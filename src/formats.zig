@@ -8,6 +8,8 @@ pub const Format = enum {
     less,
     css_modules,
     css_in_js,
+    postcss,
+    stylus,
 };
 
 pub fn detectFormat(filename: []const u8) Format {
@@ -21,6 +23,10 @@ pub fn detectFormat(filename: []const u8) Format {
         return .css_modules;
     } else if (std.mem.endsWith(u8, filename, ".css.js") or std.mem.endsWith(u8, filename, ".css.ts")) {
         return .css_in_js;
+    } else if (std.mem.endsWith(u8, filename, ".postcss")) {
+        return .postcss;
+    } else if (std.mem.endsWith(u8, filename, ".styl")) {
+        return .stylus;
     } else {
         return .css;
     }
@@ -80,6 +86,17 @@ fn parseCSSInJS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet
     var p = css_in_js_parser.Parser.init(allocator, input);
     defer p.deinit();
     return try p.parse();
+}
+
+fn parsePostCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
+    const postcss_parser = @import("formats/postcss.zig");
+    var p = postcss_parser.Parser.init(allocator, input);
+    defer p.deinit();
+    return try p.parse();
+}
+
+fn parseStylus(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
+    return parseCSS(allocator, input);
 }
 
 test "detect format from filename" {
