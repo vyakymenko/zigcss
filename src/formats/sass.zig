@@ -129,14 +129,19 @@ pub const Parser = struct {
             }
 
             if (self.isSelector(trimmed)) {
-                while (indent_stack.items.len > 0 and indent_stack.items[indent_stack.items.len - 1].indent >= indent) {
-                    const info = indent_stack.pop() orelse break;
-                    self.allocator.free(info.selector);
-                    try result.append(self.allocator, '}');
-                    try result.append(self.allocator, '\n');
+                while (indent_stack.items.len > 0) {
+                    const top_indent = indent_stack.items[indent_stack.items.len - 1].indent;
+                    if (top_indent >= indent) {
+                        const info = indent_stack.pop() orelse break;
+                        self.allocator.free(info.selector);
+                        try result.append(self.allocator, '}');
+                        try result.append(self.allocator, '\n');
+                    } else {
+                        break;
+                    }
                 }
                 
-                if (indent_stack.items.len > 0) {
+                if (indent_stack.items.len > 0 and indent > indent_stack.items[indent_stack.items.len - 1].indent) {
                     const parent_selector = indent_stack.items[indent_stack.items.len - 1].selector;
                     try result.appendSlice(self.allocator, parent_selector);
                     try result.append(self.allocator, ' ');
