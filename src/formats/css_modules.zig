@@ -126,11 +126,19 @@ test "CSS Modules generates consistent hashes" {
     var stylesheet2 = try p2.parse();
     defer stylesheet2.deinit();
 
+    try std.testing.expect(stylesheet1.rules.items.len == 1);
+    try std.testing.expect(stylesheet2.rules.items.len == 1);
+    
     const rule1 = stylesheet1.rules.items[0];
     const rule2 = stylesheet2.rules.items[0];
+    
+    try std.testing.expect(rule1 == .style);
+    try std.testing.expect(rule2 == .style);
     
     const scoped1 = rule1.style.selectors.items[0].parts.items[0].class;
     const scoped2 = rule2.style.selectors.items[0].parts.items[0].class;
     
+    try std.testing.expect(std.mem.startsWith(u8, scoped1, "test_"));
+    try std.testing.expect(std.mem.startsWith(u8, scoped2, "test_"));
     try std.testing.expect(std.mem.eql(u8, scoped1, scoped2));
 }
