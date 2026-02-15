@@ -5,8 +5,12 @@ pub const Stylesheet = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !Stylesheet {
+        return initWithCapacity(allocator, 0);
+    }
+
+    pub fn initWithCapacity(allocator: std.mem.Allocator, capacity: usize) !Stylesheet {
         return .{
-            .rules = try std.ArrayList(Rule).initCapacity(allocator, 0),
+            .rules = try std.ArrayList(Rule).initCapacity(allocator, capacity),
             .allocator = allocator,
         };
     }
@@ -37,9 +41,13 @@ pub const StyleRule = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !StyleRule {
+        return initWithCapacity(allocator, 0, 0);
+    }
+
+    pub fn initWithCapacity(allocator: std.mem.Allocator, selector_capacity: usize, declaration_capacity: usize) !StyleRule {
         return .{
-            .selectors = try std.ArrayList(Selector).initCapacity(allocator, 0),
-            .declarations = try std.ArrayList(Declaration).initCapacity(allocator, 0),
+            .selectors = try std.ArrayList(Selector).initCapacity(allocator, selector_capacity),
+            .declarations = try std.ArrayList(Declaration).initCapacity(allocator, declaration_capacity),
             .allocator = allocator,
         };
     }
@@ -88,8 +96,12 @@ pub const Selector = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !Selector {
+        return initWithCapacity(allocator, 0);
+    }
+
+    pub fn initWithCapacity(allocator: std.mem.Allocator, capacity: usize) !Selector {
         return .{
-            .parts = try std.ArrayList(SelectorPart).initCapacity(allocator, 0),
+            .parts = try std.ArrayList(SelectorPart).initCapacity(allocator, capacity),
             .allocator = allocator,
         };
     }
