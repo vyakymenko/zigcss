@@ -109,4 +109,6 @@ test "detect format from filename" {
     try std.testing.expect(detectFormat("style.module.css") == .css_modules);
     try std.testing.expect(detectFormat("style.css.js") == .css_in_js);
     try std.testing.expect(detectFormat("style.css.ts") == .css_in_js);
+    try std.testing.expect(detectFormat("style.postcss") == .postcss);
+    try std.testing.expect(detectFormat("style.styl") == .stylus);
 }
