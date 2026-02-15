@@ -420,8 +420,12 @@ Multi-pass optimization pipeline:
 
 1. **Empty rule removal** ✅ — Remove rules with no declarations
 2. **Selector merging** ✅ — Merge rules with identical selectors
-3. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last)
-4. **Value optimization** ✅ — Advanced optimizations:
+3. **Shorthand property optimization** ✅ — Combine longhand properties into shorthand:
+   - `margin-top`, `margin-right`, `margin-bottom`, `margin-left` → `margin`
+   - `padding-top`, `padding-right`, `padding-bottom`, `padding-left` → `padding`
+   - Optimizes to 1, 2, 3, or 4-value shorthand based on equality
+4. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last)
+5. **Value optimization** ✅ — Advanced optimizations:
    - Hex color minification (`#ffffff` → `#fff`)
    - RGB to hex conversion (`rgb(255, 255, 255)` → `#fff`)
    - Zero unit removal (`0px` → `0`, `0em` → `0`, etc.)
@@ -433,6 +437,7 @@ pub const Optimizer = struct {
     pub fn optimize(self: *Optimizer, stylesheet: *Stylesheet) !void {
         try self.removeEmptyRules(stylesheet);
         try self.mergeSelectors(stylesheet);
+        try self.optimizeShorthandProperties(stylesheet);
         try self.removeDuplicateDeclarations(stylesheet);
         try self.optimizeValues(stylesheet);
     }
@@ -441,7 +446,10 @@ pub const Optimizer = struct {
 
 ### Code Generator
 
-- **Fast code generation** — Single-pass codegen with minimal allocations
+- **Fast code generation** ✅ — Single-pass codegen with minimal allocations
+- **Optimized size estimation** ✅ — Accurate pre-allocation to reduce reallocations
+- **Efficient selector generation** ✅ — Optimized spacing logic, reduced redundant checks
+- **Advanced minification** ✅ — Removes trailing semicolons, optimizes spacing
 - **Configurable output** — Pretty-print or minify
 - **Source map support** — Full source map generation
 - **Incremental output** — Stream output for large files
