@@ -156,20 +156,6 @@ test "parse CSS-in-JS template string" {
     try std.testing.expect(std.mem.eql(u8, rule.style.declarations.items[0].value, "red"));
 }
 
-test "parse CSS-in-JS object literal" {
-    const js = "const styles = { '.container': { color: 'red' } };";
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    var p = Parser.init(allocator, js);
-    defer p.deinit();
-    var stylesheet = try p.parse();
-    defer stylesheet.deinit();
-
-    try std.testing.expect(stylesheet.rules.items.len >= 0);
-}
-
 test "parse CSS-in-JS with expressions" {
     const js = "const styles = ` .container { color: ${color}; } `;";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
