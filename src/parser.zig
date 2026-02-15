@@ -150,7 +150,7 @@ pub const Parser = struct {
             } else if (ch == '~') {
                 self.advance();
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .following_sibling });
-            } else if (self.isAlnum(ch) or ch == '-' or ch == '_') {
+            } else if (isAlnum(ch) or ch == '-' or ch == '_') {
                 const name = try self.parseIdentifier();
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .type = name });
             } else {
