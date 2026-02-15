@@ -98,7 +98,10 @@ fn parsePostCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet
 }
 
 fn parseStylus(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    return parseCSS(allocator, input);
+    const stylus_parser = @import("formats/stylus.zig");
+    var p = stylus_parser.Parser.init(allocator, input);
+    defer p.deinit();
+    return try p.parse();
 }
 
 test "detect format from filename" {
