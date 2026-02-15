@@ -157,7 +157,7 @@ test "parse CSS-in-JS template string" {
 }
 
 test "parse CSS-in-JS object literal" {
-    const js = "const styles = { container: { color: 'red', background: 'blue' } };";
+    const js = "const styles = { '.container': { color: 'red' } };";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
