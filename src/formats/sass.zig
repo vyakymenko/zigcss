@@ -37,7 +37,7 @@ pub const Parser = struct {
         defer self.allocator.free(processed_css);
 
         var css_p = css_parser.Parser.init(self.allocator, processed_css);
-        var stylesheet = try css_p.parse();
+        const stylesheet = try css_p.parse();
         return stylesheet;
     }
 
