@@ -118,29 +118,15 @@ pub const Parser = struct {
                     
                     if (var_end > var_start) {
                         var scan_pos = var_end;
-                        var is_decl = false;
-                        
-                        while (scan_pos < self.input.len) {
-                            const ch = self.input[scan_pos];
-                            if (ch == '=') {
-                                is_decl = true;
-                                break;
-                            }
-                            if (ch == '\n' or ch == ';' or ch == '{' or ch == ':') {
-                                break;
-                            }
-                            if (ch != ' ' and ch != '\t') {
-                                break;
-                            }
+                        while (scan_pos < self.input.len and (self.input[scan_pos] == ' ' or self.input[scan_pos] == '\t')) {
                             scan_pos += 1;
                         }
                         
-                        if (is_decl) {
-                            while (i < self.input.len) {
-                                if (self.input[i] == '\n' or self.input[i] == ';') {
-                                    i += 1;
-                                    break;
-                                }
+                        if (scan_pos < self.input.len and self.input[scan_pos] == '=') {
+                            while (i < self.input.len and self.input[i] != '\n' and self.input[i] != ';') {
+                                i += 1;
+                            }
+                            if (i < self.input.len) {
                                 i += 1;
                             }
                             continue;

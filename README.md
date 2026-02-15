@@ -105,6 +105,24 @@ Add to your `build.zig.zon`:
 # Compile a single CSS file
 zcss input.css -o output.css
 
+# Compile SCSS files
+zcss styles.scss -o styles.css
+
+# Compile SASS files
+zcss styles.sass -o styles.css
+
+# Compile LESS files
+zcss styles.less -o styles.css
+
+# Compile CSS Modules
+zcss component.module.css -o component.module.css
+
+# Compile PostCSS files
+zcss styles.postcss -o styles.css
+
+# Compile Stylus files
+zcss styles.styl -o styles.css
+
 # Compile with optimizations
 zcss input.css -o output.css --optimize
 
