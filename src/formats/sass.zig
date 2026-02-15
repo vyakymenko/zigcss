@@ -110,7 +110,8 @@ pub const Parser = struct {
                 const prev_line_idx = if (i > 0) i - 1 else 0;
                 const prev_indent = self.getIndentForLine(prev_line_idx);
                 if (prev_indent >= indent) {
-                    const _ = indent_stack.pop();
+                    const selector = indent_stack.pop();
+                    self.allocator.free(selector);
                     try result.append(self.allocator, '}');
                     try result.append(self.allocator, '\n');
                 } else {
