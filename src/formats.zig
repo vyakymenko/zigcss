@@ -73,7 +73,10 @@ fn parseCSSModules(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesh
 }
 
 fn parseCSSInJS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    return parseCSS(allocator, input);
+    const css_in_js_parser = @import("formats/css_in_js.zig");
+    var p = css_in_js_parser.Parser.init(allocator, input);
+    defer p.deinit();
+    return try p.parse();
 }
 
 test "detect format from filename" {
