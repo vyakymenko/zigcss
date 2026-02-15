@@ -1,8 +1,10 @@
 const std = @import("std");
+const string_pool = @import("string_pool.zig");
 
 pub const Stylesheet = struct {
     rules: std.ArrayList(Rule),
     allocator: std.mem.Allocator,
+    string_pool: ?string_pool.StringPool,
 
     pub fn init(allocator: std.mem.Allocator) !Stylesheet {
         return initWithCapacity(allocator, 0);
@@ -12,6 +14,7 @@ pub const Stylesheet = struct {
         return .{
             .rules = try std.ArrayList(Rule).initCapacity(allocator, capacity),
             .allocator = allocator,
+            .string_pool = null,
         };
     }
 
@@ -20,6 +23,9 @@ pub const Stylesheet = struct {
             rule.deinit();
         }
         self.rules.deinit(self.allocator);
+        if (self.string_pool) |*pool| {
+            pool.deinit();
+        }
     }
 };
 
@@ -80,8 +86,6 @@ pub const AtRule = struct {
     }
 
     pub fn deinit(self: *AtRule) void {
-        self.allocator.free(self.name);
-        self.allocator.free(self.prelude);
         if (self.rules) |*rules| {
             for (rules.items) |*rule| {
                 rule.deinit();
@@ -142,12 +146,7 @@ pub const SelectorPart = union(enum) {
 
     pub fn deinit(self: *SelectorPart, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .type => |s| allocator.free(s),
-            .class => |s| allocator.free(s),
-            .id => |s| allocator.free(s),
             .attribute => |*attr| attr.deinit(allocator),
-            .pseudo_class => |s| allocator.free(s),
-            .pseudo_element => |s| allocator.free(s),
             else => {},
         }
     }
@@ -173,13 +172,8 @@ pub const AttributeSelector = struct {
     case_sensitive: bool = true,
 
     pub fn deinit(self: *AttributeSelector, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
-        if (self.operator) |op| {
-            allocator.free(op);
-        }
-        if (self.value) |val| {
-            allocator.free(val);
-        }
+        _ = self;
+        _ = allocator;
     }
 
     pub fn toString(self: *const AttributeSelector, allocator: std.mem.Allocator) ![]const u8 {
@@ -237,7 +231,6 @@ pub const Declaration = struct {
     }
 
     pub fn deinit(self: *Declaration) void {
-        self.allocator.free(self.property);
-        self.allocator.free(self.value);
+        _ = self;
     }
 };

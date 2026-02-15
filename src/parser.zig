@@ -1,16 +1,34 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const string_pool = @import("string_pool.zig");
+const simd = @import("simd.zig");
 
 pub const Parser = struct {
     input: []const u8,
     pos: usize,
     allocator: std.mem.Allocator,
+    string_pool: *string_pool.StringPool,
+    owns_pool: bool,
 
     pub fn init(allocator: std.mem.Allocator, input: []const u8) Parser {
+        const pool = allocator.create(string_pool.StringPool) catch @panic("Failed to create string pool");
+        pool.* = string_pool.StringPool.init(allocator);
         return .{
             .input = input,
             .pos = 0,
             .allocator = allocator,
+            .string_pool = pool,
+            .owns_pool = true,
+        };
+    }
+
+    pub fn initWithPool(allocator: std.mem.Allocator, input: []const u8, pool: *string_pool.StringPool) Parser {
+        return .{
+            .input = input,
+            .pos = 0,
+            .allocator = allocator,
+            .string_pool = pool,
+            .owns_pool = false,
         };
     }
 
@@ -18,6 +36,15 @@ pub const Parser = struct {
         const estimated_rules = self.estimateRuleCount();
         var stylesheet = try ast.Stylesheet.initWithCapacity(self.allocator, estimated_rules);
         errdefer stylesheet.deinit();
+
+        if (stylesheet.string_pool) |*pool| {
+            pool.deinit();
+        }
+        stylesheet.string_pool = self.string_pool.*;
+        if (self.owns_pool) {
+            self.allocator.destroy(self.string_pool);
+            self.owns_pool = false;
+        }
 
         self.skipWhitespace();
 
@@ -195,11 +222,11 @@ pub const Parser = struct {
 
         var value = self.input[value_start..value_end];
         value = std.mem.trim(u8, value, " \t\n\r");
-        const value_copy = try self.allocator.dupe(u8, value);
+        const value_interned = try self.string_pool.intern(value);
 
         var decl = ast.Declaration.init(self.allocator);
         decl.property = property;
-        decl.value = value_copy;
+        decl.value = value_interned;
         decl.important = important;
         return decl;
     }
@@ -228,7 +255,7 @@ pub const Parser = struct {
 
         var prelude_raw = self.input[prelude_start..prelude_end];
         prelude_raw = std.mem.trim(u8, prelude_raw, " \t\n\r");
-        const prelude = try self.allocator.dupe(u8, prelude_raw);
+        const prelude = try self.string_pool.intern(prelude_raw);
 
         var at_rule = ast.AtRule.init(self.allocator);
         at_rule.name = name;
@@ -289,8 +316,7 @@ pub const Parser = struct {
             return error.InvalidIdentifier;
         }
 
-        const ident = self.input[start..self.pos];
-        return try self.allocator.dupe(u8, ident);
+        return try self.string_pool.internSlice(start, self.pos, self.input);
     }
 
     inline fn isAlpha(ch: u8) bool {
@@ -302,15 +328,15 @@ pub const Parser = struct {
     }
 
     fn skipWhitespace(self: *Parser) void {
-        while (self.pos < self.input.len) {
-            const ch = self.input[self.pos];
-            if (std.ascii.isWhitespace(ch)) {
-                self.pos += 1;
-            } else if (ch == '/' and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '*') {
-                self.skipComment();
-            } else {
-                break;
-            }
+        if (self.pos < self.input.len and self.input[self.pos] == '/' and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '*') {
+            self.skipComment();
+            self.skipWhitespace();
+            return;
+        }
+        simd.skipWhitespaceSimd(self.input, &self.pos);
+        if (self.pos < self.input.len and self.input[self.pos] == '/' and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '*') {
+            self.skipComment();
+            self.skipWhitespace();
         }
     }
 

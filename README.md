@@ -453,11 +453,12 @@ pub const Optimizer = struct {
 ### Performance Optimizations
 
 1. **Arena allocator** — Fast allocation for AST nodes
-2. **String interning** — Deduplicate repeated strings
-3. **SIMD operations** — Vectorized operations where applicable
+2. **String interning** ✅ — Deduplicate repeated strings (property names, class names, identifiers)
+3. **SIMD operations** ✅ — Vectorized whitespace skipping for faster parsing
 4. **Parallel parsing** — Multi-threaded parsing for large files
 5. **Zero-copy parsing** — Tokens reference original input
 6. **Comptime optimizations** — Leverage Zig's compile-time execution
+7. **Capacity estimation** — Pre-allocate ArrayLists with estimated sizes to reduce reallocations
 
 ### Memory Management
 
@@ -565,7 +566,8 @@ zig build test --summary all
 - [x] Optimized character checks (inline functions)
 - [x] Faster whitespace skipping
 - [x] Output size estimation
-- [ ] SIMD optimizations
+- [x] String interning for deduplication
+- [x] SIMD-optimized whitespace skipping
 - [ ] Parallel parsing improvements
 - [ ] Incremental compilation
 - [ ] Better error messages
