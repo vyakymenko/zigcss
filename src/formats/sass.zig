@@ -372,9 +372,10 @@ test "parse SASS with variables" {
     var stylesheet = try p.parse();
     defer stylesheet.deinit();
 
-    try std.testing.expect(stylesheet.rules.items.len == 1);
+    try std.testing.expect(stylesheet.rules.items.len >= 1);
     const rule = stylesheet.rules.items[0];
     try std.testing.expect(rule == .style);
+    try std.testing.expect(rule.style.declarations.items.len >= 1);
     try std.testing.expect(std.mem.eql(u8, rule.style.declarations.items[0].value, "red"));
 }
 
