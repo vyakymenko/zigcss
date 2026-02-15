@@ -102,11 +102,12 @@ pub const Parser = struct {
         self.pos = 0;
 
         while (self.pos < self.input.len) {
-            if (self.peek() == '$') {
-                const var_start = self.pos + 1;
-                var var_end = var_start;
-
-                if (var_end < self.input.len and (std.ascii.isAlphabetic(self.input[var_end]) or self.input[var_end] == '-')) {
+            if (self.peek() == '$' and self.pos + 1 < self.input.len) {
+                const next = self.input[self.pos + 1];
+                if (std.ascii.isAlphabetic(next) or next == '-') {
+                    var check_pos = self.pos + 1;
+                    var var_end = check_pos;
+                    
                     while (var_end < self.input.len) {
                         const ch = self.input[var_end];
                         if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_') {
@@ -115,44 +116,43 @@ pub const Parser = struct {
                             break;
                         }
                     }
-
-                    if (var_end > var_start) {
-                        const var_name = self.input[var_start..var_end];
-                        if (self.variables.get(var_name)) |value| {
-                            try result.appendSlice(self.allocator, value);
-                            self.pos = var_end;
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            if (self.peek() == '$' and self.pos + 1 < self.input.len) {
-                const next = self.input[self.pos + 1];
-                if (std.ascii.isAlphabetic(next) or next == '-') {
-                    var check_pos = self.pos;
-                    var is_decl = false;
-                    while (check_pos < self.input.len) {
-                        const ch = self.input[check_pos];
-                        if (ch == '=') {
-                            is_decl = true;
-                            break;
-                        }
-                        if (ch == '\n' or ch == ';' or ch == '{') {
-                            break;
-                        }
-                        check_pos += 1;
-                    }
-                    if (is_decl) {
-                        while (self.pos < self.input.len) {
-                            const ch = self.peek();
-                            if (ch == '\n' or ch == ';') {
-                                self.advance();
+                    
+                    if (var_end > check_pos) {
+                        var is_decl = false;
+                        var scan_pos = var_end;
+                        while (scan_pos < self.input.len) {
+                            const ch = self.input[scan_pos];
+                            if (ch == '=') {
+                                is_decl = true;
                                 break;
                             }
-                            self.advance();
+                            if (ch == '\n' or ch == ';' or ch == '{' or ch == ':') {
+                                break;
+                            }
+                            if (ch != ' ' and ch != '\t') {
+                                break;
+                            }
+                            scan_pos += 1;
                         }
-                        continue;
+                        
+                        if (is_decl) {
+                            while (self.pos < self.input.len) {
+                                const ch = self.peek();
+                                if (ch == '\n' or ch == ';') {
+                                    self.advance();
+                                    break;
+                                }
+                                self.advance();
+                            }
+                            continue;
+                        } else {
+                            const var_name = self.input[check_pos..var_end];
+                            if (self.variables.get(var_name)) |value| {
+                                try result.appendSlice(self.allocator, value);
+                                self.pos = var_end;
+                                continue;
+                            }
+                        }
                     }
                 }
             }
