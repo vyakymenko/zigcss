@@ -45,24 +45,22 @@ pub const Parser = struct {
         for (self.lines.items) |line| {
             const trimmed = std.mem.trimLeft(u8, line, " \t");
             if (trimmed.len > 0 and trimmed[0] == '$') {
-                var temp_pos: usize = 0;
-                while (temp_pos < trimmed.len and trimmed[temp_pos] != '$') {
-                    temp_pos += 1;
+                var i: usize = 1;
+                while (i < trimmed.len and (std.ascii.isAlphanumeric(trimmed[i]) or trimmed[i] == '-' or trimmed[i] == '_')) {
+                    i += 1;
                 }
-                if (temp_pos < trimmed.len) {
-                    const var_line = trimmed[temp_pos..];
-                    const old_pos = self.pos;
-                    self.pos = 0;
-                    const line_in_input = std.mem.indexOf(u8, self.input, var_line) orelse {
-                        self.pos = old_pos;
-                        continue;
-                    };
-                    self.pos = line_in_input;
-                    self.parseVariable() catch {
-                        self.pos = old_pos;
-                        continue;
-                    };
-                    self.pos = old_pos;
+                
+                if (i < trimmed.len and trimmed[i] == ':') {
+                    const name = trimmed[1..i];
+                    i += 1;
+                    while (i < trimmed.len and std.ascii.isWhitespace(trimmed[i])) {
+                        i += 1;
+                    }
+                    const value = std.mem.trim(u8, trimmed[i..], " \t");
+                    
+                    const name_copy = try self.allocator.dupe(u8, name);
+                    const value_copy = try self.allocator.dupe(u8, value);
+                    try self.variables.put(name_copy, value_copy);
                 }
             }
         }
