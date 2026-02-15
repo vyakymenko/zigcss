@@ -15,7 +15,7 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !ast.Stylesheet {
-        var stylesheet = ast.Stylesheet.init(self.allocator);
+        var stylesheet = try ast.Stylesheet.init(self.allocator);
         errdefer stylesheet.deinit();
 
         self.skipWhitespace();
@@ -23,10 +23,10 @@ pub const Parser = struct {
         while (self.pos < self.input.len) {
             if (self.peek() == '@') {
                 const at_rule = try self.parseAtRule();
-                try stylesheet.rules.append(ast.Rule{ .at_rule = at_rule });
+                try stylesheet.rules.append(self.allocator, ast.Rule{ .at_rule = at_rule });
             } else {
                 const style_rule = try self.parseStyleRule();
-                try stylesheet.rules.append(ast.Rule{ .style = style_rule });
+                try stylesheet.rules.append(self.allocator, ast.Rule{ .style = style_rule });
             }
             self.skipWhitespace();
         }
@@ -35,12 +35,12 @@ pub const Parser = struct {
     }
 
     fn parseStyleRule(self: *Parser) !ast.StyleRule {
-        var rule = ast.StyleRule.init(self.allocator);
+        var rule = try ast.StyleRule.init(self.allocator);
         errdefer rule.deinit();
 
         while (true) {
             const selector = try self.parseSelector();
-            try rule.selectors.append(selector);
+            try rule.selectors.append(self.allocator, selector);
 
             self.skipWhitespace();
             if (self.peek() == ',') {
@@ -60,7 +60,7 @@ pub const Parser = struct {
 
         while (self.pos < self.input.len and self.peek() != '}') {
             const decl = try self.parseDeclaration();
-            try rule.declarations.append(decl);
+            try rule.declarations.append(self.allocator, decl);
             self.skipWhitespace();
             if (self.peek() == ';') {
                 self.advance();
@@ -76,7 +76,7 @@ pub const Parser = struct {
     }
 
     fn parseSelector(self: *Parser) !ast.Selector {
-        var selector = ast.Selector.init(self.allocator);
+        var selector = try ast.Selector.init(self.allocator);
         errdefer selector.deinit();
 
         while (self.pos < self.input.len) {
@@ -90,36 +90,36 @@ pub const Parser = struct {
             if (ch == '.') {
                 self.advance();
                 const name = try self.parseIdentifier();
-                try selector.parts.append(ast.SelectorPart{ .class = name });
+                try selector.parts.append(self.allocator, ast.SelectorPart{ .class = name });
             } else if (ch == '#') {
                 self.advance();
                 const name = try self.parseIdentifier();
-                try selector.parts.append(ast.SelectorPart{ .id = name });
+                try selector.parts.append(self.allocator, ast.SelectorPart{ .id = name });
             } else if (ch == '*') {
                 self.advance();
-                try selector.parts.append(ast.SelectorPart{ .universal = {} });
+                try selector.parts.append(self.allocator, ast.SelectorPart{ .universal = {} });
             } else if (ch == ':') {
                 self.advance();
                 if (self.peek() == ':') {
                     self.advance();
                     const name = try self.parseIdentifier();
-                    try selector.parts.append(ast.SelectorPart{ .pseudo_element = name });
+                    try selector.parts.append(self.allocator, ast.SelectorPart{ .pseudo_element = name });
                 } else {
                     const name = try self.parseIdentifier();
-                    try selector.parts.append(ast.SelectorPart{ .pseudo_class = name });
+                    try selector.parts.append(self.allocator, ast.SelectorPart{ .pseudo_class = name });
                 }
             } else if (ch == '>') {
                 self.advance();
-                try selector.parts.append(ast.SelectorPart{ .combinator = .child });
+                try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .child });
             } else if (ch == '+') {
                 self.advance();
-                try selector.parts.append(ast.SelectorPart{ .combinator = .next_sibling });
+                try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .next_sibling });
             } else if (ch == '~') {
                 self.advance();
-                try selector.parts.append(ast.SelectorPart{ .combinator = .following_sibling });
+                try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .following_sibling });
             } else if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_') {
                 const name = try self.parseIdentifier();
-                try selector.parts.append(ast.SelectorPart{ .type = name });
+                try selector.parts.append(self.allocator, ast.SelectorPart{ .type = name });
             } else {
                 self.advance();
             }
@@ -180,7 +180,7 @@ pub const Parser = struct {
         const name = try self.parseIdentifier();
         self.skipWhitespace();
 
-        var prelude_start = self.pos;
+        const prelude_start = self.pos;
         var prelude_end = self.pos;
 
         while (self.pos < self.input.len) {
@@ -205,17 +205,17 @@ pub const Parser = struct {
             self.advance();
             self.skipWhitespace();
 
-            var rules = std.ArrayList(ast.Rule).init(self.allocator);
-            errdefer rules.deinit();
+            var rules = try std.ArrayList(ast.Rule).initCapacity(self.allocator, 0);
+            errdefer rules.deinit(self.allocator);
 
             while (self.pos < self.input.len and self.peek() != '}') {
-                if (self.peek() == '@') {
-                    const nested_at_rule = try self.parseAtRule();
-                    try rules.append(ast.Rule{ .at_rule = nested_at_rule });
-                } else {
-                    const style_rule = try self.parseStyleRule();
-                    try rules.append(ast.Rule{ .style = style_rule });
-                }
+            if (self.peek() == '@') {
+                const nested_at_rule = try self.parseAtRule();
+                try rules.append(self.allocator, ast.Rule{ .at_rule = nested_at_rule });
+            } else {
+                const style_rule = try self.parseStyleRule();
+                try rules.append(self.allocator, ast.Rule{ .style = style_rule });
+            }
                 self.skipWhitespace();
             }
 

@@ -4,11 +4,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
-        .name = "zcss",
+    const root_module = b.addModule("zcss", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "zcss",
+        .root_module = root_module,
     });
 
     b.installArtifact(exe);
@@ -22,10 +26,14 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const unit_tests = b.addTest(.{
+    const test_module = b.addModule("zcss", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+    });
+
+    const unit_tests = b.addTest(.{
+        .root_module = test_module,
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);

@@ -4,9 +4,9 @@ pub const Stylesheet = struct {
     rules: std.ArrayList(Rule),
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) Stylesheet {
+    pub fn init(allocator: std.mem.Allocator) !Stylesheet {
         return .{
-            .rules = std.ArrayList(Rule).init(allocator),
+            .rules = try std.ArrayList(Rule).initCapacity(allocator, 0),
             .allocator = allocator,
         };
     }
@@ -15,7 +15,7 @@ pub const Stylesheet = struct {
         for (self.rules.items) |*rule| {
             rule.deinit();
         }
-        self.rules.deinit();
+        self.rules.deinit(self.allocator);
     }
 };
 
@@ -36,10 +36,10 @@ pub const StyleRule = struct {
     declarations: std.ArrayList(Declaration),
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) StyleRule {
+    pub fn init(allocator: std.mem.Allocator) !StyleRule {
         return .{
-            .selectors = std.ArrayList(Selector).init(allocator),
-            .declarations = std.ArrayList(Declaration).init(allocator),
+            .selectors = try std.ArrayList(Selector).initCapacity(allocator, 0),
+            .declarations = try std.ArrayList(Declaration).initCapacity(allocator, 0),
             .allocator = allocator,
         };
     }
@@ -48,11 +48,11 @@ pub const StyleRule = struct {
         for (self.selectors.items) |*selector| {
             selector.deinit();
         }
-        self.selectors.deinit();
+        self.selectors.deinit(self.allocator);
         for (self.declarations.items) |*decl| {
             decl.deinit();
         }
-        self.declarations.deinit();
+        self.declarations.deinit(self.allocator);
     }
 };
 
@@ -78,7 +78,7 @@ pub const AtRule = struct {
             for (rules.items) |*rule| {
                 rule.deinit();
             }
-            rules.deinit();
+            rules.deinit(self.allocator);
         }
     }
 };
@@ -87,23 +87,23 @@ pub const Selector = struct {
     parts: std.ArrayList(SelectorPart),
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) Selector {
+    pub fn init(allocator: std.mem.Allocator) !Selector {
         return .{
-            .parts = std.ArrayList(SelectorPart).init(allocator),
+            .parts = try std.ArrayList(SelectorPart).initCapacity(allocator, 0),
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *Selector) void {
         for (self.parts.items) |*part| {
-            part.deinit();
+            part.deinit(self.allocator);
         }
-        self.parts.deinit();
+        self.parts.deinit(self.allocator);
     }
 
     pub fn toString(self: *const Selector, allocator: std.mem.Allocator) ![]const u8 {
-        var list = std.ArrayList(u8).init(allocator);
-        defer list.deinit();
+        var list = try std.ArrayList(u8).initCapacity(allocator, 0);
+        defer list.deinit(allocator);
 
         for (self.parts.items, 0..) |part, i| {
             if (i > 0) {
@@ -128,9 +128,14 @@ pub const SelectorPart = union(enum) {
     pseudo_element: []const u8,
     combinator: Combinator,
 
-    pub fn deinit(self: *SelectorPart) void {
+    pub fn deinit(self: *SelectorPart, allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .attribute => |*attr| attr.deinit(),
+            .type => |s| allocator.free(s),
+            .class => |s| allocator.free(s),
+            .id => |s| allocator.free(s),
+            .attribute => |*attr| attr.deinit(allocator),
+            .pseudo_class => |s| allocator.free(s),
+            .pseudo_element => |s| allocator.free(s),
             else => {},
         }
     }
@@ -155,28 +160,34 @@ pub const AttributeSelector = struct {
     value: ?[]const u8,
     case_sensitive: bool = true,
 
-    pub fn deinit(self: *AttributeSelector) void {
-        _ = self;
+    pub fn deinit(self: *AttributeSelector, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        if (self.operator) |op| {
+            allocator.free(op);
+        }
+        if (self.value) |val| {
+            allocator.free(val);
+        }
     }
 
     pub fn toString(self: *const AttributeSelector, allocator: std.mem.Allocator) ![]const u8 {
-        var list = std.ArrayList(u8).init(allocator);
-        defer list.deinit();
+        var list = try std.ArrayList(u8).initCapacity(allocator, 0);
+        defer list.deinit(allocator);
 
-        try list.append('[');
-        try list.appendSlice(self.name);
-        if (self.operator) |op| {
-            try list.appendSlice(op);
-            if (self.value) |val| {
-                try list.append('"');
-                try list.appendSlice(val);
-                try list.append('"');
-            }
+    try list.append(allocator, '[');
+    try list.appendSlice(allocator, self.name);
+    if (self.operator) |op| {
+        try list.appendSlice(allocator, op);
+        if (self.value) |val| {
+            try list.append(allocator, '"');
+            try list.appendSlice(allocator, val);
+            try list.append(allocator, '"');
         }
-        if (!self.case_sensitive) {
-            try list.appendSlice(" i");
-        }
-        try list.append(']');
+    }
+    if (!self.case_sensitive) {
+        try list.appendSlice(allocator, " i");
+    }
+    try list.append(allocator, ']');
 
         return list.toOwnedSlice();
     }

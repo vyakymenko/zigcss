@@ -7,76 +7,75 @@ pub const CodegenOptions = struct {
 };
 
 pub fn generate(allocator: std.mem.Allocator, stylesheet: ast.Stylesheet, options: CodegenOptions) ![]const u8 {
-    _ = options;
-    var list = std.ArrayList(u8).init(allocator);
-    defer list.deinit();
+    var list = try std.ArrayList(u8).initCapacity(allocator, 0);
+    defer list.deinit(allocator);
 
     for (stylesheet.rules.items, 0..) |rule, i| {
         if (i > 0 and !options.minify) {
-            try list.append('\n');
+            try list.append(allocator, '\n');
         }
 
         switch (rule) {
             .style => |style_rule| {
-                try generateStyleRule(&list, style_rule, options);
+                try generateStyleRule(&list, allocator, style_rule, options);
             },
             .at_rule => |at_rule| {
-                try generateAtRule(&list, at_rule, options);
+                try generateAtRule(&list, allocator, at_rule, options);
             },
         }
     }
 
-    return list.toOwnedSlice();
+    return try list.toOwnedSlice(allocator);
 }
 
-fn generateStyleRule(list: *std.ArrayList(u8), rule: ast.StyleRule, options: CodegenOptions) !void {
+fn generateStyleRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rule: ast.StyleRule, options: CodegenOptions) !void {
     for (rule.selectors.items, 0..) |selector, i| {
         if (i > 0) {
-            try list.append(',');
+            try list.append(allocator, ',');
             if (!options.minify) {
-                try list.append(' ');
+                try list.append(allocator, ' ');
             }
         }
-        try generateSelector(list, selector, options);
+        try generateSelector(list, allocator, selector, options);
     }
 
     if (!options.minify) {
-        try list.append(' ');
+        try list.append(allocator, ' ');
     }
-    try list.append('{');
+    try list.append(allocator, '{');
     if (!options.minify) {
-        try list.append('\n');
+        try list.append(allocator, '\n');
     }
 
     for (rule.declarations.items, 0..) |decl, i| {
         if (!options.minify and i > 0) {
-            try list.append('\n');
+            try list.append(allocator, '\n');
         }
         if (!options.minify) {
-            try list.appendSlice("  ");
+            try list.appendSlice(allocator, "  ");
         }
-        try list.appendSlice(decl.property);
-        try list.append(':');
+        try list.appendSlice(allocator, decl.property);
+        try list.append(allocator, ':');
         if (!options.minify) {
-            try list.append(' ');
+            try list.append(allocator, ' ');
         }
-        try list.appendSlice(decl.value);
+        try list.appendSlice(allocator, decl.value);
         if (decl.important) {
             if (!options.minify) {
-                try list.append(' ');
+                try list.append(allocator, ' ');
             }
-            try list.appendSlice("!important");
+            try list.appendSlice(allocator, "!important");
         }
-        try list.append(';');
+        try list.append(allocator, ';');
     }
 
     if (!options.minify) {
-        try list.append('\n');
+        try list.append(allocator, '\n');
     }
-    try list.append('}');
+    try list.append(allocator, '}');
 }
 
-fn generateSelector(list: *std.ArrayList(u8), selector: ast.Selector, options: CodegenOptions) !void {
+fn generateSelector(list: *std.ArrayList(u8), allocator: std.mem.Allocator, selector: ast.Selector, options: CodegenOptions) !void {
     _ = options;
     for (selector.parts.items, 0..) |part, i| {
         if (i > 0) {
@@ -91,98 +90,98 @@ fn generateSelector(list: *std.ArrayList(u8), selector: ast.Selector, options: C
                     else => false,
                 };
                 if (!is_combinator) {
-                    try list.append(' ');
+                    try list.append(allocator, ' ');
                 }
             }
         }
 
         switch (part) {
-            .type => |s| try list.appendSlice(s),
+            .type => |s| try list.appendSlice(allocator, s),
             .class => |s| {
-                try list.append('.');
-                try list.appendSlice(s);
+                try list.append(allocator, '.');
+                try list.appendSlice(allocator, s);
             },
             .id => |s| {
-                try list.append('#');
-                try list.appendSlice(s);
+                try list.append(allocator, '#');
+                try list.appendSlice(allocator, s);
             },
-            .universal => try list.append('*'),
-            .attribute => |attr| try generateAttributeSelector(list, attr),
+            .universal => try list.append(allocator, '*'),
+            .attribute => |attr| try generateAttributeSelector(list, allocator, attr),
             .pseudo_class => |s| {
-                try list.append(':');
-                try list.appendSlice(s);
+                try list.append(allocator, ':');
+                try list.appendSlice(allocator, s);
             },
             .pseudo_element => |s| {
-                try list.appendSlice("::");
-                try list.appendSlice(s);
+                try list.appendSlice(allocator, "::");
+                try list.appendSlice(allocator, s);
             },
-            .combinator => |c| try list.appendSlice(c.toString()),
+            .combinator => |c| try list.appendSlice(allocator, c.toString()),
         }
     }
 }
 
-fn generateAttributeSelector(list: *std.ArrayList(u8), attr: ast.AttributeSelector) !void {
-    try list.append('[');
-    try list.appendSlice(attr.name);
+fn generateAttributeSelector(list: *std.ArrayList(u8), allocator: std.mem.Allocator, attr: ast.AttributeSelector) !void {
+    try list.append(allocator, '[');
+    try list.appendSlice(allocator, attr.name);
     if (attr.operator) |op| {
-        try list.appendSlice(op);
+        try list.appendSlice(allocator, op);
         if (attr.value) |val| {
-            try list.append('"');
-            try list.appendSlice(val);
-            try list.append('"');
+            try list.append(allocator, '"');
+            try list.appendSlice(allocator, val);
+            try list.append(allocator, '"');
         }
     }
     if (!attr.case_sensitive) {
-        try list.appendSlice(" i");
+        try list.appendSlice(allocator, " i");
     }
-    try list.append(']');
+    try list.append(allocator, ']');
 }
 
-fn generateAtRule(list: *std.ArrayList(u8), rule: ast.AtRule, options: CodegenOptions) !void {
-    try list.append('@');
-    try list.appendSlice(rule.name);
+fn generateAtRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rule: ast.AtRule, options: CodegenOptions) !void {
+    try list.append(allocator, '@');
+    try list.appendSlice(allocator, rule.name);
     if (rule.prelude.len > 0) {
         if (!options.minify) {
-            try list.append(' ');
+            try list.append(allocator, ' ');
         }
-        try list.appendSlice(rule.prelude);
+        try list.appendSlice(allocator, rule.prelude);
     }
 
     if (rule.rules) |rules| {
         if (!options.minify) {
-            try list.append(' ');
+            try list.append(allocator, ' ');
         }
-        try list.append('{');
+        try list.append(allocator, '{');
         if (!options.minify) {
-            try list.append('\n');
+            try list.append(allocator, '\n');
         }
 
         for (rules.items, 0..) |nested_rule, i| {
             if (!options.minify and i > 0) {
-                try list.append('\n');
+                try list.append(allocator, '\n');
             }
 
             switch (nested_rule) {
                 .style => |style_rule| {
                     if (!options.minify) {
-                        try list.appendSlice("  ");
+                        try list.appendSlice(allocator, "  ");
                     }
-                    try generateStyleRule(list, style_rule, options);
+                    try generateStyleRule(list, allocator, style_rule, options);
                 },
                 .at_rule => |at_rule| {
                     if (!options.minify) {
-                        try list.appendSlice("  ");
+                        try list.appendSlice(allocator, "  ");
                     }
-                    try generateAtRule(list, at_rule, options);
+                    try generateAtRule(list, allocator, at_rule, options);
                 },
             }
         }
 
         if (!options.minify) {
-            try list.append('\n');
+            try list.append(allocator, '\n');
         }
-        try list.append('}');
+        try list.append(allocator, '}');
     } else {
-        try list.append(';');
+        try list.append(allocator, ';');
     }
 }

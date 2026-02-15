@@ -55,10 +55,10 @@ pub fn main() !void {
     defer allocator.free(input);
 
     var p = parser.Parser.init(allocator, input);
-    const stylesheet = try p.parse();
+    var stylesheet = try p.parse();
     defer stylesheet.deinit();
 
-    var options = codegen.CodegenOptions{
+    const options = codegen.CodegenOptions{
         .minify = minify_flag,
         .optimize = optimize_flag,
     };
@@ -67,11 +67,15 @@ pub fn main() !void {
     defer allocator.free(result);
 
     if (output_file) |out| {
-        try std.fs.cwd().writeFileAlloc(allocator, out, result);
+        try std.fs.cwd().writeFile(.{ .sub_path = out, .data = result });
         std.debug.print("Compiled: {s} -> {s}\n", .{ input_file, out });
     } else {
-        const stdout = std.io.getStdOut().writer();
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buffer: [1024]u8 = undefined;
+        var stdout_writer = stdout_file.writer(&stdout_buffer);
+        const stdout = &stdout_writer.interface;
         try stdout.writeAll(result);
+        try stdout.flush();
     }
 }
 
@@ -82,7 +86,7 @@ test "basic compilation" {
     const allocator = gpa.allocator();
 
     var p = parser.Parser.init(allocator, css);
-    const stylesheet = try p.parse();
+    var stylesheet = try p.parse();
     defer stylesheet.deinit();
 
     const result = try codegen.generate(allocator, stylesheet, .{});
@@ -100,7 +104,7 @@ test "minify output" {
     const allocator = gpa.allocator();
 
     var p = parser.Parser.init(allocator, css);
-    const stylesheet = try p.parse();
+    var stylesheet = try p.parse();
     defer stylesheet.deinit();
 
     const result = try codegen.generate(allocator, stylesheet, .{ .minify = true });
@@ -117,7 +121,7 @@ test "important flag" {
     const allocator = gpa.allocator();
 
     var p = parser.Parser.init(allocator, css);
-    const stylesheet = try p.parse();
+    var stylesheet = try p.parse();
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len == 1);
@@ -134,7 +138,7 @@ test "multiple selectors" {
     const allocator = gpa.allocator();
 
     var p = parser.Parser.init(allocator, css);
-    const stylesheet = try p.parse();
+    var stylesheet = try p.parse();
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len == 1);
@@ -150,7 +154,7 @@ test "at-rule parsing" {
     const allocator = gpa.allocator();
 
     var p = parser.Parser.init(allocator, css);
-    const stylesheet = try p.parse();
+    var stylesheet = try p.parse();
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len == 1);
