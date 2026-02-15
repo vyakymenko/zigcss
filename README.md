@@ -568,6 +568,9 @@ zig build test --summary all
 - [x] Output size estimation
 - [x] String interning for deduplication
 - [x] SIMD-optimized whitespace skipping
+- [x] Basic optimizer (remove empty rules)
+- [ ] Value optimization (colors, units)
+- [ ] Duplicate declaration removal
 - [ ] Parallel parsing improvements
 - [ ] Incremental compilation
 - [ ] Better error messages

@@ -64,7 +64,7 @@ pub fn main() !void {
         .optimize = optimize_flag,
     };
 
-    const result = try codegen.generate(allocator, stylesheet, options);
+    const result = try codegen.generate(allocator, &stylesheet, options);
     defer allocator.free(result);
 
     if (output_file) |out| {
@@ -90,7 +90,7 @@ test "basic compilation" {
     var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
-    const result = try codegen.generate(allocator, stylesheet, .{});
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".container"));
@@ -108,7 +108,7 @@ test "minify output" {
     var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
-    const result = try codegen.generate(allocator, stylesheet, .{ .minify = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{ .minify = true });
     defer allocator.free(result);
 
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "\n"));

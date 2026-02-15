@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const optimizer = @import("optimizer.zig");
 
 pub const CodegenOptions = struct {
     minify: bool = false,
@@ -30,8 +31,13 @@ fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
     return @max(size, 256);
 }
 
-pub fn generate(allocator: std.mem.Allocator, stylesheet: ast.Stylesheet, options: CodegenOptions) ![]const u8 {
-    const estimated_size = estimateOutputSize(stylesheet);
+pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, options: CodegenOptions) ![]const u8 {
+    if (options.optimize) {
+        var opt = optimizer.Optimizer.init(allocator);
+        try opt.optimize(stylesheet);
+    }
+
+    const estimated_size = estimateOutputSize(stylesheet.*);
     var list = try std.ArrayList(u8).initCapacity(allocator, estimated_size);
     errdefer list.deinit(allocator);
 
