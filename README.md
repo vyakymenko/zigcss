@@ -566,11 +566,14 @@ zig build test --summary all
 - [x] Optimized character checks (inline functions)
 - [x] Faster whitespace skipping
 - [x] Output size estimation
-- [x] String interning for deduplication
+- [x] String interning for deduplication (pointer-based, no copying)
 - [x] SIMD-optimized whitespace skipping
-- [x] Basic optimizer (remove empty rules)
-- [ ] Value optimization (colors, units)
-- [ ] Duplicate declaration removal
+- [x] CSS optimizer with multiple passes:
+  - [x] Remove empty rules
+  - [x] Remove duplicate declarations
+  - [x] Value optimization (hex colors, zero units)
+- [ ] Advanced value optimization (rgb colors, more units)
+- [ ] Selector merging and optimization
 - [ ] Parallel parsing improvements
 - [ ] Incremental compilation
 - [ ] Better error messages

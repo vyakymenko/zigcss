@@ -4,7 +4,8 @@ const string_pool = @import("string_pool.zig");
 pub const Stylesheet = struct {
     rules: std.ArrayList(Rule),
     allocator: std.mem.Allocator,
-    string_pool: ?string_pool.StringPool,
+    string_pool: ?*string_pool.StringPool,
+    owns_string_pool: bool,
 
     pub fn init(allocator: std.mem.Allocator) !Stylesheet {
         return initWithCapacity(allocator, 0);
@@ -15,6 +16,7 @@ pub const Stylesheet = struct {
             .rules = try std.ArrayList(Rule).initCapacity(allocator, capacity),
             .allocator = allocator,
             .string_pool = null,
+            .owns_string_pool = false,
         };
     }
 
@@ -23,8 +25,11 @@ pub const Stylesheet = struct {
             rule.deinit();
         }
         self.rules.deinit(self.allocator);
-        if (self.string_pool) |*pool| {
-            pool.deinit();
+        if (self.owns_string_pool) {
+            if (self.string_pool) |pool| {
+                pool.deinit();
+                self.allocator.destroy(pool);
+            }
         }
     }
 };

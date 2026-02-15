@@ -37,12 +37,15 @@ pub const Parser = struct {
         var stylesheet = try ast.Stylesheet.initWithCapacity(self.allocator, estimated_rules);
         errdefer stylesheet.deinit();
 
-        if (stylesheet.string_pool) |*pool| {
-            pool.deinit();
+        if (stylesheet.string_pool) |pool| {
+            if (stylesheet.owns_string_pool) {
+                pool.deinit();
+                stylesheet.allocator.destroy(pool);
+            }
         }
-        stylesheet.string_pool = self.string_pool.*;
+        stylesheet.string_pool = self.string_pool;
+        stylesheet.owns_string_pool = self.owns_pool;
         if (self.owns_pool) {
-            self.allocator.destroy(self.string_pool);
             self.owns_pool = false;
         }
 

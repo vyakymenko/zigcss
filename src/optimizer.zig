@@ -10,6 +10,8 @@ pub const Optimizer = struct {
 
     pub fn optimize(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         try self.removeEmptyRules(stylesheet);
+        try self.removeDuplicateDeclarations(stylesheet);
+        try self.optimizeValues(stylesheet);
     }
 
     fn removeEmptyRules(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
@@ -36,53 +38,59 @@ pub const Optimizer = struct {
     }
 
     fn optimizeValues(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
-        for (stylesheet.rules.items) |*rule| {
-            switch (rule.*) {
-                .style => |*style_rule| {
-                    for (style_rule.declarations.items) |*decl| {
-                        const optimized = try self.optimizeValue(decl.value);
-                        if (optimized.ptr != decl.value.ptr) {
-                            decl.value = optimized;
-                        }
-                    }
-                },
-                .at_rule => |*at_rule| {
-                    if (at_rule.rules) |*rules| {
-                        for (rules.items) |*nested_rule| {
-                            switch (nested_rule.*) {
-                                .style => |*style_rule| {
-                                    for (style_rule.declarations.items) |*decl| {
-                                        const optimized = try self.optimizeValue(decl.value);
-                                        if (optimized.ptr != decl.value.ptr) {
-                                            decl.value = optimized;
-                                        }
-                                    }
-                                },
-                                .at_rule => {},
+        if (stylesheet.string_pool) |pool| {
+            for (stylesheet.rules.items) |*rule| {
+                switch (rule.*) {
+                    .style => |*style_rule| {
+                        for (style_rule.declarations.items) |*decl| {
+                            const result = try self.optimizeValue(decl.value);
+                            if (result.was_optimized) {
+                                const interned = try pool.intern(result.optimized);
+                                self.allocator.free(result.optimized);
+                                decl.value = interned;
                             }
                         }
-                    }
-                },
+                    },
+                    .at_rule => |*at_rule| {
+                        if (at_rule.rules) |*rules| {
+                            for (rules.items) |*nested_rule| {
+                                switch (nested_rule.*) {
+                                    .style => |*style_rule| {
+                                        for (style_rule.declarations.items) |*decl| {
+                                            const opt_result = try self.optimizeValue(decl.value);
+                                            if (opt_result.was_optimized) {
+                                                const interned = try pool.intern(opt_result.optimized);
+                                                self.allocator.free(opt_result.optimized);
+                                                decl.value = interned;
+                                            }
+                                        }
+                                    },
+                                    .at_rule => {},
+                                }
+                            }
+                        }
+                    },
+                }
             }
         }
     }
 
-    fn optimizeValue(self: *Optimizer, value: []const u8) ![]const u8 {
+    fn optimizeValue(self: *Optimizer, value: []const u8) !struct { optimized: []const u8, was_optimized: bool } {
         const trimmed = std.mem.trim(u8, value, " \t\n\r");
         
-        if (trimmed.len == 0) return value;
+        if (trimmed.len == 0) return .{ .optimized = value, .was_optimized = false };
 
         if (self.optimizeHexColor(trimmed)) |optimized| {
             if (optimized.len < trimmed.len) {
-                return try self.allocator.dupe(u8, optimized);
+                return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
             }
         }
 
         if (self.optimizeUnit(trimmed)) |optimized| {
-            return try self.allocator.dupe(u8, optimized);
+            return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
         }
 
-        return value;
+        return .{ .optimized = value, .was_optimized = false };
     }
 
     fn optimizeHexColor(self: *Optimizer, value: []const u8) ?[]const u8 {
