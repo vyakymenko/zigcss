@@ -59,7 +59,10 @@ fn parseSASS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
 }
 
 fn parseLESS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    return parseCSS(allocator, input);
+    const less_parser = @import("formats/less.zig");
+    var p = less_parser.Parser.init(allocator, input);
+    defer p.deinit();
+    return try p.parse();
 }
 
 fn parseCSSModules(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
