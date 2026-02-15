@@ -38,15 +38,6 @@ pub const Parser = struct {
         const processed_css = try self.substituteVariables(css_content);
         defer self.allocator.free(processed_css);
 
-        // #region agent log
-        const log_file = std.fs.cwd().createFile("/Users/vyakymenko/Documents/git/GitHub/zcss/.cursor/debug.log", .{}) catch null;
-        if (log_file) |file| {
-            defer file.close();
-            const writer = file.writer();
-            writer.print("{{\"runId\":\"sass-debug\",\"hypothesisId\":\"A\",\"location\":\"sass.zig:38\",\"message\":\"Generated CSS\",\"data\":{{\"css\":\"{s}\"}},\"timestamp\":{d}}}\n", .{ std.fmt.fmtSliceEscapeLower(processed_css), std.time.timestamp() }) catch {};
-        }
-        // #endregion
-
         var css_p = css_parser.Parser.init(self.allocator, processed_css);
         const stylesheet = try css_p.parse();
         return stylesheet;
