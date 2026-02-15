@@ -15,7 +15,8 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !ast.Stylesheet {
-        var stylesheet = try ast.Stylesheet.init(self.allocator);
+        const estimated_rules = self.estimateRuleCount();
+        var stylesheet = try ast.Stylesheet.initWithCapacity(self.allocator, estimated_rules);
         errdefer stylesheet.deinit();
 
         self.skipWhitespace();
@@ -34,8 +35,20 @@ pub const Parser = struct {
         return stylesheet;
     }
 
+    fn estimateRuleCount(self: *const Parser) usize {
+        var count: usize = 0;
+        var i: usize = 0;
+        while (i < self.input.len) {
+            if (self.input[i] == '{' or self.input[i] == '@') {
+                count += 1;
+            }
+            i += 1;
+        }
+        return @max(count / 2, 4);
+    }
+
     fn parseStyleRule(self: *Parser) !ast.StyleRule {
-        var rule = try ast.StyleRule.init(self.allocator);
+        var rule = try ast.StyleRule.initWithCapacity(self.allocator, 1, 4);
         errdefer rule.deinit();
 
         while (true) {
@@ -76,7 +89,7 @@ pub const Parser = struct {
     }
 
     fn parseSelector(self: *Parser) !ast.Selector {
-        var selector = try ast.Selector.init(self.allocator);
+        var selector = try ast.Selector.initWithCapacity(self.allocator, 4);
         errdefer selector.deinit();
 
         while (self.pos < self.input.len) {
@@ -263,8 +276,8 @@ pub const Parser = struct {
     fn skipWhitespace(self: *Parser) void {
         while (self.pos < self.input.len) {
             const ch = self.input[self.pos];
-            if (std.ascii.isWhitespace(ch)) {
-                self.advance();
+            if (ch == ' ' or ch == '\t' or ch == '\n' or ch == '\r') {
+                self.pos += 1;
             } else if (ch == '/' and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '*') {
                 self.skipComment();
             } else {
