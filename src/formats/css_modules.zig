@@ -2,17 +2,15 @@ const std = @import("std");
 const ast = @import("../ast.zig");
 const css_parser = @import("../parser.zig");
 
-pub const Parser = struct {
+    pub const Parser = struct {
     input: []const u8,
     allocator: std.mem.Allocator,
-    class_map: std.StringHashMap([]const u8),
     hash_counter: u32,
 
     pub fn init(allocator: std.mem.Allocator, input: []const u8) Parser {
         return .{
             .input = input,
             .allocator = allocator,
-            .class_map = std.StringHashMap([]const u8).init(allocator),
             .hash_counter = 0,
         };
     }
@@ -57,7 +55,8 @@ pub const Parser = struct {
             switch (part.*) {
                 .class => |class_name| {
                     const scoped_name = try self.getScopedClassName(class_name);
-                    part.* = .{ .class = scoped_name };
+                    const scoped_copy = try self.allocator.dupe(u8, scoped_name);
+                    part.* = .{ .class = scoped_copy };
                 },
                 else => {},
             }
@@ -65,18 +64,11 @@ pub const Parser = struct {
     }
 
     fn getScopedClassName(self: *Parser, original_name: []const u8) ![]const u8 {
-        if (self.class_map.get(original_name)) |scoped| {
-            return scoped;
-        }
-
         const hash = try self.generateHash(original_name);
+        defer self.allocator.free(hash);
+        
         const scoped_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ original_name, hash });
-        
-        const original_copy = try self.allocator.dupe(u8, original_name);
-        const scoped_copy = try self.allocator.dupe(u8, scoped_name);
-        
-        try self.class_map.put(original_copy, scoped_copy);
-        return scoped_copy;
+        return scoped_name;
     }
 
     fn generateHash(self: *Parser, name: []const u8) ![]const u8 {
@@ -88,17 +80,8 @@ pub const Parser = struct {
         return hash_str;
     }
 
-    pub fn getClassMap(self: *const Parser) std.StringHashMap([]const u8) {
-        return self.class_map;
-    }
-
     pub fn deinit(self: *Parser) void {
-        var it = self.class_map.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.class_map.deinit();
+        _ = self;
     }
 };
 
