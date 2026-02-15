@@ -54,8 +54,11 @@ const css_parser = @import("../parser.zig");
         for (selector.parts.items) |*part| {
             switch (part.*) {
                 .class => |class_name| {
-                    const scoped_name = try self.getScopedClassName(class_name);
+                    const old_class_name = class_name;
+                    const scoped_name = try self.getScopedClassName(old_class_name);
+                    defer self.allocator.free(scoped_name);
                     const scoped_copy = try self.allocator.dupe(u8, scoped_name);
+                    self.allocator.free(old_class_name);
                     part.* = .{ .class = scoped_copy };
                 },
                 else => {},

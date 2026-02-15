@@ -194,17 +194,7 @@ pub const Parser = struct {
         }
 
         var value = self.input[value_start..value_end];
-        var trim_start: usize = 0;
-        var trim_end: usize = value.len;
-        
-        while (trim_start < value.len and (value[trim_start] == ' ' or value[trim_start] == '\t' or value[trim_start] == '\n' or value[trim_start] == '\r')) {
-            trim_start += 1;
-        }
-        while (trim_end > trim_start and (value[trim_end - 1] == ' ' or value[trim_end - 1] == '\t' or value[trim_end - 1] == '\n' or value[trim_end - 1] == '\r')) {
-            trim_end -= 1;
-        }
-        
-        value = value[trim_start..trim_end];
+        value = std.mem.trim(u8, value, " \t\n\r");
         const value_copy = try self.allocator.dupe(u8, value);
 
         var decl = ast.Declaration.init(self.allocator);
@@ -304,17 +294,17 @@ pub const Parser = struct {
     }
 
     inline fn isAlpha(ch: u8) bool {
-        return (ch >= 'a' and ch <= 'z') or (ch >= 'A' and ch <= 'Z');
+        return std.ascii.isAlphabetic(ch);
     }
 
     inline fn isAlnum(ch: u8) bool {
-        return isAlpha(ch) or (ch >= '0' and ch <= '9');
+        return std.ascii.isAlphanumeric(ch);
     }
 
     fn skipWhitespace(self: *Parser) void {
         while (self.pos < self.input.len) {
             const ch = self.input[self.pos];
-            if (ch == ' ' or ch == '\t' or ch == '\n' or ch == '\r') {
+            if (std.ascii.isWhitespace(ch)) {
                 self.pos += 1;
             } else if (ch == '/' and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '*') {
                 self.skipComment();
@@ -326,23 +316,24 @@ pub const Parser = struct {
 
     fn skipComment(self: *Parser) void {
         self.pos += 2;
-        while (self.pos < self.input.len - 1) {
+        const end = self.input.len - 1;
+        while (self.pos < end) {
             if (self.input[self.pos] == '*' and self.input[self.pos + 1] == '/') {
                 self.pos += 2;
                 return;
             }
-            self.advance();
+            self.pos += 1;
         }
     }
 
-    fn peek(self: *const Parser) u8 {
+    inline fn peek(self: *const Parser) u8 {
         if (self.pos >= self.input.len) {
             return 0;
         }
         return self.input[self.pos];
     }
 
-    fn advance(self: *Parser) void {
+    inline fn advance(self: *Parser) void {
         if (self.pos < self.input.len) {
             self.pos += 1;
         }
