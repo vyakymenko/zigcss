@@ -26,6 +26,23 @@ pub const Parser = struct {
                 if (next_pos < self.input.len) {
                     const next_ch = self.input[next_pos];
                     if (std.ascii.isAlphabetic(next_ch) or next_ch == '-') {
+                        const var_name_start = next_pos;
+                        var var_name_end = var_name_start;
+                        while (var_name_end < self.input.len and (std.ascii.isAlphanumeric(self.input[var_name_end]) or self.input[var_name_end] == '-')) {
+                            var_name_end += 1;
+                        }
+                        
+                        const potential_var_name = self.input[var_name_start..var_name_end];
+                        if (std.mem.eql(u8, potential_var_name, "media") or 
+                            std.mem.eql(u8, potential_var_name, "import") or
+                            std.mem.eql(u8, potential_var_name, "charset") or
+                            std.mem.eql(u8, potential_var_name, "keyframes") or
+                            std.mem.eql(u8, potential_var_name, "supports") or
+                            std.mem.eql(u8, potential_var_name, "page") or
+                            std.mem.eql(u8, potential_var_name, "font-face")) {
+                            break;
+                        }
+                        
                         try self.parseVariable();
                         self.skipWhitespace();
                     } else {
