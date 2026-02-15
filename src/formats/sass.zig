@@ -128,7 +128,16 @@ pub const Parser = struct {
 
             if (self.isSelector(trimmed)) {
                 if (indent_stack.items.len > 0) {
-                    try result.append(self.allocator, ' ');
+                    const parent_indent = indent_stack.items[indent_stack.items.len - 1];
+                    if (indent > parent_indent) {
+                        try result.appendSlice(self.allocator, "  ");
+                    } else {
+                        while (indent_stack.items.len > 0 and indent_stack.items[indent_stack.items.len - 1] >= indent) {
+                            _ = indent_stack.pop();
+                            try result.append(self.allocator, '}');
+                            try result.append(self.allocator, '\n');
+                        }
+                    }
                 }
                 try result.appendSlice(self.allocator, trimmed);
                 try result.append(self.allocator, ' ');
