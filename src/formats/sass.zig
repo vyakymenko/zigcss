@@ -33,7 +33,7 @@ pub const Parser = struct {
         const css_content = try self.convertToCSS();
         defer self.allocator.free(css_content);
 
-        const processed_css = try self.processVariables(css_content);
+        const processed_css = try self.substituteVariables(css_content);
         defer self.allocator.free(processed_css);
 
         var css_p = css_parser.Parser.init(self.allocator, processed_css);
@@ -221,15 +221,7 @@ pub const Parser = struct {
         return try result.toOwnedSlice(self.allocator);
     }
 
-    fn processVariables(self: *Parser, input: []const u8) ![]const u8 {
-        self.pos = 0;
-        while (self.pos < self.input.len) {
-            if (self.peek() == '$') {
-                try self.parseVariable();
-            } else {
-                self.advance();
-            }
-        }
+    fn substituteVariables(self: *Parser, input: []const u8) ![]const u8 {
 
         var result = try std.ArrayList(u8).initCapacity(self.allocator, input.len);
         errdefer result.deinit(self.allocator);
