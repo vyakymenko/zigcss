@@ -28,6 +28,8 @@ pub const Parser = struct {
             self.lines.deinit(self.allocator);
         }
 
+        try self.parseVariablesFromLines();
+
         const css_content = try self.convertToCSS();
         defer self.allocator.free(css_content);
 
@@ -37,6 +39,33 @@ pub const Parser = struct {
         var css_p = css_parser.Parser.init(self.allocator, processed_css);
         const stylesheet = try css_p.parse();
         return stylesheet;
+    }
+
+    fn parseVariablesFromLines(self: *Parser) !void {
+        for (self.lines.items) |line| {
+            const trimmed = std.mem.trimLeft(u8, line, " \t");
+            if (trimmed.len > 0 and trimmed[0] == '$') {
+                var temp_pos: usize = 0;
+                while (temp_pos < trimmed.len and trimmed[temp_pos] != '$') {
+                    temp_pos += 1;
+                }
+                if (temp_pos < trimmed.len) {
+                    const var_line = trimmed[temp_pos..];
+                    const old_pos = self.pos;
+                    self.pos = 0;
+                    const line_in_input = std.mem.indexOf(u8, self.input, var_line) orelse {
+                        self.pos = old_pos;
+                        continue;
+                    };
+                    self.pos = line_in_input;
+                    self.parseVariable() catch {
+                        self.pos = old_pos;
+                        continue;
+                    };
+                    self.pos = old_pos;
+                }
+            }
+        }
     }
 
     fn parseLines(self: *Parser) !void {
@@ -88,9 +117,6 @@ pub const Parser = struct {
             }
 
             if (trimmed[0] == '$') {
-                try result.appendSlice(self.allocator, trimmed);
-                try result.append(self.allocator, ';');
-                try result.append(self.allocator, '\n');
                 i += 1;
                 continue;
             }
