@@ -85,7 +85,6 @@ pub const Parser = struct {
         const hash_value = hasher.final();
         
         const hash_str = try std.fmt.allocPrint(self.allocator, "{x}", .{hash_value});
-        _ = self;
         return hash_str;
     }
 
