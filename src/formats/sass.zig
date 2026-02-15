@@ -8,6 +8,7 @@ pub const Parser = struct {
     allocator: std.mem.Allocator,
     variables: std.StringHashMap([]const u8),
     lines: std.ArrayList([]const u8),
+    last_line_type: ?enum { selector, property },
 
     pub fn init(allocator: std.mem.Allocator, input: []const u8) !Parser {
         return .{
@@ -16,6 +17,7 @@ pub const Parser = struct {
             .allocator = allocator,
             .variables = std.StringHashMap([]const u8).init(allocator),
             .lines = try std.ArrayList([]const u8).initCapacity(allocator, 0),
+            .last_line_type = null,
         };
     }
 
@@ -35,6 +37,15 @@ pub const Parser = struct {
 
         const processed_css = try self.substituteVariables(css_content);
         defer self.allocator.free(processed_css);
+
+        // #region agent log
+        const log_file = std.fs.cwd().createFile("/Users/vyakymenko/Documents/git/GitHub/zcss/.cursor/debug.log", .{}) catch null;
+        if (log_file) |file| {
+            defer file.close();
+            const writer = file.writer();
+            writer.print("{{\"runId\":\"sass-debug\",\"hypothesisId\":\"A\",\"location\":\"sass.zig:38\",\"message\":\"Generated CSS\",\"data\":{{\"css\":\"{s}\"}},\"timestamp\":{d}}}\n", .{ std.fmt.fmtSliceEscapeLower(processed_css), std.time.timestamp() }) catch {};
+        }
+        // #endregion
 
         var css_p = css_parser.Parser.init(self.allocator, processed_css);
         const stylesheet = try css_p.parse();
@@ -129,6 +140,16 @@ pub const Parser = struct {
             }
 
             if (self.isSelector(trimmed)) {
+                if (self.last_line_type == .property and indent_stack.items.len > 0) {
+                    const top_indent = indent_stack.items[indent_stack.items.len - 1].indent;
+                    if (indent <= top_indent) {
+                        const info = indent_stack.pop() orelse {};
+                        self.allocator.free(info.selector);
+                        try result.append(self.allocator, '}');
+                        try result.append(self.allocator, '\n');
+                    }
+                }
+                
                 while (indent_stack.items.len > 0) {
                     const top_indent = indent_stack.items[indent_stack.items.len - 1].indent;
                     if (top_indent >= indent) {
@@ -152,6 +173,7 @@ pub const Parser = struct {
                 try result.append(self.allocator, '\n');
                 const selector_copy = try self.allocator.dupe(u8, trimmed);
                 try indent_stack.append(self.allocator, .{ .selector = selector_copy, .indent = indent });
+                self.last_line_type = .selector;
             } else if (self.isProperty(trimmed)) {
                 try result.appendSlice(self.allocator, "  ");
                 const property_line = try self.processVariablesInLine(trimmed);
@@ -159,6 +181,7 @@ pub const Parser = struct {
                 try result.appendSlice(self.allocator, property_line);
                 try result.append(self.allocator, ';');
                 try result.append(self.allocator, '\n');
+                self.last_line_type = .property;
             }
 
             i += 1;
