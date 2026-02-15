@@ -6,9 +6,34 @@ pub const CodegenOptions = struct {
     optimize: bool = false,
 };
 
+fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
+    var size: usize = 0;
+    for (stylesheet.rules.items) |rule| {
+        switch (rule) {
+            .style => |style_rule| {
+                for (style_rule.selectors.items) |selector| {
+                    size += 20;
+                    size += selector.parts.items.len * 10;
+                }
+                size += 50;
+                size += style_rule.declarations.items.len * 30;
+            },
+            .at_rule => |at_rule| {
+                size += 50;
+                size += at_rule.name.len + at_rule.prelude.len;
+                if (at_rule.rules) |rules| {
+                    size += rules.items.len * 30;
+                }
+            },
+        }
+    }
+    return @max(size, 256);
+}
+
 pub fn generate(allocator: std.mem.Allocator, stylesheet: ast.Stylesheet, options: CodegenOptions) ![]const u8 {
-    var list = try std.ArrayList(u8).initCapacity(allocator, 0);
-    defer list.deinit(allocator);
+    const estimated_size = estimateOutputSize(stylesheet);
+    var list = try std.ArrayList(u8).initCapacity(allocator, estimated_size);
+    errdefer list.deinit(allocator);
 
     for (stylesheet.rules.items, 0..) |rule, i| {
         if (i > 0 and !options.minify) {

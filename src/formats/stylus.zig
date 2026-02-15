@@ -65,7 +65,8 @@ pub const Parser = struct {
         self.skipWhitespace();
 
         if (self.peek() != '=') {
-            return error.ExpectedEquals;
+            self.pos = name_start - 1;
+            return;
         }
         self.advance();
         self.skipWhitespace();
