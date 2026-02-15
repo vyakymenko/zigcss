@@ -546,8 +546,14 @@ zig build test --summary all
 - [x] CLI tool
 - [x] Library API
 
-### Phase 2: Advanced Features (In Progress)
-- [ ] CSS Nesting full support
+### Phase 2: Preprocessor Support ✅ COMPLETED
+- [x] SCSS/SASS support - Variables, nesting, indented syntax
+- [x] LESS support - Variables, at-rules
+- [x] CSS Modules support - Scoped class names
+- [x] CSS-in-JS compilation - Template literals extraction
+- [x] PostCSS support - @apply, @custom-media, @nest directives
+- [x] Stylus support - Variables, indented syntax
+- [ ] Advanced nesting features (mixins, functions)
 - [ ] Autoprefixer integration
 - [ ] Custom property resolution
 - [ ] Advanced selector optimization
@@ -555,11 +561,15 @@ zig build test --summary all
 - [ ] Watch mode improvements
 
 ### Phase 3: Performance & Polish
+- [x] Capacity estimation for ArrayLists
+- [x] Optimized character checks (inline functions)
+- [x] Faster whitespace skipping
+- [x] Output size estimation
 - [ ] SIMD optimizations
 - [ ] Parallel parsing improvements
 - [ ] Incremental compilation
 - [ ] Better error messages
-- [ ] Comprehensive test suite
+- [x] Comprehensive test suite (22/22 tests passing)
 - [ ] Performance profiling tools
 
 ### Phase 4: Ecosystem
@@ -571,12 +581,13 @@ zig build test --summary all
 - [ ] Documentation site
 
 ### Phase 5: Advanced CSS Features
-- [ ] CSS Modules support
-- [ ] CSS-in-JS compilation
-- [ ] PostCSS plugin compatibility layer
+- [x] CSS Modules support
+- [x] CSS-in-JS compilation
+- [x] PostCSS plugin compatibility layer
 - [ ] CSS Grid/Flexbox optimizations
 - [ ] Container queries
 - [ ] Cascade layers
+- [ ] Tailwind @apply expansion
 
 ## 🤝 Contributing
 
