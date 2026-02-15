@@ -149,7 +149,7 @@ test "parse PostCSS @apply directive" {
 }
 
 test "parse PostCSS custom media" {
-    const postcss = "@custom-media --small-viewport (max-width: 30em);";
+    const postcss = "@custom-media --small-viewport (max-width: 30em);\n.test { color: red; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
