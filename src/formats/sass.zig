@@ -116,15 +116,6 @@ pub const Parser = struct {
 
             const indent = line.len - trimmed.len;
 
-            if (self.isSelector(trimmed)) {
-                while (indent_stack.items.len > 0 and indent_stack.items[indent_stack.items.len - 1].indent >= indent) {
-                    const info = indent_stack.pop() orelse break;
-                    self.allocator.free(info.selector);
-                    try result.append(self.allocator, '}');
-                    try result.append(self.allocator, '\n');
-                }
-            }
-
             if (trimmed[0] == '$') {
                 i += 1;
                 continue;
@@ -138,6 +129,13 @@ pub const Parser = struct {
             }
 
             if (self.isSelector(trimmed)) {
+                while (indent_stack.items.len > 0 and indent_stack.items[indent_stack.items.len - 1].indent >= indent) {
+                    const info = indent_stack.pop() orelse break;
+                    self.allocator.free(info.selector);
+                    try result.append(self.allocator, '}');
+                    try result.append(self.allocator, '\n');
+                }
+                
                 if (indent_stack.items.len > 0) {
                     const parent_selector = indent_stack.items[indent_stack.items.len - 1].selector;
                     try result.appendSlice(self.allocator, parent_selector);
