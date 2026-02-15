@@ -87,13 +87,23 @@ pub const Parser = struct {
         }
     }
 
+    const SelectorInfo = struct {
+        selector: []const u8,
+        indent: usize,
+    };
+
     fn convertToCSS(self: *Parser) ![]const u8 {
         var result = try std.ArrayList(u8).initCapacity(self.allocator, self.input.len * 2);
         errdefer result.deinit(self.allocator);
 
         var i: usize = 0;
-        var indent_stack = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
-        defer indent_stack.deinit(self.allocator);
+        var indent_stack = try std.ArrayList(SelectorInfo).initCapacity(self.allocator, 0);
+        defer {
+            for (indent_stack.items) |info| {
+                self.allocator.free(info.selector);
+            }
+            indent_stack.deinit(self.allocator);
+        }
 
         while (i < self.lines.items.len) {
             const line = self.lines.items[i];
@@ -106,17 +116,11 @@ pub const Parser = struct {
 
             const indent = line.len - trimmed.len;
 
-            while (indent_stack.items.len > 0) {
-                const prev_line_idx = if (i > 0) i - 1 else 0;
-                const prev_indent = self.getIndentForLine(prev_line_idx);
-                if (prev_indent >= indent) {
-                    const selector = indent_stack.pop();
-                    self.allocator.free(selector);
-                    try result.append(self.allocator, '}');
-                    try result.append(self.allocator, '\n');
-                } else {
-                    break;
-                }
+            while (indent_stack.items.len > 0 and indent_stack.items[indent_stack.items.len - 1].indent >= indent) {
+                const info = indent_stack.pop();
+                self.allocator.free(info.selector);
+                try result.append(self.allocator, '}');
+                try result.append(self.allocator, '\n');
             }
 
             if (trimmed[0] == '$') {
@@ -133,7 +137,7 @@ pub const Parser = struct {
 
             if (self.isSelector(trimmed)) {
                 if (indent_stack.items.len > 0) {
-                    const parent_selector = indent_stack.items[indent_stack.items.len - 1];
+                    const parent_selector = indent_stack.items[indent_stack.items.len - 1].selector;
                     try result.appendSlice(self.allocator, parent_selector);
                     try result.append(self.allocator, ' ');
                 }
@@ -142,7 +146,7 @@ pub const Parser = struct {
                 try result.append(self.allocator, '{');
                 try result.append(self.allocator, '\n');
                 const selector_copy = try self.allocator.dupe(u8, trimmed);
-                try indent_stack.append(self.allocator, selector_copy);
+                try indent_stack.append(self.allocator, .{ .selector = selector_copy, .indent = indent });
             } else if (self.isProperty(trimmed)) {
                 try result.appendSlice(self.allocator, "  ");
                 const property_line = try self.processVariablesInLine(trimmed);
@@ -156,8 +160,8 @@ pub const Parser = struct {
         }
 
         while (indent_stack.items.len > 0) {
-            const selector = indent_stack.pop();
-            self.allocator.free(selector);
+            const info = indent_stack.pop();
+            self.allocator.free(info.selector);
             try result.append(self.allocator, '}');
             if (indent_stack.items.len > 0) {
                 try result.append(self.allocator, '\n');
@@ -165,15 +169,6 @@ pub const Parser = struct {
         }
 
         return try result.toOwnedSlice(self.allocator);
-    }
-
-    fn getIndentForLine(self: *Parser, line_index: usize) usize {
-        if (line_index >= self.lines.items.len) {
-            return 0;
-        }
-        const line = self.lines.items[line_index];
-        const trimmed = std.mem.trimLeft(u8, line, " \t");
-        return line.len - trimmed.len;
     }
 
     fn isSelector(self: *Parser, line: []const u8) bool {
