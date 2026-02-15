@@ -37,7 +37,7 @@ pub const Parser = struct {
         defer self.allocator.free(processed_css);
 
         var css_p = css_parser.Parser.init(self.allocator, processed_css);
-        const stylesheet = try css_p.parse();
+        var stylesheet = try css_p.parse();
         return stylesheet;
     }
 
@@ -137,7 +137,9 @@ pub const Parser = struct {
                 try indent_stack.append(self.allocator, indent);
             } else if (self.isProperty(trimmed)) {
                 try result.appendSlice(self.allocator, "  ");
-                try result.appendSlice(self.allocator, trimmed);
+                const property_line = try self.processVariablesInLine(trimmed);
+                defer self.allocator.free(property_line);
+                try result.appendSlice(self.allocator, property_line);
                 try result.append(self.allocator, ';');
                 try result.append(self.allocator, '\n');
             }
@@ -179,6 +181,44 @@ pub const Parser = struct {
 
     fn isLastLine(self: *Parser, index: usize) bool {
         return index == self.lines.items.len - 1;
+    }
+
+    fn processVariablesInLine(self: *Parser, line: []const u8) ![]const u8 {
+        var result = try std.ArrayList(u8).initCapacity(self.allocator, line.len * 2);
+        errdefer result.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < line.len) {
+            if (line[i] == '$' and i + 1 < line.len) {
+                const var_start = i + 1;
+                var var_end = var_start;
+
+                if (std.ascii.isAlphabetic(line[var_end]) or line[var_end] == '-') {
+                    while (var_end < line.len) {
+                        const ch = line[var_end];
+                        if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_') {
+                            var_end += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if (var_end > var_start) {
+                        const var_name = line[var_start..var_end];
+                        if (self.variables.get(var_name)) |value| {
+                            try result.appendSlice(self.allocator, value);
+                            i = var_end;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            try result.append(self.allocator, line[i]);
+            i += 1;
+        }
+
+        return try result.toOwnedSlice(self.allocator);
     }
 
     fn processVariables(self: *Parser, input: []const u8) ![]const u8 {
