@@ -100,10 +100,9 @@ pub const Parser = struct {
         errdefer result.deinit(self.allocator);
 
         self.pos = 0;
-        var in_variable_decl = false;
 
         while (self.pos < self.input.len) {
-            if (self.peek() == '$' and !in_variable_decl) {
+            if (self.peek() == '$') {
                 const var_start = self.pos + 1;
                 var var_end = var_start;
 
@@ -145,11 +144,10 @@ pub const Parser = struct {
                         check_pos += 1;
                     }
                     if (is_decl) {
-                        in_variable_decl = true;
                         while (self.pos < self.input.len) {
                             const ch = self.peek();
                             if (ch == '\n' or ch == ';') {
-                                in_variable_decl = false;
+                                self.advance();
                                 break;
                             }
                             self.advance();
