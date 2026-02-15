@@ -10,6 +10,7 @@ pub const Optimizer = struct {
 
     pub fn optimize(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         try self.removeEmptyRules(stylesheet);
+        try self.mergeSelectors(stylesheet);
         try self.removeDuplicateDeclarations(stylesheet);
         try self.optimizeValues(stylesheet);
     }
@@ -35,6 +36,108 @@ pub const Optimizer = struct {
                 i += 1;
             }
         }
+    }
+
+    fn mergeSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        var i: usize = 0;
+        while (i < stylesheet.rules.items.len) {
+            const rule = &stylesheet.rules.items[i];
+            if (rule.* != .style) {
+                i += 1;
+                continue;
+            }
+
+            var j: usize = i + 1;
+            while (j < stylesheet.rules.items.len) {
+                const other_rule = &stylesheet.rules.items[j];
+                if (other_rule.* != .style) {
+                    j += 1;
+                    continue;
+                }
+
+                if (self.selectorsEqual(&rule.style.selectors, &other_rule.style.selectors)) {
+                    for (other_rule.style.declarations.items) |*decl| {
+                        try rule.style.declarations.append(self.allocator, decl.*);
+                    }
+                    other_rule.style.declarations.items.len = 0;
+                    other_rule.deinit();
+                    _ = stylesheet.rules.swapRemove(j);
+                } else {
+                    j += 1;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    fn selectorsEqual(self: *Optimizer, a: *std.ArrayList(ast.Selector), b: *std.ArrayList(ast.Selector)) bool {
+        if (a.items.len != b.items.len) {
+            return false;
+        }
+
+        for (a.items, 0..) |selector_a, i| {
+            const selector_b = b.items[i];
+            if (!self.selectorEqual(&selector_a, &selector_b)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    fn selectorEqual(self: *Optimizer, a: *const ast.Selector, b: *const ast.Selector) bool {
+        if (a.parts.items.len != b.parts.items.len) {
+            return false;
+        }
+
+        for (a.parts.items, b.parts.items) |part_a, part_b| {
+            if (!self.selectorPartEqual(&part_a, &part_b)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    fn selectorPartEqual(self: *Optimizer, a: *const ast.SelectorPart, b: *const ast.SelectorPart) bool {
+        _ = self;
+        if (@as(std.meta.Tag(ast.SelectorPart), a.*) != @as(std.meta.Tag(ast.SelectorPart), b.*)) {
+            return false;
+        }
+
+        return switch (a.*) {
+            .type => |s_a| std.mem.eql(u8, s_a, b.type),
+            .class => |s_a| std.mem.eql(u8, s_a, b.class),
+            .id => |s_a| std.mem.eql(u8, s_a, b.id),
+            .universal => true,
+            .pseudo_class => |s_a| std.mem.eql(u8, s_a, b.pseudo_class),
+            .pseudo_element => |s_a| std.mem.eql(u8, s_a, b.pseudo_element),
+            .combinator => |c_a| c_a == b.combinator,
+            .attribute => |attr_a| blk: {
+                const attr_b = b.attribute;
+                if (!std.mem.eql(u8, attr_a.name, attr_b.name)) break :blk false;
+                if (attr_a.operator) |op_a| {
+                    if (attr_b.operator) |op_b| {
+                        if (!std.mem.eql(u8, op_a, op_b)) break :blk false;
+                    } else {
+                        break :blk false;
+                    }
+                } else if (attr_b.operator != null) {
+                    break :blk false;
+                }
+                if (attr_a.value) |val_a| {
+                    if (attr_b.value) |val_b| {
+                        if (!std.mem.eql(u8, val_a, val_b)) break :blk false;
+                    } else {
+                        break :blk false;
+                    }
+                } else if (attr_b.value != null) {
+                    break :blk false;
+                }
+                if (attr_a.case_sensitive != attr_b.case_sensitive) break :blk false;
+                break :blk true;
+            },
+        };
     }
 
     fn optimizeValues(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
@@ -80,6 +183,10 @@ pub const Optimizer = struct {
         
         if (trimmed.len == 0) return .{ .optimized = value, .was_optimized = false };
 
+        if (self.optimizeRgbColor(trimmed)) |optimized| {
+            return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
+        }
+
         if (self.optimizeHexColor(trimmed)) |optimized| {
             if (optimized.len < trimmed.len) {
                 return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
@@ -106,24 +213,97 @@ pub const Optimizer = struct {
         return null;
     }
 
-    fn optimizeUnit(self: *Optimizer, value: []const u8) ?[]const u8 {
-        _ = self;
-        if (value.len < 3) return null;
+    fn optimizeRgbColor(self: *Optimizer, value: []const u8) ?[]const u8 {
+        const is_rgba = std.mem.startsWith(u8, value, "rgba(");
+        const is_rgb = std.mem.startsWith(u8, value, "rgb(");
         
-        if (std.mem.endsWith(u8, value, "px")) {
-            if (std.fmt.parseFloat(f32, value[0..value.len - 2])) |num| {
-                if (num == 0.0) {
-                    return "0";
-                }
-            } else |_| {}
+        if (!is_rgb and !is_rgba) {
+            return null;
         }
 
-        if (std.mem.endsWith(u8, value, "em")) {
-            if (std.fmt.parseFloat(f32, value[0..value.len - 2])) |num| {
-                if (num == 0.0) {
-                    return "0";
+        const prefix_len: usize = if (is_rgba) 5 else 4;
+        
+        if (value.len < prefix_len + 1 or value[value.len - 1] != ')') {
+            return null;
+        }
+
+        const content = value[prefix_len..value.len - 1];
+        var parts = std.mem.splitScalar(u8, content, ',');
+        
+        var r: ?u8 = null;
+        var g: ?u8 = null;
+        var b: ?u8 = null;
+        var a: ?f32 = null;
+        var part_idx: usize = 0;
+
+        while (parts.next()) |part| {
+            const trimmed_part = std.mem.trim(u8, part, " \t");
+            if (part_idx == 0) {
+                if (std.fmt.parseInt(u8, trimmed_part, 10)) |val| {
+                    r = val;
+                } else |_| {
+                    return null;
                 }
-            } else |_| {}
+            } else if (part_idx == 1) {
+                if (std.fmt.parseInt(u8, trimmed_part, 10)) |val| {
+                    g = val;
+                } else |_| {
+                    return null;
+                }
+            } else if (part_idx == 2) {
+                if (std.fmt.parseInt(u8, trimmed_part, 10)) |val| {
+                    b = val;
+                } else |_| {
+                    return null;
+                }
+            } else if (part_idx == 3 and is_rgba) {
+                if (std.fmt.parseFloat(f32, trimmed_part)) |val| {
+                    a = val;
+                } else |_| {
+                    return null;
+                }
+            }
+            part_idx += 1;
+        }
+
+        if (r == null or g == null or b == null) {
+            return null;
+        }
+
+        if (is_rgba and a != null and a.? != 1.0) {
+            return null;
+        }
+
+        const r_val = r.?;
+        const g_val = g.?;
+        const b_val = b.?;
+
+        if (r_val >> 4 == r_val & 0xF and g_val >> 4 == g_val & 0xF and b_val >> 4 == b_val & 0xF) {
+            const short_hex = std.fmt.allocPrint(self.allocator, "#{x}{x}{x}", .{ r_val & 0xF, g_val & 0xF, b_val & 0xF }) catch return null;
+            return short_hex;
+        }
+
+        const hex = std.fmt.allocPrint(self.allocator, "#{x:0>2}{x:0>2}{x:0>2}", .{ r_val, g_val, b_val }) catch return null;
+        return hex;
+    }
+
+    fn optimizeUnit(self: *Optimizer, value: []const u8) ?[]const u8 {
+        _ = self;
+        if (value.len < 2) return null;
+        
+        const units = [_][]const u8{ "px", "em", "rem", "%", "pt", "pc", "in", "cm", "mm", "ex", "ch", "vw", "vh", "vmin", "vmax" };
+        
+        for (units) |unit| {
+            if (std.mem.endsWith(u8, value, unit)) {
+                const num_str = value[0..value.len - unit.len];
+                if (std.fmt.parseFloat(f32, num_str)) |num| {
+                    if (num == 0.0) {
+                        return "0";
+                    }
+                } else |_| {
+                    continue;
+                }
+            }
         }
 
         return null;

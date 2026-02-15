@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../ast.zig");
 const css_parser = @import("../parser.zig");
+const string_pool = @import("../string_pool.zig");
 
     pub const Parser = struct {
     input: []const u8,
@@ -25,11 +26,12 @@ const css_parser = @import("../parser.zig");
     }
 
     fn scopeClassNames(self: *Parser, stylesheet: *ast.Stylesheet) !void {
+        const pool = stylesheet.string_pool orelse return error.NoStringPool;
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
                     for (style_rule.selectors.items) |*selector| {
-                        try self.scopeSelector(selector);
+                        try self.scopeSelector(selector, pool);
                     }
                 },
                 .at_rule => |*at_rule| {
@@ -38,7 +40,7 @@ const css_parser = @import("../parser.zig");
                             switch (nested_rule.*) {
                                 .style => |*style_rule| {
                                     for (style_rule.selectors.items) |*selector| {
-                                        try self.scopeSelector(selector);
+                                        try self.scopeSelector(selector, pool);
                                     }
                                 },
                                 .at_rule => {},
@@ -50,16 +52,14 @@ const css_parser = @import("../parser.zig");
         }
     }
 
-    fn scopeSelector(self: *Parser, selector: *ast.Selector) !void {
+    fn scopeSelector(self: *Parser, selector: *ast.Selector, pool: *string_pool.StringPool) !void {
         for (selector.parts.items) |*part| {
             switch (part.*) {
                 .class => |class_name| {
-                    const old_class_name = class_name;
-                    const scoped_name = try self.getScopedClassName(old_class_name);
+                    const scoped_name = try self.getScopedClassName(class_name);
                     defer self.allocator.free(scoped_name);
-                    const scoped_copy = try self.allocator.dupe(u8, scoped_name);
-                    self.allocator.free(old_class_name);
-                    part.* = .{ .class = scoped_copy };
+                    const scoped_interned = try pool.intern(scoped_name);
+                    part.* = .{ .class = scoped_interned };
                 },
                 else => {},
             }
