@@ -66,7 +66,10 @@ fn parseLESS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
 }
 
 fn parseCSSModules(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    return parseCSS(allocator, input);
+    const css_modules_parser = @import("formats/css_modules.zig");
+    var p = css_modules_parser.Parser.init(allocator, input);
+    defer p.deinit();
+    return try p.parse();
 }
 
 fn parseCSSInJS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
