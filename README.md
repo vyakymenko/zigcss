@@ -418,27 +418,23 @@ pub const Node = union(enum) {
 
 Multi-pass optimization pipeline:
 
-1. **Selector optimization** — Merge duplicate selectors, remove redundant specificity
-2. **Property optimization** — Combine shorthand properties, remove duplicates
-3. **Value optimization** — Minify colors, units, and values
-4. **Rule optimization** — Remove empty rules, merge compatible rules
-5. **Ordering** — Sort declarations for better compression
+1. **Empty rule removal** ✅ — Remove rules with no declarations
+2. **Selector merging** ✅ — Merge rules with identical selectors
+3. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last)
+4. **Value optimization** ✅ — Advanced optimizations:
+   - Hex color minification (`#ffffff` → `#fff`)
+   - RGB to hex conversion (`rgb(255, 255, 255)` → `#fff`)
+   - Zero unit removal (`0px` → `0`, `0em` → `0`, etc.)
+   - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
 
 ```zig
 // Optimization passes
 pub const Optimizer = struct {
-    passes: []const Pass = &.{
-        .selector_optimization,
-        .property_optimization,
-        .value_optimization,
-        .rule_optimization,
-        .ordering,
-    },
-    
-    pub fn optimize(self: *Optimizer, ast: *AST) !void {
-        for (self.passes) |pass| {
-            try pass.run(ast);
-        }
+    pub fn optimize(self: *Optimizer, stylesheet: *Stylesheet) !void {
+        try self.removeEmptyRules(stylesheet);
+        try self.mergeSelectors(stylesheet);
+        try self.removeDuplicateDeclarations(stylesheet);
+        try self.optimizeValues(stylesheet);
     }
 };
 ```
@@ -572,8 +568,8 @@ zig build test --summary all
   - [x] Remove empty rules
   - [x] Remove duplicate declarations
   - [x] Value optimization (hex colors, zero units)
-- [ ] Advanced value optimization (rgb colors, more units)
-- [ ] Selector merging and optimization
+  - [x] Advanced value optimization (rgb colors, comprehensive unit support)
+  - [x] Selector merging and optimization
 - [ ] Parallel parsing improvements
 - [ ] Incremental compilation
 - [ ] Better error messages
