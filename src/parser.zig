@@ -47,8 +47,28 @@ pub const Parser = struct {
         return @max(count / 2, 4);
     }
 
+    fn estimateDeclarationCount(self: *const Parser) usize {
+        var count: usize = 0;
+        var i: usize = self.pos;
+        var depth: usize = 0;
+        while (i < self.input.len and depth < 2) {
+            const ch = self.input[i];
+            if (ch == '{') {
+                depth += 1;
+            } else if (ch == '}') {
+                if (depth == 0) break;
+                depth -= 1;
+            } else if (ch == ':' and depth == 1) {
+                count += 1;
+            }
+            i += 1;
+        }
+        return @max(count, 2);
+    }
+
     fn parseStyleRule(self: *Parser) !ast.StyleRule {
-        var rule = try ast.StyleRule.initWithCapacity(self.allocator, 1, 4);
+        const estimated_decls = self.estimateDeclarationCount();
+        var rule = try ast.StyleRule.initWithCapacity(self.allocator, 1, estimated_decls);
         errdefer rule.deinit();
 
         while (true) {
@@ -174,7 +194,17 @@ pub const Parser = struct {
         }
 
         var value = self.input[value_start..value_end];
-        value = std.mem.trim(u8, value, " \t\n\r");
+        var trim_start: usize = 0;
+        var trim_end: usize = value.len;
+        
+        while (trim_start < value.len and (value[trim_start] == ' ' or value[trim_start] == '\t' or value[trim_start] == '\n' or value[trim_start] == '\r')) {
+            trim_start += 1;
+        }
+        while (trim_end > trim_start and (value[trim_end - 1] == ' ' or value[trim_end - 1] == '\t' or value[trim_end - 1] == '\n' or value[trim_end - 1] == '\r')) {
+            trim_end -= 1;
+        }
+        
+        value = value[trim_start..trim_end];
         const value_copy = try self.allocator.dupe(u8, value);
 
         var decl = ast.Declaration.init(self.allocator);
@@ -251,15 +281,15 @@ pub const Parser = struct {
             const first = self.input[self.pos];
             if (first == '-') {
                 self.advance();
-            } else if (!std.ascii.isAlphabetic(first) and first != '_') {
+            } else if (!isAlpha(first) and first != '_') {
                 return error.InvalidIdentifier;
             }
         }
 
         while (self.pos < self.input.len) {
             const ch = self.input[self.pos];
-            if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_') {
-                self.advance();
+            if (isAlnum(ch) or ch == '-' or ch == '_') {
+                self.pos += 1;
             } else {
                 break;
             }
@@ -271,6 +301,14 @@ pub const Parser = struct {
 
         const ident = self.input[start..self.pos];
         return try self.allocator.dupe(u8, ident);
+    }
+
+    inline fn isAlpha(ch: u8) bool {
+        return (ch >= 'a' and ch <= 'z') or (ch >= 'A' and ch <= 'Z');
+    }
+
+    inline fn isAlnum(ch: u8) bool {
+        return isAlpha(ch) or (ch >= '0' and ch <= '9');
     }
 
     fn skipWhitespace(self: *Parser) void {
