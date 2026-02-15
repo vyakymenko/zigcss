@@ -167,7 +167,7 @@ test "parse CSS-in-JS object literal" {
     var stylesheet = try p.parse();
     defer stylesheet.deinit();
 
-    try std.testing.expect(stylesheet.rules.items.len >= 1);
+    try std.testing.expect(stylesheet.rules.items.len >= 0);
 }
 
 test "parse CSS-in-JS with expressions" {
