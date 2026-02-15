@@ -35,22 +35,39 @@ pub const Parser = struct {
                     j += 1;
                 }
                 
-                if (j < self.input.len and self.input[j] == '(') {
+                var depth: usize = 0;
+                var in_string = false;
+                var string_char: u8 = 0;
+                
+                while (j < self.input.len) {
+                    const ch = self.input[j];
+                    if (!in_string) {
+                        if (ch == '"' or ch == '\'') {
+                            in_string = true;
+                            string_char = ch;
+                        } else if (ch == ';' and depth == 0) {
+                            i = j + 1;
+                            break;
+                        } else if (ch == '{') {
+                            depth += 1;
+                        } else if (ch == '}') {
+                            if (depth == 0) {
+                                i = j;
+                                break;
+                            }
+                            depth -= 1;
+                        }
+                    } else {
+                        if (ch == string_char and (j == 0 or self.input[j - 1] != '\\')) {
+                            in_string = false;
+                        }
+                    }
                     j += 1;
-                    const start = j;
-                    while (j < self.input.len and self.input[j] != ')') {
-                        j += 1;
-                    }
-                    if (j < self.input.len) {
-                        const class_name = self.input[start..j];
-                        try result.appendSlice(self.allocator, self.input[i..apply_end]);
-                        try result.append(self.allocator, ' ');
-                        try result.appendSlice(self.allocator, class_name);
-                        try result.append(self.allocator, ';');
-                        i = j + 1;
-                        continue;
-                    }
                 }
+                if (j >= self.input.len) {
+                    i = j;
+                }
+                continue;
             }
 
             if (self.matchAt(i, "@custom-media")) {
