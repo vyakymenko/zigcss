@@ -99,14 +99,13 @@ pub const Parser = struct {
         var result = try std.ArrayList(u8).initCapacity(self.allocator, self.input.len);
         errdefer result.deinit(self.allocator);
 
-        self.pos = 0;
-
-        while (self.pos < self.input.len) {
-            if (self.peek() == '$' and self.pos + 1 < self.input.len) {
-                const next = self.input[self.pos + 1];
+        var i: usize = 0;
+        while (i < self.input.len) {
+            if (self.input[i] == '$' and i + 1 < self.input.len) {
+                const next = self.input[i + 1];
                 if (std.ascii.isAlphabetic(next) or next == '-') {
-                    var check_pos = self.pos + 1;
-                    var var_end = check_pos;
+                    const var_start = i + 1;
+                    var var_end = var_start;
                     
                     while (var_end < self.input.len) {
                         const ch = self.input[var_end];
@@ -117,9 +116,10 @@ pub const Parser = struct {
                         }
                     }
                     
-                    if (var_end > check_pos) {
-                        var is_decl = false;
+                    if (var_end > var_start) {
                         var scan_pos = var_end;
+                        var is_decl = false;
+                        
                         while (scan_pos < self.input.len) {
                             const ch = self.input[scan_pos];
                             if (ch == '=') {
@@ -136,20 +136,19 @@ pub const Parser = struct {
                         }
                         
                         if (is_decl) {
-                            while (self.pos < self.input.len) {
-                                const ch = self.peek();
-                                if (ch == '\n' or ch == ';') {
-                                    self.advance();
+                            while (i < self.input.len) {
+                                if (self.input[i] == '\n' or self.input[i] == ';') {
+                                    i += 1;
                                     break;
                                 }
-                                self.advance();
+                                i += 1;
                             }
                             continue;
                         } else {
-                            const var_name = self.input[check_pos..var_end];
+                            const var_name = self.input[var_start..var_end];
                             if (self.variables.get(var_name)) |value| {
                                 try result.appendSlice(self.allocator, value);
-                                self.pos = var_end;
+                                i = var_end;
                                 continue;
                             }
                         }
@@ -157,8 +156,8 @@ pub const Parser = struct {
                 }
             }
 
-            try result.append(self.allocator, self.input[self.pos]);
-            self.pos += 1;
+            try result.append(self.allocator, self.input[i]);
+            i += 1;
         }
 
         return try result.toOwnedSlice(self.allocator);
