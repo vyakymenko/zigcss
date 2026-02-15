@@ -107,9 +107,10 @@ pub const Parser = struct {
             const indent = line.len - trimmed.len;
 
             while (indent_stack.items.len > 0) {
-                const prev_indent = self.getIndentForLine(i - 1);
+                const prev_line_idx = if (i > 0) i - 1 else 0;
+                const prev_indent = self.getIndentForLine(prev_line_idx);
                 if (prev_indent >= indent) {
-                    _ = indent_stack.pop();
+                    const _ = indent_stack.pop();
                     try result.append(self.allocator, '}');
                     try result.append(self.allocator, '\n');
                 } else {
@@ -154,15 +155,12 @@ pub const Parser = struct {
         }
 
         while (indent_stack.items.len > 0) {
-            _ = indent_stack.pop();
+            const selector = indent_stack.pop();
+            self.allocator.free(selector);
             try result.append(self.allocator, '}');
             if (indent_stack.items.len > 0) {
                 try result.append(self.allocator, '\n');
             }
-        }
-
-        for (indent_stack.items) |selector| {
-            self.allocator.free(selector);
         }
 
         return try result.toOwnedSlice(self.allocator);
