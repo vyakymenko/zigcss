@@ -1,0 +1,16 @@
+$primary-color: #007bff;
+$secondary-color: #6c757d;
+$spacing: 20px;
+
+.container {
+    color: $primary-color;
+    padding: $spacing;
+    
+    .nested {
+        background-color: $secondary-color;
+    }
+    
+    &:hover {
+        opacity: 0.8;
+    }
+}

@@ -1,5 +1,5 @@
 const std = @import("std");
-const parser = @import("parser.zig");
+const formats = @import("formats.zig");
 const ast = @import("ast.zig");
 const codegen = @import("codegen.zig");
 
@@ -54,8 +54,9 @@ pub fn main() !void {
     const input = try std.fs.cwd().readFileAlloc(allocator, input_file, 10 * 1024 * 1024);
     defer allocator.free(input);
 
-    var p = parser.Parser.init(allocator, input);
-    var stylesheet = try p.parse();
+    const format = formats.detectFormat(input_file);
+    const parser_trait = formats.getParser(format);
+    var stylesheet = try parser_trait.parseFn(allocator, input);
     defer stylesheet.deinit();
 
     const options = codegen.CodegenOptions{
@@ -85,8 +86,8 @@ test "basic compilation" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var p = parser.Parser.init(allocator, css);
-    var stylesheet = try p.parse();
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
     const result = try codegen.generate(allocator, stylesheet, .{});
@@ -103,8 +104,8 @@ test "minify output" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var p = parser.Parser.init(allocator, css);
-    var stylesheet = try p.parse();
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
     const result = try codegen.generate(allocator, stylesheet, .{ .minify = true });
@@ -120,8 +121,8 @@ test "important flag" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var p = parser.Parser.init(allocator, css);
-    var stylesheet = try p.parse();
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len == 1);
@@ -137,8 +138,8 @@ test "multiple selectors" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var p = parser.Parser.init(allocator, css);
-    var stylesheet = try p.parse();
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len == 1);
@@ -153,8 +154,8 @@ test "at-rule parsing" {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var p = parser.Parser.init(allocator, css);
-    var stylesheet = try p.parse();
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len == 1);
