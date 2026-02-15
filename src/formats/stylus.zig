@@ -2,6 +2,8 @@ const std = @import("std");
 const ast = @import("../ast.zig");
 const css_parser = @import("../parser.zig");
 
+const InfiniteLoop = error{InfiniteLoop};
+
 pub const Parser = struct {
     input: []const u8,
     pos: usize,
@@ -19,86 +21,10 @@ pub const Parser = struct {
 
     pub fn parse(self: *Parser) !ast.Stylesheet {
         try self.parseVariables();
-        const processed = try self.processVariables();
-        defer self.allocator.free(processed);
-
-        var css_p = css_parser.Parser.init(self.allocator, processed);
-        const stylesheet = try css_p.parse();
-        return stylesheet;
-    }
-
-    fn parseVariables(self: *Parser) !void {
-        self.pos = 0;
-        while (self.pos < self.input.len) {
-            self.skipWhitespace();
-            if (self.pos >= self.input.len) break;
-
-            if (self.peek() == '$') {
-                try self.parseVariable();
-            } else {
-                self.advance();
-            }
-        }
-    }
-
-    fn parseVariable(self: *Parser) !void {
-        if (self.peek() != '$') {
-            return error.ExpectedDollarSign;
-        }
-        self.advance();
-
-        const name_start = self.pos;
-        while (self.pos < self.input.len) {
-            const ch = self.peek();
-            if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_') {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-
-        if (self.pos == name_start) {
-            return error.InvalidVariableName;
-        }
-
-        const name = self.input[name_start..self.pos];
-        self.skipWhitespace();
-
-        if (self.peek() != '=') {
-            self.pos = name_start - 1;
-            return;
-        }
-        self.advance();
-        self.skipWhitespace();
-
-        const value_start = self.pos;
-        while (self.pos < self.input.len) {
-            const ch = self.peek();
-            if (ch == '\n' or ch == '\r' or ch == ';') {
-                break;
-            }
-            self.advance();
-        }
-
-        var value = self.input[value_start..self.pos];
-        value = std.mem.trim(u8, value, " \t");
-        const value_copy = try self.allocator.dupe(u8, value);
-        const name_copy = try self.allocator.dupe(u8, name);
-
-        try self.variables.put(name_copy, value_copy);
-
-        if (self.peek() == ';') {
-            self.advance();
-        }
-        if (self.peek() == '\n' or self.peek() == '\r') {
-            self.advance();
-        }
-    }
-
-    fn processVariables(self: *Parser) ![]const u8 {
-        var result = try std.ArrayList(u8).initCapacity(self.allocator, self.input.len);
-        errdefer result.deinit(self.allocator);
-
+        
+        var processed = try std.ArrayList(u8).initCapacity(self.allocator, self.input.len);
+        defer processed.deinit(self.allocator);
+        
         var i: usize = 0;
         while (i < self.input.len) {
             if (self.input[i] == '$' and i + 1 < self.input.len) {
@@ -133,7 +59,7 @@ pub const Parser = struct {
                         } else {
                             const var_name = self.input[var_start..var_end];
                             if (self.variables.get(var_name)) |value| {
-                                try result.appendSlice(self.allocator, value);
+                                try processed.appendSlice(self.allocator, value);
                                 i = var_end;
                                 continue;
                             }
@@ -141,13 +67,108 @@ pub const Parser = struct {
                     }
                 }
             }
-
-            try result.append(self.allocator, self.input[i]);
+            
+            try processed.append(self.allocator, self.input[i]);
             i += 1;
         }
+        
+        const processed_str = try processed.toOwnedSlice(self.allocator);
+        defer self.allocator.free(processed_str);
 
-        return try result.toOwnedSlice(self.allocator);
+        var css_p = css_parser.Parser.init(self.allocator, processed_str);
+        const stylesheet = try css_p.parse();
+        return stylesheet;
     }
+
+    fn parseVariables(self: *Parser) !void {
+        self.pos = 0;
+        var last_pos: usize = 0;
+        var iterations: usize = 0;
+        
+        while (self.pos < self.input.len) {
+            if (iterations > self.input.len * 2) {
+                return error.InfiniteLoop;
+            }
+            iterations += 1;
+            
+            if (self.pos == last_pos and self.pos < self.input.len) {
+                self.advance();
+                last_pos = self.pos;
+                continue;
+            }
+            last_pos = self.pos;
+            
+            self.skipWhitespace();
+            if (self.pos >= self.input.len) break;
+
+            if (self.peek() == '$') {
+                const before_parse = self.pos;
+                self.parseVariable() catch {};
+                if (self.pos == before_parse) {
+                    self.advance();
+                }
+            } else {
+                self.advance();
+            }
+        }
+    }
+
+    fn parseVariable(self: *Parser) !void {
+        if (self.peek() != '$') {
+            return error.ExpectedDollarSign;
+        }
+        const dollar_pos = self.pos;
+        self.advance();
+
+        const name_start = self.pos;
+        while (self.pos < self.input.len) {
+            const ch = self.peek();
+            if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_') {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if (self.pos == name_start) {
+            self.pos = dollar_pos;
+            return;
+        }
+
+        const name = self.input[name_start..self.pos];
+        self.skipWhitespace();
+
+        if (self.peek() != '=') {
+            self.pos = dollar_pos;
+            return;
+        }
+        self.advance();
+        self.skipWhitespace();
+
+        const value_start = self.pos;
+        while (self.pos < self.input.len) {
+            const ch = self.peek();
+            if (ch == '\n' or ch == '\r' or ch == ';') {
+                break;
+            }
+            self.advance();
+        }
+
+        var value = self.input[value_start..self.pos];
+        value = std.mem.trim(u8, value, " \t");
+        const value_copy = try self.allocator.dupe(u8, value);
+        const name_copy = try self.allocator.dupe(u8, name);
+
+        try self.variables.put(name_copy, value_copy);
+
+        if (self.peek() == ';') {
+            self.advance();
+        }
+        if (self.peek() == '\n' or self.peek() == '\r') {
+            self.advance();
+        }
+    }
+
 
     fn skipWhitespace(self: *Parser) void {
         while (self.pos < self.input.len) {
@@ -191,7 +212,11 @@ test "parse Stylus with variables" {
 
     var p = Parser.init(allocator, stylus);
     defer p.deinit();
-    var stylesheet = try p.parse();
+    
+    var stylesheet = p.parse() catch |err| {
+        std.debug.print("Error parsing Stylus: {}\n", .{err});
+        return err;
+    };
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len >= 1);
