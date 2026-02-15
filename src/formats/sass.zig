@@ -143,10 +143,11 @@ pub const Parser = struct {
                 if (self.last_line_type == .property and indent_stack.items.len > 0) {
                     const top_indent = indent_stack.items[indent_stack.items.len - 1].indent;
                     if (indent <= top_indent) {
-                        const info = indent_stack.pop() orelse {};
-                        self.allocator.free(info.selector);
-                        try result.append(self.allocator, '}');
-                        try result.append(self.allocator, '\n');
+                        if (indent_stack.pop()) |info| {
+                            self.allocator.free(info.selector);
+                            try result.append(self.allocator, '}');
+                            try result.append(self.allocator, '\n');
+                        }
                     }
                 }
                 
