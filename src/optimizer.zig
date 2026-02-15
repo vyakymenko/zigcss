@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const string_pool = @import("string_pool.zig");
 
 pub const Optimizer = struct {
     allocator: std.mem.Allocator,
@@ -11,6 +12,7 @@ pub const Optimizer = struct {
     pub fn optimize(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         try self.removeEmptyRules(stylesheet);
         try self.mergeSelectors(stylesheet);
+        try self.optimizeShorthandProperties(stylesheet);
         try self.removeDuplicateDeclarations(stylesheet);
         try self.optimizeValues(stylesheet);
     }
@@ -307,6 +309,128 @@ pub const Optimizer = struct {
         }
 
         return null;
+    }
+
+    fn optimizeShorthandProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        const pool = stylesheet.string_pool;
+        for (stylesheet.rules.items) |*rule| {
+            switch (rule.*) {
+                .style => |*style_rule| {
+                    try self.optimizeShorthandInRule(style_rule, pool);
+                },
+                .at_rule => |*at_rule| {
+                    if (at_rule.rules) |*rules| {
+                        for (rules.items) |*nested_rule| {
+                            switch (nested_rule.*) {
+                                .style => |*style_rule| {
+                                    try self.optimizeShorthandInRule(style_rule, pool);
+                                },
+                                .at_rule => {},
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    fn optimizeShorthandInRule(self: *Optimizer, style_rule: *ast.StyleRule, pool: ?*string_pool.StringPool) !void {
+        var margin_top: ?[]const u8 = null;
+        var margin_right: ?[]const u8 = null;
+        var margin_bottom: ?[]const u8 = null;
+        var margin_left: ?[]const u8 = null;
+        
+        var padding_top: ?[]const u8 = null;
+        var padding_right: ?[]const u8 = null;
+        var padding_bottom: ?[]const u8 = null;
+        var padding_left: ?[]const u8 = null;
+        
+        var margin_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
+        defer margin_indices.deinit(self.allocator);
+        var padding_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
+        defer padding_indices.deinit(self.allocator);
+        
+        for (style_rule.declarations.items, 0..) |*decl, i| {
+            if (std.mem.eql(u8, decl.property, "margin-top")) {
+                margin_top = decl.value;
+                try margin_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "margin-right")) {
+                margin_right = decl.value;
+                try margin_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "margin-bottom")) {
+                margin_bottom = decl.value;
+                try margin_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "margin-left")) {
+                margin_left = decl.value;
+                try margin_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "padding-top")) {
+                padding_top = decl.value;
+                try padding_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "padding-right")) {
+                padding_right = decl.value;
+                try padding_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "padding-bottom")) {
+                padding_bottom = decl.value;
+                try padding_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "padding-left")) {
+                padding_left = decl.value;
+                try padding_indices.append(self.allocator, i);
+            }
+        }
+        
+        if (margin_indices.items.len == 4) {
+            const shorthand = try self.buildShorthand(margin_top.?, margin_right.?, margin_bottom.?, margin_left.?);
+            defer self.allocator.free(shorthand);
+            
+            const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
+            
+            var new_decl = ast.Declaration.init(style_rule.allocator);
+            new_decl.property = "margin";
+            new_decl.value = interned;
+            try style_rule.declarations.append(style_rule.allocator, new_decl);
+            
+            var i: usize = margin_indices.items.len;
+            while (i > 0) {
+                i -= 1;
+                const idx = margin_indices.items[i];
+                style_rule.declarations.items[idx].deinit();
+                _ = style_rule.declarations.swapRemove(idx);
+            }
+        }
+        
+        if (padding_indices.items.len == 4) {
+            const shorthand = try self.buildShorthand(padding_top.?, padding_right.?, padding_bottom.?, padding_left.?);
+            defer self.allocator.free(shorthand);
+            
+            const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
+            
+            var new_decl = ast.Declaration.init(style_rule.allocator);
+            new_decl.property = "padding";
+            new_decl.value = interned;
+            try style_rule.declarations.append(style_rule.allocator, new_decl);
+            
+            var i: usize = padding_indices.items.len;
+            while (i > 0) {
+                i -= 1;
+                const idx = padding_indices.items[i];
+                style_rule.declarations.items[idx].deinit();
+                _ = style_rule.declarations.swapRemove(idx);
+            }
+        }
+    }
+
+    fn buildShorthand(self: *Optimizer, top: []const u8, right: []const u8, bottom: []const u8, left: []const u8) ![]const u8 {
+        if (std.mem.eql(u8, top, bottom) and std.mem.eql(u8, right, left)) {
+            if (std.mem.eql(u8, top, right)) {
+                return try std.fmt.allocPrint(self.allocator, "{s}", .{top});
+            } else {
+                return try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ top, right });
+            }
+        } else if (std.mem.eql(u8, right, left)) {
+            return try std.fmt.allocPrint(self.allocator, "{s} {s} {s}", .{ top, right, bottom });
+        } else {
+            return try std.fmt.allocPrint(self.allocator, "{s} {s} {s} {s}", .{ top, right, bottom, left });
+        }
     }
 
     fn removeDuplicateDeclarations(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {

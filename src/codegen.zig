@@ -13,17 +13,30 @@ fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
         switch (rule) {
             .style => |style_rule| {
                 for (style_rule.selectors.items) |selector| {
-                    size += 20;
-                    size += selector.parts.items.len * 10;
+                    size += 15;
+                    for (selector.parts.items) |part| {
+                        size += switch (part) {
+                            .type => |s| s.len,
+                            .class => |s| s.len + 1,
+                            .id => |s| s.len + 1,
+                            .universal => 1,
+                            .attribute => |attr| attr.name.len + (attr.value orelse "").len + 5,
+                            .pseudo_class => |s| s.len + 1,
+                            .pseudo_element => |s| s.len + 2,
+                            .combinator => 3,
+                        };
+                    }
                 }
-                size += 50;
-                size += style_rule.declarations.items.len * 30;
+                size += 3;
+                for (style_rule.declarations.items) |decl| {
+                    size += decl.property.len + decl.value.len + 3;
+                    if (decl.important) size += 10;
+                }
             },
             .at_rule => |at_rule| {
-                size += 50;
-                size += at_rule.name.len + at_rule.prelude.len;
+                size += at_rule.name.len + at_rule.prelude.len + 5;
                 if (at_rule.rules) |rules| {
-                    size += rules.items.len * 30;
+                    size += rules.items.len * 25;
                 }
             },
         }
@@ -78,6 +91,7 @@ fn generateStyleRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rul
         try list.append(allocator, '\n');
     }
 
+    const decl_count = rule.declarations.items.len;
     for (rule.declarations.items, 0..) |decl, i| {
         if (!options.minify and i > 0) {
             try list.append(allocator, '\n');
@@ -97,7 +111,10 @@ fn generateStyleRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rul
             }
             try list.appendSlice(allocator, "!important");
         }
-        try list.append(allocator, ';');
+        const is_last = i == decl_count - 1;
+        if (!is_last or !options.minify) {
+            try list.append(allocator, ';');
+        }
     }
 
     if (!options.minify) {
@@ -108,22 +125,25 @@ fn generateStyleRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rul
 
 fn generateSelector(list: *std.ArrayList(u8), allocator: std.mem.Allocator, selector: ast.Selector, options: CodegenOptions) !void {
     _ = options;
-    for (selector.parts.items, 0..) |part, i| {
+    const parts = selector.parts.items;
+    if (parts.len == 0) return;
+    
+    var prev_was_combinator = false;
+    for (parts, 0..) |part, i| {
         if (i > 0) {
-            const needs_space = switch (part) {
-                .combinator => false,
-                else => true,
+            const is_combinator = switch (part) {
+                .combinator => true,
+                else => false,
             };
-            if (needs_space and i > 0) {
-                const prev_part = selector.parts.items[i - 1];
-                const is_combinator = switch (prev_part) {
-                    .combinator => true,
-                    else => false,
-                };
-                if (!is_combinator) {
-                    try list.append(allocator, ' ');
-                }
+            if (!is_combinator and !prev_was_combinator) {
+                try list.append(allocator, ' ');
             }
+            prev_was_combinator = is_combinator;
+        } else {
+            prev_was_combinator = switch (part) {
+                .combinator => true,
+                else => false,
+            };
         }
 
         switch (part) {
