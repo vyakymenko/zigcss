@@ -44,6 +44,8 @@ pub fn getParser(format: Format) ParserTrait {
         .less => .{ .parseFn = parseLESS },
         .css_modules => .{ .parseFn = parseCSSModules },
         .css_in_js => .{ .parseFn = parseCSSInJS },
+        .postcss => .{ .parseFn = parsePostCSS },
+        .stylus => .{ .parseFn = parseStylus },
     };
 }
 
