@@ -36,39 +36,48 @@ Performance tested on a MacBook Pro M3 (16GB RAM) with real-world CSS workloads.
 #### Small CSS (~100 bytes)
 | Compiler | **Total Time** | Speedup vs zcss |
 |----------|----------------|-----------------|
-| **zcss** | **9.9ms** | 1x (baseline) |
-| PostCSS | 2,040.8ms | **206x slower** |
-| Sass | 2,267.7ms | **229x slower** |
+| **zcss** | **11.1ms** | 1x (baseline) |
+| Lightning CSS | 546.3ms | **49x slower** |
+| esbuild | 599.2ms | **54x slower** |
+| cssnano | 764.3ms | **69x slower** |
+| PostCSS | 773.2ms | **70x slower** |
+| Sass | 766.1ms | **69x slower** |
 
-**zcss is 206-229x faster** than competitors for small files.
+**zcss is 49-70x faster** than competitors for small files.
 
 #### Medium CSS (~10KB, typical production bundle)
 | Compiler | **Total Time** | Speedup vs zcss |
 |----------|----------------|-----------------|
-| **zcss** | **12.0ms** | 1x (baseline) |
-| PostCSS | 2,035.2ms | **170x slower** |
-| Sass | 2,414.8ms | **201x slower** |
+| **zcss** | **10.6ms** | 1x (baseline) |
+| Lightning CSS | 558.0ms | **53x slower** |
+| esbuild | 595.0ms | **56x slower** |
+| PostCSS | 667.5ms | **63x slower** |
+| cssnano | 744.6ms | **70x slower** |
+| Sass | 803.0ms | **76x slower** |
 
-**zcss is 170-201x faster** than competitors for medium-sized files.
+**zcss is 53-76x faster** than competitors for medium-sized files.
 
 #### Large CSS (~100KB, complex stylesheet)
 | Compiler | **Total Time** | Speedup vs zcss |
 |----------|----------------|-----------------|
-| **zcss** | **25.4ms** | 1x (baseline) |
-| PostCSS | 2,028.3ms | **80x slower** |
-| Sass | 2,707.8ms | **107x slower** |
+| **zcss** | **27.0ms** | 1x (baseline) |
+| Lightning CSS | 646.9ms | **24x slower** |
+| esbuild | 619.2ms | **23x slower** |
+| PostCSS | 699.8ms | **26x slower** |
+| cssnano | 867.0ms | **32x slower** |
+| Sass | 830.3ms | **31x slower** |
 
-**zcss is 80-107x faster** than competitors for large files.
+**zcss is 23-32x faster** than competitors for large files.
 
-> **Note**: Benchmarks run with `zig build -Doptimize=ReleaseFast`. Competitor tools tested via `npx` (Node.js v24.11.1). Results averaged over 10 iterations after 2 warmup runs. Performance improvements include SIMD-optimized whitespace skipping, optimized parser hot paths, pre-interned CSS keywords, and improved capacity estimation.
+> **Note**: Benchmarks run with `zig build -Doptimize=ReleaseFast`. Competitor tools tested via `npx` (Node.js v24.11.1). Results averaged over 10 iterations after 2 warmup runs. Performance improvements include SIMD-optimized whitespace skipping, optimized parser hot paths, pre-interned CSS keywords, and improved capacity estimation. Lightning CSS, cssnano, and esbuild are included as modern high-performance competitors.
 
 #### Performance Summary
 
-- **Throughput**: ~1.9 MB/s for large files (100KB in 57ms)
+- **Throughput**: ~3.7 MB/s for large files (100KB in 27ms)
 - **Parsing speed**: ~6,400 rules/second (100KB file with ~1000 rules)
 - **Memory efficiency**: Single 2.6MB binary, no runtime overhead
 - **Startup time**: Instant (no VM or interpreter startup)
-- **Real-world**: Processes typical 10KB production CSS in **12.0ms** vs 2,035ms (PostCSS) or 2,415ms (Sass)
+- **Real-world**: Processes typical 10KB production CSS in **10.6ms** vs 558ms (Lightning CSS), 595ms (esbuild), or 803ms (Sass)
 
 #### Why zcss is Faster
 

@@ -81,7 +81,7 @@ function benchmarkCssnano(file) {
 }
 
 function benchmarkEsbuild(file) {
-    const cmd = `npx --yes esbuild --loader=css --minify ${file} --outfile=/dev/null 2>/dev/null`;
+    const cmd = `npx --yes esbuild ${file} --bundle --loader:.css=css --minify --outfile=/dev/null 2>/dev/null`;
     return timeCommand(cmd);
 }
 
