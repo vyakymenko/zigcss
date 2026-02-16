@@ -481,6 +481,8 @@ pub const Optimizer = struct {
 13. **Redundant selector removal** ✅ — Removes selectors that are subsets of other selectors in the same rule
 14. **Media query merging** ✅ — Merges identical `@media` rules to reduce output size
 15. **Improved SIMD whitespace skipping** ✅ — Processes 32 bytes at a time for faster parsing
+16. **Font shorthand optimization** ✅ — Combines font-* properties into font shorthand
+17. **Background shorthand optimization** ✅ — Combines background-* properties into background shorthand
 
 ### Memory Management
 

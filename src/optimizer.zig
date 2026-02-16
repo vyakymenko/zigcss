@@ -426,12 +426,29 @@ pub const Optimizer = struct {
         var border_style: ?[]const u8 = null;
         var border_color: ?[]const u8 = null;
         
+        var font_style: ?[]const u8 = null;
+        var font_variant: ?[]const u8 = null;
+        var font_weight: ?[]const u8 = null;
+        var font_size: ?[]const u8 = null;
+        var line_height: ?[]const u8 = null;
+        var font_family: ?[]const u8 = null;
+        
+        var background_color: ?[]const u8 = null;
+        var background_image: ?[]const u8 = null;
+        var background_repeat: ?[]const u8 = null;
+        var background_position: ?[]const u8 = null;
+        var background_attachment: ?[]const u8 = null;
+        
         var margin_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
         defer margin_indices.deinit(self.allocator);
         var padding_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
         defer padding_indices.deinit(self.allocator);
         var border_indices = try std.ArrayList(usize).initCapacity(self.allocator, 3);
         defer border_indices.deinit(self.allocator);
+        var font_indices = try std.ArrayList(usize).initCapacity(self.allocator, 6);
+        defer font_indices.deinit(self.allocator);
+        var background_indices = try std.ArrayList(usize).initCapacity(self.allocator, 5);
+        defer background_indices.deinit(self.allocator);
         
         for (style_rule.declarations.items, 0..) |*decl, i| {
             if (std.mem.eql(u8, decl.property, "margin-top")) {
@@ -467,6 +484,39 @@ pub const Optimizer = struct {
             } else if (std.mem.eql(u8, decl.property, "border-color")) {
                 border_color = decl.value;
                 try border_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "font-style")) {
+                font_style = decl.value;
+                try font_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "font-variant")) {
+                font_variant = decl.value;
+                try font_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "font-weight")) {
+                font_weight = decl.value;
+                try font_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "font-size")) {
+                font_size = decl.value;
+                try font_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "line-height")) {
+                line_height = decl.value;
+                try font_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "font-family")) {
+                font_family = decl.value;
+                try font_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "background-color")) {
+                background_color = decl.value;
+                try background_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "background-image")) {
+                background_image = decl.value;
+                try background_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "background-repeat")) {
+                background_repeat = decl.value;
+                try background_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "background-position")) {
+                background_position = decl.value;
+                try background_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "background-attachment")) {
+                background_attachment = decl.value;
+                try background_indices.append(self.allocator, i);
             }
         }
         
@@ -529,6 +579,46 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
+        
+        if (font_indices.items.len >= 2 and font_size != null and font_family != null) {
+            const shorthand = try self.buildFontShorthand(font_style, font_variant, font_weight, font_size.?, line_height, font_family.?);
+            defer self.allocator.free(shorthand);
+            
+            const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
+            
+            var new_decl = ast.Declaration.init(style_rule.allocator);
+            new_decl.property = "font";
+            new_decl.value = interned;
+            try style_rule.declarations.append(style_rule.allocator, new_decl);
+            
+            var i: usize = font_indices.items.len;
+            while (i > 0) {
+                i -= 1;
+                const idx = font_indices.items[i];
+                style_rule.declarations.items[idx].deinit();
+                _ = style_rule.declarations.swapRemove(idx);
+            }
+        }
+        
+        if (background_indices.items.len >= 2) {
+            const shorthand = try self.buildBackgroundShorthand(background_color, background_image, background_repeat, background_position, background_attachment);
+            defer self.allocator.free(shorthand);
+            
+            const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
+            
+            var new_decl = ast.Declaration.init(style_rule.allocator);
+            new_decl.property = "background";
+            new_decl.value = interned;
+            try style_rule.declarations.append(style_rule.allocator, new_decl);
+            
+            var i: usize = background_indices.items.len;
+            while (i > 0) {
+                i -= 1;
+                const idx = background_indices.items[i];
+                style_rule.declarations.items[idx].deinit();
+                _ = style_rule.declarations.swapRemove(idx);
+            }
+        }
     }
 
     fn buildShorthand(self: *Optimizer, top: []const u8, right: []const u8, bottom: []const u8, left: []const u8) ![]const u8 {
@@ -547,6 +637,64 @@ pub const Optimizer = struct {
 
     fn buildBorderShorthand(self: *Optimizer, width: []const u8, style: []const u8, color: []const u8) ![]const u8 {
         return try std.fmt.allocPrint(self.allocator, "{s} {s} {s}", .{ width, style, color });
+    }
+
+    fn buildFontShorthand(self: *Optimizer, style: ?[]const u8, variant: ?[]const u8, weight: ?[]const u8, size: []const u8, line_height: ?[]const u8, family: []const u8) ![]const u8 {
+        var parts = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
+        defer parts.deinit(self.allocator);
+
+        if (style) |s| try parts.append(self.allocator, s);
+        if (variant) |v| try parts.append(self.allocator, v);
+        if (weight) |w| try parts.append(self.allocator, w);
+        
+        if (line_height) |lh| {
+            try parts.append(self.allocator, size);
+            try parts.append(self.allocator, "/");
+            try parts.append(self.allocator, lh);
+        } else {
+            try parts.append(self.allocator, size);
+        }
+        
+        try parts.append(self.allocator, family);
+
+        var result = try std.ArrayList(u8).initCapacity(self.allocator, 128);
+        defer result.deinit(self.allocator);
+
+        for (parts.items, 0..) |part, i| {
+            if (i > 0) {
+                try result.append(self.allocator, ' ');
+            }
+            try result.appendSlice(self.allocator, part);
+        }
+
+        return try result.toOwnedSlice(self.allocator);
+    }
+
+    fn buildBackgroundShorthand(self: *Optimizer, color: ?[]const u8, image: ?[]const u8, repeat: ?[]const u8, position: ?[]const u8, attachment: ?[]const u8) ![]const u8 {
+        var parts = try std.ArrayList([]const u8).initCapacity(self.allocator, 5);
+        defer parts.deinit(self.allocator);
+
+        if (color) |c| try parts.append(self.allocator, c);
+        if (image) |img| try parts.append(self.allocator, img);
+        if (repeat) |r| try parts.append(self.allocator, r);
+        if (attachment) |a| try parts.append(self.allocator, a);
+        if (position) |p| try parts.append(self.allocator, p);
+
+        if (parts.items.len == 0) {
+            return try self.allocator.dupe(u8, "none");
+        }
+
+        var result = try std.ArrayList(u8).initCapacity(self.allocator, 128);
+        defer result.deinit(self.allocator);
+
+        for (parts.items, 0..) |part, i| {
+            if (i > 0) {
+                try result.append(self.allocator, ' ');
+            }
+            try result.appendSlice(self.allocator, part);
+        }
+
+        return try result.toOwnedSlice(self.allocator);
     }
 
     fn removeDuplicateDeclarations(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
