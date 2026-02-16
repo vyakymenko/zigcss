@@ -128,14 +128,14 @@ pub const Selector = struct {
 
         for (self.parts.items, 0..) |part, i| {
             if (i > 0) {
-                try list.append(' ');
+                try list.append(allocator, ' ');
             }
             const str = try part.toString(allocator);
             defer allocator.free(str);
-            try list.appendSlice(str);
+            try list.appendSlice(allocator, str);
         }
 
-        return list.toOwnedSlice();
+        return try list.toOwnedSlice(allocator);
     }
 };
 
@@ -200,7 +200,7 @@ pub const AttributeSelector = struct {
     }
     try list.append(allocator, ']');
 
-        return list.toOwnedSlice();
+        return try list.toOwnedSlice(allocator);
     }
 };
 

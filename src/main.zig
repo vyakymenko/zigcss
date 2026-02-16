@@ -15,6 +15,17 @@ const CompileConfig = struct {
     autoprefix: ?autoprefixer.AutoprefixOptions = null,
 };
 
+const CompileTask = struct {
+    input_file: []const u8,
+    output_file: []const u8,
+    optimize: bool,
+    minify: bool,
+    source_map: bool,
+    autoprefix: ?autoprefixer.AutoprefixOptions,
+    result: ?[]const u8 = null,
+    err: ?[]const u8 = null,
+};
+
 fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     const input = try std.fs.cwd().readFileAlloc(allocator, config.input_file, 10 * 1024 * 1024);
     defer allocator.free(input);
@@ -108,6 +119,218 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     }
 }
 
+fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
+    const input = std.fs.cwd().readFileAlloc(allocator, task.input_file, 10 * 1024 * 1024) catch |err| {
+        task.err = std.fmt.allocPrint(allocator, "Failed to read {s}: {s}", .{ task.input_file, @errorName(err) }) catch "Read error";
+        return;
+    };
+    defer allocator.free(input);
+
+    const format = formats.detectFormat(task.input_file);
+    
+    var stylesheet: ast.Stylesheet = undefined;
+    var stylesheet_initialized = false;
+    
+    if (format == .css) {
+        var css_parser = parser.Parser.init(allocator, input);
+        defer if (css_parser.owns_pool) {
+            css_parser.string_pool.deinit();
+            allocator.destroy(css_parser.string_pool);
+        };
+        
+        const result = css_parser.parseWithErrorInfo();
+        switch (result) {
+            .success => |s| {
+                stylesheet = s;
+                stylesheet_initialized = true;
+            },
+            .parse_error => |parse_error| {
+                const error_msg = error_module.formatErrorWithContext(allocator, input, task.input_file, parse_error) catch |err| {
+                    task.err = std.fmt.allocPrint(allocator, "Parse error: {s}", .{@errorName(err)}) catch "Parse error";
+                    return;
+                };
+                task.err = error_msg;
+                return;
+            },
+        }
+    } else {
+        const parser_trait = formats.getParser(format);
+        stylesheet = parser_trait.parseFn(allocator, input) catch |err| {
+            task.err = std.fmt.allocPrint(allocator, "Parse error: {s}", .{@errorName(err)}) catch "Parse error";
+            return;
+        };
+        stylesheet_initialized = true;
+    }
+    
+    defer if (stylesheet_initialized) stylesheet.deinit();
+
+    const options = codegen.CodegenOptions{
+        .minify = task.minify,
+        .optimize = task.optimize,
+        .autoprefix = task.autoprefix,
+    };
+
+    const result = codegen.generate(allocator, &stylesheet, options) catch |err| {
+        task.err = std.fmt.allocPrint(allocator, "Codegen error: {s}", .{@errorName(err)}) catch "Codegen error";
+        return;
+    };
+    
+    task.result = result;
+}
+
+fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !void {
+    const num_threads = @min(tasks.len, std.Thread.getCpuCount() catch 4);
+    
+    if (tasks.len == 1) {
+        compileTask(&tasks[0], allocator);
+        if (tasks[0].err) |err| {
+            std.debug.print("Error: {s}\n", .{err});
+            return error.CompileError;
+        }
+        if (tasks[0].result) |result| {
+            try std.fs.cwd().writeFile(.{ .sub_path = tasks[0].output_file, .data = result });
+            std.debug.print("Compiled: {s} -> {s}\n", .{ tasks[0].input_file, tasks[0].output_file });
+        }
+        return;
+    }
+
+    var threads = try std.ArrayList(std.Thread).initCapacity(allocator, num_threads);
+    defer threads.deinit(allocator);
+    
+    var mutex = std.Thread.Mutex{};
+    var completed: usize = 0;
+    var has_error = false;
+
+    const batch_size = (tasks.len + num_threads - 1) / num_threads;
+    var thread_idx: usize = 0;
+    
+    while (thread_idx < num_threads) : (thread_idx += 1) {
+        const start = thread_idx * batch_size;
+        const end = @min(start + batch_size, tasks.len);
+        
+        if (start >= tasks.len) break;
+        
+        const thread = try std.Thread.spawn(.{}, struct {
+            fn worker(tasks_slice: []CompileTask, alloc: std.mem.Allocator, mtx: *std.Thread.Mutex, done: *usize, err: *bool) void {
+                for (tasks_slice) |*task| {
+                    compileTask(task, alloc);
+                    
+                    mtx.lock();
+                    done.* += 1;
+                    if (task.err) |_| {
+                        err.* = true;
+                    }
+                    mtx.unlock();
+                }
+            }
+        }.worker, .{ tasks[start..end], allocator, &mutex, &completed, &has_error });
+        
+        try threads.append(allocator, thread);
+    }
+
+    for (threads.items) |thread| {
+        thread.join();
+    }
+
+    if (has_error) {
+        for (tasks) |*task| {
+            if (task.err) |err| {
+                std.debug.print("Error compiling {s}: {s}\n", .{ task.input_file, err });
+            }
+        }
+        return error.CompileError;
+    }
+
+    for (tasks) |*task| {
+        if (task.result) |result| {
+            try std.fs.cwd().writeFile(.{ .sub_path = task.output_file, .data = result });
+            std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
+            allocator.free(result);
+        }
+    }
+}
+
+const CompileError = error{CompileError};
+
+fn expandGlob(allocator: std.mem.Allocator, pattern: []const u8) !std.ArrayList([]const u8) {
+    var files = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    
+    if (std.mem.indexOf(u8, pattern, "*") == null) {
+        try files.append(allocator, pattern);
+        return files;
+    }
+
+    const cwd = std.fs.cwd();
+    const dir_path = std.fs.path.dirname(pattern) orelse ".";
+    const basename_pattern = std.fs.path.basename(pattern);
+    
+    var dir = try cwd.openDir(dir_path, .{ .iterate = true });
+    defer dir.close();
+    
+    var iter = dir.iterate();
+    while (try iter.next()) |entry| {
+        if (matchPattern(basename_pattern, entry.name)) {
+            const full_path = try std.fs.path.join(allocator, &.{ dir_path, entry.name });
+            try files.append(allocator, full_path);
+        }
+    }
+    
+    return files;
+}
+
+fn matchPattern(pattern: []const u8, name: []const u8) bool {
+    var pattern_idx: usize = 0;
+    var name_idx: usize = 0;
+    
+    while (pattern_idx < pattern.len and name_idx < name.len) {
+        if (pattern[pattern_idx] == '*') {
+            pattern_idx += 1;
+            if (pattern_idx >= pattern.len) return true;
+            while (name_idx < name.len) {
+                if (matchPattern(pattern[pattern_idx..], name[name_idx..])) {
+                    return true;
+                }
+                name_idx += 1;
+            }
+            return false;
+        } else if (pattern[pattern_idx] == name[name_idx]) {
+            pattern_idx += 1;
+            name_idx += 1;
+        } else {
+            return false;
+        }
+    }
+    
+    return pattern_idx >= pattern.len and name_idx >= name.len;
+}
+
+fn determineOutputFile(allocator: std.mem.Allocator, input_file: []const u8, output_dir: ?[]const u8, output_file: ?[]const u8) ![]const u8 {
+    if (output_file) |out| {
+        return try allocator.dupe(u8, out);
+    }
+    
+    if (output_dir) |dir| {
+        const basename = std.fs.path.basename(input_file);
+        const ext = std.fs.path.extension(basename);
+        const name_without_ext = basename[0..basename.len - ext.len];
+        const output_ext = if (std.mem.eql(u8, ext, ".scss") or std.mem.eql(u8, ext, ".sass")) ".css"
+            else if (std.mem.eql(u8, ext, ".less")) ".css"
+            else if (std.mem.eql(u8, ext, ".styl")) ".css"
+            else if (std.mem.eql(u8, ext, ".postcss")) ".css"
+            else ext;
+        return try std.fmt.allocPrint(allocator, "{s}/{s}{s}", .{ dir, name_without_ext, output_ext });
+    }
+    
+    const ext = std.fs.path.extension(input_file);
+    const name_without_ext = input_file[0..input_file.len - ext.len];
+    const output_ext = if (std.mem.eql(u8, ext, ".scss") or std.mem.eql(u8, ext, ".sass")) ".css"
+        else if (std.mem.eql(u8, ext, ".less")) ".css"
+        else if (std.mem.eql(u8, ext, ".styl")) ".css"
+        else if (std.mem.eql(u8, ext, ".postcss")) ".css"
+        else ext;
+    return try std.fmt.allocPrint(allocator, "{s}{s}", .{ name_without_ext, output_ext });
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -118,8 +341,10 @@ pub fn main() !void {
 
     if (args.len < 2) {
         std.debug.print("Usage: zcss <input.css> [-o output.css] [options]\n", .{});
+        std.debug.print("       zcss <input1.css> <input2.css> ... [-o output-dir/] [--output-dir] [options]\n", .{});
         std.debug.print("\nOptions:\n", .{});
-        std.debug.print("  -o, --output <file>      Output file\n", .{});
+        std.debug.print("  -o, --output <file>      Output file or directory\n", .{});
+        std.debug.print("  --output-dir             Treat output as directory (for multiple files)\n", .{});
         std.debug.print("  --optimize               Enable optimizations\n", .{});
         std.debug.print("  --minify                 Minify output\n", .{});
         std.debug.print("  --source-map             Generate source map\n", .{});
@@ -130,23 +355,28 @@ pub fn main() !void {
         return;
     }
 
-    const input_file = args[1];
+    var input_files = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer input_files.deinit(allocator);
+    
     var output_file: ?[]const u8 = null;
+    var output_dir_flag = false;
     var optimize_flag = false;
     var minify_flag = false;
     var source_map_flag = false;
     var watch_flag = false;
     var autoprefix_flag = false;
-    var browsers: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(allocator);
-    defer browsers.deinit();
+    var browsers = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer browsers.deinit(allocator);
 
-    var i: usize = 2;
+    var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "-o") or std.mem.eql(u8, args[i], "--output")) {
             if (i + 1 < args.len) {
                 output_file = args[i + 1];
                 i += 1;
             }
+        } else if (std.mem.eql(u8, args[i], "--output-dir")) {
+            output_dir_flag = true;
         } else if (std.mem.eql(u8, args[i], "--optimize")) {
             optimize_flag = true;
         } else if (std.mem.eql(u8, args[i], "--minify")) {
@@ -164,7 +394,7 @@ pub fn main() !void {
                 while (iter.next()) |browser| {
                     const trimmed = std.mem.trim(u8, browser, " \t");
                     if (trimmed.len > 0) {
-                        try browsers.append(trimmed);
+                        try browsers.append(allocator, trimmed);
                     }
                 }
                 i += 1;
@@ -172,29 +402,85 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
             std.debug.print("Usage: zcss <input.css> [-o output.css] [options]\n", .{});
             return;
+        } else if (args[i][0] != '-') {
+            var expanded = try expandGlob(allocator, args[i]);
+            defer {
+                for (expanded.items) |path| {
+                    allocator.free(path);
+                }
+                expanded.deinit(allocator);
+            }
+            try input_files.appendSlice(allocator, expanded.items);
         }
     }
 
+    if (input_files.items.len == 0) {
+        std.debug.print("Error: No input files specified\n", .{});
+        std.process.exit(1);
+    }
+
     const autoprefix_opts: ?autoprefixer.AutoprefixOptions = if (autoprefix_flag) blk: {
-        const browsers_slice = try browsers.toOwnedSlice();
+        const browsers_slice = try browsers.toOwnedSlice(allocator);
         break :blk autoprefixer.AutoprefixOptions{
             .browsers = browsers_slice,
         };
     } else null;
 
-    const config = CompileConfig{
-        .input_file = input_file,
-        .output_file = output_file,
-        .optimize = optimize_flag,
-        .minify = minify_flag,
-        .source_map = source_map_flag,
-        .autoprefix = autoprefix_opts,
-    };
-
     if (watch_flag) {
+        if (input_files.items.len > 1) {
+            std.debug.print("Error: Watch mode only supports single file\n", .{});
+            std.process.exit(1);
+        }
+        const config = CompileConfig{
+            .input_file = input_files.items[0],
+            .output_file = output_file,
+            .optimize = optimize_flag,
+            .minify = minify_flag,
+            .source_map = source_map_flag,
+            .autoprefix = autoprefix_opts,
+        };
         try watchFile(allocator, config);
-    } else {
+    } else if (input_files.items.len == 1) {
+        const config = CompileConfig{
+            .input_file = input_files.items[0],
+            .output_file = output_file,
+            .optimize = optimize_flag,
+            .minify = minify_flag,
+            .source_map = source_map_flag,
+            .autoprefix = autoprefix_opts,
+        };
         compileFile(allocator, config) catch {
+            std.process.exit(1);
+        };
+    } else {
+        const output_dir: ?[]const u8 = if (output_dir_flag or output_file != null) output_file else null;
+        
+        if (output_dir) |dir| {
+            try std.fs.cwd().makePath(dir);
+        }
+        
+        var tasks = try std.ArrayList(CompileTask).initCapacity(allocator, input_files.items.len);
+        defer {
+            for (tasks.items) |*task| {
+                allocator.free(task.output_file);
+                if (task.err) |err| allocator.free(err);
+            }
+            tasks.deinit(allocator);
+        }
+        
+        for (input_files.items) |input| {
+            const out_file = try determineOutputFile(allocator, input, output_dir, null);
+            try tasks.append(allocator, CompileTask{
+                .input_file = input,
+                .output_file = out_file,
+                .optimize = optimize_flag,
+                .minify = minify_flag,
+                .source_map = source_map_flag,
+                .autoprefix = autoprefix_opts,
+            });
+        }
+        
+        compileFilesParallel(allocator, tasks.items) catch {
             std.process.exit(1);
         };
     }

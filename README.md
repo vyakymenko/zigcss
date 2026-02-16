@@ -25,7 +25,7 @@ zcss is engineered to be **the fastest CSS compiler in the world**. Key performa
 - **Zero runtime dependencies** — Single binary, no external libraries
 - **Compile-time optimizations** — Leverages Zig's comptime for maximum efficiency
 - **Memory-efficient parsing** — Minimal allocations, zero-copy where possible
-- **Parallel processing** — Multi-threaded compilation for large projects
+- **Parallel processing** — Multi-threaded compilation for multiple files (utilizes all CPU cores)
 - **Native performance** — Compiled to machine code, not interpreted
 
 ### Benchmarks
@@ -75,6 +75,7 @@ Sass:     920ms (compile + minify)
 - 📐 **Media Queries** — Advanced media query parsing and optimization
 - 🎭 **Pseudo-classes** — Complete pseudo-class and pseudo-element support
 - 📋 **Preprocessor Support** — SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS
+- 🚀 **Parallel Processing** — Multi-threaded compilation for multiple files
 
 ## 📦 Installation
 
@@ -453,7 +454,7 @@ zig build test --summary all
 - [x] Hash-based selector merging optimization (O(n²) → O(n))
 - [x] Comprehensive test suite
 - [x] Better error messages with position tracking
-- [ ] Parallel parsing improvements
+- [x] Parallel file processing ✅ — Multi-threaded compilation for multiple files
 - [ ] Incremental compilation
 - [ ] Performance profiling tools
 

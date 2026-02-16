@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Features
+- Add parallel file processing - compile multiple files concurrently using all CPU cores
+- Add --output-dir flag support for batch compilation of multiple files
+- Add glob pattern support for input files (e.g., `src/*.css`)
+
 ### Performance Improvements
 - Add font and background shorthand optimizations
 - Add redundant selector removal and media query merging optimizations
