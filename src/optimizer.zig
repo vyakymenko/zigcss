@@ -41,6 +41,9 @@ pub const Optimizer = struct {
     }
 
     fn mergeSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        var selector_map = std.AutoHashMap(usize, usize).init(self.allocator);
+        defer selector_map.deinit();
+
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
@@ -49,27 +52,60 @@ pub const Optimizer = struct {
                 continue;
             }
 
-            var j: usize = i + 1;
-            while (j < stylesheet.rules.items.len) {
-                const other_rule = &stylesheet.rules.items[j];
-                if (other_rule.* != .style) {
-                    j += 1;
+            const selector_hash = self.hashSelectors(&rule.style.selectors);
+            const gop = try selector_map.getOrPut(selector_hash);
+            
+            if (gop.found_existing) {
+                const target_idx = gop.value_ptr.*;
+                const target_rule = &stylesheet.rules.items[target_idx];
+                
+                if (target_rule.* == .style and self.selectorsEqual(&target_rule.style.selectors, &rule.style.selectors)) {
+                    for (rule.style.declarations.items) |*decl| {
+                        try target_rule.style.declarations.append(self.allocator, decl.*);
+                    }
+                    rule.style.declarations.items.len = 0;
+                    rule.deinit();
+                    _ = stylesheet.rules.swapRemove(i);
                     continue;
                 }
-
-                if (self.selectorsEqual(&rule.style.selectors, &other_rule.style.selectors)) {
-                    for (other_rule.style.declarations.items) |*decl| {
-                        try rule.style.declarations.append(self.allocator, decl.*);
-                    }
-                    other_rule.style.declarations.items.len = 0;
-                    other_rule.deinit();
-                    _ = stylesheet.rules.swapRemove(j);
-                } else {
-                    j += 1;
-                }
+            } else {
+                gop.value_ptr.* = i;
             }
+            
             i += 1;
         }
+    }
+
+    fn hashSelectors(self: *Optimizer, selectors: *std.ArrayList(ast.Selector)) usize {
+        _ = self;
+        var hash: usize = 0;
+        for (selectors.items) |selector| {
+            hash = hash * 31 +% selector.parts.items.len;
+            for (selector.parts.items) |part| {
+                hash = hash * 31 +% @intFromEnum(@as(std.meta.Tag(ast.SelectorPart), part));
+                hash = hash * 31 +% switch (part) {
+                    .type => |s| std.hash_map.hashString(s),
+                    .class => |s| std.hash_map.hashString(s),
+                    .id => |s| std.hash_map.hashString(s),
+                    .universal => 0,
+                    .pseudo_class => |s| std.hash_map.hashString(s),
+                    .pseudo_element => |s| std.hash_map.hashString(s),
+                    .combinator => |c| @intFromEnum(c),
+                    .attribute => |attr| blk: {
+                        var h: usize = std.hash_map.hashString(attr.name);
+                        if (attr.operator) |op| {
+                            h = h * 31 +% std.hash_map.hashString(op);
+                        }
+                        if (attr.value) |val| {
+                            h = h * 31 +% std.hash_map.hashString(val);
+                        }
+                        h = h * 31 +% @intFromBool(attr.case_sensitive);
+                        break :blk h;
+                    },
+                };
+            }
+        }
+        return hash;
     }
 
     fn selectorsEqual(self: *Optimizer, a: *std.ArrayList(ast.Selector), b: *std.ArrayList(ast.Selector)) bool {

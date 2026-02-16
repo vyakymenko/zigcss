@@ -180,7 +180,7 @@ pub const Parser = struct {
             } else if (ch == '~') {
                 self.advance();
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .following_sibling });
-            } else if (isAlnum(ch) or ch == '-' or ch == '_') {
+            } else if (isAlnumOrDash(ch)) {
                 const name = try self.parseIdentifier();
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .type = name });
             } else {
@@ -308,7 +308,7 @@ pub const Parser = struct {
 
         while (self.pos < self.input.len) {
             const ch = self.input[self.pos];
-            if (isAlnum(ch) or ch == '-' or ch == '_') {
+            if (isAlnumOrDash(ch)) {
                 self.pos += 1;
             } else {
                 break;
@@ -322,12 +322,35 @@ pub const Parser = struct {
         return try self.string_pool.internSlice(start, self.pos, self.input);
     }
 
+    const CHAR_CLASS = initCharClass();
+
+    fn initCharClass() [256]u8 {
+        comptime {
+            @setEvalBranchQuota(10000);
+            var table: [256]u8 = undefined;
+            for (&table, 0..) |*entry, i| {
+                const ch = @as(u8, @intCast(i));
+                var flags: u8 = 0;
+                if (std.ascii.isAlphabetic(ch)) flags |= 1;
+                if (std.ascii.isDigit(ch)) flags |= 2;
+                if (std.ascii.isAlphanumeric(ch)) flags |= 4;
+                if (ch == '-' or ch == '_') flags |= 8;
+                entry.* = flags;
+            }
+            return table;
+        }
+    }
+
     inline fn isAlpha(ch: u8) bool {
-        return std.ascii.isAlphabetic(ch);
+        return (CHAR_CLASS[ch] & 1) != 0;
     }
 
     inline fn isAlnum(ch: u8) bool {
-        return std.ascii.isAlphanumeric(ch);
+        return (CHAR_CLASS[ch] & 4) != 0;
+    }
+
+    inline fn isAlnumOrDash(ch: u8) bool {
+        return (CHAR_CLASS[ch] & 12) != 0;
     }
 
     fn skipWhitespace(self: *Parser) void {
