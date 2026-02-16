@@ -92,14 +92,17 @@ pub const Optimizer = struct {
     }
 
     fn removeUnusedCustomProperties(self: *Optimizer, stylesheet: *ast.Stylesheet, used_properties: *std.StringHashMap(void)) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        if (used_properties.count() == 0) return;
         
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
+                    if (style_rule.declarations.items.len == 0) continue;
                     var i: usize = 0;
                     while (i < style_rule.declarations.items.len) {
                         const decl = &style_rule.declarations.items[i];
-                        if (std.mem.startsWith(u8, decl.property, "--")) {
+                        if (decl.property.len >= 2 and decl.property[0] == '-' and decl.property[1] == '-') {
                             if (!used_properties.contains(decl.property)) {
                                 _ = style_rule.declarations.swapRemove(i);
                             } else {
@@ -120,13 +123,17 @@ pub const Optimizer = struct {
     }
 
     fn removeUnusedCustomPropertiesFromRules(self: *Optimizer, rules: []ast.Rule, used_properties: *const std.StringHashMap(void)) void {
+        if (rules.len == 0) return;
+        if (used_properties.count() == 0) return;
+        
         for (rules) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
+                    if (style_rule.declarations.items.len == 0) continue;
                     var i: usize = 0;
                     while (i < style_rule.declarations.items.len) {
                         const decl = &style_rule.declarations.items[i];
-                        if (std.mem.startsWith(u8, decl.property, "--")) {
+                        if (decl.property.len >= 2 and decl.property[0] == '-' and decl.property[1] == '-') {
                             if (!used_properties.contains(decl.property)) {
                                 _ = style_rule.declarations.swapRemove(i);
                             } else {
@@ -147,18 +154,23 @@ pub const Optimizer = struct {
     }
 
     fn collectUsedCustomPropertiesBeforeResolve(self: *Optimizer, stylesheet: *ast.Stylesheet, used_properties: *std.StringHashMap(void)) void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
+                    if (style_rule.declarations.items.len == 0) continue;
                     for (style_rule.declarations.items) |*decl| {
-                        if (std.mem.indexOf(u8, decl.value, "var(") != null) {
+                        if (decl.value.len >= 4 and std.mem.indexOf(u8, decl.value, "var(") != null) {
                             self.extractCustomPropertyNames(decl.value, used_properties);
                         }
                     }
                 },
                 .at_rule => |*at_rule| {
                     if (at_rule.rules) |*nested_rules| {
-                        self.collectUsedCustomPropertiesFromRules(nested_rules.items, used_properties);
+                        if (nested_rules.items.len > 0) {
+                            self.collectUsedCustomPropertiesFromRules(nested_rules.items, used_properties);
+                        }
                     }
                 },
             }
@@ -166,18 +178,23 @@ pub const Optimizer = struct {
     }
 
     fn collectUsedCustomPropertiesFromRules(self: *Optimizer, rules: []ast.Rule, used_properties: *std.StringHashMap(void)) void {
+        if (rules.len == 0) return;
+        
         for (rules) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
+                    if (style_rule.declarations.items.len == 0) continue;
                     for (style_rule.declarations.items) |*decl| {
-                        if (std.mem.indexOf(u8, decl.value, "var(") != null) {
+                        if (decl.value.len >= 4 and std.mem.indexOf(u8, decl.value, "var(") != null) {
                             self.extractCustomPropertyNames(decl.value, used_properties);
                         }
                     }
                 },
                 .at_rule => |*at_rule| {
                     if (at_rule.rules) |*nested_rules| {
-                        self.collectUsedCustomPropertiesFromRules(nested_rules.items, used_properties);
+                        if (nested_rules.items.len > 0) {
+                            self.collectUsedCustomPropertiesFromRules(nested_rules.items, used_properties);
+                        }
                     }
                 },
             }
@@ -227,6 +244,8 @@ pub const Optimizer = struct {
 
     fn removeEmptyRules(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         _ = self;
+        if (stylesheet.rules.items.len == 0) return;
+        
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const should_remove = switch (stylesheet.rules.items[i]) {
@@ -395,7 +414,9 @@ pub const Optimizer = struct {
             for (stylesheet.rules.items) |*rule| {
                 switch (rule.*) {
                     .style => |*style_rule| {
+                        if (style_rule.declarations.items.len == 0) continue;
                         for (style_rule.declarations.items) |*decl| {
+                            if (decl.value.len == 0) continue;
                             const result = try self.optimizeValue(decl.value);
                             if (result.was_optimized) {
                                 const interned = try pool.intern(result.optimized);
@@ -406,10 +427,13 @@ pub const Optimizer = struct {
                     },
                     .at_rule => |*at_rule| {
                         if (at_rule.rules) |*rules| {
+                            if (rules.items.len == 0) continue;
                             for (rules.items) |*nested_rule| {
                                 switch (nested_rule.*) {
                                     .style => |*style_rule| {
+                                        if (style_rule.declarations.items.len == 0) continue;
                                         for (style_rule.declarations.items) |*decl| {
+                                            if (decl.value.len == 0) continue;
                                             const opt_result = try self.optimizeValue(decl.value);
                                             if (opt_result.was_optimized) {
                                                 const interned = try pool.intern(opt_result.optimized);
@@ -429,9 +453,14 @@ pub const Optimizer = struct {
     }
 
     fn optimizeValue(self: *Optimizer, value: []const u8) !struct { optimized: []const u8, was_optimized: bool } {
-        const trimmed = std.mem.trim(u8, value, " \t\n\r");
+        if (value.len == 0) return .{ .optimized = value, .was_optimized = false };
+        
+        const needs_trimming = (value.len > 0 and (std.ascii.isWhitespace(value[0]) or std.ascii.isWhitespace(value[value.len - 1])));
+        const trimmed = if (needs_trimming) std.mem.trim(u8, value, " \t\n\r") else value;
         
         if (trimmed.len == 0) return .{ .optimized = value, .was_optimized = false };
+        
+        if (trimmed.len < 3) return .{ .optimized = value, .was_optimized = false };
 
         if (self.optimizeRgbColor(trimmed)) |optimized| {
             return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
