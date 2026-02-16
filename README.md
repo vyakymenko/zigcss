@@ -291,6 +291,9 @@ zcss input.css -o output.css --watch
 # Generate source maps
 zcss input.css -o output.css --source-map
 
+# Extract critical CSS for above-the-fold content
+zcss input.css -o critical.css --critical-classes "header,button,card" --critical-ids "nav" --critical-elements "div,body"
+
 # Compile multiple files
 zcss src/*.css -o dist/ --output-dir
 
@@ -587,6 +590,72 @@ div { color: black; }
 ```
 
 Dead code elimination works with nested rules in `@media`, `@container`, and `@layer` at-rules, automatically removing entire at-rules if all their nested rules are unused.
+
+### Critical CSS Extraction
+
+zcss can extract critical CSS for above-the-fold content, keeping only the CSS rules needed for initial page render. This improves First Contentful Paint (FCP) and Largest Contentful Paint (LCP) metrics by reducing the amount of CSS that needs to be parsed and applied before the page becomes interactive.
+
+**Input CSS:**
+```css
+.critical-header { color: red; }
+.non-critical-footer { color: blue; }
+#critical-nav { color: green; }
+#non-critical-sidebar { color: yellow; }
+div { color: black; }
+span { color: white; }
+```
+
+**Usage:**
+```zig
+const std = @import("std");
+const zcss = @import("zcss");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const css = try std.fs.cwd().readFileAlloc(allocator, "styles.css", 10 * 1024 * 1024);
+    defer allocator.free(css);
+
+    const critical_classes = [_][]const u8{"critical-header", "button", "card"};
+    const critical_ids = [_][]const u8{"critical-nav", "header"};
+    const critical_elements = [_][]const u8{"div", "body"};
+
+    const critical_css_opts = zcss.optimizer.CriticalCssOptions{
+        .critical_classes = &critical_classes,
+        .critical_ids = &critical_ids,
+        .critical_elements = &critical_elements,
+    };
+
+    const parser_trait = zcss.formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    const result = try zcss.codegen.generate(allocator, &stylesheet, .{
+        .optimize = true,
+        .critical_css = critical_css_opts,
+    });
+    defer allocator.free(result);
+
+    try std.fs.cwd().writeFile(.{ .sub_path = "critical.css", .data = result });
+}
+```
+
+**Output CSS:**
+```css
+.critical-header { color: red; }
+#critical-nav { color: green; }
+div { color: black; }
+```
+
+Critical CSS extraction works with nested rules in `@media`, `@container`, and `@layer` at-rules, automatically removing entire at-rules if all their nested rules are non-critical.
+
+**CLI Usage:**
+```bash
+# Extract critical CSS with specific classes, IDs, and elements
+zcss styles.css -o critical.css --critical-classes "header,button,card" --critical-ids "nav,header" --critical-elements "div,body"
+```
 
 ### SCSS Advanced Features
 
@@ -1036,7 +1105,12 @@ The documentation site includes:
   - Remove CSS rules whose selectors don't match any used classes, IDs, elements, or attributes
   - Supports nested rules in @media, @container, and @layer at-rules
   - Configurable via API with DeadCodeOptions
-- [ ] Critical CSS extraction — Extract above-the-fold CSS for faster initial render
+- [x] Critical CSS extraction ✅ — Extract above-the-fold CSS for faster initial render
+  - Extract only CSS rules needed for above-the-fold content
+  - Improves First Contentful Paint (FCP) and Largest Contentful Paint (LCP) metrics
+  - Supports nested rules in @media, @container, and @layer at-rules
+  - Configurable via API with CriticalCssOptions
+  - CLI support with --critical-classes, --critical-ids, and --critical-elements flags
 - [ ] Enhanced error messages — Provide suggestions and context for common errors
 - [ ] Advanced LSP features — Go to definition, find references, rename symbols
 

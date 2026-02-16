@@ -9,6 +9,7 @@ pub const CodegenOptions = struct {
     optimize: bool = false,
     autoprefix: ?autoprefixer.AutoprefixOptions = null,
     dead_code: ?optimizer.DeadCodeOptions = null,
+    critical_css: ?optimizer.CriticalCssOptions = null,
     plugins: []const plugin.Plugin = &.{},
 };
 
@@ -57,8 +58,10 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
         try registry.run(stylesheet);
     }
 
-    if (options.optimize or options.autoprefix != null or options.dead_code != null) {
-        var opt = if (options.dead_code) |dead_code_opts|
+    if (options.optimize or options.autoprefix != null or options.dead_code != null or options.critical_css != null) {
+        var opt = if (options.critical_css) |critical_css_opts|
+            optimizer.Optimizer.initWithCriticalCss(allocator, critical_css_opts)
+        else if (options.dead_code) |dead_code_opts|
             optimizer.Optimizer.initWithDeadCode(allocator, dead_code_opts)
         else if (options.autoprefix) |autoprefix_opts|
             optimizer.Optimizer.initWithAutoprefix(allocator, autoprefix_opts)
@@ -70,6 +73,9 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
         }
         if (options.dead_code) |dead_code_opts| {
             opt.dead_code_options = dead_code_opts;
+        }
+        if (options.critical_css) |critical_css_opts| {
+            opt.critical_css_options = critical_css_opts;
         }
         
         try opt.optimize(stylesheet);

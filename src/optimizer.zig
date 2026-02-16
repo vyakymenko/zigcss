@@ -11,10 +11,18 @@ pub const DeadCodeOptions = struct {
     used_attributes: ?[]const []const u8 = null,
 };
 
+pub const CriticalCssOptions = struct {
+    critical_classes: ?[]const []const u8 = null,
+    critical_ids: ?[]const []const u8 = null,
+    critical_elements: ?[]const []const u8 = null,
+    critical_attributes: ?[]const []const u8 = null,
+};
+
 pub const Optimizer = struct {
     allocator: std.mem.Allocator,
     autoprefix_options: ?autoprefixer.AutoprefixOptions = null,
     dead_code_options: ?DeadCodeOptions = null,
+    critical_css_options: ?CriticalCssOptions = null,
 
     pub fn init(allocator: std.mem.Allocator) Optimizer {
         return .{ .allocator = allocator };
@@ -34,6 +42,13 @@ pub const Optimizer = struct {
         };
     }
 
+    pub fn initWithCriticalCss(allocator: std.mem.Allocator, critical_css_opts: CriticalCssOptions) Optimizer {
+        return .{
+            .allocator = allocator,
+            .critical_css_options = critical_css_opts,
+        };
+    }
+
     pub fn optimize(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         try self.resolveCustomProperties(stylesheet);
         if (self.autoprefix_options) |opts| {
@@ -42,6 +57,9 @@ pub const Optimizer = struct {
         try self.removeEmptyRules(stylesheet);
         if (self.dead_code_options) |_| {
             try self.removeDeadCode(stylesheet);
+        }
+        if (self.critical_css_options) |_| {
+            try self.extractCriticalCss(stylesheet);
         }
         try self.optimizeSelectors(stylesheet);
         try self.mergeSelectors(stylesheet);
@@ -1867,5 +1885,77 @@ pub const Optimizer = struct {
         }
         
         return false;
+    }
+
+    fn extractCriticalCss(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        const opts = self.critical_css_options.?;
+        
+        var critical_classes_set = std.StringHashMap(void).init(self.allocator);
+        defer critical_classes_set.deinit();
+        if (opts.critical_classes) |classes| {
+            for (classes) |class| {
+                try critical_classes_set.put(class, {});
+            }
+        }
+        
+        var critical_ids_set = std.StringHashMap(void).init(self.allocator);
+        defer critical_ids_set.deinit();
+        if (opts.critical_ids) |ids| {
+            for (ids) |id| {
+                try critical_ids_set.put(id, {});
+            }
+        }
+        
+        var critical_elements_set = std.StringHashMap(void).init(self.allocator);
+        defer critical_elements_set.deinit();
+        if (opts.critical_elements) |elements| {
+            for (elements) |element| {
+                try critical_elements_set.put(element, {});
+            }
+        }
+        
+        var critical_attributes_set = std.StringHashMap(void).init(self.allocator);
+        defer critical_attributes_set.deinit();
+        if (opts.critical_attributes) |attributes| {
+            for (attributes) |attr| {
+                try critical_attributes_set.put(attr, {});
+            }
+        }
+        
+        var i: usize = 0;
+        while (i < stylesheet.rules.items.len) {
+            const rule = &stylesheet.rules.items[i];
+            const should_remove = switch (rule.*) {
+                .style => |*style_rule| !self.isSelectorUsed(&style_rule.selectors, &critical_classes_set, &critical_ids_set, &critical_elements_set, &critical_attributes_set),
+                .at_rule => |*at_rule| blk: {
+                    if (at_rule.rules) |*rules| {
+                        var j: usize = 0;
+                        while (j < rules.items.len) {
+                            const nested_rule = &rules.items[j];
+                            const nested_should_remove = switch (nested_rule.*) {
+                                .style => |*style_rule| !self.isSelectorUsed(&style_rule.selectors, &critical_classes_set, &critical_ids_set, &critical_elements_set, &critical_attributes_set),
+                                .at_rule => false,
+                            };
+                            if (nested_should_remove) {
+                                nested_rule.deinit();
+                                _ = rules.swapRemove(j);
+                            } else {
+                                j += 1;
+                            }
+                        }
+                        break :blk rules.items.len == 0;
+                    } else {
+                        break :blk false;
+                    }
+                },
+            };
+            
+            if (should_remove) {
+                rule.deinit();
+                _ = stylesheet.rules.swapRemove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 };

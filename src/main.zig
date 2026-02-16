@@ -16,6 +16,7 @@ const CompileConfig = struct {
     minify: bool,
     source_map: bool,
     autoprefix: ?autoprefixer.AutoprefixOptions = null,
+    critical_css: ?optimizer.CriticalCssOptions = null,
     profile: bool = false,
 };
 
@@ -26,6 +27,7 @@ const CompileTask = struct {
     minify: bool,
     source_map: bool,
     autoprefix: ?autoprefixer.AutoprefixOptions,
+    critical_css: ?optimizer.CriticalCssOptions,
     profile: bool,
     result: ?[]const u8 = null,
     err: ?[]const u8 = null,
@@ -83,6 +85,7 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
         .minify = config.minify,
         .optimize = config.optimize,
         .autoprefix = config.autoprefix,
+        .critical_css = config.critical_css,
     };
     
     try optimize_timing.end();
@@ -216,6 +219,7 @@ fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
         .minify = task.minify,
         .optimize = task.optimize,
         .autoprefix = task.autoprefix,
+        .critical_css = task.critical_css,
     };
 
     const result = codegen.generate(allocator, &stylesheet, options) catch |err| {
@@ -448,6 +452,9 @@ pub fn main() !void {
         std.debug.print("  --source-map             Generate source map\n", .{});
         std.debug.print("  --autoprefix             Add vendor prefixes\n", .{});
         std.debug.print("  --browsers <list>        Browser support (comma-separated)\n", .{});
+        std.debug.print("  --critical-classes <list> Critical CSS classes (comma-separated)\n", .{});
+        std.debug.print("  --critical-ids <list>    Critical CSS IDs (comma-separated)\n", .{});
+        std.debug.print("  --critical-elements <list> Critical CSS elements (comma-separated)\n", .{});
         std.debug.print("  --watch                  Watch mode\n", .{});
         std.debug.print("  --profile                Enable performance profiling\n", .{});
         std.debug.print("  --lsp                    Start Language Server Protocol server\n", .{});
@@ -473,6 +480,12 @@ pub fn main() !void {
     var profile_flag = false;
     var browsers = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     defer browsers.deinit(allocator);
+    var critical_classes = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer critical_classes.deinit(allocator);
+    var critical_ids = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer critical_ids.deinit(allocator);
+    var critical_elements = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer critical_elements.deinit(allocator);
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -507,6 +520,45 @@ pub fn main() !void {
                 }
                 i += 1;
             }
+        } else if (std.mem.eql(u8, args[i], "--critical-classes")) {
+            if (i + 1 < args.len) {
+                const classes_str = args[i + 1];
+                var iter = std.mem.splitSequence(u8, classes_str, ",");
+                while (iter.next()) |class| {
+                    const trimmed = std.mem.trim(u8, class, " \t");
+                    if (trimmed.len > 0) {
+                        const class_copy = try allocator.dupe(u8, trimmed);
+                        try critical_classes.append(allocator, class_copy);
+                    }
+                }
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, args[i], "--critical-ids")) {
+            if (i + 1 < args.len) {
+                const ids_str = args[i + 1];
+                var iter = std.mem.splitSequence(u8, ids_str, ",");
+                while (iter.next()) |id| {
+                    const trimmed = std.mem.trim(u8, id, " \t");
+                    if (trimmed.len > 0) {
+                        const id_copy = try allocator.dupe(u8, trimmed);
+                        try critical_ids.append(allocator, id_copy);
+                    }
+                }
+                i += 1;
+            }
+        } else if (std.mem.eql(u8, args[i], "--critical-elements")) {
+            if (i + 1 < args.len) {
+                const elements_str = args[i + 1];
+                var iter = std.mem.splitSequence(u8, elements_str, ",");
+                while (iter.next()) |element| {
+                    const trimmed = std.mem.trim(u8, element, " \t");
+                    if (trimmed.len > 0) {
+                        const element_copy = try allocator.dupe(u8, trimmed);
+                        try critical_elements.append(allocator, element_copy);
+                    }
+                }
+                i += 1;
+            }
         } else if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
             std.debug.print("Usage: zcss <input.css> [-o output.css] [options]\n", .{});
             return;
@@ -537,6 +589,17 @@ pub fn main() !void {
         };
     } else null;
 
+    const critical_css_opts: ?optimizer.CriticalCssOptions = if (critical_classes.items.len > 0 or critical_ids.items.len > 0 or critical_elements.items.len > 0) blk: {
+        const classes_slice = if (critical_classes.items.len > 0) try critical_classes.toOwnedSlice(allocator) else null;
+        const ids_slice = if (critical_ids.items.len > 0) try critical_ids.toOwnedSlice(allocator) else null;
+        const elements_slice = if (critical_elements.items.len > 0) try critical_elements.toOwnedSlice(allocator) else null;
+        break :blk optimizer.CriticalCssOptions{
+            .critical_classes = classes_slice,
+            .critical_ids = ids_slice,
+            .critical_elements = elements_slice,
+        };
+    } else null;
+
     if (watch_flag) {
         if (input_files.items.len > 1) {
             std.debug.print("Error: Watch mode only supports single file\n", .{});
@@ -549,6 +612,7 @@ pub fn main() !void {
             .minify = minify_flag,
             .source_map = source_map_flag,
             .autoprefix = autoprefix_opts,
+            .critical_css = critical_css_opts,
             .profile = profile_flag,
         };
         try watchFile(allocator, config);
@@ -560,6 +624,7 @@ pub fn main() !void {
             .minify = minify_flag,
             .source_map = source_map_flag,
             .autoprefix = autoprefix_opts,
+            .critical_css = critical_css_opts,
             .profile = profile_flag,
         };
         compileFile(allocator, config) catch {
@@ -590,6 +655,7 @@ pub fn main() !void {
                 .minify = minify_flag,
                 .source_map = source_map_flag,
                 .autoprefix = autoprefix_opts,
+                .critical_css = critical_css_opts,
                 .profile = profile_flag,
             });
         }
@@ -972,4 +1038,64 @@ test "dead code elimination with media queries" {
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".used-class"));
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, ".unused-class"));
+}
+
+test "critical CSS extraction" {
+    const css = ".critical-class { color: red; } .non-critical-class { color: blue; } #critical-id { color: green; } #non-critical-id { color: yellow; } div { color: black; } span { color: white; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    const critical_classes = [_][]const u8{"critical-class"};
+    const critical_ids = [_][]const u8{"critical-id"};
+    const critical_elements = [_][]const u8{"div"};
+
+    const critical_css_opts = optimizer.CriticalCssOptions{
+        .critical_classes = &critical_classes,
+        .critical_ids = &critical_ids,
+        .critical_elements = &critical_elements,
+    };
+
+    const result = try codegen.generate(allocator, &stylesheet, .{
+        .optimize = true,
+        .critical_css = critical_css_opts,
+    });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".critical-class"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "#critical-id"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "div"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, ".non-critical-class"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "#non-critical-id"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "span"));
+}
+
+test "critical CSS extraction with media queries" {
+    const css = "@media (min-width: 768px) { .critical-class { color: red; } .non-critical-class { color: blue; } }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    const critical_classes = [_][]const u8{"critical-class"};
+
+    const critical_css_opts = optimizer.CriticalCssOptions{
+        .critical_classes = &critical_classes,
+    };
+
+    const result = try codegen.generate(allocator, &stylesheet, .{
+        .optimize = true,
+        .critical_css = critical_css_opts,
+    });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".critical-class"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, ".non-critical-class"));
 }
