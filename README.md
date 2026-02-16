@@ -444,6 +444,9 @@ Multi-pass optimization pipeline:
    - `border-width`, `border-style`, `border-color` → `border`
    - `font-*` properties → `font`
    - `background-*` properties → `background`
+   - `flex-grow`, `flex-shrink`, `flex-basis` → `flex`
+   - `grid-template-rows`, `grid-template-columns`, `grid-template-areas` → `grid-template`
+   - `row-gap`, `column-gap` → `gap`
 5. **Advanced selector optimization** ✅ — Intelligent selector optimizations:
    - Universal selector removal (`*` removed when redundant)
    - Selector simplification (redundant combinators removed)
@@ -679,7 +682,7 @@ zcss input.css -o output.css --profile
 - [x] CSS Modules support
 - [x] CSS-in-JS compilation
 - [x] PostCSS plugin compatibility layer
-- [ ] CSS Grid/Flexbox optimizations
+- [x] CSS Grid/Flexbox optimizations ✅ — Flexbox and Grid shorthand property optimizations
 - [x] Container queries ✅ — Full container query support with merging optimization
 - [ ] Cascade layers
 - [ ] Tailwind @apply expansion

@@ -6,6 +6,7 @@ const error_module = @import("error.zig");
 const parser = @import("parser.zig");
 const autoprefixer = @import("autoprefixer.zig");
 const profiler = @import("profiler.zig");
+const optimizer = @import("optimizer.zig");
 
 const CompileConfig = struct {
     input_file: []const u8,
@@ -646,4 +647,89 @@ test "container query parsing" {
     const rule = stylesheet.rules.items[0];
     try std.testing.expect(rule == .at_rule);
     try std.testing.expect(std.mem.eql(u8, rule.at_rule.name, "container"));
+}
+
+test "flexbox shorthand optimization" {
+    const css = ".flex { flex-grow: 1; flex-shrink: 1; flex-basis: 0%; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    var opt = optimizer.Optimizer.init(allocator);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "flex:"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "flex-grow"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "flex-shrink"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "flex-basis"));
+}
+
+test "grid template shorthand optimization" {
+    const css = ".grid { grid-template-rows: 1fr 1fr; grid-template-columns: repeat(2, 1fr); }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    var opt = optimizer.Optimizer.init(allocator);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "grid-template:"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "grid-template-rows"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "grid-template-columns"));
+}
+
+test "gap shorthand optimization" {
+    const css = ".container { row-gap: 20px; column-gap: 20px; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    var opt = optimizer.Optimizer.init(allocator);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "gap:"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "row-gap"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "column-gap"));
+}
+
+test "gap shorthand optimization different values" {
+    const css = ".container { row-gap: 10px; column-gap: 20px; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    var opt = optimizer.Optimizer.init(allocator);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "gap:"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "10px"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "20px"));
 }

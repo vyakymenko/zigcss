@@ -466,6 +466,17 @@ pub const Optimizer = struct {
         var background_position: ?[]const u8 = null;
         var background_attachment: ?[]const u8 = null;
         
+        var flex_grow: ?[]const u8 = null;
+        var flex_shrink: ?[]const u8 = null;
+        var flex_basis: ?[]const u8 = null;
+        
+        var grid_template_rows: ?[]const u8 = null;
+        var grid_template_columns: ?[]const u8 = null;
+        var grid_template_areas: ?[]const u8 = null;
+        
+        var row_gap: ?[]const u8 = null;
+        var column_gap: ?[]const u8 = null;
+        
         var margin_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
         defer margin_indices.deinit(self.allocator);
         var padding_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
@@ -476,6 +487,12 @@ pub const Optimizer = struct {
         defer font_indices.deinit(self.allocator);
         var background_indices = try std.ArrayList(usize).initCapacity(self.allocator, 5);
         defer background_indices.deinit(self.allocator);
+        var flex_indices = try std.ArrayList(usize).initCapacity(self.allocator, 3);
+        defer flex_indices.deinit(self.allocator);
+        var grid_template_indices = try std.ArrayList(usize).initCapacity(self.allocator, 3);
+        defer grid_template_indices.deinit(self.allocator);
+        var gap_indices = try std.ArrayList(usize).initCapacity(self.allocator, 2);
+        defer gap_indices.deinit(self.allocator);
         
         for (style_rule.declarations.items, 0..) |*decl, i| {
             if (std.mem.eql(u8, decl.property, "margin-top")) {
@@ -544,6 +561,30 @@ pub const Optimizer = struct {
             } else if (std.mem.eql(u8, decl.property, "background-attachment")) {
                 background_attachment = decl.value;
                 try background_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "flex-grow")) {
+                flex_grow = decl.value;
+                try flex_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "flex-shrink")) {
+                flex_shrink = decl.value;
+                try flex_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "flex-basis")) {
+                flex_basis = decl.value;
+                try flex_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "grid-template-rows")) {
+                grid_template_rows = decl.value;
+                try grid_template_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "grid-template-columns")) {
+                grid_template_columns = decl.value;
+                try grid_template_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "grid-template-areas")) {
+                grid_template_areas = decl.value;
+                try grid_template_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "row-gap")) {
+                row_gap = decl.value;
+                try gap_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "column-gap")) {
+                column_gap = decl.value;
+                try gap_indices.append(self.allocator, i);
             }
         }
         
@@ -646,6 +687,66 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
+        
+        if (flex_indices.items.len == 3) {
+            const shorthand = try self.buildFlexShorthand(flex_grow.?, flex_shrink.?, flex_basis.?);
+            defer self.allocator.free(shorthand);
+            
+            const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
+            
+            var new_decl = ast.Declaration.init(style_rule.allocator);
+            new_decl.property = "flex";
+            new_decl.value = interned;
+            try style_rule.declarations.append(style_rule.allocator, new_decl);
+            
+            var i: usize = flex_indices.items.len;
+            while (i > 0) {
+                i -= 1;
+                const idx = flex_indices.items[i];
+                style_rule.declarations.items[idx].deinit();
+                _ = style_rule.declarations.swapRemove(idx);
+            }
+        }
+        
+        if (grid_template_indices.items.len >= 2 and grid_template_rows != null and grid_template_columns != null) {
+            const shorthand = try self.buildGridTemplateShorthand(grid_template_rows, grid_template_columns, grid_template_areas);
+            defer self.allocator.free(shorthand);
+            
+            const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
+            
+            var new_decl = ast.Declaration.init(style_rule.allocator);
+            new_decl.property = "grid-template";
+            new_decl.value = interned;
+            try style_rule.declarations.append(style_rule.allocator, new_decl);
+            
+            var i: usize = grid_template_indices.items.len;
+            while (i > 0) {
+                i -= 1;
+                const idx = grid_template_indices.items[i];
+                style_rule.declarations.items[idx].deinit();
+                _ = style_rule.declarations.swapRemove(idx);
+            }
+        }
+        
+        if (gap_indices.items.len == 2) {
+            const shorthand = try self.buildGapShorthand(row_gap.?, column_gap.?);
+            defer self.allocator.free(shorthand);
+            
+            const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
+            
+            var new_decl = ast.Declaration.init(style_rule.allocator);
+            new_decl.property = "gap";
+            new_decl.value = interned;
+            try style_rule.declarations.append(style_rule.allocator, new_decl);
+            
+            var i: usize = gap_indices.items.len;
+            while (i > 0) {
+                i -= 1;
+                const idx = gap_indices.items[i];
+                style_rule.declarations.items[idx].deinit();
+                _ = style_rule.declarations.swapRemove(idx);
+            }
+        }
     }
 
     fn buildShorthand(self: *Optimizer, top: []const u8, right: []const u8, bottom: []const u8, left: []const u8) ![]const u8 {
@@ -722,6 +823,60 @@ pub const Optimizer = struct {
         }
 
         return try result.toOwnedSlice(self.allocator);
+    }
+
+    fn buildFlexShorthand(self: *Optimizer, grow: []const u8, shrink: []const u8, basis: []const u8) ![]const u8 {
+        if (std.mem.eql(u8, grow, "1") and std.mem.eql(u8, shrink, "1") and std.mem.eql(u8, basis, "0%")) {
+            return try self.allocator.dupe(u8, "1 1 0%");
+        }
+        if (std.mem.eql(u8, grow, "0") and std.mem.eql(u8, shrink, "1") and std.mem.eql(u8, basis, "auto")) {
+            return try self.allocator.dupe(u8, "0 1 auto");
+        }
+        if (std.mem.eql(u8, grow, "none")) {
+            return try self.allocator.dupe(u8, "none");
+        }
+        if (std.mem.eql(u8, grow, "auto")) {
+            return try self.allocator.dupe(u8, "auto");
+        }
+        return try std.fmt.allocPrint(self.allocator, "{s} {s} {s}", .{ grow, shrink, basis });
+    }
+
+    fn buildGridTemplateShorthand(self: *Optimizer, rows: ?[]const u8, columns: ?[]const u8, areas: ?[]const u8) ![]const u8 {
+        var parts = try std.ArrayList([]const u8).initCapacity(self.allocator, 3);
+        defer parts.deinit(self.allocator);
+
+        if (areas) |a| {
+            try parts.append(self.allocator, a);
+        }
+        if (rows) |r| {
+            try parts.append(self.allocator, r);
+        }
+        if (columns) |c| {
+            try parts.append(self.allocator, c);
+        }
+
+        if (parts.items.len == 0) {
+            return try self.allocator.dupe(u8, "none");
+        }
+
+        var result = try std.ArrayList(u8).initCapacity(self.allocator, 128);
+        defer result.deinit(self.allocator);
+
+        for (parts.items, 0..) |part, i| {
+            if (i > 0) {
+                try result.append(self.allocator, ' ');
+            }
+            try result.appendSlice(self.allocator, part);
+        }
+
+        return try result.toOwnedSlice(self.allocator);
+    }
+
+    fn buildGapShorthand(self: *Optimizer, row: []const u8, column: []const u8) ![]const u8 {
+        if (std.mem.eql(u8, row, column)) {
+            return try self.allocator.dupe(u8, row);
+        }
+        return try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ row, column });
     }
 
     fn removeDuplicateDeclarations(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add CSS Grid/Flexbox shorthand optimizations - combine flex-grow/flex-shrink/flex-basis into flex, grid-template-* into grid-template, row-gap/column-gap into gap
 - Add container query support - full CSS Container Queries parsing and optimization
 - Add container query merging optimization - merge identical @container rules for smaller output
 - Add container query test coverage
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add glob pattern support for input files (e.g., `src/*.css`)
 
 ### Performance Improvements
+- Add CSS Grid/Flexbox shorthand optimizations - reduces CSS size by combining related Grid and Flexbox properties into shorthand form
 - Add container query merging optimization - reduces CSS size by combining identical container queries
 - Add performance profiling infrastructure for identifying bottlenecks and measuring improvements
 - Add detailed timing breakdowns for parse, optimize, and codegen phases
