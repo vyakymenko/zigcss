@@ -710,9 +710,16 @@ Multi-pass optimization pipeline:
      - Simplify nested calc() expressions
      - Remove unnecessary calc() wrappers (`calc(10px)` → `10px`)
      - Optimize min()/max()/clamp() with numeric values
-8. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
-9. **Container query merging** ✅ — Merge identical `@container` rules into a single rule
-10. **Cascade layer merging** ✅ — Merge identical `@layer` rules into a single rule
+8. **CSS Logical Properties optimization** ✅ — Convert logical properties to physical equivalents:
+   - `margin-inline-start` → `margin-left`, `margin-inline-end` → `margin-right`
+   - `margin-block-start` → `margin-top`, `margin-block-end` → `margin-bottom`
+   - `padding-inline-*` → `padding-*` (left/right), `padding-block-*` → `padding-*` (top/bottom)
+   - `border-inline-*` → `border-*` (left/right), `border-block-*` → `border-*` (top/bottom)
+   - `inset-inline-*` → `left`/`right`, `inset-block-*` → `top`/`bottom`
+   - Assumes LTR and horizontal-tb writing mode for safe conversion
+9. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
+10. **Container query merging** ✅ — Merge identical `@container` rules into a single rule
+11. **Cascade layer merging** ✅ — Merge identical `@layer` rules into a single rule
 
 ### Code Generator
 
@@ -958,7 +965,12 @@ The documentation site includes:
   - Simplify nested calc() expressions
   - Remove unnecessary calc() wrappers
   - Optimize min()/max()/clamp() with numeric values
-- [ ] CSS Logical Properties optimization — Convert logical properties to physical equivalents when safe
+- [x] CSS Logical Properties optimization ✅ — Convert logical properties to physical equivalents when safe
+  - Convert margin-inline-* and margin-block-* to margin-* properties
+  - Convert padding-inline-* and padding-block-* to padding-* properties
+  - Convert border-inline-* and border-block-* to border-* properties
+  - Convert inset-inline-* and inset-block-* to positioning properties
+  - Assumes LTR and horizontal-tb writing mode for safe conversion
 - [ ] Dead code elimination — Remove unused CSS rules and declarations
 - [ ] Critical CSS extraction — Extract above-the-fold CSS for faster initial render
 - [ ] Enhanced error messages — Provide suggestions and context for common errors

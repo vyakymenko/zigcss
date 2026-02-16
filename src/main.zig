@@ -863,3 +863,53 @@ test "gap shorthand optimization different values" {
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "10px"));
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "20px"));
 }
+
+test "logical properties optimization" {
+    const css = ".box { margin-inline-start: 10px; margin-inline-end: 20px; padding-block-start: 5px; padding-block-end: 15px; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    var opt = optimizer.Optimizer.init(allocator);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "margin-left"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "margin-right"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "padding-top"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "padding-bottom"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "margin-inline-start"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "margin-inline-end"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "padding-block-start"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "padding-block-end"));
+}
+
+test "logical border properties optimization" {
+    const css = ".border { border-inline-start-width: 2px; border-inline-end-color: red; border-block-start-style: solid; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    var opt = optimizer.Optimizer.init(allocator);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "border-left-width"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "border-right-color"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "border-top-style"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "border-inline-start-width"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "border-inline-end-color"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "border-block-start-style"));
+}

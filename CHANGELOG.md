@@ -68,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add constant expression evaluation for CSS Math Functions - evaluate constant expressions at compile time
 - Add calc() wrapper removal - remove unnecessary calc() wrappers when safe
 - Add min()/max()/clamp() numeric optimization - optimize math functions with numeric values
+- Add CSS Logical Properties optimization - convert logical properties to physical equivalents when safe
+- Add logical property conversion for margin, padding, border, and inset properties
+- Convert margin-inline-* and margin-block-* to margin-* properties (assumes LTR and horizontal-tb writing mode)
+- Convert padding-inline-* and padding-block-* to padding-* properties
+- Convert border-inline-* and border-block-* to border-* properties
+- Convert inset-inline-* and inset-block-* to positioning properties (left, right, top, bottom)
 
 ### Performance Improvements
 - Add cascade layer merging optimization - reduces CSS size by combining identical cascade layers
@@ -96,6 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use optimized character checks in selector parsing
 - Add CSS Math Functions optimization - reduces CSS size by evaluating and simplifying calc(), min(), max(), and clamp() expressions
 - Optimize constant math expressions at compile time for faster runtime performance
+- Add CSS Logical Properties optimization - converts logical properties to physical equivalents for better browser compatibility and potential size reduction
+- Fix ArrayList initialization for Zig 0.15.2 compatibility - update ArrayList.init() calls to use initCapacity() with proper error handling
 
 ### Features
 - Add autoprefixer integration with vendor prefix support for CSS properties and values

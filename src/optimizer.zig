@@ -28,6 +28,7 @@ pub const Optimizer = struct {
         try self.optimizeSelectors(stylesheet);
         try self.mergeSelectors(stylesheet);
         try self.removeRedundantSelectors(stylesheet);
+        try self.optimizeLogicalProperties(stylesheet);
         try self.optimizeShorthandProperties(stylesheet);
         try self.removeDuplicateDeclarations(stylesheet);
         try self.optimizeValues(stylesheet);
@@ -469,7 +470,7 @@ pub const Optimizer = struct {
             return null;
         }
 
-        var args = std.ArrayList([]const u8).init(self.allocator);
+        var args = std.ArrayList([]const u8).initCapacity(self.allocator, 4) catch return null;
         defer args.deinit(self.allocator);
 
         var depth: i32 = 0;
@@ -485,7 +486,7 @@ pub const Optimizer = struct {
             } else if (ch == ',' and depth == 0) {
                 const arg = std.mem.trim(u8, content[start..i], " \t\n\r");
                 if (arg.len > 0) {
-                    args.append(arg) catch return null;
+                    args.append(self.allocator, arg) catch return null;
                 }
                 start = i + 1;
             }
@@ -495,7 +496,7 @@ pub const Optimizer = struct {
         if (start < content.len) {
             const arg = std.mem.trim(u8, content[start..], " \t\n\r");
             if (arg.len > 0) {
-                args.append(arg) catch return null;
+                args.append(self.allocator, arg) catch return null;
             }
         }
 
@@ -503,15 +504,15 @@ pub const Optimizer = struct {
             return null;
         }
 
-        var evaluated_args = std.ArrayList(?f64).init(self.allocator);
+        var evaluated_args = std.ArrayList(?f64).initCapacity(self.allocator, 4) catch return null;
         defer evaluated_args.deinit(self.allocator);
 
         var all_numeric = true;
         for (args.items) |arg| {
             if (self.parseNumericValue(arg)) |num| {
-                evaluated_args.append(num) catch return null;
+                evaluated_args.append(self.allocator, num) catch return null;
             } else {
-                evaluated_args.append(null) catch return null;
+                evaluated_args.append(self.allocator, null) catch return null;
                 all_numeric = false;
             }
         }
@@ -545,7 +546,7 @@ pub const Optimizer = struct {
             return null;
         }
 
-        var args = std.ArrayList([]const u8).init(self.allocator);
+        var args = std.ArrayList([]const u8).initCapacity(self.allocator, 4) catch return null;
         defer args.deinit(self.allocator);
 
         var depth: i32 = 0;
@@ -561,7 +562,7 @@ pub const Optimizer = struct {
             } else if (ch == ',' and depth == 0) {
                 const arg = std.mem.trim(u8, content[start..i], " \t\n\r");
                 if (arg.len > 0) {
-                    args.append(arg) catch return null;
+                    args.append(self.allocator, arg) catch return null;
                 }
                 start = i + 1;
             }
@@ -571,7 +572,7 @@ pub const Optimizer = struct {
         if (start < content.len) {
             const arg = std.mem.trim(u8, content[start..], " \t\n\r");
             if (arg.len > 0) {
-                args.append(arg) catch return null;
+                args.append(self.allocator, arg) catch return null;
             }
         }
 
@@ -602,10 +603,10 @@ pub const Optimizer = struct {
             return null;
         }
 
-        var parts = std.ArrayList([]const u8).init(self.allocator);
+        var parts = std.ArrayList([]const u8).initCapacity(self.allocator, 4) catch return null;
         defer parts.deinit(self.allocator);
 
-        var operators = std.ArrayList(u8).init(self.allocator);
+        var operators = std.ArrayList(u8).initCapacity(self.allocator, 4) catch return null;
         defer operators.deinit(self.allocator);
 
         var i: usize = 0;
@@ -624,10 +625,10 @@ pub const Optimizer = struct {
                 if (i > start) {
                     const part = std.mem.trim(u8, trimmed[start..i], " \t\n\r");
                     if (part.len > 0) {
-                        parts.append(part) catch return null;
+                        parts.append(self.allocator, part) catch return null;
                     }
                 }
-                operators.append(ch) catch return null;
+                operators.append(self.allocator, ch) catch return null;
                 i += 1;
                 start = i;
             } else {
@@ -638,7 +639,7 @@ pub const Optimizer = struct {
         if (start < trimmed.len) {
             const part = std.mem.trim(u8, trimmed[start..], " \t\n\r");
             if (part.len > 0) {
-                parts.append(part) catch return null;
+                parts.append(self.allocator, part) catch return null;
             }
         }
 
@@ -655,12 +656,12 @@ pub const Optimizer = struct {
             return null;
         }
 
-        var values = std.ArrayList(f64).init(self.allocator);
+        var values = std.ArrayList(f64).initCapacity(self.allocator, 4) catch return null;
         defer values.deinit(self.allocator);
 
         for (parts.items) |part| {
             const num = self.parseNumericValue(part) orelse return null;
-            values.append(num) catch return null;
+            values.append(self.allocator, num) catch return null;
         }
 
         var result = values.items[0];
@@ -739,6 +740,81 @@ pub const Optimizer = struct {
         }
 
         return !has_operators;
+    }
+
+    fn optimizeLogicalProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        const pool = stylesheet.string_pool;
+        for (stylesheet.rules.items) |*rule| {
+            switch (rule.*) {
+                .style => |*style_rule| {
+                    try self.convertLogicalPropertiesInRule(style_rule, pool);
+                },
+                .at_rule => |*at_rule| {
+                    if (at_rule.rules) |*rules| {
+                        for (rules.items) |*nested_rule| {
+                            switch (nested_rule.*) {
+                                .style => |*style_rule| {
+                                    try self.convertLogicalPropertiesInRule(style_rule, pool);
+                                },
+                                .at_rule => {},
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    fn convertLogicalPropertiesInRule(self: *Optimizer, style_rule: *ast.StyleRule, pool: ?*string_pool.StringPool) !void {
+        for (style_rule.declarations.items) |*decl| {
+            const logical_prop = self.getPhysicalPropertyName(decl.property);
+            if (logical_prop) |physical| {
+                const interned = if (pool) |p| try p.intern(physical) else physical;
+                decl.property = interned;
+            }
+        }
+    }
+
+    fn getPhysicalPropertyName(self: *Optimizer, logical: []const u8) ?[]const u8 {
+        _ = self;
+        const logical_map = [_]struct { logical: []const u8, physical: []const u8 }{
+            .{ .logical = "margin-inline-start", .physical = "margin-left" },
+            .{ .logical = "margin-inline-end", .physical = "margin-right" },
+            .{ .logical = "margin-block-start", .physical = "margin-top" },
+            .{ .logical = "margin-block-end", .physical = "margin-bottom" },
+            .{ .logical = "padding-inline-start", .physical = "padding-left" },
+            .{ .logical = "padding-inline-end", .physical = "padding-right" },
+            .{ .logical = "padding-block-start", .physical = "padding-top" },
+            .{ .logical = "padding-block-end", .physical = "padding-bottom" },
+            .{ .logical = "border-inline-start", .physical = "border-left" },
+            .{ .logical = "border-inline-end", .physical = "border-right" },
+            .{ .logical = "border-block-start", .physical = "border-top" },
+            .{ .logical = "border-block-end", .physical = "border-bottom" },
+            .{ .logical = "border-inline-start-width", .physical = "border-left-width" },
+            .{ .logical = "border-inline-end-width", .physical = "border-right-width" },
+            .{ .logical = "border-block-start-width", .physical = "border-top-width" },
+            .{ .logical = "border-block-end-width", .physical = "border-bottom-width" },
+            .{ .logical = "border-inline-start-style", .physical = "border-left-style" },
+            .{ .logical = "border-inline-end-style", .physical = "border-right-style" },
+            .{ .logical = "border-block-start-style", .physical = "border-top-style" },
+            .{ .logical = "border-block-end-style", .physical = "border-bottom-style" },
+            .{ .logical = "border-inline-start-color", .physical = "border-left-color" },
+            .{ .logical = "border-inline-end-color", .physical = "border-right-color" },
+            .{ .logical = "border-block-start-color", .physical = "border-top-color" },
+            .{ .logical = "border-block-end-color", .physical = "border-bottom-color" },
+            .{ .logical = "inset-inline-start", .physical = "left" },
+            .{ .logical = "inset-inline-end", .physical = "right" },
+            .{ .logical = "inset-block-start", .physical = "top" },
+            .{ .logical = "inset-block-end", .physical = "bottom" },
+        };
+
+        for (logical_map) |entry| {
+            if (std.mem.eql(u8, logical, entry.logical)) {
+                return entry.physical;
+            }
+        }
+
+        return null;
     }
 
     fn optimizeShorthandProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
