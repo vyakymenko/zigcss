@@ -631,3 +631,19 @@ test "at-rule parsing" {
     try std.testing.expect(rule == .at_rule);
     try std.testing.expect(std.mem.eql(u8, rule.at_rule.name, "media"));
 }
+
+test "container query parsing" {
+    const css = "@container (min-width: 400px) { .card { padding: 1rem; } }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .at_rule);
+    try std.testing.expect(std.mem.eql(u8, rule.at_rule.name, "container"));
+}

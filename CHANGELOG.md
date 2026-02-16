@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add container query support - full CSS Container Queries parsing and optimization
+- Add container query merging optimization - merge identical @container rules for smaller output
+- Add container query test coverage
 - Add Zig build system integration - build helpers for seamless CSS compilation in Zig projects
 - Add CssCompileStep API for programmatic CSS compilation in build.zig
 - Add build_helpers.zig module with addCssCompileStep and addCssCompileStepTo functions
@@ -27,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add glob pattern support for input files (e.g., `src/*.css`)
 
 ### Performance Improvements
+- Add container query merging optimization - reduces CSS size by combining identical container queries
 - Add performance profiling infrastructure for identifying bottlenecks and measuring improvements
 - Add detailed timing breakdowns for parse, optimize, and codegen phases
 - Add benchmark suite for automated performance regression testing

@@ -92,6 +92,7 @@ Performance tested on a MacBook Pro M3 (16GB RAM) with real-world CSS workloads.
 - 🎨 **CSS Nesting** — Native support for CSS Nesting specification
 - 🔄 **Custom Properties** — Full CSS custom properties (variables) support
 - 📐 **Media Queries** — Advanced media query parsing and optimization
+- 📦 **Container Queries** — Full CSS Container Queries support with automatic optimization
 - 🎭 **Pseudo-classes** — Complete pseudo-class and pseudo-element support
 - 📋 **Preprocessor Support** — SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS
 - 🚀 **Parallel Processing** — Multi-threaded compilation for multiple files
@@ -386,6 +387,31 @@ zcss supports the CSS Nesting specification:
 }
 ```
 
+### Container Queries
+
+zcss supports CSS Container Queries, allowing styles to be applied based on the size of a containing element rather than the viewport:
+
+```css
+.card {
+    container-type: inline-size;
+}
+
+@container (min-width: 400px) {
+    .card {
+        padding: 2rem;
+    }
+}
+
+@container (min-width: 600px) {
+    .card {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+}
+```
+
+Container queries are automatically optimized by merging identical `@container` rules, similar to media query optimization.
+
 ## 🏗️ Architecture
 
 zcss is built with performance in mind using a multi-stage compilation pipeline:
@@ -432,6 +458,7 @@ Multi-pass optimization pipeline:
    - Zero unit removal (`0px` → `0`, `0em` → `0`)
    - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
 8. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
+9. **Container query merging** ✅ — Merge identical `@container` rules into a single rule
 
 ### Code Generator
 
@@ -653,7 +680,7 @@ zcss input.css -o output.css --profile
 - [x] CSS-in-JS compilation
 - [x] PostCSS plugin compatibility layer
 - [ ] CSS Grid/Flexbox optimizations
-- [ ] Container queries
+- [x] Container queries ✅ — Full container query support with merging optimization
 - [ ] Cascade layers
 - [ ] Tailwind @apply expansion
 
