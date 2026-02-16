@@ -430,7 +430,7 @@ zig build test --summary all
 - [x] Stylus support - Variables, indented syntax
 - [ ] Advanced nesting features (mixins, functions)
 - [ ] Autoprefixer integration
-- [ ] Custom property resolution
+- [x] Custom property resolution ✅ — Resolve CSS custom properties (var()) with fallback support
 - [ ] Advanced selector optimization
 - [ ] Plugin system
 - [x] Watch mode improvements ✅ — Polling-based file watching with automatic recompilation

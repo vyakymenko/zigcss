@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const string_pool = @import("string_pool.zig");
+const custom_properties = @import("custom_properties.zig");
 
 pub const Optimizer = struct {
     allocator: std.mem.Allocator,
@@ -10,6 +11,7 @@ pub const Optimizer = struct {
     }
 
     pub fn optimize(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        try self.resolveCustomProperties(stylesheet);
         try self.removeEmptyRules(stylesheet);
         try self.mergeSelectors(stylesheet);
         try self.removeRedundantSelectors(stylesheet);
@@ -17,6 +19,12 @@ pub const Optimizer = struct {
         try self.removeDuplicateDeclarations(stylesheet);
         try self.optimizeValues(stylesheet);
         try self.mergeMediaQueries(stylesheet);
+    }
+
+    fn resolveCustomProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        var resolver = custom_properties.CustomPropertyResolver.init(self.allocator, stylesheet.string_pool);
+        defer resolver.deinit();
+        try resolver.resolve(stylesheet);
     }
 
     fn removeEmptyRules(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
