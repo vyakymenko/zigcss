@@ -5,6 +5,106 @@ const codegen = @import("codegen.zig");
 const error_module = @import("error.zig");
 const parser = @import("parser.zig");
 
+const CompileConfig = struct {
+    input_file: []const u8,
+    output_file: ?[]const u8,
+    optimize: bool,
+    minify: bool,
+    source_map: bool,
+};
+
+fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
+    const input = try std.fs.cwd().readFileAlloc(allocator, config.input_file, 10 * 1024 * 1024);
+    defer allocator.free(input);
+
+    const format = formats.detectFormat(config.input_file);
+    
+    var stylesheet: ast.Stylesheet = undefined;
+    var stylesheet_initialized = false;
+    
+    if (format == .css) {
+        var css_parser = parser.Parser.init(allocator, input);
+        defer if (css_parser.owns_pool) {
+            css_parser.string_pool.deinit();
+            allocator.destroy(css_parser.string_pool);
+        };
+        
+        const result = css_parser.parseWithErrorInfo();
+        switch (result) {
+            .success => |s| {
+                stylesheet = s;
+                stylesheet_initialized = true;
+            },
+            .parse_error => |parse_error| {
+                const error_msg = try error_module.formatErrorWithContext(allocator, input, config.input_file, parse_error);
+                defer allocator.free(error_msg);
+                std.debug.print("{s}\n", .{error_msg});
+                return error.ParseError;
+            },
+        }
+    } else {
+        const parser_trait = formats.getParser(format);
+        stylesheet = try parser_trait.parseFn(allocator, input);
+        stylesheet_initialized = true;
+    }
+    
+    defer if (stylesheet_initialized) stylesheet.deinit();
+
+    const options = codegen.CodegenOptions{
+        .minify = config.minify,
+        .optimize = config.optimize,
+    };
+
+    const result = try codegen.generate(allocator, &stylesheet, options);
+    defer allocator.free(result);
+
+    if (config.output_file) |out| {
+        try std.fs.cwd().writeFile(.{ .sub_path = out, .data = result });
+        std.debug.print("Compiled: {s} -> {s}\n", .{ config.input_file, out });
+    } else {
+        const stdout_file = std.fs.File.stdout();
+        var stdout_buffer: [1024]u8 = undefined;
+        var stdout_writer = stdout_file.writer(&stdout_buffer);
+        const stdout = &stdout_writer.interface;
+        try stdout.writeAll(result);
+        try stdout.flush();
+    }
+}
+
+const ParseError = error{ParseError};
+
+fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
+    std.debug.print("Watching {s} for changes... (Press Ctrl+C to stop)\n", .{config.input_file});
+    
+    const cwd = std.fs.cwd();
+    const input_file_handle = try cwd.openFile(config.input_file, .{});
+    defer input_file_handle.close();
+    
+    var last_modified: i128 = 0;
+    
+    try compileFile(allocator, config);
+    
+    const stat = try input_file_handle.stat();
+    last_modified = stat.mtime;
+    
+    while (true) {
+        std.Thread.sleep(500 * std.time.ns_per_ms);
+        
+        const current_stat = input_file_handle.stat() catch |err| {
+            std.debug.print("Error checking file: {}\n", .{err});
+            continue;
+        };
+        
+        if (current_stat.mtime != last_modified) {
+            last_modified = current_stat.mtime;
+            std.debug.print("File changed, recompiling...\n", .{});
+            compileFile(allocator, config) catch {
+                continue;
+            };
+        }
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -53,60 +153,20 @@ pub fn main() !void {
         }
     }
 
-    const input = try std.fs.cwd().readFileAlloc(allocator, input_file, 10 * 1024 * 1024);
-    defer allocator.free(input);
-
-    const format = formats.detectFormat(input_file);
-    
-    var stylesheet: ast.Stylesheet = undefined;
-    var stylesheet_initialized = false;
-    
-    if (format == .css) {
-        var css_parser = parser.Parser.init(allocator, input);
-        defer if (css_parser.owns_pool) {
-            css_parser.string_pool.deinit();
-            allocator.destroy(css_parser.string_pool);
-        };
-        
-        const result = css_parser.parseWithErrorInfo();
-        switch (result) {
-            .success => |s| {
-                stylesheet = s;
-                stylesheet_initialized = true;
-            },
-            .parse_error => |parse_error| {
-                const error_msg = try error_module.formatErrorWithContext(allocator, input, input_file, parse_error);
-                defer allocator.free(error_msg);
-                std.debug.print("{s}\n", .{error_msg});
-                std.process.exit(1);
-            },
-        }
-    } else {
-        const parser_trait = formats.getParser(format);
-        stylesheet = try parser_trait.parseFn(allocator, input);
-        stylesheet_initialized = true;
-    }
-    
-    defer if (stylesheet_initialized) stylesheet.deinit();
-
-    const options = codegen.CodegenOptions{
-        .minify = minify_flag,
+    const config = CompileConfig{
+        .input_file = input_file,
+        .output_file = output_file,
         .optimize = optimize_flag,
+        .minify = minify_flag,
+        .source_map = source_map_flag,
     };
 
-    const result = try codegen.generate(allocator, &stylesheet, options);
-    defer allocator.free(result);
-
-    if (output_file) |out| {
-        try std.fs.cwd().writeFile(.{ .sub_path = out, .data = result });
-        std.debug.print("Compiled: {s} -> {s}\n", .{ input_file, out });
+    if (watch_flag) {
+        try watchFile(allocator, config);
     } else {
-        const stdout_file = std.fs.File.stdout();
-        var stdout_buffer: [1024]u8 = undefined;
-        var stdout_writer = stdout_file.writer(&stdout_buffer);
-        const stdout = &stdout_writer.interface;
-        try stdout.writeAll(result);
-        try stdout.flush();
+        compileFile(allocator, config) catch {
+            std.process.exit(1);
+        };
     }
 }
 
