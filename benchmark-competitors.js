@@ -14,6 +14,62 @@ fs.writeFileSync('bench-small.css', smallCSS);
 fs.writeFileSync('bench-medium.css', mediumCSS);
 fs.writeFileSync('bench-large.css', largeCSS);
 
+// Create Tailwind input files
+fs.writeFileSync('bench-tailwind-small.css', '@tailwind base; @tailwind components; @tailwind utilities;');
+fs.writeFileSync('bench-tailwind-medium.css', '@tailwind base; @tailwind components; @tailwind utilities;');
+fs.writeFileSync('bench-tailwind-large.css', '@tailwind base; @tailwind components; @tailwind utilities;');
+
+// Create Tailwind content files with utility classes
+const smallTailwindContent = '<div class="container mx-auto p-4 bg-white text-black"></div>';
+const mediumTailwindContent = generateMediumTailwindContent();
+const largeTailwindContent = generateLargeTailwindContent();
+
+fs.writeFileSync('bench-tailwind-small.html', smallTailwindContent);
+fs.writeFileSync('bench-tailwind-medium.html', mediumTailwindContent);
+fs.writeFileSync('bench-tailwind-large.html', largeTailwindContent);
+
+function generateMediumTailwindContent() {
+    let html = '<div class="container mx-auto p-4 bg-white text-black">';
+    const classes = [
+        'flex', 'grid', 'hidden', 'block', 'inline', 'inline-block',
+        'w-full', 'h-full', 'w-1/2', 'h-1/2', 'w-1/3', 'h-1/3',
+        'p-2', 'p-4', 'p-6', 'm-2', 'm-4', 'm-6',
+        'bg-blue-500', 'bg-red-500', 'bg-green-500', 'bg-yellow-500',
+        'text-white', 'text-black', 'text-gray-500', 'text-blue-500',
+        'rounded', 'rounded-lg', 'rounded-xl', 'shadow', 'shadow-lg',
+        'border', 'border-2', 'border-gray-300', 'border-blue-500',
+        'hover:bg-blue-600', 'focus:outline-none', 'active:scale-95',
+        'transition', 'duration-300', 'ease-in-out'
+    ];
+    for (let i = 0; i < 50; i++) {
+        const randomClasses = classes.sort(() => 0.5 - Math.random()).slice(0, 5).join(' ');
+        html += `<div class="${randomClasses}">Item ${i}</div>`;
+    }
+    html += '</div>';
+    return html;
+}
+
+function generateLargeTailwindContent() {
+    let html = '<div class="container mx-auto p-4 bg-white text-black">';
+    const spacing = ['p-1', 'p-2', 'p-3', 'p-4', 'p-5', 'p-6', 'p-8', 'p-10', 'p-12', 'm-1', 'm-2', 'm-3', 'm-4', 'm-5', 'm-6', 'm-8', 'm-10', 'm-12'];
+    const colors = ['bg-red', 'bg-blue', 'bg-green', 'bg-yellow', 'bg-purple', 'bg-pink', 'bg-indigo', 'bg-gray'];
+    const shades = ['50', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+    const sizes = ['w-1', 'w-2', 'w-4', 'w-8', 'w-12', 'w-16', 'w-20', 'w-24', 'w-32', 'w-48', 'w-64', 'w-full', 'h-1', 'h-2', 'h-4', 'h-8', 'h-12', 'h-16', 'h-20', 'h-24', 'h-32', 'h-48', 'h-64', 'h-full'];
+    const utilities = ['flex', 'grid', 'hidden', 'block', 'rounded', 'shadow', 'border', 'hover:scale-105', 'transition', 'duration-300'];
+    
+    for (let i = 0; i < 500; i++) {
+        const parts = [];
+        if (Math.random() > 0.5) parts.push(spacing[Math.floor(Math.random() * spacing.length)]);
+        if (Math.random() > 0.5) parts.push(colors[Math.floor(Math.random() * colors.length)] + '-' + shades[Math.floor(Math.random() * shades.length)]);
+        if (Math.random() > 0.5) parts.push(sizes[Math.floor(Math.random() * sizes.length)]);
+        if (Math.random() > 0.5) parts.push(utilities[Math.floor(Math.random() * utilities.length)]);
+        const randomClasses = parts.join(' ');
+        html += `<div class="${randomClasses}">Item ${i}</div>`;
+    }
+    html += '</div>';
+    return html;
+}
+
 function generateLargeCSS() {
     let css = '';
     for (let i = 0; i < 1000; i++) {
@@ -85,16 +141,41 @@ function benchmarkEsbuild(file) {
     return timeCommand(cmd);
 }
 
+function benchmarkTailwind(inputFile, contentFile, outputFile) {
+    const cmd = `npx --yes tailwindcss-cli build -i ${inputFile} -o ${outputFile} --purge ${contentFile} --minify 2>/dev/null`;
+    return timeCommand(cmd);
+}
+
 const results = {
     small: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] },
     medium: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] },
     large: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] }
 };
 
+const tailwindResults = {
+    small: { tailwind: [], lightningcss: [], cssnano: [], esbuild: [] },
+    medium: { tailwind: [], lightningcss: [], cssnano: [], esbuild: [] },
+    large: { tailwind: [], lightningcss: [], cssnano: [], esbuild: [] }
+};
+
 const iterations = 10;
 const warmup = 2;
 
 console.log('Running benchmarks (this may take a while)...\n');
+
+// Build Tailwind CSS files first (for comparison with other tools)
+console.log('Building Tailwind CSS files...');
+benchmarkTailwind('bench-tailwind-small.css', 'bench-tailwind-small.html', 'bench-tailwind-small-out.css');
+benchmarkTailwind('bench-tailwind-medium.css', 'bench-tailwind-medium.html', 'bench-tailwind-medium-out.css');
+benchmarkTailwind('bench-tailwind-large.css', 'bench-tailwind-large.html', 'bench-tailwind-large-out.css');
+
+// Ensure Tailwind output files exist
+if (!fs.existsSync('bench-tailwind-small-out.css') || 
+    !fs.existsSync('bench-tailwind-medium-out.css') || 
+    !fs.existsSync('bench-tailwind-large-out.css')) {
+    console.error('Error: Tailwind CSS files were not generated. Exiting.');
+    process.exit(1);
+}
 
 // Warmup
 console.log('Warming up...');
@@ -103,6 +184,7 @@ for (let i = 0; i < warmup; i++) {
     benchmarkLightningCSS('bench-small.css');
     benchmarkCssnano('bench-small.css');
     benchmarkEsbuild('bench-small.css');
+    benchmarkTailwind('bench-tailwind-small.css', 'bench-tailwind-small.html', 'bench-tailwind-small-out.css');
 }
 
 // Benchmark small
@@ -131,6 +213,20 @@ for (let i = 0; i < iterations; i++) {
     
     const esbuild = benchmarkEsbuild('bench-small.css');
     if (esbuild !== null) results.small.esbuild.push(esbuild);
+    
+    const tailwind = benchmarkTailwind('bench-tailwind-small.css', 'bench-tailwind-small.html', 'bench-tailwind-small-out.css');
+    if (tailwind !== null) tailwindResults.small.tailwind.push(tailwind);
+    
+    if (fs.existsSync('bench-tailwind-small-out.css')) {
+        const lightningcssTailwind = benchmarkLightningCSS('bench-tailwind-small-out.css');
+        if (lightningcssTailwind !== null) tailwindResults.small.lightningcss.push(lightningcssTailwind);
+        
+        const cssnanoTailwind = benchmarkCssnano('bench-tailwind-small-out.css');
+        if (cssnanoTailwind !== null) tailwindResults.small.cssnano.push(cssnanoTailwind);
+        
+        const esbuildTailwind = benchmarkEsbuild('bench-tailwind-small-out.css');
+        if (esbuildTailwind !== null) tailwindResults.small.esbuild.push(esbuildTailwind);
+    }
 }
 
 // Benchmark medium
@@ -159,6 +255,20 @@ for (let i = 0; i < iterations; i++) {
     
     const esbuild = benchmarkEsbuild('bench-medium.css');
     if (esbuild !== null) results.medium.esbuild.push(esbuild);
+    
+    const tailwind = benchmarkTailwind('bench-tailwind-medium.css', 'bench-tailwind-medium.html', 'bench-tailwind-medium-out.css');
+    if (tailwind !== null) tailwindResults.medium.tailwind.push(tailwind);
+    
+    if (fs.existsSync('bench-tailwind-medium-out.css')) {
+        const lightningcssTailwind = benchmarkLightningCSS('bench-tailwind-medium-out.css');
+        if (lightningcssTailwind !== null) tailwindResults.medium.lightningcss.push(lightningcssTailwind);
+        
+        const cssnanoTailwind = benchmarkCssnano('bench-tailwind-medium-out.css');
+        if (cssnanoTailwind !== null) tailwindResults.medium.cssnano.push(cssnanoTailwind);
+        
+        const esbuildTailwind = benchmarkEsbuild('bench-tailwind-medium-out.css');
+        if (esbuildTailwind !== null) tailwindResults.medium.esbuild.push(esbuildTailwind);
+    }
 }
 
 // Benchmark large
@@ -187,6 +297,20 @@ for (let i = 0; i < iterations; i++) {
     
     const esbuild = benchmarkEsbuild('bench-large.css');
     if (esbuild !== null) results.large.esbuild.push(esbuild);
+    
+    const tailwind = benchmarkTailwind('bench-tailwind-large.css', 'bench-tailwind-large.html', 'bench-tailwind-large-out.css');
+    if (tailwind !== null) tailwindResults.large.tailwind.push(tailwind);
+    
+    if (fs.existsSync('bench-tailwind-large-out.css')) {
+        const lightningcssTailwind = benchmarkLightningCSS('bench-tailwind-large-out.css');
+        if (lightningcssTailwind !== null) tailwindResults.large.lightningcss.push(lightningcssTailwind);
+        
+        const cssnanoTailwind = benchmarkCssnano('bench-tailwind-large-out.css');
+        if (cssnanoTailwind !== null) tailwindResults.large.cssnano.push(cssnanoTailwind);
+        
+        const esbuildTailwind = benchmarkEsbuild('bench-tailwind-large-out.css');
+        if (esbuildTailwind !== null) tailwindResults.large.esbuild.push(esbuildTailwind);
+    }
 }
 
 function avg(arr) {
@@ -232,10 +356,38 @@ console.log(`  Sass:         ${formatTime(avg(results.large.sass))}`);
 console.log(`  Less:         ${formatTime(avg(results.large.less))}`);
 console.log(`  Stylus:       ${formatTime(avg(results.large.stylus))}`);
 
+console.log('\n=== Tailwind CSS Build Comparison ===\n');
+console.log('Small Tailwind CSS:');
+console.log(`  Tailwind (build): ${formatTime(avg(tailwindResults.small.tailwind))}`);
+console.log(`  LightningCSS:     ${formatTime(avg(tailwindResults.small.lightningcss))}`);
+console.log(`  cssnano:          ${formatTime(avg(tailwindResults.small.cssnano))}`);
+console.log(`  esbuild:          ${formatTime(avg(tailwindResults.small.esbuild))}`);
+
+console.log('\nMedium Tailwind CSS:');
+console.log(`  Tailwind (build): ${formatTime(avg(tailwindResults.medium.tailwind))}`);
+console.log(`  LightningCSS:     ${formatTime(avg(tailwindResults.medium.lightningcss))}`);
+console.log(`  cssnano:          ${formatTime(avg(tailwindResults.medium.cssnano))}`);
+console.log(`  esbuild:          ${formatTime(avg(tailwindResults.medium.esbuild))}`);
+
+console.log('\nLarge Tailwind CSS:');
+console.log(`  Tailwind (build): ${formatTime(avg(tailwindResults.large.tailwind))}`);
+console.log(`  LightningCSS:     ${formatTime(avg(tailwindResults.large.lightningcss))}`);
+console.log(`  cssnano:          ${formatTime(avg(tailwindResults.large.cssnano))}`);
+console.log(`  esbuild:          ${formatTime(avg(tailwindResults.large.esbuild))}`);
+
 // Cleanup
 fs.unlinkSync('bench-small.css');
 fs.unlinkSync('bench-medium.css');
 fs.unlinkSync('bench-large.css');
+try { fs.unlinkSync('bench-tailwind-small.css'); } catch (e) {}
+try { fs.unlinkSync('bench-tailwind-medium.css'); } catch (e) {}
+try { fs.unlinkSync('bench-tailwind-large.css'); } catch (e) {}
+try { fs.unlinkSync('bench-tailwind-small.html'); } catch (e) {}
+try { fs.unlinkSync('bench-tailwind-medium.html'); } catch (e) {}
+try { fs.unlinkSync('bench-tailwind-large.html'); } catch (e) {}
+try { fs.unlinkSync('bench-tailwind-small-out.css'); } catch (e) {}
+try { fs.unlinkSync('bench-tailwind-medium-out.css'); } catch (e) {}
+try { fs.unlinkSync('bench-tailwind-large-out.css'); } catch (e) {}
 
 // Output JSON for README update
 const jsonResults = {
@@ -271,5 +423,28 @@ const jsonResults = {
     }
 };
 
+const tailwindJsonResults = {
+    small: {
+        tailwind: avg(tailwindResults.small.tailwind),
+        lightningcss: avg(tailwindResults.small.lightningcss),
+        cssnano: avg(tailwindResults.small.cssnano),
+        esbuild: avg(tailwindResults.small.esbuild)
+    },
+    medium: {
+        tailwind: avg(tailwindResults.medium.tailwind),
+        lightningcss: avg(tailwindResults.medium.lightningcss),
+        cssnano: avg(tailwindResults.medium.cssnano),
+        esbuild: avg(tailwindResults.medium.esbuild)
+    },
+    large: {
+        tailwind: avg(tailwindResults.large.tailwind),
+        lightningcss: avg(tailwindResults.large.lightningcss),
+        cssnano: avg(tailwindResults.large.cssnano),
+        esbuild: avg(tailwindResults.large.esbuild)
+    }
+};
+
 fs.writeFileSync('benchmark-results.json', JSON.stringify(jsonResults, null, 2));
+fs.writeFileSync('benchmark-tailwind-results.json', JSON.stringify(tailwindJsonResults, null, 2));
 console.log('\nResults saved to benchmark-results.json');
+console.log('Tailwind comparison results saved to benchmark-tailwind-results.json');

@@ -69,7 +69,23 @@ Performance tested on a MacBook Pro M3 (16GB RAM) with real-world CSS workloads.
 
 **zcss is 23-32x faster** than competitors for large files.
 
-> **Note**: Benchmarks run with `zig build -Doptimize=ReleaseFast`. Competitor tools tested via `npx` (Node.js v24.11.1). Results averaged over 10 iterations after 2 warmup runs. Performance improvements include SIMD-optimized whitespace skipping, optimized parser hot paths, pre-interned CSS keywords, and improved capacity estimation. Lightning CSS, cssnano, and esbuild are included as modern high-performance competitors.
+#### Tailwind CSS Build Comparison
+
+Performance comparison of Tailwind CSS build process vs processing Tailwind-generated CSS with other tools:
+
+| Compiler | **Small** | **Medium** | **Large** |
+|----------|-----------|------------|-----------|
+| **Tailwind (build)** | 2617.3ms | 2570.5ms | 2649.7ms |
+| **LightningCSS** | 681.5ms | 744.7ms | 744.6ms |
+| **cssnano** | 802.3ms | 906.0ms | 905.6ms |
+| **esbuild** | 650.1ms | 667.0ms | 691.2ms |
+
+**Key insights:**
+- Tailwind CSS build process takes ~2.5-2.6 seconds (includes scanning HTML and generating CSS)
+- Processing Tailwind-generated CSS with LightningCSS or esbuild is **3-4x faster** than Tailwind's build process
+- For post-processing Tailwind output, LightningCSS and esbuild offer the best performance
+
+> **Note**: Benchmarks run with `zig build -Doptimize=ReleaseFast`. Competitor tools tested via `npx` (Node.js v24.11.1). Results averaged over 10 iterations after 2 warmup runs. Performance improvements include SIMD-optimized whitespace skipping, optimized parser hot paths, pre-interned CSS keywords, and improved capacity estimation. Lightning CSS, cssnano, and esbuild are included as modern high-performance competitors. Tailwind benchmark compares the full build process (scanning HTML + CSS generation) vs processing the generated CSS with other tools.
 
 #### Performance Summary
 
