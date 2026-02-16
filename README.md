@@ -1092,7 +1092,7 @@ The documentation site includes:
 - [x] Cascade layers ✅ — Full CSS Cascade Layers support with merging optimization
 - [x] Tailwind @apply expansion ✅ — Expand Tailwind utility classes in @apply directives
 
-### Phase 6: Advanced Optimizations 🚧 IN PROGRESS
+### Phase 6: Advanced Optimizations ✅ COMPLETED
 - [x] CSS Math Functions optimization ✅ — Optimize calc(), min(), max(), and clamp() expressions
   - Evaluate constant expressions at compile time
   - Simplify nested calc() expressions
@@ -1124,6 +1124,11 @@ The documentation site includes:
   - Find all references to CSS symbols across the document
   - Rename symbols with automatic updates to all references
   - Full LSP protocol support for navigation and refactoring
+- [x] Unused custom property removal ✅ — Remove unused CSS custom property definitions after inlining
+  - Automatically removes custom property declarations that are no longer referenced
+  - Works with nested rules in @media, @container, and @layer at-rules
+  - Reduces CSS size by eliminating unused custom property definitions
+  - Improves performance by reducing CSS parsing overhead
 
 ## 🤝 Contributing
 

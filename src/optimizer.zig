@@ -50,7 +50,11 @@ pub const Optimizer = struct {
     }
 
     pub fn optimize(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        var used_properties = std.StringHashMap(void).init(self.allocator);
+        defer used_properties.deinit();
+        self.collectUsedCustomPropertiesBeforeResolve(stylesheet, &used_properties);
         try self.resolveCustomProperties(stylesheet);
+        try self.removeUnusedCustomProperties(stylesheet, &used_properties);
         if (self.autoprefix_options) |opts| {
             try self.addAutoprefixes(stylesheet, opts);
         }
@@ -82,6 +86,140 @@ pub const Optimizer = struct {
         var resolver = custom_properties.CustomPropertyResolver.init(self.allocator, stylesheet.string_pool);
         defer resolver.deinit();
         try resolver.resolve(stylesheet);
+    }
+
+    fn removeUnusedCustomProperties(self: *Optimizer, stylesheet: *ast.Stylesheet, used_properties: *std.StringHashMap(void)) !void {
+        
+        for (stylesheet.rules.items) |*rule| {
+            switch (rule.*) {
+                .style => |*style_rule| {
+                    var i: usize = 0;
+                    while (i < style_rule.declarations.items.len) {
+                        const decl = &style_rule.declarations.items[i];
+                        if (std.mem.startsWith(u8, decl.property, "--")) {
+                            if (!used_properties.contains(decl.property)) {
+                                _ = style_rule.declarations.swapRemove(i);
+                            } else {
+                                i += 1;
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                },
+                .at_rule => |*at_rule| {
+                    if (at_rule.rules) |*nested_rules| {
+                        self.removeUnusedCustomPropertiesFromRules(nested_rules.items, used_properties);
+                    }
+                },
+            }
+        }
+    }
+
+    fn removeUnusedCustomPropertiesFromRules(self: *Optimizer, rules: []ast.Rule, used_properties: *const std.StringHashMap(void)) void {
+        for (rules) |*rule| {
+            switch (rule.*) {
+                .style => |*style_rule| {
+                    var i: usize = 0;
+                    while (i < style_rule.declarations.items.len) {
+                        const decl = &style_rule.declarations.items[i];
+                        if (std.mem.startsWith(u8, decl.property, "--")) {
+                            if (!used_properties.contains(decl.property)) {
+                                _ = style_rule.declarations.swapRemove(i);
+                            } else {
+                                i += 1;
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                },
+                .at_rule => |*at_rule| {
+                    if (at_rule.rules) |*nested_rules| {
+                        self.removeUnusedCustomPropertiesFromRules(nested_rules.items, used_properties);
+                    }
+                },
+            }
+        }
+    }
+
+    fn collectUsedCustomPropertiesBeforeResolve(self: *Optimizer, stylesheet: *ast.Stylesheet, used_properties: *std.StringHashMap(void)) void {
+        for (stylesheet.rules.items) |*rule| {
+            switch (rule.*) {
+                .style => |*style_rule| {
+                    for (style_rule.declarations.items) |*decl| {
+                        if (std.mem.indexOf(u8, decl.value, "var(") != null) {
+                            self.extractCustomPropertyNames(decl.value, used_properties);
+                        }
+                    }
+                },
+                .at_rule => |*at_rule| {
+                    if (at_rule.rules) |*nested_rules| {
+                        self.collectUsedCustomPropertiesFromRules(nested_rules.items, used_properties);
+                    }
+                },
+            }
+        }
+    }
+
+    fn collectUsedCustomPropertiesFromRules(self: *Optimizer, rules: []ast.Rule, used_properties: *std.StringHashMap(void)) void {
+        for (rules) |*rule| {
+            switch (rule.*) {
+                .style => |*style_rule| {
+                    for (style_rule.declarations.items) |*decl| {
+                        if (std.mem.indexOf(u8, decl.value, "var(") != null) {
+                            self.extractCustomPropertyNames(decl.value, used_properties);
+                        }
+                    }
+                },
+                .at_rule => |*at_rule| {
+                    if (at_rule.rules) |*nested_rules| {
+                        self.collectUsedCustomPropertiesFromRules(nested_rules.items, used_properties);
+                    }
+                },
+            }
+        }
+    }
+
+    fn extractCustomPropertyNames(self: *Optimizer, value: []const u8, used_properties: *std.StringHashMap(void)) void {
+        _ = self;
+        var pos: usize = 0;
+        while (pos < value.len) {
+            if (pos + 4 <= value.len and std.mem.eql(u8, value[pos..pos+4], "var(")) {
+                pos += 4;
+                
+                while (pos < value.len and std.ascii.isWhitespace(value[pos])) {
+                    pos += 1;
+                }
+                
+                const var_start = pos;
+                while (pos < value.len and value[pos] != ',' and value[pos] != ')') {
+                    pos += 1;
+                }
+                
+                const var_name = std.mem.trim(u8, value[var_start..pos], " \t\n\r");
+                used_properties.put(var_name, {}) catch {};
+                
+                if (pos < value.len and value[pos] == ',') {
+                    pos += 1;
+                    var paren_depth: usize = 0;
+                    while (pos < value.len) {
+                        if (value[pos] == '(') paren_depth += 1;
+                        if (value[pos] == ')') {
+                            if (paren_depth == 0) break;
+                            paren_depth -= 1;
+                        }
+                        pos += 1;
+                    }
+                }
+                
+                if (pos < value.len and value[pos] == ')') {
+                    pos += 1;
+                }
+            } else {
+                pos += 1;
+            }
+        }
     }
 
     fn removeEmptyRules(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
@@ -1959,3 +2097,135 @@ pub const Optimizer = struct {
         }
     }
 };
+
+test "remove unused custom properties" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var pool = try allocator.create(string_pool.StringPool);
+    pool.* = string_pool.StringPool.init(allocator);
+    defer {
+        pool.deinit();
+        allocator.destroy(pool);
+    }
+
+    var stylesheet = try ast.Stylesheet.init(allocator);
+    stylesheet.string_pool = pool;
+    stylesheet.owns_string_pool = false;
+    defer stylesheet.deinit();
+
+    var root_rule = try ast.StyleRule.init(allocator);
+    var root_selector = try ast.Selector.init(allocator);
+    try root_selector.parts.append(allocator, ast.SelectorPart{ .type = try pool.intern(":root") });
+    try root_rule.selectors.append(allocator, root_selector);
+
+    var used_prop = ast.Declaration.init(allocator);
+    used_prop.property = try pool.intern("--primary-color");
+    used_prop.value = try pool.intern("#007bff");
+    try root_rule.declarations.append(allocator, used_prop);
+
+    var unused_prop = ast.Declaration.init(allocator);
+    unused_prop.property = try pool.intern("--unused-color");
+    unused_prop.value = try pool.intern("#ff0000");
+    try root_rule.declarations.append(allocator, unused_prop);
+
+    try stylesheet.rules.append(allocator, ast.Rule{ .style = root_rule });
+
+    var button_rule = try ast.StyleRule.init(allocator);
+    var button_selector = try ast.Selector.init(allocator);
+    try button_selector.parts.append(allocator, ast.SelectorPart{ .class = try pool.intern("button") });
+    try button_rule.selectors.append(allocator, button_selector);
+
+    var bg_decl = ast.Declaration.init(allocator);
+    bg_decl.property = try pool.intern("background-color");
+    bg_decl.value = try pool.intern("var(--primary-color)");
+    try button_rule.declarations.append(allocator, bg_decl);
+
+    try stylesheet.rules.append(allocator, ast.Rule{ .style = button_rule });
+
+    var used_properties = std.StringHashMap(void).init(allocator);
+    defer used_properties.deinit();
+    var temp_optimizer = Optimizer.init(allocator);
+    temp_optimizer.collectUsedCustomPropertiesBeforeResolve(&stylesheet, &used_properties);
+
+    var resolver = custom_properties.CustomPropertyResolver.init(allocator, pool);
+    defer resolver.deinit();
+    try resolver.resolve(&stylesheet);
+
+    var optimizer = Optimizer.init(allocator);
+    try optimizer.removeUnusedCustomProperties(&stylesheet, &used_properties);
+
+    const root_style = stylesheet.rules.items[0].style;
+    try std.testing.expect(root_style.declarations.items.len == 1);
+    try std.testing.expect(std.mem.eql(u8, root_style.declarations.items[0].property, "--primary-color"));
+}
+
+test "remove unused custom properties with nested rules" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var pool = try allocator.create(string_pool.StringPool);
+    pool.* = string_pool.StringPool.init(allocator);
+    defer {
+        pool.deinit();
+        allocator.destroy(pool);
+    }
+
+    var stylesheet = try ast.Stylesheet.init(allocator);
+    stylesheet.string_pool = pool;
+    stylesheet.owns_string_pool = false;
+    defer stylesheet.deinit();
+
+    var root_rule = try ast.StyleRule.init(allocator);
+    var root_selector = try ast.Selector.init(allocator);
+    try root_selector.parts.append(allocator, ast.SelectorPart{ .type = try pool.intern(":root") });
+    try root_rule.selectors.append(allocator, root_selector);
+
+    var used_prop = ast.Declaration.init(allocator);
+    used_prop.property = try pool.intern("--primary-color");
+    used_prop.value = try pool.intern("#007bff");
+    try root_rule.declarations.append(allocator, used_prop);
+
+    var unused_prop = ast.Declaration.init(allocator);
+    unused_prop.property = try pool.intern("--unused-color");
+    unused_prop.value = try pool.intern("#ff0000");
+    try root_rule.declarations.append(allocator, unused_prop);
+
+    try stylesheet.rules.append(allocator, ast.Rule{ .style = root_rule });
+
+    var media_rule = ast.AtRule.init(allocator);
+    media_rule.name = try pool.intern("media");
+    media_rule.prelude = try pool.intern("(min-width: 768px)");
+    media_rule.rules = try std.ArrayList(ast.Rule).initCapacity(allocator, 1);
+
+    var button_rule = try ast.StyleRule.init(allocator);
+    var button_selector = try ast.Selector.init(allocator);
+    try button_selector.parts.append(allocator, ast.SelectorPart{ .class = try pool.intern("button") });
+    try button_rule.selectors.append(allocator, button_selector);
+
+    var bg_decl = ast.Declaration.init(allocator);
+    bg_decl.property = try pool.intern("background-color");
+    bg_decl.value = try pool.intern("var(--primary-color)");
+    try button_rule.declarations.append(allocator, bg_decl);
+
+    try media_rule.rules.?.append(allocator, ast.Rule{ .style = button_rule });
+    try stylesheet.rules.append(allocator, ast.Rule{ .at_rule = media_rule });
+
+    var used_properties = std.StringHashMap(void).init(allocator);
+    defer used_properties.deinit();
+    var temp_optimizer = Optimizer.init(allocator);
+    temp_optimizer.collectUsedCustomPropertiesBeforeResolve(&stylesheet, &used_properties);
+
+    var resolver = custom_properties.CustomPropertyResolver.init(allocator, pool);
+    defer resolver.deinit();
+    try resolver.resolve(&stylesheet);
+
+    var optimizer = Optimizer.init(allocator);
+    try optimizer.removeUnusedCustomProperties(&stylesheet, &used_properties);
+
+    const root_style = stylesheet.rules.items[0].style;
+    try std.testing.expect(root_style.declarations.items.len == 1);
+    try std.testing.expect(std.mem.eql(u8, root_style.declarations.items[0].property, "--primary-color"));
+}
