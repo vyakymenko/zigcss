@@ -8,6 +8,7 @@ pub const CodegenOptions = struct {
     minify: bool = false,
     optimize: bool = false,
     autoprefix: ?autoprefixer.AutoprefixOptions = null,
+    dead_code: ?optimizer.DeadCodeOptions = null,
     plugins: []const plugin.Plugin = &.{},
 };
 
@@ -56,11 +57,21 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
         try registry.run(stylesheet);
     }
 
-    if (options.optimize or options.autoprefix != null) {
-        var opt = if (options.autoprefix) |autoprefix_opts|
+    if (options.optimize or options.autoprefix != null or options.dead_code != null) {
+        var opt = if (options.dead_code) |dead_code_opts|
+            optimizer.Optimizer.initWithDeadCode(allocator, dead_code_opts)
+        else if (options.autoprefix) |autoprefix_opts|
             optimizer.Optimizer.initWithAutoprefix(allocator, autoprefix_opts)
         else
             optimizer.Optimizer.init(allocator);
+        
+        if (options.autoprefix) |autoprefix_opts| {
+            opt.autoprefix_options = autoprefix_opts;
+        }
+        if (options.dead_code) |dead_code_opts| {
+            opt.dead_code_options = dead_code_opts;
+        }
+        
         try opt.optimize(stylesheet);
     }
 

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add dead code elimination optimization - remove unused CSS rules based on used selectors (classes, IDs, elements, attributes)
+- Add DeadCodeOptions API for configuring dead code elimination with used selectors
+- Add dead code elimination support for nested rules in @media, @container, and @layer at-rules
+- Add comprehensive test coverage for dead code elimination
 - Add documentation site - comprehensive documentation built with VitePress
 - Add VitePress configuration - modern documentation site with search, navigation, and GitHub Pages deployment
 - Add documentation pages - getting started guide, installation, API reference, examples, and advanced topics
@@ -76,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Convert inset-inline-* and inset-block-* to positioning properties (left, right, top, bottom)
 
 ### Performance Improvements
+- Add dead code elimination optimization - reduces CSS size by removing unused rules based on used selectors
 - Add cascade layer merging optimization - reduces CSS size by combining identical cascade layers
 - Fix memory safety issue in media query, container query, and cascade layer merging - properly move rules instead of copying to prevent double-free
 - Add CSS Grid/Flexbox shorthand optimizations - reduces CSS size by combining related Grid and Flexbox properties into shorthand form

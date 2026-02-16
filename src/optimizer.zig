@@ -4,9 +4,17 @@ const string_pool = @import("string_pool.zig");
 const custom_properties = @import("custom_properties.zig");
 const autoprefixer = @import("autoprefixer.zig");
 
+pub const DeadCodeOptions = struct {
+    used_classes: ?[]const []const u8 = null,
+    used_ids: ?[]const []const u8 = null,
+    used_elements: ?[]const []const u8 = null,
+    used_attributes: ?[]const []const u8 = null,
+};
+
 pub const Optimizer = struct {
     allocator: std.mem.Allocator,
     autoprefix_options: ?autoprefixer.AutoprefixOptions = null,
+    dead_code_options: ?DeadCodeOptions = null,
 
     pub fn init(allocator: std.mem.Allocator) Optimizer {
         return .{ .allocator = allocator };
@@ -19,12 +27,22 @@ pub const Optimizer = struct {
         };
     }
 
+    pub fn initWithDeadCode(allocator: std.mem.Allocator, dead_code_opts: DeadCodeOptions) Optimizer {
+        return .{
+            .allocator = allocator,
+            .dead_code_options = dead_code_opts,
+        };
+    }
+
     pub fn optimize(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         try self.resolveCustomProperties(stylesheet);
         if (self.autoprefix_options) |opts| {
             try self.addAutoprefixes(stylesheet, opts);
         }
         try self.removeEmptyRules(stylesheet);
+        if (self.dead_code_options) |_| {
+            try self.removeDeadCode(stylesheet);
+        }
         try self.optimizeSelectors(stylesheet);
         try self.mergeSelectors(stylesheet);
         try self.removeRedundantSelectors(stylesheet);
@@ -1725,5 +1743,129 @@ pub const Optimizer = struct {
             stylesheet.rules.items[idx].deinit();
             _ = stylesheet.rules.swapRemove(idx);
         }
+    }
+
+    fn removeDeadCode(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        const opts = self.dead_code_options.?;
+        
+        var used_classes_set = std.StringHashMap(void).init(self.allocator);
+        defer used_classes_set.deinit();
+        if (opts.used_classes) |classes| {
+            for (classes) |class| {
+                try used_classes_set.put(class, {});
+            }
+        }
+        
+        var used_ids_set = std.StringHashMap(void).init(self.allocator);
+        defer used_ids_set.deinit();
+        if (opts.used_ids) |ids| {
+            for (ids) |id| {
+                try used_ids_set.put(id, {});
+            }
+        }
+        
+        var used_elements_set = std.StringHashMap(void).init(self.allocator);
+        defer used_elements_set.deinit();
+        if (opts.used_elements) |elements| {
+            for (elements) |element| {
+                try used_elements_set.put(element, {});
+            }
+        }
+        
+        var used_attributes_set = std.StringHashMap(void).init(self.allocator);
+        defer used_attributes_set.deinit();
+        if (opts.used_attributes) |attributes| {
+            for (attributes) |attr| {
+                try used_attributes_set.put(attr, {});
+            }
+        }
+        
+        var i: usize = 0;
+        while (i < stylesheet.rules.items.len) {
+            const rule = &stylesheet.rules.items[i];
+            const should_remove = switch (rule.*) {
+                .style => |*style_rule| !self.isSelectorUsed(&style_rule.selectors, &used_classes_set, &used_ids_set, &used_elements_set, &used_attributes_set),
+                .at_rule => |*at_rule| blk: {
+                    if (at_rule.rules) |*rules| {
+                        var j: usize = 0;
+                        while (j < rules.items.len) {
+                            const nested_rule = &rules.items[j];
+                            const nested_should_remove = switch (nested_rule.*) {
+                                .style => |*style_rule| !self.isSelectorUsed(&style_rule.selectors, &used_classes_set, &used_ids_set, &used_elements_set, &used_attributes_set),
+                                .at_rule => false,
+                            };
+                            if (nested_should_remove) {
+                                nested_rule.deinit();
+                                _ = rules.swapRemove(j);
+                            } else {
+                                j += 1;
+                            }
+                        }
+                        break :blk rules.items.len == 0;
+                    } else {
+                        break :blk false;
+                    }
+                },
+            };
+            
+            if (should_remove) {
+                rule.deinit();
+                _ = stylesheet.rules.swapRemove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn isSelectorUsed(self: *Optimizer, selectors: *std.ArrayList(ast.Selector), used_classes: *std.StringHashMap(void), used_ids: *std.StringHashMap(void), used_elements: *std.StringHashMap(void), used_attributes: *std.StringHashMap(void)) bool {
+        _ = self;
+        
+        if (used_classes.count() == 0 and used_ids.count() == 0 and used_elements.count() == 0 and used_attributes.count() == 0) {
+            return true;
+        }
+        
+        for (selectors.items) |selector| {
+            var has_match = false;
+            
+            for (selector.parts.items) |part| {
+                switch (part) {
+                    .class => |class| {
+                        if (used_classes.contains(class)) {
+                            has_match = true;
+                            break;
+                        }
+                    },
+                    .id => |id| {
+                        if (used_ids.contains(id)) {
+                            has_match = true;
+                            break;
+                        }
+                    },
+                    .type => |element| {
+                        if (used_elements.contains(element)) {
+                            has_match = true;
+                            break;
+                        }
+                    },
+                    .attribute => |attr| {
+                        if (used_attributes.contains(attr.name)) {
+                            has_match = true;
+                            break;
+                        }
+                    },
+                    .universal => {
+                        has_match = true;
+                        break;
+                    },
+                    .pseudo_class, .pseudo_element, .combinator => {},
+                }
+            }
+            
+            if (has_match) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 };

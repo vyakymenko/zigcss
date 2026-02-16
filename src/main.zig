@@ -913,3 +913,63 @@ test "logical border properties optimization" {
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "border-inline-end-color"));
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "border-block-start-style"));
 }
+
+test "dead code elimination" {
+    const css = ".used-class { color: red; } .unused-class { color: blue; } #used-id { color: green; } #unused-id { color: yellow; } div { color: black; } span { color: white; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    const used_classes = [_][]const u8{"used-class"};
+    const used_ids = [_][]const u8{"used-id"};
+    const used_elements = [_][]const u8{"div"};
+
+    const dead_code_opts = optimizer.DeadCodeOptions{
+        .used_classes = &used_classes,
+        .used_ids = &used_ids,
+        .used_elements = &used_elements,
+    };
+
+    const result = try codegen.generate(allocator, &stylesheet, .{
+        .optimize = true,
+        .dead_code = dead_code_opts,
+    });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".used-class"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "#used-id"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "div"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, ".unused-class"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "#unused-id"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "span"));
+}
+
+test "dead code elimination with media queries" {
+    const css = "@media (min-width: 768px) { .used-class { color: red; } .unused-class { color: blue; } }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    const used_classes = [_][]const u8{"used-class"};
+
+    const dead_code_opts = optimizer.DeadCodeOptions{
+        .used_classes = &used_classes,
+    };
+
+    const result = try codegen.generate(allocator, &stylesheet, .{
+        .optimize = true,
+        .dead_code = dead_code_opts,
+    });
+    defer allocator.free(result);
+
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".used-class"));
+    try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, ".unused-class"));
+}

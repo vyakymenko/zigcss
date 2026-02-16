@@ -528,6 +528,66 @@ zcss includes a comprehensive Tailwind utility registry covering:
 - **Borders**: border width, style, radius utilities
 - **Effects**: shadows, opacity utilities
 
+### Dead Code Elimination
+
+zcss can remove unused CSS rules based on a list of used selectors (classes, IDs, elements, attributes). This is useful for removing CSS that's not referenced in your HTML/JavaScript:
+
+**Input CSS:**
+```css
+.used-class { color: red; }
+.unused-class { color: blue; }
+#used-id { color: green; }
+#unused-id { color: yellow; }
+div { color: black; }
+span { color: white; }
+```
+
+**Usage:**
+```zig
+const std = @import("std");
+const zcss = @import("zcss");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const css = try std.fs.cwd().readFileAlloc(allocator, "styles.css", 10 * 1024 * 1024);
+    defer allocator.free(css);
+
+    const used_classes = [_][]const u8{"used-class", "button", "card"};
+    const used_ids = [_][]const u8{"used-id", "header"};
+    const used_elements = [_][]const u8{"div", "body"};
+
+    const dead_code_opts = zcss.optimizer.DeadCodeOptions{
+        .used_classes = &used_classes,
+        .used_ids = &used_ids,
+        .used_elements = &used_elements,
+    };
+
+    const parser_trait = zcss.formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    const result = try zcss.codegen.generate(allocator, &stylesheet, .{
+        .optimize = true,
+        .dead_code = dead_code_opts,
+    });
+    defer allocator.free(result);
+
+    try std.fs.cwd().writeFile(.{ .sub_path = "styles.min.css", .data = result });
+}
+```
+
+**Output CSS:**
+```css
+.used-class { color: red; }
+#used-id { color: green; }
+div { color: black; }
+```
+
+Dead code elimination works with nested rules in `@media`, `@container`, and `@layer` at-rules, automatically removing entire at-rules if all their nested rules are unused.
+
 ### SCSS Advanced Features
 
 zcss supports advanced SCSS features including mixins with content blocks and variable arguments:
@@ -720,6 +780,7 @@ Multi-pass optimization pipeline:
 9. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
 10. **Container query merging** ✅ — Merge identical `@container` rules into a single rule
 11. **Cascade layer merging** ✅ — Merge identical `@layer` rules into a single rule
+12. **Dead code elimination** ✅ — Remove unused CSS rules based on used selectors (classes, IDs, elements, attributes)
 
 ### Code Generator
 
@@ -971,7 +1032,10 @@ The documentation site includes:
   - Convert border-inline-* and border-block-* to border-* properties
   - Convert inset-inline-* and inset-block-* to positioning properties
   - Assumes LTR and horizontal-tb writing mode for safe conversion
-- [ ] Dead code elimination — Remove unused CSS rules and declarations
+- [x] Dead code elimination ✅ — Remove unused CSS rules and declarations based on used selectors
+  - Remove CSS rules whose selectors don't match any used classes, IDs, elements, or attributes
+  - Supports nested rules in @media, @container, and @layer at-rules
+  - Configurable via API with DeadCodeOptions
 - [ ] Critical CSS extraction — Extract above-the-fold CSS for faster initial render
 - [ ] Enhanced error messages — Provide suggestions and context for common errors
 - [ ] Advanced LSP features — Go to definition, find references, rename symbols
