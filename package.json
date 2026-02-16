@@ -7,7 +7,6 @@
     "zcss": "./index.js"
   },
   "files": [
-    "bin/",
     "index.js",
     "install.js",
     "README.md",

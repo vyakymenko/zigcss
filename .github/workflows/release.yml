@@ -52,7 +52,12 @@ jobs:
           version: ${{ matrix.zig-version }}
 
       - name: Build Release Binary
-        run: zig build -Doptimize=ReleaseFast
+        run: |
+          if [ "${{ matrix.target }}" == "aarch64-linux" ]; then
+            zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux
+          else
+            zig build -Doptimize=ReleaseFast
+          fi
 
       - name: Get Version
         id: version
@@ -65,7 +70,7 @@ jobs:
             mkdir -p release
             cp zig-out/bin/${{ matrix.binary-name }} release/
             cd release
-            7z a ../zcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip ${{ matrix.binary-name }}
+            powershell -Command "Compress-Archive -Path '${{ matrix.binary-name }}' -DestinationPath '../zcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip' -Force"
             cd ..
           else
             mkdir -p release
