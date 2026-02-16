@@ -447,6 +447,7 @@ zig build test --summary all
 - [x] Advanced selector optimization ✅ — Universal selector removal, selector simplification, specificity calculation
 - [ ] Plugin system
 - [x] Watch mode improvements ✅ — Polling-based file watching with automatic recompilation
+- [x] Incremental compilation ✅ — Content hash-based change detection for faster watch mode
 
 ### Phase 3: Performance & Polish ✅ MOSTLY COMPLETED
 - [x] Capacity estimation for ArrayLists
@@ -461,7 +462,7 @@ zig build test --summary all
 - [x] Comprehensive test suite
 - [x] Better error messages with position tracking
 - [x] Parallel file processing ✅ — Multi-threaded compilation for multiple files
-- [ ] Incremental compilation
+- [x] Incremental compilation ✅ — Content-based change detection for faster watch mode
 - [ ] Performance profiling tools
 
 ### Phase 4: Ecosystem

@@ -87,35 +87,55 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
 
 const ParseError = error{ParseError};
 
+fn computeFileHash(content: []const u8) u64 {
+    var hasher = std.hash.XxHash64.init(0);
+    hasher.update(content);
+    return hasher.final();
+}
+
 fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     std.debug.print("Watching {s} for changes... (Press Ctrl+C to stop)\n", .{config.input_file});
     
     const cwd = std.fs.cwd();
-    const input_file_handle = try cwd.openFile(config.input_file, .{});
-    defer input_file_handle.close();
     
-    var last_modified: i128 = 0;
-    
-    try compileFile(allocator, config);
-    
-    const stat = try input_file_handle.stat();
-    last_modified = stat.mtime;
+    var last_hash: ?u64 = null;
+    var first_compile = true;
     
     while (true) {
-        std.Thread.sleep(500 * std.time.ns_per_ms);
-        
-        const current_stat = input_file_handle.stat() catch |err| {
-            std.debug.print("Error checking file: {}\n", .{err});
+        const input = cwd.readFileAlloc(allocator, config.input_file, 10 * 1024 * 1024) catch |err| {
+            std.debug.print("Error reading file: {}\n", .{err});
+            std.Thread.sleep(500 * std.time.ns_per_ms);
             continue;
         };
+        defer allocator.free(input);
         
-        if (current_stat.mtime != last_modified) {
-            last_modified = current_stat.mtime;
-            std.debug.print("File changed, recompiling...\n", .{});
-            compileFile(allocator, config) catch {
+        const current_hash = computeFileHash(input);
+        
+        if (first_compile or last_hash == null or current_hash != last_hash.?) {
+            if (!first_compile) {
+                std.debug.print("File changed, recompiling...\n", .{});
+            }
+            
+            const temp_config = CompileConfig{
+                .input_file = config.input_file,
+                .output_file = config.output_file,
+                .optimize = config.optimize,
+                .minify = config.minify,
+                .source_map = config.source_map,
+                .autoprefix = config.autoprefix,
+            };
+            
+            compileFile(allocator, temp_config) catch |err| {
+                std.debug.print("Compilation error: {}\n", .{err});
+                std.Thread.sleep(500 * std.time.ns_per_ms);
                 continue;
             };
+            
+            last_hash = current_hash;
+            first_compile = false;
         }
+        
+        std.Thread.sleep(500 * std.time.ns_per_ms);
     }
 }
 

@@ -8,12 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add incremental compilation - content hash-based change detection for faster watch mode
 - Add advanced selector optimization - universal selector removal, selector simplification, and specificity-based optimization
 - Add parallel file processing - compile multiple files concurrently using all CPU cores
 - Add --output-dir flag support for batch compilation of multiple files
 - Add glob pattern support for input files (e.g., `src/*.css`)
 
 ### Performance Improvements
+- Add incremental compilation with content hash tracking - watch mode only recompiles when file content actually changes
 - Add advanced selector optimization with universal selector removal and selector simplification
 - Add font and background shorthand optimizations
 - Add redundant selector removal and media query merging optimizations
