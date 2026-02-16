@@ -160,55 +160,96 @@ fn generateStyleRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
     
     const minify = options.minify;
     
+    var selector_needed: usize = 0;
+    for (rule.selectors.items) |selector| {
+        selector_needed += estimateSelectorSize(selector);
+        if (!minify) selector_needed += 2;
+    }
+    selector_needed += if (!minify) 3 else 1;
+    try list.ensureUnusedCapacity(allocator, selector_needed);
+    
     for (rule.selectors.items, 0..) |selector, i| {
         if (i > 0) {
-            try list.append(allocator, ',');
+            list.appendAssumeCapacity(',');
             if (!minify) {
-                try list.append(allocator, ' ');
+                list.appendAssumeCapacity(' ');
             }
         }
         try generateSelector(list, allocator, selector, options);
     }
 
     if (!minify) {
-        try list.append(allocator, ' ');
+        list.appendAssumeCapacity(' ');
     }
-    try list.append(allocator, '{');
+    list.appendAssumeCapacity('{');
     if (!minify) {
-        try list.append(allocator, '\n');
+        list.appendAssumeCapacity('\n');
     }
 
     const decl_count = rule.declarations.items.len;
     const last_idx = decl_count - 1;
     
+    const total_decl_size = blk: {
+        var size: usize = 0;
+        for (rule.declarations.items) |decl| {
+            size += decl.property.len + decl.value.len + 2;
+            if (decl.important) size += 10;
+        }
+        if (!minify) {
+            size += (rule.declarations.items.len * 3) + 1;
+        } else {
+            size += rule.declarations.items.len - 1;
+        }
+        break :blk size;
+    };
+    try list.ensureUnusedCapacity(allocator, total_decl_size);
+    
     for (rule.declarations.items, 0..) |decl, i| {
+        
         if (!minify) {
             if (i > 0) {
-                try list.append(allocator, '\n');
+                list.appendAssumeCapacity('\n');
             }
-            try list.appendSlice(allocator, "  ");
+            list.appendSliceAssumeCapacity("  ");
         }
-        try list.appendSlice(allocator, decl.property);
-        try list.append(allocator, ':');
+        list.appendSliceAssumeCapacity(decl.property);
+        list.appendAssumeCapacity(':');
         if (!minify) {
-            try list.append(allocator, ' ');
+            list.appendAssumeCapacity(' ');
         }
-        try list.appendSlice(allocator, decl.value);
+        list.appendSliceAssumeCapacity(decl.value);
         if (decl.important) {
             if (!minify) {
-                try list.append(allocator, ' ');
+                list.appendAssumeCapacity(' ');
             }
-            try list.appendSlice(allocator, "!important");
+            list.appendSliceAssumeCapacity("!important");
         }
         if (i != last_idx or !minify) {
-            try list.append(allocator, ';');
+            list.appendAssumeCapacity(';');
         }
     }
 
     if (!minify) {
-        try list.append(allocator, '\n');
+        list.appendAssumeCapacity('\n');
     }
-    try list.append(allocator, '}');
+    list.appendAssumeCapacity('}');
+}
+
+fn estimateSelectorSize(selector: ast.Selector) usize {
+    var size: usize = 0;
+    for (selector.parts.items) |part| {
+        size += switch (part) {
+            .type => |s| s.len,
+            .class => |s| s.len + 1,
+            .id => |s| s.len + 1,
+            .universal => 1,
+            .attribute => |attr| attr.name.len + (attr.value orelse "").len + 6,
+            .pseudo_class => |s| s.len + 1,
+            .pseudo_element => |s| s.len + 2,
+            .combinator => 3,
+        };
+    }
+    return size;
 }
 
 fn generateSelector(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, selector: ast.Selector, options: CodegenOptions) !void {
@@ -225,7 +266,8 @@ fn generateSelector(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloca
         if (i > 0) {
             const is_combinator = part == .combinator;
             if (!is_combinator and !prev_was_combinator) {
-                try list.append(allocator, ' ');
+                try list.ensureUnusedCapacity(allocator, 1);
+                list.appendAssumeCapacity(' ');
             }
             prev_was_combinator = is_combinator;
         } else {
@@ -238,91 +280,159 @@ fn generateSelector(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloca
 
 fn generateSelectorPart(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, part: ast.SelectorPart) !void {
     switch (part) {
-        .type => |s| try list.appendSlice(allocator, s),
+        .type => |s| {
+            if (list.capacity - list.items.len < s.len) {
+                try list.ensureUnusedCapacity(allocator, s.len);
+            }
+            list.appendSliceAssumeCapacity(s);
+        },
         .class => |s| {
-            try list.append(allocator, '.');
-            try list.appendSlice(allocator, s);
+            if (list.capacity - list.items.len < s.len + 1) {
+                try list.ensureUnusedCapacity(allocator, s.len + 1);
+            }
+            list.appendAssumeCapacity('.');
+            list.appendSliceAssumeCapacity(s);
         },
         .id => |s| {
-            try list.append(allocator, '#');
-            try list.appendSlice(allocator, s);
+            if (list.capacity - list.items.len < s.len + 1) {
+                try list.ensureUnusedCapacity(allocator, s.len + 1);
+            }
+            list.appendAssumeCapacity('#');
+            list.appendSliceAssumeCapacity(s);
         },
-        .universal => try list.append(allocator, '*'),
+        .universal => {
+            if (list.capacity - list.items.len < 1) {
+                try list.ensureUnusedCapacity(allocator, 1);
+            }
+            list.appendAssumeCapacity('*');
+        },
         .attribute => |attr| try generateAttributeSelector(list, allocator, attr),
         .pseudo_class => |s| {
-            try list.append(allocator, ':');
-            try list.appendSlice(allocator, s);
+            if (list.capacity - list.items.len < s.len + 1) {
+                try list.ensureUnusedCapacity(allocator, s.len + 1);
+            }
+            list.appendAssumeCapacity(':');
+            list.appendSliceAssumeCapacity(s);
         },
         .pseudo_element => |s| {
-            try list.appendSlice(allocator, "::");
-            try list.appendSlice(allocator, s);
+            if (list.capacity - list.items.len < s.len + 2) {
+                try list.ensureUnusedCapacity(allocator, s.len + 2);
+            }
+            list.appendSliceAssumeCapacity("::");
+            list.appendSliceAssumeCapacity(s);
         },
-        .combinator => |c| try list.appendSlice(allocator, c.toString()),
+        .combinator => |c| {
+            const comb_str = c.toString();
+            if (list.capacity - list.items.len < comb_str.len) {
+                try list.ensureUnusedCapacity(allocator, comb_str.len);
+            }
+            list.appendSliceAssumeCapacity(comb_str);
+        },
     }
 }
 
 fn generateAttributeSelector(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, attr: ast.AttributeSelector) !void {
-    try list.append(allocator, '[');
-    try list.appendSlice(allocator, attr.name);
+    var needed = attr.name.len + 2;
     if (attr.operator) |op| {
-        try list.appendSlice(allocator, op);
+        needed += op.len;
         if (attr.value) |val| {
-            try list.append(allocator, '"');
-            try list.appendSlice(allocator, val);
-            try list.append(allocator, '"');
+            needed += val.len + 2;
         }
     }
     if (!attr.case_sensitive) {
-        try list.appendSlice(allocator, " i");
+        needed += 2;
     }
-    try list.append(allocator, ']');
+    try list.ensureUnusedCapacity(allocator, needed);
+    
+    list.appendAssumeCapacity('[');
+    list.appendSliceAssumeCapacity(attr.name);
+    if (attr.operator) |op| {
+        list.appendSliceAssumeCapacity(op);
+        if (attr.value) |val| {
+            list.appendAssumeCapacity('"');
+            list.appendSliceAssumeCapacity(val);
+            list.appendAssumeCapacity('"');
+        }
+    }
+    if (!attr.case_sensitive) {
+        list.appendSliceAssumeCapacity(" i");
+    }
+    list.appendAssumeCapacity(']');
 }
 
 fn generateAtRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, rule: ast.AtRule, options: CodegenOptions) !void {
-    try list.append(allocator, '@');
-    try list.appendSlice(allocator, rule.name);
+    const minify = options.minify;
+    var needed = rule.name.len + 1;
     if (rule.prelude.len > 0) {
-        if (!options.minify) {
-            try list.append(allocator, ' ');
+        needed += rule.prelude.len;
+        if (!minify) needed += 1;
+    }
+    
+    if (rule.rules) |rules| {
+        needed += if (!minify) 3 else 1;
+        for (rules.items) |nested_rule| {
+            switch (nested_rule) {
+                .style => |style_rule| {
+                    needed += estimateStyleRuleSize(style_rule);
+                    if (!minify) needed += 2;
+                },
+                .at_rule => |at_rule| {
+                    needed += at_rule.name.len + at_rule.prelude.len + 3;
+                    if (!minify) needed += 2;
+                },
+            }
         }
-        try list.appendSlice(allocator, rule.prelude);
+        if (!minify) needed += 1;
+    } else {
+        needed += 1;
+    }
+    
+    try list.ensureUnusedCapacity(allocator, needed);
+    
+    list.appendAssumeCapacity('@');
+    list.appendSliceAssumeCapacity(rule.name);
+    if (rule.prelude.len > 0) {
+        if (!minify) {
+            list.appendAssumeCapacity(' ');
+        }
+        list.appendSliceAssumeCapacity(rule.prelude);
     }
 
     if (rule.rules) |rules| {
-        if (!options.minify) {
-            try list.append(allocator, ' ');
+        if (!minify) {
+            list.appendAssumeCapacity(' ');
         }
-        try list.append(allocator, '{');
-        if (!options.minify) {
-            try list.append(allocator, '\n');
+        list.appendAssumeCapacity('{');
+        if (!minify) {
+            list.appendAssumeCapacity('\n');
         }
 
         for (rules.items, 0..) |nested_rule, i| {
-            if (!options.minify and i > 0) {
-                try list.append(allocator, '\n');
+            if (!minify and i > 0) {
+                list.appendAssumeCapacity('\n');
             }
 
             switch (nested_rule) {
                 .style => |style_rule| {
-                    if (!options.minify) {
-                        try list.appendSlice(allocator, "  ");
+                    if (!minify) {
+                        list.appendSliceAssumeCapacity("  ");
                     }
                     try generateStyleRule(list, allocator, style_rule, options);
                 },
                 .at_rule => |at_rule| {
-                    if (!options.minify) {
-                        try list.appendSlice(allocator, "  ");
+                    if (!minify) {
+                        list.appendSliceAssumeCapacity("  ");
                     }
                     try generateAtRule(list, allocator, at_rule, options);
                 },
             }
         }
 
-        if (!options.minify) {
-            try list.append(allocator, '\n');
+        if (!minify) {
+            list.appendAssumeCapacity('\n');
         }
-        try list.append(allocator, '}');
+        list.appendAssumeCapacity('}');
     } else {
-        try list.append(allocator, ';');
+        list.appendAssumeCapacity(';');
     }
 }

@@ -270,7 +270,9 @@ pub const Optimizer = struct {
     fn mergeSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len <= 1) return;
         
+        const estimated_capacity = @as(u32, @intCast(@min(stylesheet.rules.items.len / 2, std.math.maxInt(u32))));
         var selector_map = std.AutoHashMap(usize, usize).init(self.allocator);
+        try selector_map.ensureTotalCapacity(estimated_capacity);
         defer selector_map.deinit();
 
         var i: usize = 0;
@@ -421,6 +423,27 @@ pub const Optimizer = struct {
 
     fn optimizeValues(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
+        if (stylesheet.string_pool == null) return;
+        
+        var has_optimizable = false;
+        for (stylesheet.rules.items) |rule| {
+            switch (rule) {
+                .style => |style_rule| {
+                    for (style_rule.declarations.items) |decl| {
+                        if (decl.value.len >= 3) {
+                            const first = decl.value[0];
+                            if (first == '#' or first == 'r' or first == 't' or first == 'c' or std.ascii.isDigit(first)) {
+                                has_optimizable = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (has_optimizable) break;
+                },
+                .at_rule => {},
+            }
+        }
+        if (!has_optimizable) return;
         
         if (stylesheet.string_pool) |pool| {
             for (stylesheet.rules.items) |*rule| {
@@ -467,37 +490,49 @@ pub const Optimizer = struct {
     fn optimizeValue(self: *Optimizer, value: []const u8) !struct { optimized: []const u8, was_optimized: bool } {
         if (value.len == 0) return .{ .optimized = value, .was_optimized = false };
         
-        const needs_trimming = (value.len > 0 and (std.ascii.isWhitespace(value[0]) or std.ascii.isWhitespace(value[value.len - 1])));
+        const first_char = value[0];
+        if (value.len < 3) return .{ .optimized = value, .was_optimized = false };
+        
+        const needs_trimming = std.ascii.isWhitespace(first_char) or std.ascii.isWhitespace(value[value.len - 1]);
         const trimmed = if (needs_trimming) std.mem.trim(u8, value, " \t\n\r") else value;
         
         if (trimmed.len == 0) return .{ .optimized = value, .was_optimized = false };
-        
         if (trimmed.len < 3) return .{ .optimized = value, .was_optimized = false };
-
-        if (self.optimizeRgbColor(trimmed)) |optimized| {
-            return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
-        }
-
-        if (self.optimizeHexColor(trimmed)) |optimized| {
-            if (optimized.len < trimmed.len) {
+        
+        const trimmed_first = trimmed[0];
+        
+        if (trimmed_first == 'r' and (trimmed.len >= 4)) {
+            if (self.optimizeRgbColor(trimmed)) |optimized| {
                 return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
             }
         }
-
-        if (self.optimizeColorName(trimmed)) |optimized| {
-            return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
+        
+        if (trimmed_first == '#') {
+            if (self.optimizeHexColor(trimmed)) |optimized| {
+                if (optimized.len < trimmed.len) {
+                    return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
+                }
+            }
         }
-
-        if (self.optimizeTransparent(trimmed)) |optimized| {
+        
+        if (trimmed_first == 't' and trimmed.len == 11) {
+            if (self.optimizeTransparent(trimmed)) |optimized| {
+                return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
+            }
+        }
+        
+        if (trimmed_first == 'c' and trimmed.len >= 5) {
+            if (self.optimizeMathFunction(trimmed)) |optimized| {
+                return .{ .optimized = optimized, .was_optimized = true };
+            }
+        }
+        
+        if (self.optimizeColorName(trimmed)) |optimized| {
             return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
         }
 
         if (self.optimizeUnit(trimmed)) |optimized| {
             return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
-        }
-
-        if (self.optimizeMathFunction(trimmed)) |optimized| {
-            return .{ .optimized = optimized, .was_optimized = true };
         }
 
         return .{ .optimized = value, .was_optimized = false };
@@ -525,8 +560,10 @@ pub const Optimizer = struct {
     }
 
     fn optimizeRgbColor(self: *Optimizer, value: []const u8) ?[]const u8 {
-        const is_rgba = std.mem.startsWith(u8, value, "rgba(");
-        const is_rgb = std.mem.startsWith(u8, value, "rgb(");
+        if (value.len < 5) return null;
+        
+        const is_rgba = value.len >= 6 and std.mem.eql(u8, value[0..5], "rgba(");
+        const is_rgb = std.mem.eql(u8, value[0..4], "rgb(");
         
         if (!is_rgb and !is_rgba) {
             return null;
@@ -1552,9 +1589,10 @@ pub const Optimizer = struct {
         const decl_count = style_rule.declarations.items.len;
         if (decl_count <= 1) return;
         
+        const estimated_capacity = @as(u32, @intCast(@min(decl_count / 2, std.math.maxInt(u32))));
         var seen = std.StringHashMap(void).init(style_rule.allocator);
         defer seen.deinit();
-        try seen.ensureTotalCapacity(@as(u32, @intCast(@min(decl_count / 2, std.math.maxInt(u32)))));
+        try seen.ensureTotalCapacity(estimated_capacity);
 
         var i: usize = decl_count;
         while (i > 0) {
@@ -1855,7 +1893,17 @@ pub const Optimizer = struct {
     fn mergeMediaQueries(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
         
+        var media_count: usize = 0;
+        for (stylesheet.rules.items) |rule| {
+            if (rule == .at_rule and rule.at_rule.name.len == 5 and std.mem.eql(u8, rule.at_rule.name, "media")) {
+                media_count += 1;
+            }
+        }
+        if (media_count <= 1) return;
+        
+        const estimated_capacity = @min(media_count / 2, 16);
         var media_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
+        try media_map.ensureTotalCapacity(estimated_capacity);
         defer {
             var it = media_map.iterator();
             while (it.next()) |entry| {
@@ -1917,8 +1965,10 @@ pub const Optimizer = struct {
             }
         }
 
-        std.mem.sort(usize, indices_to_remove.items, {}, comptime std.sort.desc(usize));
-        for (indices_to_remove.items) |idx| {
+        var idx_i = indices_to_remove.items.len;
+        while (idx_i > 0) {
+            idx_i -= 1;
+            const idx = indices_to_remove.items[idx_i];
             stylesheet.rules.items[idx].deinit();
             _ = stylesheet.rules.swapRemove(idx);
         }
@@ -1927,7 +1977,17 @@ pub const Optimizer = struct {
     fn mergeContainerQueries(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
         
+        var container_count: usize = 0;
+        for (stylesheet.rules.items) |rule| {
+            if (rule == .at_rule and rule.at_rule.name.len == 9 and std.mem.eql(u8, rule.at_rule.name, "container")) {
+                container_count += 1;
+            }
+        }
+        if (container_count <= 1) return;
+        
+        const estimated_capacity = @min(container_count / 2, 16);
         var container_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
+        try container_map.ensureTotalCapacity(estimated_capacity);
         defer {
             var it = container_map.iterator();
             while (it.next()) |entry| {
@@ -1989,8 +2049,10 @@ pub const Optimizer = struct {
             }
         }
 
-        std.mem.sort(usize, indices_to_remove.items, {}, comptime std.sort.desc(usize));
-        for (indices_to_remove.items) |idx| {
+        var idx_i = indices_to_remove.items.len;
+        while (idx_i > 0) {
+            idx_i -= 1;
+            const idx = indices_to_remove.items[idx_i];
             stylesheet.rules.items[idx].deinit();
             _ = stylesheet.rules.swapRemove(idx);
         }
@@ -1999,7 +2061,17 @@ pub const Optimizer = struct {
     fn mergeCascadeLayers(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
         
+        var layer_count: usize = 0;
+        for (stylesheet.rules.items) |rule| {
+            if (rule == .at_rule and rule.at_rule.name.len == 5 and std.mem.eql(u8, rule.at_rule.name, "layer")) {
+                layer_count += 1;
+            }
+        }
+        if (layer_count <= 1) return;
+        
+        const estimated_capacity = @min(layer_count / 2, 16);
         var layer_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
+        try layer_map.ensureTotalCapacity(estimated_capacity);
         defer {
             var it = layer_map.iterator();
             while (it.next()) |entry| {
@@ -2062,8 +2134,10 @@ pub const Optimizer = struct {
             }
         }
 
-        std.mem.sort(usize, indices_to_remove.items, {}, comptime std.sort.desc(usize));
-        for (indices_to_remove.items) |idx| {
+        var idx_i = indices_to_remove.items.len;
+        while (idx_i > 0) {
+            idx_i -= 1;
+            const idx = indices_to_remove.items[idx_i];
             stylesheet.rules.items[idx].deinit();
             _ = stylesheet.rules.swapRemove(idx);
         }
