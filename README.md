@@ -1118,6 +1118,15 @@ The documentation site includes:
   - Use length checks before mem.eql for faster comparisons
   - Pre-allocate ArrayLists with better capacity estimates
   - Reduce string comparisons in merge operations
+- [x] Parser hot path optimizations ✅ — Optimize critical parsing functions
+  - Optimize parseIdentifier - use local variable for position, reduce bounds checks
+  - Optimize parseDeclaration - direct character access, avoid unnecessary trim
+  - Optimize parseSelector - cache peek results, use direct position updates
+  - Optimize parseStyleRule - reduce peek() calls, use direct character access
+- [x] Optimizer loop optimizations ✅ — Cache lengths and reduce lookups
+  - Pre-allocate hash map capacity in removeDuplicatesInRule
+  - Cache selector and parts counts to avoid repeated lookups
+  - Reduce function call overhead in hot loops
 - [x] CSS Logical Properties optimization ✅ — Convert logical properties to physical equivalents when safe
   - Convert margin-inline-* and margin-block-* to margin-* properties
   - Convert padding-inline-* and padding-block-* to padding-* properties

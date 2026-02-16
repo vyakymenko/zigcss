@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optimize string pool - add early exits for empty strings, improve bounds checking
 - Optimize hash operations - cache counts, pre-allocate capacity, reduce reallocations
 - Optimize at-rule merging - use length checks before string comparisons for faster matching
+- Optimize parser hot paths - parseIdentifier, parseDeclaration, parseSelector, parseStyleRule
+- Reduce bounds checks and function calls in parser loops
+- Optimize optimizer loops - cache lengths, pre-allocate hash maps, reduce lookups
+- Improve loop performance by caching collection sizes throughout optimizer
 
 ### Features
 - Add advanced LSP features - go to definition, find references, and rename symbols
