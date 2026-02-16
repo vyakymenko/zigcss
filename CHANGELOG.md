@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add Zig build system integration - build helpers for seamless CSS compilation in Zig projects
+- Add CssCompileStep API for programmatic CSS compilation in build.zig
+- Add build_helpers.zig module with addCssCompileStep and addCssCompileStepTo functions
+- Add support for configuring CSS compilation options (optimize, minify, autoprefix) in build system
 - Add performance profiling tools - built-in profiling system with timing and memory metrics
 - Add --profile CLI flag for performance profiling during compilation
 - Add benchmark suite with `zig build bench` command

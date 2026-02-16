@@ -132,6 +132,89 @@ Add to your `build.zig.zon`:
 }
 ```
 
+### Build Integration
+
+zcss provides build helpers for seamless integration with Zig's build system. Automatically compile CSS files as part of your build process:
+
+**1. Add zcss as a dependency in `build.zig.zon`:**
+
+```zig
+.{
+    .name = "my-project",
+    .version = "0.1.0",
+    .dependencies = .{
+        .zcss = .{
+            .path = "../zcss",
+        },
+    },
+}
+```
+
+**2. Use build helpers in your `build.zig`:**
+
+```zig
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const zcss_dep = b.dependency("zcss", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zcss_exe = zcss_dep.artifact("zcss");
+    const zcss_path = zcss_dep.path("");
+
+    const build_helpers = @import("build_helpers.zig");
+    const build_helpers_path = b.pathJoin(&.{ zcss_path, "build_helpers.zig" });
+    const build_helpers_module = b.createModule(.{
+        .root_source_file = b.path(build_helpers_path),
+    });
+
+    const css_step = build_helpers.addCssCompileStep(
+        b,
+        zcss_exe,
+        "zig-out/css",
+    );
+
+    css_step.addInputFile("src/styles.css");
+    css_step.addInputFile("src/components.scss");
+    css_step.setOptimize(true);
+    css_step.setMinify(true);
+    css_step.setAutoprefix(true);
+    css_step.addBrowsers(&.{ "last 2 versions", "> 1%" });
+
+    const install_step = b.getInstallStep();
+    install_step.dependOn(&css_step.step);
+
+    const exe = b.addExecutable(.{
+        .name = "my-app",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    b.installArtifact(exe);
+}
+```
+
+**Build Helper API:**
+
+- `addCssCompileStep(builder, zcss_exe, output_dir)` - Create a CSS compilation step
+- `addCssCompileStepTo(builder, zcss_exe, output_dir, step)` - Create and attach to a build step
+- `css_step.addInputFile(file)` - Add a single CSS file to compile
+- `css_step.addInputFiles(files)` - Add multiple CSS files
+- `css_step.setOptimize(bool)` - Enable/disable optimizations
+- `css_step.setMinify(bool)` - Enable/disable minification
+- `css_step.setSourceMap(bool)` - Enable/disable source maps
+- `css_step.setAutoprefix(bool)` - Enable/disable autoprefixer
+- `css_step.addBrowser(browser)` - Add browser support requirement
+- `css_step.addBrowsers(browsers)` - Add multiple browser requirements
+
+CSS files are automatically compiled when you run `zig build`, and the compiled output is placed in the specified output directory.
+
 ## 🎯 Quick Start
 
 ### Command Line Usage
@@ -560,7 +643,7 @@ zcss input.css -o output.css --profile
 ### Phase 4: Ecosystem
 - [ ] Language server protocol (LSP) support
 - [ ] Editor integrations (VSCode, Neovim)
-- [ ] Build tool integrations (Zig build, Make, etc.)
+- [x] Build tool integrations ✅ — Zig build system integration with build helpers
 - [ ] Pre-built binaries for all platforms
 - [ ] Package manager integration
 - [ ] Documentation site
