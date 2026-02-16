@@ -438,6 +438,41 @@ zcss supports CSS Cascade Layers, allowing you to control the cascade order of y
 
 Cascade layers are automatically optimized by merging identical `@layer` rules with the same name, reducing CSS size while maintaining cascade order.
 
+### Tailwind @apply Expansion
+
+zcss supports Tailwind CSS `@apply` directive expansion, automatically converting utility classes into CSS declarations:
+
+**Input:**
+```css
+.btn {
+    @apply px-4 py-2 bg-blue-500 text-white rounded-lg shadow-md;
+}
+```
+
+**Output:**
+```css
+.btn {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    background-color: #3b82f6;
+    color: #fff;
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+```
+
+zcss includes a comprehensive Tailwind utility registry covering:
+- **Spacing**: padding, margin utilities (p-*, px-*, py-*, m-*, mx-*, my-*, etc.)
+- **Colors**: text and background colors (text-*, bg-*)
+- **Typography**: font sizes, weights, styles, transforms
+- **Layout**: display, width, height, overflow utilities
+- **Flexbox**: flex direction, wrap, alignment utilities
+- **Grid**: grid template columns utilities
+- **Borders**: border width, style, radius utilities
+- **Effects**: shadows, opacity utilities
+
 ## 🏗️ Architecture
 
 zcss is built with performance in mind using a multi-stage compilation pipeline:
@@ -705,14 +740,14 @@ zcss input.css -o output.css --profile
 - [ ] Package manager integration
 - [ ] Documentation site
 
-### Phase 5: Advanced CSS Features
+### Phase 5: Advanced CSS Features ✅ COMPLETED
 - [x] CSS Modules support
 - [x] CSS-in-JS compilation
 - [x] PostCSS plugin compatibility layer
 - [x] CSS Grid/Flexbox optimizations ✅ — Flexbox and Grid shorthand property optimizations
 - [x] Container queries ✅ — Full container query support with merging optimization
 - [x] Cascade layers ✅ — Full CSS Cascade Layers support with merging optimization
-- [ ] Tailwind @apply expansion
+- [x] Tailwind @apply expansion ✅ — Expand Tailwind utility classes in @apply directives
 
 ## 🤝 Contributing
 

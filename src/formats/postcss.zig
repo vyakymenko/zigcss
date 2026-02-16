@@ -1,15 +1,26 @@
 const std = @import("std");
 const ast = @import("../ast.zig");
 const css_parser = @import("../parser.zig");
+const tailwind = @import("../tailwind.zig");
 
 pub const Parser = struct {
     input: []const u8,
     allocator: std.mem.Allocator,
+    tailwind_registry: ?*tailwind.TailwindRegistry,
 
     pub fn init(allocator: std.mem.Allocator, input: []const u8) Parser {
         return .{
             .input = input,
             .allocator = allocator,
+            .tailwind_registry = null,
+        };
+    }
+
+    pub fn initWithTailwind(allocator: std.mem.Allocator, input: []const u8, registry: *tailwind.TailwindRegistry) Parser {
+        return .{
+            .input = input,
+            .allocator = allocator,
+            .tailwind_registry = registry,
         };
     }
 
@@ -26,6 +37,19 @@ pub const Parser = struct {
         var result = try std.ArrayList(u8).initCapacity(self.allocator, self.input.len);
         errdefer result.deinit(self.allocator);
 
+        var registry: ?*tailwind.TailwindRegistry = null;
+        var owns_registry = false;
+        if (self.tailwind_registry) |reg| {
+            registry = reg;
+        } else {
+            var reg = try tailwind.TailwindRegistry.init(self.allocator);
+            registry = &reg;
+            owns_registry = true;
+        }
+        defer if (owns_registry) {
+            if (registry) |reg| reg.deinit();
+        };
+
         var i: usize = 0;
         while (i < self.input.len) {
             if (self.matchAt(i, "@apply")) {
@@ -35,6 +59,7 @@ pub const Parser = struct {
                     j += 1;
                 }
                 
+                const apply_start = j;
                 var depth: usize = 0;
                 var in_string = false;
                 var string_char: u8 = 0;
@@ -46,12 +71,36 @@ pub const Parser = struct {
                             in_string = true;
                             string_char = ch;
                         } else if (ch == ';' and depth == 0) {
+                            const apply_content = self.input[apply_start..j];
+                            if (registry) |reg| {
+                                const expanded = reg.expandApply(self.allocator, apply_content) catch {
+                                    try result.writer(self.allocator).print("@apply {s};", .{apply_content});
+                                    i = j + 1;
+                                    continue;
+                                };
+                                defer self.allocator.free(expanded);
+                                try result.appendSlice(self.allocator, expanded);
+                            } else {
+                                try result.writer(self.allocator).print("@apply {s};", .{apply_content});
+                            }
                             i = j + 1;
                             break;
                         } else if (ch == '{') {
                             depth += 1;
                         } else if (ch == '}') {
                             if (depth == 0) {
+                                const apply_content = self.input[apply_start..j];
+                                if (registry) |reg| {
+                                    const expanded = reg.expandApply(self.allocator, apply_content) catch {
+                                        try result.writer(self.allocator).print("@apply {s}", .{apply_content});
+                                        i = j;
+                                        continue;
+                                    };
+                                    defer self.allocator.free(expanded);
+                                    try result.appendSlice(self.allocator, expanded);
+                                } else {
+                                    try result.writer(self.allocator).print("@apply {s}", .{apply_content});
+                                }
                                 i = j;
                                 break;
                             }
@@ -65,6 +114,18 @@ pub const Parser = struct {
                     j += 1;
                 }
                 if (j >= self.input.len) {
+                    const apply_content = self.input[apply_start..];
+                    if (registry) |reg| {
+                        const expanded = reg.expandApply(self.allocator, apply_content) catch {
+                            try result.writer(self.allocator).print("@apply {s}", .{apply_content});
+                            i = j;
+                            continue;
+                        };
+                        defer self.allocator.free(expanded);
+                        try result.appendSlice(self.allocator, expanded);
+                    } else {
+                        try result.writer(self.allocator).print("@apply {s}", .{apply_content});
+                    }
                     i = j;
                 }
                 continue;
@@ -160,4 +221,58 @@ test "parse PostCSS custom media" {
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len >= 0);
+}
+
+test "expand Tailwind @apply directive" {
+    const postcss = ".btn { @apply px-4 py-2 bg-blue-500 text-white; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, postcss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len >= 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(rule.style.declarations.items.len > 0);
+    
+    var found_padding = false;
+    var found_bg = false;
+    var found_color = false;
+    
+    for (rule.style.declarations.items) |decl| {
+        if (std.mem.eql(u8, decl.property, "padding-left") or std.mem.eql(u8, decl.property, "padding-right")) {
+            found_padding = true;
+        }
+        if (std.mem.eql(u8, decl.property, "background-color")) {
+            found_bg = true;
+        }
+        if (std.mem.eql(u8, decl.property, "color")) {
+            found_color = true;
+        }
+    }
+    
+    try std.testing.expect(found_padding);
+    try std.testing.expect(found_bg);
+    try std.testing.expect(found_color);
+}
+
+test "expand Tailwind @apply with multiple utilities" {
+    const postcss = ".card { @apply p-4 rounded-lg shadow-md; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, postcss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len >= 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(rule.style.declarations.items.len > 0);
 }

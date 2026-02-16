@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add Tailwind @apply expansion - automatically expand Tailwind utility classes in @apply directives into CSS declarations
+- Add comprehensive Tailwind utility registry with 200+ utility classes covering spacing, colors, typography, layout, flexbox, grid, borders, and effects
+- Add TailwindRegistry module for managing and expanding Tailwind utility classes
+- Integrate Tailwind @apply expansion into PostCSS processor
 - Add CSS Cascade Layers support - full parsing and optimization for @layer at-rules
 - Add cascade layer merging optimization - merge identical @layer rules for smaller output
 - Add cascade layer test coverage
