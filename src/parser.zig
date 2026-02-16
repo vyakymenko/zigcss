@@ -93,10 +93,15 @@ pub const Parser = struct {
     }
 
     fn estimateRuleCount(self: *const Parser) usize {
+        if (self.input.len == 0) return 0;
+        
         var count: usize = 0;
         var i: usize = 0;
-        while (i < self.input.len) {
-            if (self.input[i] == '{' or self.input[i] == '@') {
+        const len = self.input.len;
+        
+        while (i < len) {
+            const ch = self.input[i];
+            if (ch == '{' or ch == '@') {
                 count += 1;
             }
             i += 1;
@@ -105,10 +110,14 @@ pub const Parser = struct {
     }
 
     fn estimateDeclarationCount(self: *const Parser) usize {
+        if (self.pos >= self.input.len) return 2;
+        
         var count: usize = 0;
         var i: usize = self.pos;
         var depth: usize = 0;
-        while (i < self.input.len and depth < 2) {
+        const len = self.input.len;
+        
+        while (i < len and depth < 2) {
             const ch = self.input[i];
             if (ch == '{') {
                 depth += 1;
@@ -395,17 +404,17 @@ pub const Parser = struct {
 
     fn skipComment(self: *Parser) void {
         self.pos += 2;
-        const end = self.input.len - 1;
+        const len = self.input.len;
+        const end = len - 1;
+        
         while (self.pos < end) {
-            if (self.input[self.pos] == '*') {
-                if (self.pos + 1 < self.input.len and self.input[self.pos + 1] == '/') {
-                    self.pos += 2;
-                    return;
-                }
+            if (self.input[self.pos] == '*' and self.input[self.pos + 1] == '/') {
+                self.pos += 2;
+                return;
             }
             self.pos += 1;
         }
-        self.pos = self.input.len;
+        self.pos = len;
     }
 
     inline fn peek(self: *const Parser) u8 {
@@ -414,22 +423,33 @@ pub const Parser = struct {
         }
         return self.input[self.pos];
     }
+    
+    inline fn peekSafe(self: *const Parser) u8 {
+        return if (self.pos < self.input.len) self.input[self.pos] else 0;
+    }
 
     inline fn advance(self: *Parser) void {
-        if (self.pos < self.input.len) {
-            const ch = self.input[self.pos];
-            if (ch == '\n') {
-                self.line += 1;
-                self.column = 1;
-            } else if (ch == '\r') {
-                if (self.pos + 1 < self.input.len and self.input[self.pos + 1] == '\n') {
-                    self.pos += 1;
-                }
-                self.line += 1;
-                self.column = 1;
-            } else {
-                self.column += 1;
+        if (self.pos >= self.input.len) return;
+        
+        const ch = self.input[self.pos];
+        self.pos += 1;
+        
+        if (ch == '\n') {
+            self.line += 1;
+            self.column = 1;
+        } else if (ch == '\r') {
+            if (self.pos < self.input.len and self.input[self.pos] == '\n') {
+                self.pos += 1;
             }
+            self.line += 1;
+            self.column = 1;
+        } else {
+            self.column += 1;
+        }
+    }
+    
+    inline fn advanceNoTracking(self: *Parser) void {
+        if (self.pos < self.input.len) {
             self.pos += 1;
         }
     }

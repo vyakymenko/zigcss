@@ -1,17 +1,19 @@
 const std = @import("std");
 
 pub fn skipWhitespaceSimd(input: []const u8, pos: *usize) void {
-    if (pos.* >= input.len) return;
+    const start_pos = pos.*;
+    if (start_pos >= input.len) return;
 
     const arch = @import("builtin").cpu.arch;
     const simd_available = arch != .wasm32 and arch != .wasm64;
+    const remaining = input.len - start_pos;
     
-    if (!simd_available or input.len - pos.* < 32) {
+    if (!simd_available or remaining < 32) {
         skipWhitespaceScalar(input, pos);
         return;
     }
 
-    var i = pos.*;
+    var i = start_pos;
     const end = input.len - 32;
 
     while (i <= end) {
@@ -38,12 +40,17 @@ pub fn skipWhitespaceSimd(input: []const u8, pos: *usize) void {
 }
 
 fn skipWhitespaceScalar(input: []const u8, pos: *usize) void {
-    while (pos.* < input.len) {
-        const ch = input[pos.*];
+    var i = pos.*;
+    const len = input.len;
+    
+    while (i < len) {
+        const ch = input[i];
         if (ch == ' ' or ch == '\t' or ch == '\n' or ch == '\r') {
-            pos.* += 1;
+            i += 1;
         } else {
             break;
         }
     }
+    
+    pos.* = i;
 }

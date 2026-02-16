@@ -111,52 +111,56 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
 
 fn generateStyleRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rule: ast.StyleRule, options: CodegenOptions) !void {
     if (rule.selectors.items.len == 0) return;
+    if (rule.declarations.items.len == 0) return;
+    
+    const minify = options.minify;
     
     for (rule.selectors.items, 0..) |selector, i| {
         if (i > 0) {
             try list.append(allocator, ',');
-            if (!options.minify) {
+            if (!minify) {
                 try list.append(allocator, ' ');
             }
         }
         try generateSelector(list, allocator, selector, options);
     }
 
-    if (!options.minify) {
+    if (!minify) {
         try list.append(allocator, ' ');
     }
     try list.append(allocator, '{');
-    if (!options.minify) {
+    if (!minify) {
         try list.append(allocator, '\n');
     }
 
     const decl_count = rule.declarations.items.len;
+    const last_idx = decl_count - 1;
+    
     for (rule.declarations.items, 0..) |decl, i| {
-        if (!options.minify and i > 0) {
-            try list.append(allocator, '\n');
-        }
-        if (!options.minify) {
+        if (!minify) {
+            if (i > 0) {
+                try list.append(allocator, '\n');
+            }
             try list.appendSlice(allocator, "  ");
         }
         try list.appendSlice(allocator, decl.property);
         try list.append(allocator, ':');
-        if (!options.minify) {
+        if (!minify) {
             try list.append(allocator, ' ');
         }
         try list.appendSlice(allocator, decl.value);
         if (decl.important) {
-            if (!options.minify) {
+            if (!minify) {
                 try list.append(allocator, ' ');
             }
             try list.appendSlice(allocator, "!important");
         }
-        const is_last = i == decl_count - 1;
-        if (!is_last or !options.minify) {
+        if (i != last_idx or !minify) {
             try list.append(allocator, ';');
         }
     }
 
-    if (!options.minify) {
+    if (!minify) {
         try list.append(allocator, '\n');
     }
     try list.append(allocator, '}');
@@ -166,47 +170,49 @@ fn generateSelector(list: *std.ArrayList(u8), allocator: std.mem.Allocator, sele
     _ = options;
     const parts = selector.parts.items;
     if (parts.len == 0) return;
+    if (parts.len == 1) {
+        try generateSelectorPart(list, allocator, parts[0]);
+        return;
+    }
 
     var prev_was_combinator = false;
     for (parts, 0..) |part, i| {
         if (i > 0) {
-            const is_combinator = switch (part) {
-                .combinator => true,
-                else => false,
-            };
+            const is_combinator = part == .combinator;
             if (!is_combinator and !prev_was_combinator) {
                 try list.append(allocator, ' ');
             }
             prev_was_combinator = is_combinator;
         } else {
-            prev_was_combinator = switch (part) {
-                .combinator => true,
-                else => false,
-            };
+            prev_was_combinator = part == .combinator;
         }
 
-        switch (part) {
-            .type => |s| try list.appendSlice(allocator, s),
-            .class => |s| {
-                try list.append(allocator, '.');
-                try list.appendSlice(allocator, s);
-            },
-            .id => |s| {
-                try list.append(allocator, '#');
-                try list.appendSlice(allocator, s);
-            },
-            .universal => try list.append(allocator, '*'),
-            .attribute => |attr| try generateAttributeSelector(list, allocator, attr),
-            .pseudo_class => |s| {
-                try list.append(allocator, ':');
-                try list.appendSlice(allocator, s);
-            },
-            .pseudo_element => |s| {
-                try list.appendSlice(allocator, "::");
-                try list.appendSlice(allocator, s);
-            },
-            .combinator => |c| try list.appendSlice(allocator, c.toString()),
-        }
+        try generateSelectorPart(list, allocator, part);
+    }
+}
+
+fn generateSelectorPart(list: *std.ArrayList(u8), allocator: std.mem.Allocator, part: ast.SelectorPart) !void {
+    switch (part) {
+        .type => |s| try list.appendSlice(allocator, s),
+        .class => |s| {
+            try list.append(allocator, '.');
+            try list.appendSlice(allocator, s);
+        },
+        .id => |s| {
+            try list.append(allocator, '#');
+            try list.appendSlice(allocator, s);
+        },
+        .universal => try list.append(allocator, '*'),
+        .attribute => |attr| try generateAttributeSelector(list, allocator, attr),
+        .pseudo_class => |s| {
+            try list.append(allocator, ':');
+            try list.appendSlice(allocator, s);
+        },
+        .pseudo_element => |s| {
+            try list.appendSlice(allocator, "::");
+            try list.appendSlice(allocator, s);
+        },
+        .combinator => |c| try list.appendSlice(allocator, c.toString()),
     }
 }
 
