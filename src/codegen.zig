@@ -14,6 +14,8 @@ pub const CodegenOptions = struct {
 };
 
 fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
+    if (stylesheet.rules.items.len == 0) return 0;
+    
     var size: usize = 0;
     for (stylesheet.rules.items) |rule| {
         switch (rule) {
@@ -85,6 +87,10 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
     var list = try std.ArrayList(u8).initCapacity(allocator, estimated_size);
     errdefer list.deinit(allocator);
 
+    if (stylesheet.rules.items.len == 0) {
+        return try list.toOwnedSlice(allocator);
+    }
+    
     for (stylesheet.rules.items, 0..) |rule, i| {
         if (i > 0 and !options.minify) {
             try list.append(allocator, '\n');
@@ -104,6 +110,8 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
 }
 
 fn generateStyleRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rule: ast.StyleRule, options: CodegenOptions) !void {
+    if (rule.selectors.items.len == 0) return;
+    
     for (rule.selectors.items, 0..) |selector, i| {
         if (i > 0) {
             try list.append(allocator, ',');
