@@ -1,20 +1,20 @@
 {
   "small": {
-    "tailwind": 2617.3211541,
-    "lightningcss": 681.4934542000001,
-    "cssnano": 802.283025,
-    "esbuild": 650.1006375000001
+    "tailwind": 1686.1449041,
+    "lightningcss": 408.95127529999996,
+    "cssnano": 578.2572335000001,
+    "esbuild": 411.7761041
   },
   "medium": {
-    "tailwind": 2570.4937248,
-    "lightningcss": 744.7012791,
-    "cssnano": 905.9922376000001,
-    "esbuild": 667.0216458000001
+    "tailwind": 1630.0572583,
+    "lightningcss": 402.09555420000004,
+    "cssnano": 584.2668876,
+    "esbuild": 409.6416709
   },
   "large": {
-    "tailwind": 2649.6679292,
-    "lightningcss": 744.5902709,
-    "cssnano": 905.5948790999998,
-    "esbuild": 691.1635918000001
+    "tailwind": 1627.7571335,
+    "lightningcss": 402.1784790999999,
+    "cssnano": 596.9881124999999,
+    "esbuild": 418.3536543
   }
 }
