@@ -524,19 +524,86 @@ zcss --lsp
 
 **Editor Integration:**
 
-The LSP server can be integrated with any editor that supports LSP:
-- **VSCode**: Configure in `.vscode/settings.json`
-- **Neovim**: Use with `nvim-lspconfig`
-- **Vim/Emacs**: Use with appropriate LSP client plugins
+zcss provides official editor integrations for popular editors:
 
-**Example VSCode Configuration:**
+#### VSCode Integration
+
+**Option 1: Use the VSCode Extension (Recommended)**
+
+1. Build zcss:
+   ```bash
+   git clone https://github.com/vyakymenko/zcss.git
+   cd zcss
+   zig build -Doptimize=ReleaseFast
+   ```
+
+2. Install the extension:
+   ```bash
+   cd vscode-extension
+   npm install
+   npm run compile
+   ```
+
+3. Press `F5` in VSCode to launch a new window with the extension loaded.
+
+**Option 2: Manual Configuration**
+
+Add to your `.vscode/settings.json`:
 ```json
 {
-  "css.languageServer": "zcss",
-  "css.languageServerPath": "/path/to/zcss",
-  "css.languageServerArgs": ["--lsp"]
+  "zcss.languageServerPath": "zcss",
+  "zcss.languageServerArgs": ["--lsp"]
 }
 ```
+
+If `zcss` is not in your PATH, provide the full path:
+```json
+{
+  "zcss.languageServerPath": "/path/to/zcss/zig-out/bin/zcss"
+}
+```
+
+The VSCode extension provides:
+- Real-time diagnostics for CSS parsing errors
+- Hover information for CSS properties
+- Code completion for common CSS properties
+- Support for CSS, SCSS, SASS, LESS, and Stylus files
+
+#### Neovim Integration
+
+**Using nvim-lspconfig:**
+
+1. Install `nvim-lspconfig` plugin (using Packer):
+   ```lua
+   use {
+     'neovim/nvim-lspconfig',
+     config = function()
+       require('lspconfig').zcss.setup({
+         cmd = {'zcss', '--lsp'},
+         filetypes = {'css', 'scss', 'sass', 'less', 'stylus'},
+       })
+     end
+   }
+   ```
+
+2. Or copy the configuration from `neovim-config/init.lua` to your Neovim config.
+
+**Features:**
+- Diagnostics with `[d` / `]d` navigation
+- Hover information with `K`
+- Code completion
+- Go to definition with `gd`
+- Find references with `gr`
+
+#### Other Editors
+
+The LSP server can be integrated with any editor that supports LSP:
+- **Vim**: Use with `vim-lsp` or `coc.nvim`
+- **Emacs**: Use with `lsp-mode` or `eglot`
+- **Sublime Text**: Use with `LSP` package
+- **Atom**: Use with `atom-languageclient`
+
+All integrations use the standard LSP protocol via `zcss --lsp`.
 
 ## 🏗️ Architecture
 
@@ -799,7 +866,7 @@ zcss input.css -o output.css --profile
 
 ### Phase 4: Ecosystem
 - [x] Language server protocol (LSP) support ✅ — Full LSP server with diagnostics, hover, and completion
-- [ ] Editor integrations (VSCode, Neovim)
+- [x] Editor integrations ✅ — VSCode extension and Neovim configuration
 - [x] Build tool integrations ✅ — Zig build system integration with build helpers
 - [ ] Pre-built binaries for all platforms
 - [ ] Package manager integration

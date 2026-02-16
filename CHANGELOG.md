@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add VSCode extension - full VSCode integration with LSP support for CSS, SCSS, SASS, LESS, and Stylus files
+- Add VSCode extension configuration - package.json, TypeScript extension code, and build configuration
+- Add Neovim integration - complete Neovim configuration with nvim-lspconfig setup and key mappings
+- Add editor integration documentation - comprehensive setup guides for VSCode and Neovim
+- Add VSCode workspace settings - recommended settings for zcss development
 - Add Language Server Protocol (LSP) support - full LSP server implementation for editor integration
 - Add LSP diagnostics - real-time error and warning reporting for CSS parsing issues
 - Add LSP hover information - hover support for CSS properties with descriptions and value types
