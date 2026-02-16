@@ -25,7 +25,7 @@ function getDownloadUrl() {
   }
 
   const ext = PLATFORM === 'win32' ? 'zip' : 'tar.gz';
-  return `https://github.com/vyakymenko/zigcss/releases/download/v${VERSION}/zigcss-${VERSION}-${target}.${ext}`;
+  return `https://github.com/vyakymenko/zigcss/releases/download/v${VERSION}/zigcss-v${VERSION}-${target}.${ext}`;
 }
 
 function downloadFile(url, dest) {
@@ -111,17 +111,32 @@ async function install() {
     
     console.log('✓ zigcss installed successfully!');
   } catch (err) {
-    if (err.message.includes('404') || err.message.includes('Failed to download')) {
-      console.warn(`⚠ Pre-built binary not available for ${PLATFORM} ${ARCH}`);
-      console.warn('Building from source requires Zig 0.15.2+');
-      console.warn('Install Zig: https://ziglang.org/download/');
-      console.warn('Then build: git clone https://github.com/vyakymenko/zigcss.git && cd zigcss && zig build');
+    const is404 = err.message.includes('404') || 
+                  err.message.includes('Failed to download') ||
+                  (err.response && err.response.statusCode === 404);
+    
+    if (is404) {
+      console.error(`✗ Pre-built binary not available for ${PLATFORM} ${ARCH}`);
+      console.error(`  Attempted URL: ${url}`);
+      console.error('');
+      console.error('This may mean:');
+      console.error('  1. The release does not include a binary for your platform');
+      console.error('  2. The version has not been released yet');
+      console.error('  3. There was an issue building the binary for this platform');
+      console.error('');
+      console.error('Options:');
+      console.error('  • Wait for a new release that includes your platform');
+      console.error('  • Build from source (requires Zig 0.15.2+):');
+      console.error('    git clone https://github.com/vyakymenko/zigcss.git');
+      console.error('    cd zigcss && zig build -Doptimize=ReleaseFast');
+      console.error('  • Install Zig: https://ziglang.org/download/');
     } else {
       console.error(`✗ Installation failed: ${err.message}`);
+      console.error('');
       console.error('You can build from source:');
       console.error('  1. Install Zig: https://ziglang.org/download/');
       console.error('  2. git clone https://github.com/vyakymenko/zigcss.git');
-      console.error('  3. cd zigcss && zig build');
+      console.error('  3. cd zigcss && zig build -Doptimize=ReleaseFast');
     }
     process.exit(1);
   }

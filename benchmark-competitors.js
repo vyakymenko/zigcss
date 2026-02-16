@@ -95,7 +95,13 @@ function timeCommand(cmd) {
 function benchmarkZigcss(file) {
     const start = process.hrtime.bigint();
     try {
-        execSync(`./zig-out/bin/zigcss ${file} -o /dev/null --minify --optimize`, {
+        let cmd;
+        if (fs.existsSync('./zig-out/bin/zigcss')) {
+            cmd = `./zig-out/bin/zigcss ${file} -o /dev/null --minify --optimize`;
+        } else {
+            cmd = `npx --yes zigcss ${file} -o /dev/null --minify --optimize`;
+        }
+        execSync(cmd, {
             stdio: 'pipe',
             timeout: 30000
         });
@@ -175,6 +181,20 @@ if (!fs.existsSync('bench-tailwind-small-out.css') ||
     !fs.existsSync('bench-tailwind-large-out.css')) {
     console.error('Error: Tailwind CSS files were not generated. Exiting.');
     process.exit(1);
+}
+
+// Check if local binary exists, otherwise try npm
+console.log('Checking zigcss installation...');
+if (fs.existsSync('./zig-out/bin/zigcss')) {
+    console.log('Using local zigcss binary');
+} else {
+    console.log('Local binary not found, will use npx zigcss');
+    try {
+        execSync('npm install -g zigcss', { stdio: 'pipe' });
+        console.log('Installed zigcss from npm');
+    } catch (error) {
+        console.log('Note: npm install failed, will try npx during benchmarks');
+    }
 }
 
 // Warmup

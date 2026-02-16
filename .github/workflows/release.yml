@@ -57,6 +57,8 @@ jobs:
         run: |
           if [ "${{ matrix.target }}" == "aarch64-linux" ]; then
             zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux
+          elif [ "${{ matrix.target }}" == "aarch64-macos" ]; then
+            zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos
           else
             zig build -Doptimize=ReleaseFast
           fi
