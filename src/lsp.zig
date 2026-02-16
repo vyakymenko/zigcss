@@ -55,10 +55,10 @@ pub const LspServer = struct {
         const method = if (root.object.get("method")) |m| m.string else return error.InvalidRequest;
         const id = root.object.get("id");
         
-        var response = std.ArrayList(u8).init(self.allocator);
+        var response = try std.ArrayList(u8).initCapacity(self.allocator, 512);
         errdefer response.deinit(self.allocator);
         
-        try response.writer(self.allocator).print("{{\"jsonrpc\":\"2.0\"", .{});
+        try response.writer(self.allocator).writeAll("{\"jsonrpc\":\"2.0\"");
         
         if (id) |request_id| {
             try response.writer(self.allocator).print(",\"id\":", .{});
@@ -68,7 +68,7 @@ pub const LspServer = struct {
         if (std.mem.eql(u8, method, "initialize")) {
             try self.handleInitialize(&response, root);
         } else if (std.mem.eql(u8, method, "initialized")) {
-            try response.writer(self.allocator).print(",\"result\":{{}}", .{});
+            try response.writer(self.allocator).writeAll(",\"result\":{}");
         } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
             try self.handleDidOpen(&response, root);
         } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
@@ -96,6 +96,7 @@ pub const LspServer = struct {
     fn writeJsonValue(self: *LspServer, writer: anytype, value: std.json.Value) !void {
         switch (value) {
             .string => |s| try writer.print("\"{s}\"", .{s}),
+            .number_string => |s| try writer.print("\"{s}\"", .{s}),
             .integer => |i| try writer.print("{}", .{i}),
             .float => |f| try writer.print("{}", .{f}),
             .bool => |b| try writer.print("{}", .{b}),
@@ -142,7 +143,9 @@ pub const LspServer = struct {
             \\}
         ;
         
-        try response.writer(self.allocator).print(",\"result\":{{{s}}}", .{capabilities});
+        try response.writer(self.allocator).print(",\"result\":{{", .{});
+        try response.writer(self.allocator).print("{s}", .{capabilities});
+        try response.writer(self.allocator).print("}}", .{});
     }
     
     fn handleDidOpen(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
@@ -208,7 +211,7 @@ pub const LspServer = struct {
             return;
         };
         
-        var diagnostics = std.ArrayList(u8).init(self.allocator);
+        var diagnostics = try std.ArrayList(u8).initCapacity(self.allocator, 512);
         defer diagnostics.deinit(self.allocator);
         try diagnostics.append(self.allocator, '[');
         
@@ -242,15 +245,18 @@ pub const LspServer = struct {
             }
         } else {
             const parser_trait = formats.getParser(format);
-            parser_trait.parseFn(self.allocator, doc.text) catch |err| {
+            if (parser_trait.parseFn(self.allocator, doc.text)) |stylesheet_result| {
+                var stylesheet = stylesheet_result;
+                defer stylesheet.deinit();
+            } else |err| {
                 if (!first) try diagnostics.append(self.allocator, ',');
                 first = false;
                 
                 const error_msg = @errorName(err);
                 try diagnostics.writer(self.allocator).print(
-                    \\{{"range":{{"start":{{"line":0,"character":0}},"end":{{"line":0,"character":1}}},"severity":1,"message":"{s}","source":"zcss"}}
-                , .{error_msg});
-            };
+                    "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":1}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zcss\"}}",
+                    .{error_msg});
+            }
         }
         
         try diagnostics.append(self.allocator, ']');
@@ -311,9 +317,17 @@ pub const LspServer = struct {
             if (word_end > word_start) {
                 const word = line_text[word_start..word_end];
                 if (self.getCssPropertyInfo(word)) |info| {
-                    try response.writer(self.allocator).print(
-                        \\,"result":{{"contents":{{"kind":"markdown","value":"{s}"}},"range":{{"start":{{"line":{},"character":{}}},"end":{{"line":{},"character":{}}}}}}
-                    , .{ info, line, word_start, line, word_end });
+                    try response.writer(self.allocator).writeAll(",\"result\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"");
+                    try response.writer(self.allocator).print("{s}", .{info});
+                    try response.writer(self.allocator).writeAll("\"},\"range\":{\"start\":{\"line\":");
+                    try response.writer(self.allocator).print("{}", .{line});
+                    try response.writer(self.allocator).writeAll(",\"character\":");
+                    try response.writer(self.allocator).print("{}", .{word_start});
+                    try response.writer(self.allocator).writeAll("},\"end\":{\"line\":");
+                    try response.writer(self.allocator).print("{}", .{line});
+                    try response.writer(self.allocator).writeAll(",\"character\":");
+                    try response.writer(self.allocator).print("{}", .{word_end});
+                    try response.writer(self.allocator).writeAll("}}}}");
                     return;
                 }
             }
@@ -359,7 +373,7 @@ pub const LspServer = struct {
         const line_text = doc.text[line_start..line_end];
         const char_pos: usize = @intCast(if (character > 0) character else 0);
         
-        var items = std.ArrayList(u8).init(self.allocator);
+        var items = try std.ArrayList(u8).initCapacity(self.allocator, 512);
         defer items.deinit(self.allocator);
         try items.append(self.allocator, '[');
         
@@ -369,7 +383,7 @@ pub const LspServer = struct {
                 if (!first) try items.append(self.allocator, ',');
                 first = false;
                 try items.writer(self.allocator).print(
-                    \\{{"label":"{s}","kind":10,"detail":"CSS Property","insertText":"{s}"}}
+                    "{{\"label\":\"{s}\",\"kind\":10,\"detail\":\"CSS Property\",\"insertText\":\"{s}\"}}"
                 , .{ prop, prop });
             }
         }
@@ -437,7 +451,7 @@ pub const LspServer = struct {
         const def_line_col = self.getLineColumn(doc.text, definition_pos);
         try response.writer(self.allocator).print(
             ",\"result\":{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}}}}",
-            .{ uri.string, def_line_col.line, def_line_col.column, def_line_col.line, def_line_col.column + symbol.len }
+            .{ uri.string, def_line_col.line, def_line_col.column, def_line_col.line, def_line_col.column + @as(i64, @intCast(symbol.len)) }
         );
     }
     
@@ -461,7 +475,7 @@ pub const LspServer = struct {
             return;
         };
         
-        var locations = std.ArrayList(u8).init(self.allocator);
+        var locations = try std.ArrayList(u8).initCapacity(self.allocator, 512);
         defer locations.deinit(self.allocator);
         try locations.append(self.allocator, '[');
         
@@ -474,7 +488,7 @@ pub const LspServer = struct {
             const ref_line_col = self.getLineColumn(doc.text, ref_pos);
             try locations.writer(self.allocator).print(
                 "{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}}}}",
-                .{ uri.string, ref_line_col.line, ref_line_col.column, ref_line_col.line, ref_line_col.column + symbol.len }
+                .{ uri.string, ref_line_col.line, ref_line_col.column, ref_line_col.line, ref_line_col.column + @as(i64, @intCast(symbol.len)) }
             );
         }
         
@@ -506,7 +520,7 @@ pub const LspServer = struct {
             return;
         };
         
-        var changes = std.ArrayList(u8).init(self.allocator);
+        var changes = try std.ArrayList(u8).initCapacity(self.allocator, 512);
         defer changes.deinit(self.allocator);
         try changes.writer(self.allocator).print("{{\"{s}\":[", .{uri.string});
         
@@ -519,7 +533,7 @@ pub const LspServer = struct {
             const ref_line_col = self.getLineColumn(doc.text, ref_pos);
             try changes.writer(self.allocator).print(
                 "{{\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}},\"newText\":\"{s}\"}}",
-                .{ ref_line_col.line, ref_line_col.column, ref_line_col.line, ref_line_col.column + symbol.len, new_name.string }
+                .{ ref_line_col.line, ref_line_col.column, ref_line_col.line, ref_line_col.column + @as(i64, @intCast(symbol.len)), new_name.string }
             );
         }
         

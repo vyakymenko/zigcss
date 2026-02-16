@@ -308,16 +308,22 @@ fn runLspServer(allocator: std.mem.Allocator) !void {
     var server = lsp.LspServer.init(allocator);
     defer server.deinit();
     
-    const stdin = std.io.getStdIn().reader();
-    const stdout = std.io.getStdOut().writer();
+    var stdin_buffer: [8192]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    var stdout_buffer: [8192]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     
     var buffer: [8192]u8 = undefined;
     
     while (true) {
-        const content_length_line = stdin.readUntilDelimiterOrEof(buffer[0..], '\n') catch |err| {
+        const content_length_line = stdin_reader.interface.takeDelimiterExclusive('\n') catch |err| {
             if (err == error.EndOfStream) break;
             return err;
-        } orelse break;
+        };
+        
+        if (content_length_line.len == 0) {
+            continue;
+        }
         
         if (!std.mem.startsWith(u8, content_length_line, "Content-Length: ")) {
             continue;
@@ -326,7 +332,10 @@ fn runLspServer(allocator: std.mem.Allocator) !void {
         const length_str = content_length_line["Content-Length: ".len..];
         const content_length = try std.fmt.parseInt(usize, std.mem.trim(u8, length_str, " \r"), 10);
         
-        _ = try stdin.readUntilDelimiterOrEof(buffer[0..], '\n');
+        _ = stdin_reader.interface.takeDelimiterExclusive('\n') catch |err| {
+            if (err == error.EndOfStream) break;
+            return err;
+        };
         
         if (content_length > buffer.len) {
             return error.BufferTooSmall;
@@ -334,16 +343,15 @@ fn runLspServer(allocator: std.mem.Allocator) !void {
         
         var total_read: usize = 0;
         while (total_read < content_length) {
-            const bytes_read = try stdin.read(buffer[total_read..content_length]);
-            if (bytes_read == 0) break;
+            const bytes_read = try stdin_reader.interface.readSliceShort(buffer[total_read..content_length]);
             total_read += bytes_read;
         }
         const request = buffer[0..total_read];
         const response = try server.handleRequest(request);
         defer allocator.free(response);
         
-        try stdout.print("Content-Length: {}\r\n\r\n{s}", .{ response.len, response });
-        try stdout.flush();
+        try stdout_writer.interface.print("Content-Length: {}\r\n\r\n{s}", .{ response.len, response });
+        try stdout_writer.interface.flush();
     }
 }
 
