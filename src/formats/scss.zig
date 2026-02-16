@@ -770,16 +770,28 @@ pub const Parser = struct {
                         }
 
                         if (content_block) |content| {
-                            const processed_content = try self.processDirectivesWithDepth(content, depth + 1);
-                            defer self.allocator.free(processed_content);
-                            
                             const content_pattern = "@content";
                             if (std.mem.indexOf(u8, mixin_body, content_pattern)) |content_pos| {
                                 const before_content = mixin_body[0..content_pos];
-                                const after_content = mixin_body[content_pos + content_pattern.len..];
-                                const new_body = try std.fmt.allocPrint(self.allocator, "{s}{s}{s}", .{ before_content, processed_content, after_content });
-                                self.allocator.free(mixin_body);
-                                mixin_body = new_body;
+                                var after_content = mixin_body[content_pos + content_pattern.len..];
+                                
+                                while (after_content.len > 0 and (std.ascii.isWhitespace(after_content[0]) or after_content[0] == ';')) {
+                                    after_content = after_content[1..];
+                                }
+                                
+                                const trimmed_content = std.mem.trim(u8, content, " \t\n\r");
+                                if (trimmed_content.len > 0) {
+                                    const processed_content = try self.processDirectivesWithDepth(trimmed_content, depth + 1);
+                                    defer self.allocator.free(processed_content);
+                                    
+                                    const new_body = try std.fmt.allocPrint(self.allocator, "{s}{s}{s}", .{ before_content, processed_content, after_content });
+                                    self.allocator.free(mixin_body);
+                                    mixin_body = new_body;
+                                } else {
+                                    const new_body = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ before_content, after_content });
+                                    self.allocator.free(mixin_body);
+                                    mixin_body = new_body;
+                                }
                             }
                         }
                         
