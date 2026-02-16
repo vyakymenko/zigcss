@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 - Add basic CSS optimizer with multiple optimization passes
 - Enable full optimizer pipeline
+- Add better error messages with position tracking (line/column information)
 
 ### Bug Fixes
 - Fix string pool copying issue

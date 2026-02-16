@@ -446,9 +446,9 @@ zig build test --summary all
 - [x] Character classification lookup tables (comptime-computed)
 - [x] Hash-based selector merging optimization (O(n²) → O(n))
 - [x] Comprehensive test suite
+- [x] Better error messages with position tracking
 - [ ] Parallel parsing improvements
 - [ ] Incremental compilation
-- [ ] Better error messages with position tracking
 - [ ] Performance profiling tools
 
 ### Phase 4: Ecosystem

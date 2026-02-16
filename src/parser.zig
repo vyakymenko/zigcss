@@ -2,10 +2,15 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const string_pool = @import("string_pool.zig");
 const simd = @import("simd.zig");
+const error_module = @import("error.zig");
+
+pub const ParseError = error_module.ParseError;
 
 pub const Parser = struct {
     input: []const u8,
     pos: usize,
+    line: usize,
+    column: usize,
     allocator: std.mem.Allocator,
     string_pool: *string_pool.StringPool,
     owns_pool: bool,
@@ -16,6 +21,8 @@ pub const Parser = struct {
         return .{
             .input = input,
             .pos = 0,
+            .line = 1,
+            .column = 1,
             .allocator = allocator,
             .string_pool = pool,
             .owns_pool = true,
@@ -26,10 +33,30 @@ pub const Parser = struct {
         return .{
             .input = input,
             .pos = 0,
+            .line = 1,
+            .column = 1,
             .allocator = allocator,
             .string_pool = pool,
             .owns_pool = false,
         };
+    }
+
+    pub const ParseResult = union(enum) {
+        success: ast.Stylesheet,
+        parse_error: ParseError,
+    };
+
+    pub fn parseWithErrorInfo(self: *Parser) ParseResult {
+        const result = self.parse() catch |err| {
+            return .{ .parse_error = switch (err) {
+                error.ExpectedOpeningBrace => self.makeError(.ExpectedOpeningBrace),
+                error.ExpectedColon => self.makeError(.ExpectedColon),
+                error.ExpectedAtSign => self.makeError(.ExpectedAtSign),
+                error.InvalidIdentifier => self.makeError(.InvalidIdentifier),
+                else => self.makeError(.InvalidSyntax),
+            } };
+        };
+        return .{ .success = result };
     }
 
     pub fn parse(self: *Parser) !ast.Stylesheet {
@@ -309,7 +336,7 @@ pub const Parser = struct {
         while (self.pos < self.input.len) {
             const ch = self.input[self.pos];
             if (isAlnumOrDash(ch)) {
-                self.pos += 1;
+                self.advance();
             } else {
                 break;
             }
@@ -390,7 +417,29 @@ pub const Parser = struct {
 
     inline fn advance(self: *Parser) void {
         if (self.pos < self.input.len) {
+            const ch = self.input[self.pos];
+            if (ch == '\n') {
+                self.line += 1;
+                self.column = 1;
+            } else if (ch == '\r') {
+                if (self.pos + 1 < self.input.len and self.input[self.pos + 1] == '\n') {
+                    self.pos += 1;
+                }
+                self.line += 1;
+                self.column = 1;
+            } else {
+                self.column += 1;
+            }
             self.pos += 1;
         }
+    }
+
+    fn makeError(self: *const Parser, kind: error_module.ParseError.ErrorKind) ParseError {
+        return ParseError{
+            .kind = kind,
+            .line = self.line,
+            .column = self.column,
+            .message = error_module.ParseError.getMessage(kind),
+        };
     }
 };

@@ -2,6 +2,8 @@ const std = @import("std");
 const formats = @import("formats.zig");
 const ast = @import("ast.zig");
 const codegen = @import("codegen.zig");
+const error_module = @import("error.zig");
+const parser = @import("parser.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -55,9 +57,37 @@ pub fn main() !void {
     defer allocator.free(input);
 
     const format = formats.detectFormat(input_file);
-    const parser_trait = formats.getParser(format);
-    var stylesheet = try parser_trait.parseFn(allocator, input);
-    defer stylesheet.deinit();
+    
+    var stylesheet: ast.Stylesheet = undefined;
+    var stylesheet_initialized = false;
+    
+    if (format == .css) {
+        var css_parser = parser.Parser.init(allocator, input);
+        defer if (css_parser.owns_pool) {
+            css_parser.string_pool.deinit();
+            allocator.destroy(css_parser.string_pool);
+        };
+        
+        const result = css_parser.parseWithErrorInfo();
+        switch (result) {
+            .success => |s| {
+                stylesheet = s;
+                stylesheet_initialized = true;
+            },
+            .parse_error => |parse_error| {
+                const error_msg = try error_module.formatErrorWithContext(allocator, input, input_file, parse_error);
+                defer allocator.free(error_msg);
+                std.debug.print("{s}\n", .{error_msg});
+                std.process.exit(1);
+            },
+        }
+    } else {
+        const parser_trait = formats.getParser(format);
+        stylesheet = try parser_trait.parseFn(allocator, input);
+        stylesheet_initialized = true;
+    }
+    
+    defer if (stylesheet_initialized) stylesheet.deinit();
 
     const options = codegen.CodegenOptions{
         .minify = minify_flag,
