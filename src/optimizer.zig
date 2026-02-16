@@ -106,12 +106,12 @@ pub const Optimizer = struct {
 
     fn hashSelectors(self: *Optimizer, selectors: *std.ArrayList(ast.Selector)) usize {
         _ = self;
-        var hash: usize = 0;
+        var hash: u64 = 0;
         for (selectors.items) |selector| {
-            hash = hash * 31 +% selector.parts.items.len;
+            hash = hash *% 31 +% @as(u64, selector.parts.items.len);
             for (selector.parts.items) |part| {
-                hash = hash * 31 +% @intFromEnum(@as(std.meta.Tag(ast.SelectorPart), part));
-                hash = hash * 31 +% switch (part) {
+                hash = hash *% 31 +% @as(u64, @intFromEnum(@as(std.meta.Tag(ast.SelectorPart), part)));
+                hash = hash *% 31 +% @as(u64, switch (part) {
                     .type => |s| std.hash_map.hashString(s),
                     .class => |s| std.hash_map.hashString(s),
                     .id => |s| std.hash_map.hashString(s),
@@ -120,20 +120,20 @@ pub const Optimizer = struct {
                     .pseudo_element => |s| std.hash_map.hashString(s),
                     .combinator => |c| @intFromEnum(c),
                     .attribute => |attr| blk: {
-                        var h: usize = std.hash_map.hashString(attr.name);
+                        var h: u64 = @as(u64, std.hash_map.hashString(attr.name));
                         if (attr.operator) |op| {
-                            h = h * 31 +% std.hash_map.hashString(op);
+                            h = h *% 31 +% @as(u64, std.hash_map.hashString(op));
                         }
                         if (attr.value) |val| {
-                            h = h * 31 +% std.hash_map.hashString(val);
+                            h = h *% 31 +% @as(u64, std.hash_map.hashString(val));
                         }
-                        h = h * 31 +% @intFromBool(attr.case_sensitive);
+                        h = h *% 31 +% @intFromBool(attr.case_sensitive);
                         break :blk h;
                     },
-                };
+                });
             }
         }
-        return hash;
+        return @as(usize, @intCast(hash));
     }
 
     fn selectorsEqual(self: *Optimizer, a: *std.ArrayList(ast.Selector), b: *std.ArrayList(ast.Selector)) bool {

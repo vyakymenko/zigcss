@@ -20,11 +20,11 @@ pub const Profiler = struct {
         total_deallocations: usize,
     };
     
-    pub fn init(allocator: std.mem.Allocator, enabled: bool) Profiler {
+    pub fn init(allocator: std.mem.Allocator, enabled: bool) !Profiler {
         return .{
             .allocator = allocator,
             .enabled = enabled,
-            .timings = std.ArrayList(Timing).init(allocator),
+            .timings = try std.ArrayList(Timing).initCapacity(allocator, 10),
             .memory_stats = .{
                 .peak_memory = 0,
                 .total_allocations = 0,
@@ -37,7 +37,7 @@ pub const Profiler = struct {
         for (self.timings.items) |timing| {
             self.allocator.free(timing.name);
         }
-        self.timings.deinit();
+        self.timings.deinit(self.allocator);
     }
     
     pub fn startTiming(self: *Profiler, name: []const u8) !TimingHandle {
@@ -154,14 +154,11 @@ pub const Profiler = struct {
 pub const TimingHandle = struct {
     profiler: *Profiler,
     name: []const u8,
-    start_time: i64,
+    start_time: i128,
     memory_before: usize,
     
     pub fn end(self: *TimingHandle) !void {
         if (!self.profiler.enabled) {
-            if (self.name.len > 0 and self.name[0] != 0) {
-                self.profiler.allocator.free(self.name);
-            }
             return;
         }
         
@@ -173,7 +170,7 @@ pub const TimingHandle = struct {
             self.profiler.memory_stats.peak_memory = memory_after;
         }
         
-        try self.profiler.timings.append(.{
+        try self.profiler.timings.append(self.profiler.allocator, .{
             .name = self.name,
             .duration_ns = duration_ns,
             .memory_before = self.memory_before,
@@ -194,37 +191,42 @@ pub fn benchmarkCompilation(
     
     for (0..iterations) |_| {
         const parse_start = std.time.nanoTimestamp();
-        const parser = @import("parser.zig").Parser.init(allocator, css);
+        var parser = @import("parser.zig").Parser.init(allocator, css);
         defer if (parser.owns_pool) {
             parser.string_pool.deinit();
             allocator.destroy(parser.string_pool);
         };
         
-        const parse_result = parser.parseWithErrorInfo();
+        var parse_result = parser.parseWithErrorInfo();
         const parse_end = std.time.nanoTimestamp();
         
         switch (parse_result) {
-            .success => |stylesheet| {
+            .success => |*stylesheet_ptr| {
+                const stylesheet = @constCast(stylesheet_ptr);
                 defer stylesheet.deinit();
                 
                 total_parse_ns += @as(u64, @intCast(@abs(parse_end - parse_start)));
                 
                 const optimize_start = std.time.nanoTimestamp();
                 const optimizer = @import("optimizer.zig");
-                optimizer.optimize(allocator, &stylesheet);
+                var opt = optimizer.Optimizer.init(allocator);
+                try opt.optimize(stylesheet);
                 const optimize_end = std.time.nanoTimestamp();
                 total_optimize_ns += @as(u64, @intCast(@abs(optimize_end - optimize_start)));
                 
                 const codegen_start = std.time.nanoTimestamp();
                 const codegen = @import("codegen.zig");
-                const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true, .minify = true });
+                const result = try codegen.generate(allocator, stylesheet, .{ .optimize = true, .minify = true });
                 defer allocator.free(result);
                 const codegen_end = std.time.nanoTimestamp();
                 total_codegen_ns += @as(u64, @intCast(@abs(codegen_end - codegen_start)));
                 
                 total_memory += result.len;
             },
-            .parse_error => return error.ParseError,
+            .parse_error => |parse_error| {
+                std.debug.print("Parse error at line {d}, column {d}: {s}\n", .{ parse_error.line, parse_error.column, parse_error.message });
+                return error.ParseError;
+            },
         }
     }
     

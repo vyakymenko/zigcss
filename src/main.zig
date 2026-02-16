@@ -30,10 +30,10 @@ const CompileTask = struct {
 };
 
 fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
-    var perf_profiler = profiler.Profiler.init(allocator, config.profile);
+    var perf_profiler = try profiler.Profiler.init(allocator, config.profile);
     defer perf_profiler.deinit();
     
-    const parse_timing = try perf_profiler.startTiming("parse");
+    var parse_timing = try perf_profiler.startTiming("parse");
     defer parse_timing.end() catch {};
     
     const input = try std.fs.cwd().readFileAlloc(allocator, config.input_file, 10 * 1024 * 1024);
@@ -74,7 +74,7 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     
     try parse_timing.end();
 
-    const optimize_timing = try perf_profiler.startTiming("optimize");
+    var optimize_timing = try perf_profiler.startTiming("optimize");
     defer optimize_timing.end() catch {};
     
     const options = codegen.CodegenOptions{
@@ -85,7 +85,7 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     
     try optimize_timing.end();
     
-    const codegen_timing = try perf_profiler.startTiming("codegen");
+    var codegen_timing = try perf_profiler.startTiming("codegen");
     defer codegen_timing.end() catch {};
 
     const result = try codegen.generate(allocator, &stylesheet, options);
@@ -302,7 +302,8 @@ fn expandGlob(allocator: std.mem.Allocator, pattern: []const u8) !std.ArrayList(
     var files = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     
     if (std.mem.indexOf(u8, pattern, "*") == null) {
-        try files.append(allocator, pattern);
+        const pattern_copy = try allocator.dupe(u8, pattern);
+        try files.append(allocator, pattern_copy);
         return files;
     }
 
@@ -403,7 +404,12 @@ pub fn main() !void {
     }
 
     var input_files = try std.ArrayList([]const u8).initCapacity(allocator, 0);
-    defer input_files.deinit(allocator);
+    defer {
+        for (input_files.items) |path| {
+            allocator.free(path);
+        }
+        input_files.deinit(allocator);
+    }
     
     var output_file: ?[]const u8 = null;
     var output_dir_flag = false;
@@ -460,7 +466,10 @@ pub fn main() !void {
                 }
                 expanded.deinit(allocator);
             }
-            try input_files.appendSlice(allocator, expanded.items);
+            for (expanded.items) |path| {
+                const path_copy = try allocator.dupe(u8, path);
+                try input_files.append(allocator, path_copy);
+            }
         }
     }
 

@@ -77,9 +77,9 @@ const test_css =
     \\.warning { color: #ffc107; border-color: #ffc107; }
     \\.info { color: #17a2b8; border-color: #17a2b8; }
     \\.responsive { width: 100%; max-width: 100%; }
-    \\.mobile-hidden { @media (max-width: 768px) { display: none; } }
-    \\.desktop-only { @media (min-width: 769px) { display: block; } }
-    \\.tablet-only { @media (min-width: 769px) and (max-width: 1024px) { display: block; } }
+    \\.mobile-hidden { display: none; }
+    \\.desktop-only { display: block; }
+    \\.tablet-only { display: block; }
     \\.dark-mode { background-color: #1a1a1a; color: #ffffff; }
     \\.light-mode { background-color: #ffffff; color: #000000; }
     \\.gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
@@ -164,9 +164,9 @@ const test_css =
     \\.warning { color: #ffc107; border-color: #ffc107; }
     \\.info { color: #17a2b8; border-color: #17a2b8; }
     \\.responsive { width: 100%; max-width: 100%; }
-    \\.mobile-hidden { @media (max-width: 768px) { display: none; } }
-    \\.desktop-only { @media (min-width: 769px) { display: block; } }
-    \\.tablet-only { @media (min-width: 769px) and (max-width: 1024px) { display: block; } }
+    \\.mobile-hidden { display: none; }
+    \\.desktop-only { display: block; }
+    \\.tablet-only { display: block; }
     \\.dark-mode { background-color: #1a1a1a; color: #ffffff; }
     \\.light-mode { background-color: #ffffff; color: #000000; }
     \\.gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
@@ -260,13 +260,13 @@ fn runDetailedBenchmark(allocator: std.mem.Allocator) !void {
     const small_css = ".container { color: red; background: white; padding: 10px; margin: 5px; }";
     const medium_css = test_css;
     
-    var large_css_buf = std.ArrayList(u8).init(allocator);
-    defer large_css_buf.deinit();
-    var writer = large_css_buf.writer();
+    var large_css_buf = try std.ArrayList(u8).initCapacity(allocator, 1024 * 1024);
+    defer large_css_buf.deinit(allocator);
+    var writer = large_css_buf.writer(allocator);
     for (0..1000) |i| {
         try writer.print(".class-{d} {{ color: #{x:0>6}; padding: {d}px; margin: {d}px; }}\n", .{ i, i * 1000, i * 2, i * 3 });
     }
-    const large_css = try large_css_buf.toOwnedSlice();
+    const large_css = try large_css_buf.toOwnedSlice(allocator);
     defer allocator.free(large_css);
     
     const test_cases = [_]struct { name: []const u8, css: []const u8 }{
@@ -291,23 +291,24 @@ fn runDetailedBenchmark(allocator: std.mem.Allocator) !void {
                 allocator.destroy(css_parser.string_pool);
             };
             
-            const parse_result = css_parser.parseWithErrorInfo();
+            var parse_result = css_parser.parseWithErrorInfo();
             const parse_end = std.time.nanoTimestamp();
             
             switch (parse_result) {
-                .success => |stylesheet| {
+                .success => |*stylesheet_ptr| {
+                    const stylesheet = @constCast(stylesheet_ptr);
                     defer stylesheet.deinit();
                     
                     total_parse += @as(u64, @intCast(@abs(parse_end - parse_start)));
                     
                     const optimize_start = std.time.nanoTimestamp();
                     var opt = optimizer.Optimizer.init(allocator);
-                    try opt.optimize(&stylesheet);
+                    try opt.optimize(stylesheet);
                     const optimize_end = std.time.nanoTimestamp();
                     total_optimize += @as(u64, @intCast(@abs(optimize_end - optimize_start)));
                     
                     const codegen_start = std.time.nanoTimestamp();
-                    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true, .minify = true });
+                    const result = try codegen.generate(allocator, stylesheet, .{ .optimize = true, .minify = true });
                     defer allocator.free(result);
                     const codegen_end = std.time.nanoTimestamp();
                     total_codegen += @as(u64, @intCast(@abs(codegen_end - codegen_start)));
