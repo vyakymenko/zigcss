@@ -191,6 +191,8 @@ pub const Autoprefixer = struct {
                 .value = try self.allocator.dupe(u8, decl.value),
                 .important = decl.important,
                 .allocator = self.allocator,
+                .owns_property = true,
+                .owns_value = true,
             };
             try new_declarations.append(self.allocator, original_decl);
 
@@ -208,6 +210,8 @@ pub const Autoprefixer = struct {
                         .value = try self.allocator.dupe(u8, decl.value),
                         .important = decl.important,
                         .allocator = self.allocator,
+                        .owns_property = true,
+                        .owns_value = true,
                     };
 
                     try new_declarations.append(self.allocator, prefixed_decl);
@@ -228,6 +232,8 @@ pub const Autoprefixer = struct {
                         .value = try self.allocator.dupe(u8, decl.value),
                         .important = decl.important,
                         .allocator = self.allocator,
+                        .owns_property = true,
+                        .owns_value = true,
                     };
 
                     try new_declarations.append(self.allocator, prefixed_decl);
@@ -280,6 +286,8 @@ test "autoprefixer adds flex prefixes" {
     var decl = ast.Declaration.init(allocator);
     decl.property = try allocator.dupe(u8, "display");
     decl.value = try allocator.dupe(u8, "flex");
+    decl.owns_property = true;
+    decl.owns_value = true;
     try style_rule.declarations.append(allocator, decl);
 
     try stylesheet.rules.append(allocator, ast.Rule{ .style = style_rule });
@@ -322,6 +330,8 @@ test "autoprefixer adds transform prefixes" {
     var decl = ast.Declaration.init(allocator);
     decl.property = try allocator.dupe(u8, "transform");
     decl.value = try allocator.dupe(u8, "rotate(45deg)");
+    decl.owns_property = true;
+    decl.owns_value = true;
     try style_rule.declarations.append(allocator, decl);
 
     try stylesheet.rules.append(allocator, ast.Rule{ .style = style_rule });

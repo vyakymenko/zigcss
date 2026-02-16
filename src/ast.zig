@@ -225,6 +225,8 @@ pub const Declaration = struct {
     value: []const u8,
     important: bool = false,
     allocator: std.mem.Allocator,
+    owns_property: bool = false,
+    owns_value: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Declaration {
         return .{
@@ -232,10 +234,17 @@ pub const Declaration = struct {
             .value = "",
             .important = false,
             .allocator = allocator,
+            .owns_property = false,
+            .owns_value = false,
         };
     }
 
     pub fn deinit(self: *Declaration) void {
-        _ = self;
+        if (self.owns_property and self.property.len > 0) {
+            self.allocator.free(self.property);
+        }
+        if (self.owns_value and self.value.len > 0) {
+            self.allocator.free(self.value);
+        }
     }
 };
