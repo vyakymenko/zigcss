@@ -241,6 +241,9 @@ zcss input.css -o output.css --source-map
 
 # Compile multiple files
 zcss src/*.css -o dist/ --output-dir
+
+# Start Language Server Protocol server
+zcss --lsp
 ```
 
 ### Supported Formats
@@ -504,6 +507,37 @@ zcss supports advanced SCSS features including mixins with content blocks and va
 }
 ```
 
+### Language Server Protocol (LSP) Support
+
+zcss includes a full LSP server implementation for editor integration:
+
+**Start the LSP server:**
+```bash
+zcss --lsp
+```
+
+**Supported LSP Features:**
+- **Diagnostics** - Real-time error and warning reporting for CSS parsing issues
+- **Hover** - Hover information for CSS properties with descriptions and value types
+- **Completion** - Code completion for common CSS properties
+- **Text Document Sync** - Full support for document open, change, and close events
+
+**Editor Integration:**
+
+The LSP server can be integrated with any editor that supports LSP:
+- **VSCode**: Configure in `.vscode/settings.json`
+- **Neovim**: Use with `nvim-lspconfig`
+- **Vim/Emacs**: Use with appropriate LSP client plugins
+
+**Example VSCode Configuration:**
+```json
+{
+  "css.languageServer": "zcss",
+  "css.languageServerPath": "/path/to/zcss",
+  "css.languageServerArgs": ["--lsp"]
+}
+```
+
 ## 🏗️ Architecture
 
 zcss is built with performance in mind using a multi-stage compilation pipeline:
@@ -764,7 +798,7 @@ zcss input.css -o output.css --profile
 - [x] Performance profiling tools ✅ — Built-in profiling with timing and memory metrics
 
 ### Phase 4: Ecosystem
-- [ ] Language server protocol (LSP) support
+- [x] Language server protocol (LSP) support ✅ — Full LSP server with diagnostics, hover, and completion
 - [ ] Editor integrations (VSCode, Neovim)
 - [x] Build tool integrations ✅ — Zig build system integration with build helpers
 - [ ] Pre-built binaries for all platforms

@@ -7,6 +7,7 @@ const parser = @import("parser.zig");
 const autoprefixer = @import("autoprefixer.zig");
 const profiler = @import("profiler.zig");
 const optimizer = @import("optimizer.zig");
+const lsp = @import("lsp.zig");
 
 const CompileConfig = struct {
     input_file: []const u8,
@@ -299,6 +300,49 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
 
 const CompileError = error{CompileError};
 
+fn runLspServer(allocator: std.mem.Allocator) !void {
+    var server = lsp.LspServer.init(allocator);
+    defer server.deinit();
+    
+    const stdin = std.io.getStdIn().reader();
+    const stdout = std.io.getStdOut().writer();
+    
+    var buffer: [8192]u8 = undefined;
+    
+    while (true) {
+        const content_length_line = stdin.readUntilDelimiterOrEof(buffer[0..], '\n') catch |err| {
+            if (err == error.EndOfStream) break;
+            return err;
+        } orelse break;
+        
+        if (!std.mem.startsWith(u8, content_length_line, "Content-Length: ")) {
+            continue;
+        }
+        
+        const length_str = content_length_line["Content-Length: ".len..];
+        const content_length = try std.fmt.parseInt(usize, std.mem.trim(u8, length_str, " \r"), 10);
+        
+        _ = try stdin.readUntilDelimiterOrEof(buffer[0..], '\n');
+        
+        if (content_length > buffer.len) {
+            return error.BufferTooSmall;
+        }
+        
+        var total_read: usize = 0;
+        while (total_read < content_length) {
+            const bytes_read = try stdin.read(buffer[total_read..content_length]);
+            if (bytes_read == 0) break;
+            total_read += bytes_read;
+        }
+        const request = buffer[0..total_read];
+        const response = try server.handleRequest(request);
+        defer allocator.free(response);
+        
+        try stdout.print("Content-Length: {}\r\n\r\n{s}", .{ response.len, response });
+        try stdout.flush();
+    }
+}
+
 fn expandGlob(allocator: std.mem.Allocator, pattern: []const u8) !std.ArrayList([]const u8) {
     var files = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     
@@ -387,9 +431,15 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
+    if (args.len >= 2 and (std.mem.eql(u8, args[1], "--lsp") or std.mem.eql(u8, args[1], "-lsp"))) {
+        try runLspServer(allocator);
+        return;
+    }
+
     if (args.len < 2) {
         std.debug.print("Usage: zcss <input.css> [-o output.css] [options]\n", .{});
         std.debug.print("       zcss <input1.css> <input2.css> ... [-o output-dir/] [--output-dir] [options]\n", .{});
+        std.debug.print("       zcss --lsp          Start Language Server Protocol server\n", .{});
         std.debug.print("\nOptions:\n", .{});
         std.debug.print("  -o, --output <file>      Output file or directory\n", .{});
         std.debug.print("  --output-dir             Treat output as directory (for multiple files)\n", .{});
@@ -400,6 +450,7 @@ pub fn main() !void {
         std.debug.print("  --browsers <list>        Browser support (comma-separated)\n", .{});
         std.debug.print("  --watch                  Watch mode\n", .{});
         std.debug.print("  --profile                Enable performance profiling\n", .{});
+        std.debug.print("  --lsp                    Start Language Server Protocol server\n", .{});
         std.debug.print("  -h, --help               Show this help\n", .{});
         return;
     }
