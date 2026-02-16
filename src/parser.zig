@@ -272,13 +272,13 @@ pub const Parser = struct {
             errdefer rules.deinit(self.allocator);
 
             while (self.pos < self.input.len and self.peek() != '}') {
-            if (self.peek() == '@') {
-                const nested_at_rule = try self.parseAtRule();
-                try rules.append(self.allocator, ast.Rule{ .at_rule = nested_at_rule });
-            } else {
-                const style_rule = try self.parseStyleRule();
-                try rules.append(self.allocator, ast.Rule{ .style = style_rule });
-            }
+                if (self.peek() == '@') {
+                    const nested_at_rule = try self.parseAtRule();
+                    try rules.append(self.allocator, ast.Rule{ .at_rule = nested_at_rule });
+                } else {
+                    const style_rule = try self.parseStyleRule();
+                    try rules.append(self.allocator, ast.Rule{ .style = style_rule });
+                }
                 self.skipWhitespace();
             }
 

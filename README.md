@@ -421,19 +421,21 @@ Multi-pass optimization pipeline:
 
 1. **Empty rule removal** ✅ — Remove rules with no declarations
 2. **Selector merging** ✅ — Merge rules with identical selectors
-3. **Shorthand property optimization** ✅ — Combine longhand properties into shorthand:
+3. **Redundant selector removal** ✅ — Remove selectors that are subsets of other selectors in the same rule
+4. **Shorthand property optimization** ✅ — Combine longhand properties into shorthand:
    - `margin-top`, `margin-right`, `margin-bottom`, `margin-left` → `margin`
    - `padding-top`, `padding-right`, `padding-bottom`, `padding-left` → `padding`
    - `border-width`, `border-style`, `border-color` → `border`
    - Optimizes to 1, 2, 3, or 4-value shorthand based on equality
-4. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last, optimized with backwards iteration)
-5. **Value optimization** ✅ — Advanced optimizations:
+5. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last, optimized with backwards iteration)
+6. **Value optimization** ✅ — Advanced optimizations:
    - Hex color minification (`#ffffff` → `#fff`)
    - RGB to hex conversion (`rgb(255, 255, 255)` → `#fff`)
    - CSS color name to hex conversion (`red` → `#f00`, `white` → `#fff`, etc.)
    - Transparent color optimization (`transparent` → `rgba(0,0,0,0)`)
    - Zero unit removal (`0px` → `0`, `0em` → `0`, etc.)
    - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
+7. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
 
 ```zig
 // Optimization passes
@@ -441,9 +443,11 @@ pub const Optimizer = struct {
     pub fn optimize(self: *Optimizer, stylesheet: *Stylesheet) !void {
         try self.removeEmptyRules(stylesheet);
         try self.mergeSelectors(stylesheet);
+        try self.removeRedundantSelectors(stylesheet);
         try self.optimizeShorthandProperties(stylesheet);
         try self.removeDuplicateDeclarations(stylesheet);
         try self.optimizeValues(stylesheet);
+        try self.mergeMediaQueries(stylesheet);
     }
 };
 ```
@@ -474,6 +478,9 @@ pub const Optimizer = struct {
 10. **Backwards iteration for duplicates** ✅ — Efficient duplicate removal by iterating backwards
 11. **Border shorthand optimization** ✅ — Combines border-width, border-style, border-color into border
 12. **Color name optimization** ✅ — Converts CSS color names (red, blue, etc.) to hex values for consistency
+13. **Redundant selector removal** ✅ — Removes selectors that are subsets of other selectors in the same rule
+14. **Media query merging** ✅ — Merges identical `@media` rules to reduce output size
+15. **Improved SIMD whitespace skipping** ✅ — Processes 32 bytes at a time for faster parsing
 
 ### Memory Management
 

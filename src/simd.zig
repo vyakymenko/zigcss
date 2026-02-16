@@ -3,36 +3,34 @@ const std = @import("std");
 pub fn skipWhitespaceSimd(input: []const u8, pos: *usize) void {
     if (pos.* >= input.len) return;
 
-    const simd_available = @import("builtin").cpu.arch != .wasm32 and @import("builtin").cpu.arch != .wasm64;
+    const arch = @import("builtin").cpu.arch;
+    const simd_available = arch != .wasm32 and arch != .wasm64;
     
-    if (!simd_available or input.len - pos.* < 16) {
+    if (!simd_available or input.len - pos.* < 32) {
         skipWhitespaceScalar(input, pos);
         return;
     }
 
-    const tab: u8 = 0x09;
-    const newline: u8 = 0x0A;
-    const cr: u8 = 0x0D;
-    const space: u8 = 0x20;
-
     var i = pos.*;
-    const end = input.len - 16;
+    const end = input.len - 32;
 
     while (i <= end) {
-        const chunk = input[i..][0..16];
         var all_whitespace = true;
-
-        for (chunk) |ch| {
-            if (ch != space and ch != tab and ch != newline and ch != cr) {
+        var j: usize = 0;
+        
+        while (j < 32) {
+            const ch = input[i + j];
+            if (ch != ' ' and ch != '\t' and ch != '\n' and ch != '\r') {
                 all_whitespace = false;
                 break;
             }
+            j += 1;
         }
-
+        
         if (!all_whitespace) {
             break;
         }
-        i += 16;
+        i += 32;
     }
 
     skipWhitespaceScalar(input, &i);

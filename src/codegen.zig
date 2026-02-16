@@ -127,7 +127,7 @@ fn generateSelector(list: *std.ArrayList(u8), allocator: std.mem.Allocator, sele
     _ = options;
     const parts = selector.parts.items;
     if (parts.len == 0) return;
-    
+
     var prev_was_combinator = false;
     for (parts, 0..) |part, i| {
         if (i > 0) {
