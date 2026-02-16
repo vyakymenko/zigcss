@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add performance profiling tools - built-in profiling system with timing and memory metrics
+- Add --profile CLI flag for performance profiling during compilation
+- Add benchmark suite with `zig build bench` command
+- Add Profiler module for detailed performance analysis (parse, optimize, codegen timing)
+- Add benchmarkCompilation function for automated performance testing
 - Add plugin system - extensible plugin architecture for custom AST transformations
 - Add PluginRegistry for managing multiple plugins
 - Add plugin support to CodegenOptions for library API
@@ -18,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add glob pattern support for input files (e.g., `src/*.css`)
 
 ### Performance Improvements
+- Add performance profiling infrastructure for identifying bottlenecks and measuring improvements
+- Add detailed timing breakdowns for parse, optimize, and codegen phases
+- Add benchmark suite for automated performance regression testing
 - Add incremental compilation with content hash tracking - watch mode only recompiles when file content actually changes
 - Add advanced selector optimization with universal selector removal and selector simplification
 - Add font and background shorthand optimizations

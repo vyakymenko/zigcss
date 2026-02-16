@@ -492,6 +492,9 @@ zig build bench
 
 # Run with verbose output
 zig build test --summary all
+
+# Compile with performance profiling
+zcss input.css -o output.css --profile
 ```
 
 ## 📊 Roadmap
@@ -519,7 +522,7 @@ zig build test --summary all
 - [x] Watch mode improvements ✅ — Polling-based file watching with automatic recompilation
 - [x] Incremental compilation ✅ — Content hash-based change detection for faster watch mode
 
-### Phase 3: Performance & Polish ✅ MOSTLY COMPLETED
+### Phase 3: Performance & Polish ✅ COMPLETED
 - [x] Capacity estimation for ArrayLists
 - [x] Optimized character checks (inline functions)
 - [x] Faster whitespace skipping
@@ -533,7 +536,7 @@ zig build test --summary all
 - [x] Better error messages with position tracking
 - [x] Parallel file processing ✅ — Multi-threaded compilation for multiple files
 - [x] Incremental compilation ✅ — Content-based change detection for faster watch mode
-- [ ] Performance profiling tools
+- [x] Performance profiling tools ✅ — Built-in profiling with timing and memory metrics
 
 ### Phase 4: Ecosystem
 - [ ] Language server protocol (LSP) support

@@ -40,4 +40,19 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const bench_module = b.addModule("zcss-bench", .{
+        .root_source_file = b.path("src/benchmarks.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const bench_exe = b.addExecutable(.{
+        .name = "zcss-bench",
+        .root_module = bench_module,
+    });
+
+    const run_bench = b.addRunArtifact(bench_exe);
+    const bench_step = b.step("bench", "Run benchmarks");
+    bench_step.dependOn(&run_bench.step);
 }

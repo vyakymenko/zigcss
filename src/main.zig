@@ -5,6 +5,7 @@ const codegen = @import("codegen.zig");
 const error_module = @import("error.zig");
 const parser = @import("parser.zig");
 const autoprefixer = @import("autoprefixer.zig");
+const profiler = @import("profiler.zig");
 
 const CompileConfig = struct {
     input_file: []const u8,
@@ -13,6 +14,7 @@ const CompileConfig = struct {
     minify: bool,
     source_map: bool,
     autoprefix: ?autoprefixer.AutoprefixOptions = null,
+    profile: bool = false,
 };
 
 const CompileTask = struct {
@@ -22,11 +24,18 @@ const CompileTask = struct {
     minify: bool,
     source_map: bool,
     autoprefix: ?autoprefixer.AutoprefixOptions,
+    profile: bool,
     result: ?[]const u8 = null,
     err: ?[]const u8 = null,
 };
 
 fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
+    var perf_profiler = profiler.Profiler.init(allocator, config.profile);
+    defer perf_profiler.deinit();
+    
+    const parse_timing = try perf_profiler.startTiming("parse");
+    defer parse_timing.end() catch {};
+    
     const input = try std.fs.cwd().readFileAlloc(allocator, config.input_file, 10 * 1024 * 1024);
     defer allocator.free(input);
 
@@ -62,15 +71,27 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     }
     
     defer if (stylesheet_initialized) stylesheet.deinit();
+    
+    try parse_timing.end();
 
+    const optimize_timing = try perf_profiler.startTiming("optimize");
+    defer optimize_timing.end() catch {};
+    
     const options = codegen.CodegenOptions{
         .minify = config.minify,
         .optimize = config.optimize,
         .autoprefix = config.autoprefix,
     };
+    
+    try optimize_timing.end();
+    
+    const codegen_timing = try perf_profiler.startTiming("codegen");
+    defer codegen_timing.end() catch {};
 
     const result = try codegen.generate(allocator, &stylesheet, options);
     defer allocator.free(result);
+    
+    try codegen_timing.end();
 
     if (config.output_file) |out| {
         try std.fs.cwd().writeFile(.{ .sub_path = out, .data = result });
@@ -82,6 +103,10 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
         const stdout = &stdout_writer.interface;
         try stdout.writeAll(result);
         try stdout.flush();
+    }
+    
+    if (config.profile) {
+        perf_profiler.printReport();
     }
 }
 
@@ -123,6 +148,7 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
                 .minify = config.minify,
                 .source_map = config.source_map,
                 .autoprefix = config.autoprefix,
+                .profile = config.profile,
             };
             
             compileFile(allocator, temp_config) catch |err| {
@@ -371,6 +397,7 @@ pub fn main() !void {
         std.debug.print("  --autoprefix             Add vendor prefixes\n", .{});
         std.debug.print("  --browsers <list>        Browser support (comma-separated)\n", .{});
         std.debug.print("  --watch                  Watch mode\n", .{});
+        std.debug.print("  --profile                Enable performance profiling\n", .{});
         std.debug.print("  -h, --help               Show this help\n", .{});
         return;
     }
@@ -385,6 +412,7 @@ pub fn main() !void {
     var source_map_flag = false;
     var watch_flag = false;
     var autoprefix_flag = false;
+    var profile_flag = false;
     var browsers = try std.ArrayList([]const u8).initCapacity(allocator, 0);
     defer browsers.deinit(allocator);
 
@@ -407,6 +435,8 @@ pub fn main() !void {
             watch_flag = true;
         } else if (std.mem.eql(u8, args[i], "--autoprefix")) {
             autoprefix_flag = true;
+        } else if (std.mem.eql(u8, args[i], "--profile")) {
+            profile_flag = true;
         } else if (std.mem.eql(u8, args[i], "--browsers")) {
             if (i + 1 < args.len) {
                 const browsers_str = args[i + 1];
@@ -458,6 +488,7 @@ pub fn main() !void {
             .minify = minify_flag,
             .source_map = source_map_flag,
             .autoprefix = autoprefix_opts,
+            .profile = profile_flag,
         };
         try watchFile(allocator, config);
     } else if (input_files.items.len == 1) {
@@ -468,6 +499,7 @@ pub fn main() !void {
             .minify = minify_flag,
             .source_map = source_map_flag,
             .autoprefix = autoprefix_opts,
+            .profile = profile_flag,
         };
         compileFile(allocator, config) catch {
             std.process.exit(1);
@@ -497,6 +529,7 @@ pub fn main() !void {
                 .minify = minify_flag,
                 .source_map = source_map_flag,
                 .autoprefix = autoprefix_opts,
+                .profile = profile_flag,
             });
         }
         
