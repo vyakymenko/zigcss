@@ -1,0 +1,79 @@
+{
+  "name": "zigcss-language-server",
+  "displayName": "zigcss Language Server",
+  "description": "Language Server Protocol support for zigcss - the world's fastest CSS compiler",
+  "version": "0.1.0",
+  "publisher": "zigcss",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:css",
+    "onLanguage:scss",
+    "onLanguage:sass",
+    "onLanguage:less",
+    "onLanguage:stylus"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "css",
+        "extensions": [".css"],
+        "aliases": ["CSS", "css"]
+      },
+      {
+        "id": "scss",
+        "extensions": [".scss"],
+        "aliases": ["SCSS", "scss"]
+      },
+      {
+        "id": "sass",
+        "extensions": [".sass"],
+        "aliases": ["SASS", "sass"]
+      },
+      {
+        "id": "less",
+        "extensions": [".less"],
+        "aliases": ["LESS", "less"]
+      },
+      {
+        "id": "stylus",
+        "extensions": [".styl"],
+        "aliases": ["Stylus", "stylus"]
+      }
+    ],
+    "configuration": {
+      "title": "zigcss",
+      "properties": {
+        "zigcss.languageServerPath": {
+          "type": "string",
+          "default": "zigcss",
+          "description": "Path to the zigcss binary. Use 'zigcss' if it's in your PATH, or provide the full path."
+        },
+        "zigcss.languageServerArgs": {
+          "type": "array",
+          "default": ["--lsp"],
+          "description": "Arguments to pass to the zigcss language server"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}

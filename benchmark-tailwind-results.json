@@ -1,0 +1,20 @@
+{
+  "small": {
+    "tailwind": 2617.3211541,
+    "lightningcss": 681.4934542000001,
+    "cssnano": 802.283025,
+    "esbuild": 650.1006375000001
+  },
+  "medium": {
+    "tailwind": 2570.4937248,
+    "lightningcss": 744.7012791,
+    "cssnano": 905.9922376000001,
+    "esbuild": 667.0216458000001
+  },
+  "large": {
+    "tailwind": 2649.6679292,
+    "lightningcss": 744.5902709,
+    "cssnano": 905.5948790999998,
+    "esbuild": 691.1635918000001
+  }
+}

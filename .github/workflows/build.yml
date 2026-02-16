@@ -1,0 +1,77 @@
+name: Build
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main, development]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }} - ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            target: x86_64-linux
+            zig-version: 0.15.2
+          - os: ubuntu-latest
+            arch: aarch64
+            target: aarch64-linux
+            zig-version: 0.15.2
+          - os: macos-latest
+            arch: x86_64
+            target: x86_64-macos
+            zig-version: 0.15.2
+          - os: macos-latest
+            arch: aarch64
+            target: aarch64-macos
+            zig-version: 0.15.2
+          - os: windows-latest
+            arch: x86_64
+            target: x86_64-windows
+            zig-version: 0.15.2
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ matrix.zig-version }}
+
+      - name: Build Release Binary
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Test Binary
+        run: zig build test
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zigcss-${{ matrix.target }}
+          path: zig-out/bin/zigcss*
+          retention-days: 7
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Run Tests
+        run: zig build test --summary all
+
+      - name: Run Benchmarks
+        run: zig build bench

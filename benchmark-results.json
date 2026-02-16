@@ -1,0 +1,32 @@
+{
+  "small": {
+    "zigcss": 14.1338708,
+    "lightningcss": 553.5723124,
+    "cssnano": 778.1464085,
+    "esbuild": 672.6258832999999,
+    "postcss": 788.9659042,
+    "sass": 829.1484459000001,
+    "less": null,
+    "stylus": null
+  },
+  "medium": {
+    "zigcss": 13.268666700000002,
+    "lightningcss": 577.2195208999999,
+    "cssnano": 767.9579875000001,
+    "esbuild": 645.7716293,
+    "postcss": 735.7756126000002,
+    "sass": 841.2448165,
+    "less": null,
+    "stylus": null
+  },
+  "large": {
+    "zigcss": 261.27339170000005,
+    "lightningcss": 674.9659001,
+    "cssnano": 940.0008667999998,
+    "esbuild": 724.1608876,
+    "postcss": 887.0960208999999,
+    "sass": 940.8911166,
+    "less": null,
+    "stylus": null
+  }
+}

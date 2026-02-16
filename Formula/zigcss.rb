@@ -1,0 +1,21 @@
+class Zigcss < Formula
+  desc "The world's fastest CSS compiler - Built with Zig"
+  homepage "https://github.com/vyakymenko/zigcss"
+  url "https://github.com/vyakymenko/zigcss/archive/v0.1.0.tar.gz"
+  sha256 ""
+  license "MIT"
+  head "https://github.com/vyakymenko/zigcss.git", branch: "development"
+
+  depends_on "zig" => :build
+
+  def install
+    system "zig", "build", "-Doptimize=ReleaseFast"
+    bin.install "zig-out/bin/zigcss"
+  end
+
+  test do
+    (testpath/"test.css").write ".test { color: red; }"
+    system "#{bin}/zigcss", "test.css", "-o", "output.css"
+    assert_match ".test", File.read("output.css")
+  end
+end

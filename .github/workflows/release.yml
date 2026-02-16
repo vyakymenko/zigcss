@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            target: x86_64-linux
+            zig-version: 0.15.2
+            binary-name: zigcss
+          - os: ubuntu-latest
+            arch: aarch64
+            target: aarch64-linux
+            zig-version: 0.15.2
+            binary-name: zigcss
+          - os: macos-latest
+            arch: x86_64
+            target: x86_64-macos
+            zig-version: 0.15.2
+            binary-name: zigcss
+          - os: macos-latest
+            arch: aarch64
+            target: aarch64-macos
+            zig-version: 0.15.2
+            binary-name: zigcss
+          - os: windows-latest
+            arch: x86_64
+            target: x86_64-windows
+            zig-version: 0.15.2
+            binary-name: zigcss.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ matrix.zig-version }}
+
+      - name: Build Release Binary
+        run: |
+          if [ "${{ matrix.target }}" == "aarch64-linux" ]; then
+            zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux
+          else
+            zig build -Doptimize=ReleaseFast
+          fi
+
+      - name: Get Version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Archive
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            mkdir -p release
+            cp zig-out/bin/${{ matrix.binary-name }} release/
+            cd release
+            powershell -Command "Compress-Archive -Path '${{ matrix.binary-name }}' -DestinationPath '../zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip' -Force"
+            cd ..
+          else
+            mkdir -p release
+            cp zig-out/bin/${{ matrix.binary-name }} release/
+            cd release
+            tar czf ../zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz ${{ matrix.binary-name }}
+            cd ..
+          fi
+
+      - name: Upload Release Asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: zigcss-${{ matrix.target }}
+          path: zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.*
+
+  create-release:
+    name: Create Release
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get Version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          body: |
+            ## zigcss ${{ steps.version.outputs.VERSION }}
+
+            Pre-built binaries for all supported platforms.
+
+            ### Installation
+
+            Download the appropriate binary for your platform and add it to your PATH.
+
+            ### Supported Platforms
+
+            - Linux (x86_64, aarch64)
+            - macOS (x86_64, aarch64)
+            - Windows (x86_64)
+
+            ### Performance
+
+            zigcss is the world's fastest CSS compiler, processing typical production CSS files 80-130x faster than competitors.
+
+          draft: false
+          prerelease: false
