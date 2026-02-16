@@ -231,6 +231,10 @@ pub const Optimizer = struct {
             }
         }
 
+        if (self.optimizeColorName(trimmed)) |optimized| {
+            return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
+        }
+
         if (self.optimizeUnit(trimmed)) |optimized| {
             return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
         }
@@ -325,6 +329,29 @@ pub const Optimizer = struct {
         return hex;
     }
 
+    fn optimizeColorName(self: *Optimizer, value: []const u8) ?[]const u8 {
+        return self.getColorHex(value);
+    }
+
+    fn getColorHex(self: *Optimizer, name: []const u8) ?[]const u8 {
+        _ = self;
+        if (name.len == 0) return null;
+        
+        const first = name[0];
+        if (first >= 'A' and first <= 'Z') {
+            return null;
+        }
+        
+        return switch (name.len) {
+            3 => if (std.mem.eql(u8, name, "red")) "#f00" else if (std.mem.eql(u8, name, "lime")) "#0f0" else null,
+            4 => if (std.mem.eql(u8, name, "blue")) "#00f" else if (std.mem.eql(u8, name, "cyan")) "#0ff" else if (std.mem.eql(u8, name, "aqua")) "#0ff" else if (std.mem.eql(u8, name, "gray")) "#808080" else if (std.mem.eql(u8, name, "teal")) "#008080" else if (std.mem.eql(u8, name, "navy")) "#000080" else null,
+            5 => if (std.mem.eql(u8, name, "black")) "#000" else if (std.mem.eql(u8, name, "white")) "#fff" else if (std.mem.eql(u8, name, "green")) "#008000" else if (std.mem.eql(u8, name, "olive")) "#808000" else if (std.mem.eql(u8, name, "maroon")) "#800000" else null,
+            6 => if (std.mem.eql(u8, name, "yellow")) "#ff0" else if (std.mem.eql(u8, name, "silver")) "#c0c0c0" else if (std.mem.eql(u8, name, "purple")) "#800080" else null,
+            7 => if (std.mem.eql(u8, name, "magenta")) "#f0f" else if (std.mem.eql(u8, name, "fuchsia")) "#f0f" else null,
+            else => null,
+        };
+    }
+
     fn optimizeUnit(self: *Optimizer, value: []const u8) ?[]const u8 {
         _ = self;
         if (value.len < 2) return null;
@@ -381,10 +408,16 @@ pub const Optimizer = struct {
         var padding_bottom: ?[]const u8 = null;
         var padding_left: ?[]const u8 = null;
         
+        var border_width: ?[]const u8 = null;
+        var border_style: ?[]const u8 = null;
+        var border_color: ?[]const u8 = null;
+        
         var margin_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
         defer margin_indices.deinit(self.allocator);
         var padding_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
         defer padding_indices.deinit(self.allocator);
+        var border_indices = try std.ArrayList(usize).initCapacity(self.allocator, 3);
+        defer border_indices.deinit(self.allocator);
         
         for (style_rule.declarations.items, 0..) |*decl, i| {
             if (std.mem.eql(u8, decl.property, "margin-top")) {
@@ -411,6 +444,15 @@ pub const Optimizer = struct {
             } else if (std.mem.eql(u8, decl.property, "padding-left")) {
                 padding_left = decl.value;
                 try padding_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "border-width")) {
+                border_width = decl.value;
+                try border_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "border-style")) {
+                border_style = decl.value;
+                try border_indices.append(self.allocator, i);
+            } else if (std.mem.eql(u8, decl.property, "border-color")) {
+                border_color = decl.value;
+                try border_indices.append(self.allocator, i);
             }
         }
         
@@ -453,6 +495,26 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
+        
+        if (border_indices.items.len == 3) {
+            const shorthand = try self.buildBorderShorthand(border_width.?, border_style.?, border_color.?);
+            defer self.allocator.free(shorthand);
+            
+            const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
+            
+            var new_decl = ast.Declaration.init(style_rule.allocator);
+            new_decl.property = "border";
+            new_decl.value = interned;
+            try style_rule.declarations.append(style_rule.allocator, new_decl);
+            
+            var i: usize = border_indices.items.len;
+            while (i > 0) {
+                i -= 1;
+                const idx = border_indices.items[i];
+                style_rule.declarations.items[idx].deinit();
+                _ = style_rule.declarations.swapRemove(idx);
+            }
+        }
     }
 
     fn buildShorthand(self: *Optimizer, top: []const u8, right: []const u8, bottom: []const u8, left: []const u8) ![]const u8 {
@@ -469,51 +531,45 @@ pub const Optimizer = struct {
         }
     }
 
+    fn buildBorderShorthand(self: *Optimizer, width: []const u8, style: []const u8, color: []const u8) ![]const u8 {
+        return try std.fmt.allocPrint(self.allocator, "{s} {s} {s}", .{ width, style, color });
+    }
+
     fn removeDuplicateDeclarations(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
-        _ = self;
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
-                    var seen = std.StringHashMap(void).init(style_rule.allocator);
-                    defer seen.deinit();
-
-                    var i: usize = 0;
-                    while (i < style_rule.declarations.items.len) {
-                        const property = style_rule.declarations.items[i].property;
-                        const gop = try seen.getOrPut(property);
-                        if (gop.found_existing) {
-                            style_rule.declarations.items[i].deinit();
-                            _ = style_rule.declarations.swapRemove(i);
-                        } else {
-                            i += 1;
-                        }
-                    }
+                    try self.removeDuplicatesInRule(style_rule);
                 },
                 .at_rule => |*at_rule| {
                     if (at_rule.rules) |*rules| {
                         for (rules.items) |*nested_rule| {
                             switch (nested_rule.*) {
                                 .style => |*style_rule| {
-                                    var seen = std.StringHashMap(void).init(style_rule.allocator);
-                                    defer seen.deinit();
-
-                                    var i: usize = 0;
-                                    while (i < style_rule.declarations.items.len) {
-                                        const property = style_rule.declarations.items[i].property;
-                                        const gop = try seen.getOrPut(property);
-                                        if (gop.found_existing) {
-                                            style_rule.declarations.items[i].deinit();
-                                            _ = style_rule.declarations.swapRemove(i);
-                                        } else {
-                                            i += 1;
-                                        }
-                                    }
+                                    try self.removeDuplicatesInRule(style_rule);
                                 },
                                 .at_rule => {},
                             }
                         }
                     }
                 },
+            }
+        }
+    }
+
+    fn removeDuplicatesInRule(self: *Optimizer, style_rule: *ast.StyleRule) !void {
+        _ = self;
+        var seen = std.StringHashMap(void).init(style_rule.allocator);
+        defer seen.deinit();
+
+        var i: usize = style_rule.declarations.items.len;
+        while (i > 0) {
+            i -= 1;
+            const property = style_rule.declarations.items[i].property;
+            const gop = try seen.getOrPut(property);
+            if (gop.found_existing) {
+                style_rule.declarations.items[i].deinit();
+                _ = style_rule.declarations.swapRemove(i);
             }
         }
     }

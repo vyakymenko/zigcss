@@ -370,12 +370,15 @@ pub const Parser = struct {
         self.pos += 2;
         const end = self.input.len - 1;
         while (self.pos < end) {
-            if (self.input[self.pos] == '*' and self.input[self.pos + 1] == '/') {
-                self.pos += 2;
-                return;
+            if (self.input[self.pos] == '*') {
+                if (self.pos + 1 < self.input.len and self.input[self.pos + 1] == '/') {
+                    self.pos += 2;
+                    return;
+                }
             }
             self.pos += 1;
         }
+        self.pos = self.input.len;
     }
 
     inline fn peek(self: *const Parser) u8 {

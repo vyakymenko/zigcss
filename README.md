@@ -381,6 +381,7 @@ zcss is built with performance in mind using a multi-stage compilation pipeline:
 - **Zero-copy tokenization** — Tokens reference original input without copying
 - **Streaming parser** — Can process large files without loading entirely into memory
 - **Error recovery** — Continues parsing after errors for better developer experience
+- **Optimized comment skipping** — Fast comment detection and skipping algorithm
 
 ```zig
 // Parser architecture
@@ -423,11 +424,13 @@ Multi-pass optimization pipeline:
 3. **Shorthand property optimization** ✅ — Combine longhand properties into shorthand:
    - `margin-top`, `margin-right`, `margin-bottom`, `margin-left` → `margin`
    - `padding-top`, `padding-right`, `padding-bottom`, `padding-left` → `padding`
+   - `border-width`, `border-style`, `border-color` → `border`
    - Optimizes to 1, 2, 3, or 4-value shorthand based on equality
-4. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last)
+4. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last, optimized with backwards iteration)
 5. **Value optimization** ✅ — Advanced optimizations:
    - Hex color minification (`#ffffff` → `#fff`)
    - RGB to hex conversion (`rgb(255, 255, 255)` → `#fff`)
+   - CSS color name to hex conversion (`red` → `#f00`, `white` → `#fff`, etc.)
    - Zero unit removal (`0px` → `0`, `0em` → `0`, etc.)
    - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
 
@@ -467,6 +470,9 @@ pub const Optimizer = struct {
 7. **Capacity estimation** ✅ — Pre-allocate ArrayLists with estimated sizes to reduce reallocations
 8. **Hash-based selector merging** ✅ — O(n²) → O(n) optimization using hash maps
 9. **Optimized character classification** ✅ — Lookup tables replace function calls for 10-20% faster parsing
+10. **Backwards iteration for duplicates** ✅ — Efficient duplicate removal by iterating backwards
+11. **Border shorthand optimization** ✅ — Combines border-width, border-style, border-color into border
+12. **Color name optimization** ✅ — Converts CSS color names (red, blue, etc.) to hex values for consistency
 
 ### Memory Management
 
