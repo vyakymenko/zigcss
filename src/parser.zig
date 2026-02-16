@@ -142,8 +142,8 @@ pub const Parser = struct {
             try rule.selectors.append(self.allocator, selector);
 
             self.skipWhitespace();
-            if (self.peek() == ',') {
-                self.advance();
+            if (self.pos < self.input.len and self.input[self.pos] == ',') {
+                self.pos += 1;
                 self.skipWhitespace();
                 continue;
             }
@@ -151,24 +151,25 @@ pub const Parser = struct {
         }
 
         self.skipWhitespace();
-        if (self.peek() != '{') {
+        if (self.pos >= self.input.len or self.input[self.pos] != '{') {
             return error.ExpectedOpeningBrace;
         }
-        self.advance();
+        self.pos += 1;
         self.skipWhitespace();
 
-        while (self.pos < self.input.len and self.peek() != '}') {
+        const len = self.input.len;
+        while (self.pos < len and self.input[self.pos] != '}') {
             const decl = try self.parseDeclaration();
             try rule.declarations.append(self.allocator, decl);
             self.skipWhitespace();
-            if (self.peek() == ';') {
-                self.advance();
+            if (self.pos < len and self.input[self.pos] == ';') {
+                self.pos += 1;
                 self.skipWhitespace();
             }
         }
 
-        if (self.peek() == '}') {
-            self.advance();
+        if (self.pos < len and self.input[self.pos] == '}') {
+            self.pos += 1;
         }
 
         return rule;
@@ -178,29 +179,32 @@ pub const Parser = struct {
         var selector = try ast.Selector.initWithCapacity(self.allocator, 4);
         errdefer selector.deinit();
 
-        while (self.pos < self.input.len) {
+        const len = self.input.len;
+        while (self.pos < len) {
             self.skipWhitespace();
+            
+            if (self.pos >= len) break;
+            const ch = self.input[self.pos];
 
-            const ch = self.peek();
             if (ch == '{' or ch == ',' or ch == '}') {
                 break;
             }
 
             if (ch == '.') {
-                self.advance();
+                self.pos += 1;
                 const name = try self.parseIdentifier();
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .class = name });
             } else if (ch == '#') {
-                self.advance();
+                self.pos += 1;
                 const name = try self.parseIdentifier();
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .id = name });
             } else if (ch == '*') {
-                self.advance();
+                self.pos += 1;
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .universal = {} });
             } else if (ch == ':') {
-                self.advance();
-                if (self.peek() == ':') {
-                    self.advance();
+                self.pos += 1;
+                if (self.pos < len and self.input[self.pos] == ':') {
+                    self.pos += 1;
                     const name = try self.parseIdentifier();
                     try selector.parts.append(self.allocator, ast.SelectorPart{ .pseudo_element = name });
                 } else {
@@ -208,19 +212,19 @@ pub const Parser = struct {
                     try selector.parts.append(self.allocator, ast.SelectorPart{ .pseudo_class = name });
                 }
             } else if (ch == '>') {
-                self.advance();
+                self.pos += 1;
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .child });
             } else if (ch == '+') {
-                self.advance();
+                self.pos += 1;
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .next_sibling });
             } else if (ch == '~') {
-                self.advance();
+                self.pos += 1;
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .following_sibling });
             } else if (isAlnumOrDash(ch)) {
                 const name = try self.parseIdentifier();
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .type = name });
             } else {
-                self.advance();
+                self.pos += 1;
             }
         }
 
@@ -231,7 +235,7 @@ pub const Parser = struct {
         const property = try self.parseIdentifier();
         self.skipWhitespace();
 
-        if (self.peek() != ':') {
+        if (self.pos >= self.input.len or self.input[self.pos] != ':') {
             return error.ExpectedColon;
         }
         self.advance();
@@ -240,15 +244,15 @@ pub const Parser = struct {
         const value_start = self.pos;
         var value_end = self.pos;
         var important = false;
+        const len = self.input.len;
 
-        while (self.pos < self.input.len) {
-            const ch = self.peek();
+        while (self.pos < len) {
+            const ch = self.input[self.pos];
             if (ch == ';' or ch == '}') {
                 break;
             }
-            if (ch == '!') {
-                const remaining = self.input[self.pos..];
-                if (std.mem.startsWith(u8, remaining, "!important")) {
+            if (ch == '!' and self.pos + 9 < len) {
+                if (std.mem.eql(u8, self.input[self.pos..self.pos+10], "!important")) {
                     important = true;
                     value_end = self.pos;
                     self.pos += 10;
@@ -256,12 +260,15 @@ pub const Parser = struct {
                 }
             }
             value_end = self.pos + 1;
-            self.advance();
+            self.pos += 1;
         }
 
-        var value = self.input[value_start..value_end];
-        value = std.mem.trim(u8, value, " \t\n\r");
-        const value_interned = try self.string_pool.intern(value);
+        const value = self.input[value_start..value_end];
+        const trimmed = std.mem.trim(u8, value, " \t\n\r");
+        const value_interned = if (trimmed.ptr == value.ptr and trimmed.len == value.len) 
+            try self.string_pool.intern(value)
+        else
+            try self.string_pool.intern(trimmed);
 
         var decl = ast.Declaration.init(self.allocator);
         decl.property = property;
@@ -332,24 +339,30 @@ pub const Parser = struct {
 
     fn parseIdentifier(self: *Parser) ![]const u8 {
         const start = self.pos;
-
-        if (self.pos < self.input.len) {
-            const first = self.input[self.pos];
-            if (first == '-') {
-                self.advance();
-            } else if (!isAlpha(first) and first != '_') {
-                return error.InvalidIdentifier;
-            }
+        const len = self.input.len;
+        
+        if (start >= len) {
+            return error.InvalidIdentifier;
+        }
+        
+        const first = self.input[start];
+        if (first == '-') {
+            self.advance();
+        } else if (!isAlpha(first) and first != '_') {
+            return error.InvalidIdentifier;
         }
 
-        while (self.pos < self.input.len) {
-            const ch = self.input[self.pos];
+        var pos = self.pos;
+        while (pos < len) {
+            const ch = self.input[pos];
             if (isAlnumOrDash(ch)) {
-                self.advance();
+                pos += 1;
             } else {
                 break;
             }
         }
+        
+        self.pos = pos;
 
         if (self.pos == start) {
             return error.InvalidIdentifier;

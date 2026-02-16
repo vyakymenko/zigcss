@@ -1549,12 +1549,14 @@ pub const Optimizer = struct {
 
     fn removeDuplicatesInRule(self: *Optimizer, style_rule: *ast.StyleRule) !void {
         _ = self;
-        if (style_rule.declarations.items.len <= 1) return;
+        const decl_count = style_rule.declarations.items.len;
+        if (decl_count <= 1) return;
         
         var seen = std.StringHashMap(void).init(style_rule.allocator);
         defer seen.deinit();
+        try seen.ensureTotalCapacity(@as(u32, @intCast(@min(decl_count / 2, std.math.maxInt(u32)))));
 
-        var i: usize = style_rule.declarations.items.len;
+        var i: usize = decl_count;
         while (i > 0) {
             i -= 1;
             const property = style_rule.declarations.items[i].property;
@@ -1570,12 +1572,14 @@ pub const Optimizer = struct {
         if (stylesheet.rules.items.len == 0) return;
         
         var i: usize = 0;
-        while (i < stylesheet.rules.items.len) {
+        const rules_len = stylesheet.rules.items.len;
+        while (i < rules_len) {
             const rule = &stylesheet.rules.items[i];
             switch (rule.*) {
                 .style => |*style_rule| {
+                    const selector_count = style_rule.selectors.items.len;
                     var j: usize = 0;
-                    while (j < style_rule.selectors.items.len) {
+                    while (j < selector_count) {
                         const selector = &style_rule.selectors.items[j];
                         if (self.simplifySelector(selector)) {
                             if (selector.parts.items.len == 0) {
@@ -1589,11 +1593,13 @@ pub const Optimizer = struct {
                 },
                 .at_rule => |*at_rule| {
                     if (at_rule.rules) |*rules| {
-                        for (rules.items) |*nested_rule| {
+                        const nested_count = rules.items.len;
+                        for (rules.items[0..nested_count]) |*nested_rule| {
                             switch (nested_rule.*) {
                                 .style => |*style_rule| {
+                                    const selector_count = style_rule.selectors.items.len;
                                     var j: usize = 0;
-                                    while (j < style_rule.selectors.items.len) {
+                                    while (j < selector_count) {
                                         const selector = &style_rule.selectors.items[j];
                                         if (self.simplifySelector(selector)) {
                                             if (selector.parts.items.len == 0) {
@@ -1619,12 +1625,13 @@ pub const Optimizer = struct {
         _ = self;
         var modified = false;
         var i: usize = 0;
+        const parts_len = selector.parts.items.len;
         
-        while (i < selector.parts.items.len) {
+        while (i < parts_len) {
             const part = &selector.parts.items[i];
             
             if (part.* == .universal) {
-                if (i == 0 and selector.parts.items.len > 1) {
+                if (i == 0 and parts_len > 1) {
                     const next_part = &selector.parts.items[i + 1];
                     if (next_part.* == .combinator) {
                         selector.parts.items[i].deinit(selector.allocator);
@@ -1654,7 +1661,7 @@ pub const Optimizer = struct {
                     modified = true;
                     continue;
                 }
-                if (i + 1 >= selector.parts.items.len) {
+                if (i + 1 >= parts_len) {
                     selector.parts.items[i].deinit(selector.allocator);
                     _ = selector.parts.swapRemove(i);
                     modified = true;
@@ -1723,12 +1730,13 @@ pub const Optimizer = struct {
             }
 
             var j: usize = 0;
-            while (j < rule.style.selectors.items.len) {
+            const selector_count = rule.style.selectors.items.len;
+            while (j < selector_count) {
                 const selector = &rule.style.selectors.items[j];
                 var is_redundant = false;
 
                 var k: usize = 0;
-                while (k < rule.style.selectors.items.len) {
+                while (k < selector_count) {
                     if (k == j) {
                         k += 1;
                         continue;
