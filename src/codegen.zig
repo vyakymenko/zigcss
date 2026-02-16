@@ -20,36 +20,80 @@ fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
     for (stylesheet.rules.items) |rule| {
         switch (rule) {
             .style => |style_rule| {
-                for (style_rule.selectors.items) |selector| {
-                    size += 15;
+                for (style_rule.selectors.items, 0..) |selector, i| {
+                    if (i > 0) size += 2;
                     for (selector.parts.items) |part| {
                         size += switch (part) {
                             .type => |s| s.len,
                             .class => |s| s.len + 1,
                             .id => |s| s.len + 1,
                             .universal => 1,
-                            .attribute => |attr| attr.name.len + (attr.value orelse "").len + 5,
+                            .attribute => |attr| attr.name.len + (attr.value orelse "").len + 6,
                             .pseudo_class => |s| s.len + 1,
                             .pseudo_element => |s| s.len + 2,
                             .combinator => 3,
                         };
                     }
                 }
-                size += 3;
-                for (style_rule.declarations.items) |decl| {
-                    size += decl.property.len + decl.value.len + 3;
+                size += 2;
+                const decl_count = style_rule.declarations.items.len;
+                for (style_rule.declarations.items, 0..) |decl, i| {
+                    size += decl.property.len + decl.value.len + 2;
                     if (decl.important) size += 10;
+                    if (i < decl_count - 1) size += 1;
                 }
             },
             .at_rule => |at_rule| {
-                size += at_rule.name.len + at_rule.prelude.len + 5;
+                size += at_rule.name.len + 1;
+                if (at_rule.prelude.len > 0) {
+                    size += at_rule.prelude.len + 1;
+                }
                 if (at_rule.rules) |rules| {
-                    size += rules.items.len * 25;
+                    size += 2;
+                    for (rules.items) |nested_rule| {
+                        switch (nested_rule) {
+                            .style => |style_rule| {
+                                size += estimateStyleRuleSize(style_rule);
+                            },
+                            .at_rule => |nested_at| {
+                                size += nested_at.name.len + nested_at.prelude.len + 5;
+                            },
+                        }
+                    }
+                } else {
+                    size += 1;
                 }
             },
         }
     }
     return @max(size, 256);
+}
+
+fn estimateStyleRuleSize(style_rule: ast.StyleRule) usize {
+    var size: usize = 0;
+    for (style_rule.selectors.items, 0..) |selector, i| {
+        if (i > 0) size += 2;
+        for (selector.parts.items) |part| {
+            size += switch (part) {
+                .type => |s| s.len,
+                .class => |s| s.len + 1,
+                .id => |s| s.len + 1,
+                .universal => 1,
+                .attribute => |attr| attr.name.len + (attr.value orelse "").len + 6,
+                .pseudo_class => |s| s.len + 1,
+                .pseudo_element => |s| s.len + 2,
+                .combinator => 3,
+            };
+        }
+    }
+    size += 2;
+    const decl_count = style_rule.declarations.items.len;
+    for (style_rule.declarations.items, 0..) |decl, i| {
+        size += decl.property.len + decl.value.len + 2;
+        if (decl.important) size += 10;
+        if (i < decl_count - 1) size += 1;
+    }
+    return size;
 }
 
 pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, options: CodegenOptions) ![]const u8 {
@@ -84,7 +128,8 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
     }
 
     const estimated_size = estimateOutputSize(stylesheet.*);
-    var list = try std.ArrayList(u8).initCapacity(allocator, estimated_size);
+    var list = std.ArrayListUnmanaged(u8){};
+    try list.ensureTotalCapacity(allocator, estimated_size);
     errdefer list.deinit(allocator);
 
     if (stylesheet.rules.items.len == 0) {
@@ -109,7 +154,7 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
     return try list.toOwnedSlice(allocator);
 }
 
-fn generateStyleRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rule: ast.StyleRule, options: CodegenOptions) !void {
+fn generateStyleRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, rule: ast.StyleRule, options: CodegenOptions) !void {
     if (rule.selectors.items.len == 0) return;
     if (rule.declarations.items.len == 0) return;
     
@@ -166,7 +211,7 @@ fn generateStyleRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rul
     try list.append(allocator, '}');
 }
 
-fn generateSelector(list: *std.ArrayList(u8), allocator: std.mem.Allocator, selector: ast.Selector, options: CodegenOptions) !void {
+fn generateSelector(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, selector: ast.Selector, options: CodegenOptions) !void {
     _ = options;
     const parts = selector.parts.items;
     if (parts.len == 0) return;
@@ -191,7 +236,7 @@ fn generateSelector(list: *std.ArrayList(u8), allocator: std.mem.Allocator, sele
     }
 }
 
-fn generateSelectorPart(list: *std.ArrayList(u8), allocator: std.mem.Allocator, part: ast.SelectorPart) !void {
+fn generateSelectorPart(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, part: ast.SelectorPart) !void {
     switch (part) {
         .type => |s| try list.appendSlice(allocator, s),
         .class => |s| {
@@ -216,7 +261,7 @@ fn generateSelectorPart(list: *std.ArrayList(u8), allocator: std.mem.Allocator, 
     }
 }
 
-fn generateAttributeSelector(list: *std.ArrayList(u8), allocator: std.mem.Allocator, attr: ast.AttributeSelector) !void {
+fn generateAttributeSelector(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, attr: ast.AttributeSelector) !void {
     try list.append(allocator, '[');
     try list.appendSlice(allocator, attr.name);
     if (attr.operator) |op| {
@@ -233,7 +278,7 @@ fn generateAttributeSelector(list: *std.ArrayList(u8), allocator: std.mem.Alloca
     try list.append(allocator, ']');
 }
 
-fn generateAtRule(list: *std.ArrayList(u8), allocator: std.mem.Allocator, rule: ast.AtRule, options: CodegenOptions) !void {
+fn generateAtRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, rule: ast.AtRule, options: CodegenOptions) !void {
     try list.append(allocator, '@');
     try list.appendSlice(allocator, rule.name);
     if (rule.prelude.len > 0) {

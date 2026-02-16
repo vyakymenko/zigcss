@@ -60,6 +60,7 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !ast.Stylesheet {
+        const input_len = self.input.len;
         const estimated_rules = self.estimateRuleCount();
         var stylesheet = try ast.Stylesheet.initWithCapacity(self.allocator, estimated_rules);
         errdefer stylesheet.deinit();
@@ -78,7 +79,7 @@ pub const Parser = struct {
 
         self.skipWhitespace();
 
-        while (self.pos < self.input.len) {
+        while (self.pos < input_len) {
             if (self.peek() == '@') {
                 const at_rule = try self.parseAtRule();
                 try stylesheet.rules.append(self.allocator, ast.Rule{ .at_rule = at_rule });
@@ -110,14 +111,15 @@ pub const Parser = struct {
     }
 
     fn estimateDeclarationCount(self: *const Parser) usize {
-        if (self.pos >= self.input.len) return 2;
+        const input_len = self.input.len;
+        if (self.pos >= input_len) return 2;
         
         var count: usize = 0;
         var i: usize = self.pos;
         var depth: usize = 0;
-        const len = self.input.len;
+        const sample_end = @min(i + 1000, input_len);
         
-        while (i < len and depth < 2) {
+        while (i < sample_end and depth < 2) {
             const ch = self.input[i];
             if (ch == '{') {
                 depth += 1;
@@ -129,10 +131,18 @@ pub const Parser = struct {
             }
             i += 1;
         }
+        
+        if (sample_end < input_len and depth > 0) {
+            const sample_size = sample_end - self.pos;
+            const extrapolated = (count * (input_len - self.pos)) / sample_size;
+            return @max(extrapolated, 2);
+        }
+        
         return @max(count, 2);
     }
 
     fn parseStyleRule(self: *Parser) !ast.StyleRule {
+        const input_len = self.input.len;
         const estimated_decls = self.estimateDeclarationCount();
         var rule = try ast.StyleRule.initWithCapacity(self.allocator, 1, estimated_decls);
         errdefer rule.deinit();
@@ -142,7 +152,7 @@ pub const Parser = struct {
             try rule.selectors.append(self.allocator, selector);
 
             self.skipWhitespace();
-            if (self.pos < self.input.len and self.input[self.pos] == ',') {
+            if (self.pos < input_len and self.input[self.pos] == ',') {
                 self.pos += 1;
                 self.skipWhitespace();
                 continue;
@@ -151,24 +161,23 @@ pub const Parser = struct {
         }
 
         self.skipWhitespace();
-        if (self.pos >= self.input.len or self.input[self.pos] != '{') {
+        if (self.pos >= input_len or self.input[self.pos] != '{') {
             return error.ExpectedOpeningBrace;
         }
         self.pos += 1;
         self.skipWhitespace();
 
-        const len = self.input.len;
-        while (self.pos < len and self.input[self.pos] != '}') {
+        while (self.pos < input_len and self.input[self.pos] != '}') {
             const decl = try self.parseDeclaration();
             try rule.declarations.append(self.allocator, decl);
             self.skipWhitespace();
-            if (self.pos < len and self.input[self.pos] == ';') {
+            if (self.pos < input_len and self.input[self.pos] == ';') {
                 self.pos += 1;
                 self.skipWhitespace();
             }
         }
 
-        if (self.pos < len and self.input[self.pos] == '}') {
+        if (self.pos < input_len and self.input[self.pos] == '}') {
             self.pos += 1;
         }
 
@@ -179,11 +188,11 @@ pub const Parser = struct {
         var selector = try ast.Selector.initWithCapacity(self.allocator, 4);
         errdefer selector.deinit();
 
-        const len = self.input.len;
-        while (self.pos < len) {
+        const input_len = self.input.len;
+        while (self.pos < input_len) {
             self.skipWhitespace();
             
-            if (self.pos >= len) break;
+            if (self.pos >= input_len) break;
             const ch = self.input[self.pos];
 
             if (ch == '{' or ch == ',' or ch == '}') {
@@ -203,7 +212,7 @@ pub const Parser = struct {
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .universal = {} });
             } else if (ch == ':') {
                 self.pos += 1;
-                if (self.pos < len and self.input[self.pos] == ':') {
+                if (self.pos < input_len and self.input[self.pos] == ':') {
                     self.pos += 1;
                     const name = try self.parseIdentifier();
                     try selector.parts.append(self.allocator, ast.SelectorPart{ .pseudo_element = name });
@@ -232,10 +241,11 @@ pub const Parser = struct {
     }
 
     fn parseDeclaration(self: *Parser) !ast.Declaration {
+        const input_len = self.input.len;
         const property = try self.parseIdentifier();
         self.skipWhitespace();
 
-        if (self.pos >= self.input.len or self.input[self.pos] != ':') {
+        if (self.pos >= input_len or self.input[self.pos] != ':') {
             return error.ExpectedColon;
         }
         self.advance();
@@ -244,14 +254,13 @@ pub const Parser = struct {
         const value_start = self.pos;
         var value_end = self.pos;
         var important = false;
-        const len = self.input.len;
 
-        while (self.pos < len) {
+        while (self.pos < input_len) {
             const ch = self.input[self.pos];
             if (ch == ';' or ch == '}') {
                 break;
             }
-            if (ch == '!' and self.pos + 9 < len) {
+            if (ch == '!' and self.pos + 9 < input_len) {
                 if (std.mem.eql(u8, self.input[self.pos..self.pos+10], "!important")) {
                     important = true;
                     value_end = self.pos;
@@ -278,6 +287,7 @@ pub const Parser = struct {
     }
 
     fn parseAtRule(self: *Parser) !ast.AtRule {
+        const input_len = self.input.len;
         if (self.peek() != '@') {
             return error.ExpectedAtSign;
         }
@@ -289,7 +299,7 @@ pub const Parser = struct {
         const prelude_start = self.pos;
         var prelude_end = self.pos;
 
-        while (self.pos < self.input.len) {
+        while (self.pos < input_len) {
             const ch = self.peek();
             if (ch == '{' or ch == ';') {
                 prelude_end = self.pos;
@@ -314,7 +324,7 @@ pub const Parser = struct {
             var rules = try std.ArrayList(ast.Rule).initCapacity(self.allocator, 0);
             errdefer rules.deinit(self.allocator);
 
-            while (self.pos < self.input.len and self.peek() != '}') {
+            while (self.pos < input_len and self.peek() != '}') {
                 if (self.peek() == '@') {
                     const nested_at_rule = try self.parseAtRule();
                     try rules.append(self.allocator, ast.Rule{ .at_rule = nested_at_rule });
@@ -339,21 +349,49 @@ pub const Parser = struct {
 
     fn parseIdentifier(self: *Parser) ![]const u8 {
         const start = self.pos;
-        const len = self.input.len;
+        const input_len = self.input.len;
         
-        if (start >= len) {
+        if (start >= input_len) {
             return error.InvalidIdentifier;
         }
         
         const first = self.input[start];
         if (first == '-') {
-            self.advance();
+            self.pos += 1;
         } else if (!isAlpha(first) and first != '_') {
             return error.InvalidIdentifier;
         }
 
         var pos = self.pos;
-        while (pos < len) {
+        const remaining = input_len - pos;
+        
+        if (remaining >= 4) {
+            while (pos + 4 <= input_len) {
+                const ch0 = self.input[pos];
+                const ch1 = self.input[pos + 1];
+                const ch2 = self.input[pos + 2];
+                const ch3 = self.input[pos + 3];
+                
+                if (!isAlnumOrDash(ch0)) {
+                    break;
+                }
+                if (!isAlnumOrDash(ch1)) {
+                    pos += 1;
+                    break;
+                }
+                if (!isAlnumOrDash(ch2)) {
+                    pos += 2;
+                    break;
+                }
+                if (!isAlnumOrDash(ch3)) {
+                    pos += 3;
+                    break;
+                }
+                pos += 4;
+            }
+        }
+        
+        while (pos < input_len) {
             const ch = self.input[pos];
             if (isAlnumOrDash(ch)) {
                 pos += 1;
@@ -403,22 +441,30 @@ pub const Parser = struct {
     }
 
     fn skipWhitespace(self: *Parser) void {
-        if (self.pos < self.input.len and self.input[self.pos] == '/' and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '*') {
-            self.skipComment();
-            self.skipWhitespace();
-            return;
+        const input_len = self.input.len;
+        if (self.pos < input_len) {
+            const ch = self.input[self.pos];
+            if (ch == '/' and self.pos + 1 < input_len and self.input[self.pos + 1] == '*') {
+                self.skipComment();
+                self.skipWhitespace();
+                return;
+            }
         }
         simd.skipWhitespaceSimd(self.input, &self.pos);
-        if (self.pos < self.input.len and self.input[self.pos] == '/' and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '*') {
-            self.skipComment();
-            self.skipWhitespace();
+        const input_len_after = self.input.len;
+        if (self.pos < input_len_after) {
+            const ch = self.input[self.pos];
+            if (ch == '/' and self.pos + 1 < input_len_after and self.input[self.pos + 1] == '*') {
+                self.skipComment();
+                self.skipWhitespace();
+            }
         }
     }
 
     fn skipComment(self: *Parser) void {
         self.pos += 2;
-        const len = self.input.len;
-        const end = len - 1;
+        const input_len = self.input.len;
+        const end = input_len - 1;
         
         while (self.pos < end) {
             if (self.input[self.pos] == '*' and self.input[self.pos + 1] == '/') {
@@ -427,7 +473,7 @@ pub const Parser = struct {
             }
             self.pos += 1;
         }
-        self.pos = len;
+        self.pos = input_len;
     }
 
     inline fn peek(self: *const Parser) u8 {

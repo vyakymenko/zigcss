@@ -17,17 +17,22 @@ pub fn skipWhitespaceSimd(input: []const u8, pos: *usize) void {
     const end = input.len - 32;
 
     while (i <= end) {
-        var all_whitespace = true;
-        var j: usize = 0;
+        const Vec32 = @Vector(32, u8);
+        const chunk_ptr: [*]const u8 = input[i..].ptr;
+        const chunk: Vec32 = @as(*const Vec32, @ptrCast(@alignCast(chunk_ptr))).*;
         
-        while (j < 32) {
-            const ch = input[i + j];
-            if (ch != ' ' and ch != '\t' and ch != '\n' and ch != '\r') {
-                all_whitespace = false;
-                break;
-            }
-            j += 1;
-        }
+        const space_vec: Vec32 = @splat(' ');
+        const tab_vec: Vec32 = @splat('\t');
+        const newline_vec: Vec32 = @splat('\n');
+        const cr_vec: Vec32 = @splat('\r');
+        
+        const is_space = chunk == space_vec;
+        const is_tab = chunk == tab_vec;
+        const is_newline = chunk == newline_vec;
+        const is_cr = chunk == cr_vec;
+        const is_whitespace = is_space | is_tab | is_newline | is_cr;
+        
+        const all_whitespace = @reduce(.And, is_whitespace);
         
         if (!all_whitespace) {
             break;
