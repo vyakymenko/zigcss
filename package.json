@@ -1,0 +1,49 @@
+{
+  "name": "zcss",
+  "version": "0.1.0",
+  "description": "The world's fastest CSS compiler - Built with Zig for uncompromising performance",
+  "main": "index.js",
+  "bin": {
+    "zcss": "./bin/zcss"
+  },
+  "scripts": {
+    "install": "node install.js",
+    "postinstall": "node install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vyakymenko/zcss.git"
+  },
+  "keywords": [
+    "css",
+    "compiler",
+    "preprocessor",
+    "scss",
+    "sass",
+    "less",
+    "stylus",
+    "postcss",
+    "minify",
+    "optimize",
+    "fast",
+    "zig"
+  ],
+  "author": "Valentyn Yakymenko",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/vyakymenko/zcss/issues"
+  },
+  "homepage": "https://github.com/vyakymenko/zcss#readme",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

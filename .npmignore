@@ -1,0 +1,13 @@
+.github/
+zig-out/
+zig-cache/
+*.zig
+build.zig
+build.zig.zon
+.gitignore
+CHANGELOG.md
+README.md
+LICENSE
+*.md
+!package.json
+!install.js

@@ -99,6 +99,24 @@ Performance tested on a MacBook Pro M3 (16GB RAM) with real-world CSS workloads.
 
 ## 📦 Installation
 
+### Package Managers
+
+**npm (Node.js):**
+```bash
+npm install -g zcss
+```
+
+**Homebrew (macOS):**
+```bash
+brew tap vyakymenko/zcss
+brew install zcss
+```
+
+Or install from source:
+```bash
+brew install --build-from-source Formula/zcss.rb
+```
+
 ### From Source
 
 **Requirements:**
@@ -902,7 +920,7 @@ zcss input.css -o output.css --profile
 - [x] Editor integrations ✅ — VSCode extension and Neovim configuration
 - [x] Build tool integrations ✅ — Zig build system integration with build helpers
 - [x] Pre-built binaries for all platforms ✅ — GitHub Actions CI/CD for automated builds and releases (Linux, macOS, Windows)
-- [ ] Package manager integration
+- [x] Package manager integration ✅ — npm package and Homebrew formula for easy installation
 - [ ] Documentation site
 
 ### Phase 5: Advanced CSS Features ✅ COMPLETED
