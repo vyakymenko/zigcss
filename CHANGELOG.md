@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 - Add Tailwind @apply expansion - automatically expand Tailwind utility classes in @apply directives into CSS declarations
+- Add SCSS @content directive support - mixins can now accept content blocks using @content
+- Add SCSS variable arguments support - mixins and functions can accept variable arguments using ... syntax
+- Enhance SCSS mixin expansion with content block processing and variable argument handling
 - Add comprehensive Tailwind utility registry with 200+ utility classes covering spacing, colors, typography, layout, flexbox, grid, borders, and effects
 - Add TailwindRegistry module for managing and expanding Tailwind utility classes
 - Integrate Tailwind @apply expansion into PostCSS processor

@@ -7,6 +7,7 @@ const Mixin = struct {
     body: []const u8,
     params: std.ArrayList([]const u8),
     defaults: std.StringHashMap([]const u8),
+    variable_args: ?[]const u8,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, name: []const u8, body: []const u8) !Mixin {
@@ -15,6 +16,7 @@ const Mixin = struct {
             .body = body,
             .params = try std.ArrayList([]const u8).initCapacity(allocator, 0),
             .defaults = std.StringHashMap([]const u8).init(allocator),
+            .variable_args = null,
             .allocator = allocator,
         };
     }
@@ -174,6 +176,7 @@ pub const Parser = struct {
             }
             defaults.deinit();
         }
+        var variable_args: ?[]const u8 = null;
 
         if (self.peek() == '(') {
             
@@ -211,6 +214,19 @@ pub const Parser = struct {
                 }
 
                 self.skipWhitespace();
+                
+                if (self.pos + 2 < self.input.len and self.input[self.pos] == '.' and self.input[self.pos + 1] == '.' and self.input[self.pos + 2] == '.') {
+                    if (params.items.len > 0) {
+                        variable_args = params.items[params.items.len - 1];
+                    }
+                    self.pos += 3;
+                    self.skipWhitespace();
+                    if (self.peek() == ')') {
+                        break;
+                    }
+                    continue;
+                }
+                
                 if (self.peek() == ':') {
                     self.advance();
                     self.skipWhitespace();
@@ -304,6 +320,7 @@ pub const Parser = struct {
         mixin.* = try Mixin.init(self.allocator, name_copy, body_copy);
         mixin.params = params;
         mixin.defaults = defaults;
+        mixin.variable_args = variable_args;
         try self.mixins.put(name_copy, mixin);
     }
 
@@ -666,7 +683,26 @@ pub const Parser = struct {
                         i += 1;
                     }
                     
-                    
+                    var content_block: ?[]const u8 = null;
+                    if (i < input.len and input[i] == '{') {
+                        const content_start = i + 1;
+                        i += 1;
+                        var brace_count: usize = 1;
+                        while (i < input.len and brace_count > 0) {
+                            if (input[i] == '{') {
+                                brace_count += 1;
+                            } else if (input[i] == '}') {
+                                brace_count -= 1;
+                            }
+                            if (brace_count > 0) {
+                                i += 1;
+                            }
+                        }
+                        if (brace_count == 0) {
+                            content_block = input[content_start..i];
+                            i += 1;
+                        }
+                    }
 
                     if (self.mixins.get(mixin_name)) |mixin| {
                         
@@ -674,7 +710,13 @@ pub const Parser = struct {
                         defer self.allocator.free(mixin_body);
 
                         var j: usize = 0;
-                        while (j < mixin.params.items.len and j < args.items.len) {
+                        var variable_args_start: usize = mixin.params.items.len;
+                        const var_arg_name = mixin.variable_args;
+                        if (var_arg_name) |_| {
+                            variable_args_start = mixin.params.items.len - 1;
+                        }
+                        
+                        while (j < variable_args_start and j < args.items.len) {
                             const param_name = mixin.params.items[j];
                             const arg_value = args.items[j];
                             const param_pattern = try std.fmt.allocPrint(self.allocator, "${s}", .{param_name});
@@ -685,16 +727,61 @@ pub const Parser = struct {
                             j += 1;
                         }
 
-                        for (mixin.params.items[args.items.len..]) |param_name| {
-                            if (mixin.defaults.get(param_name)) |default_value| {
-                                const param_pattern = try std.fmt.allocPrint(self.allocator, "${s}", .{param_name});
+                        if (var_arg_name) |var_name| {
+                            if (args.items.len > variable_args_start) {
+                                var var_args_list = try std.ArrayList(u8).initCapacity(self.allocator, 100);
+                                defer var_args_list.deinit(self.allocator);
+                                
+                                for (args.items[variable_args_start..], 0..) |arg, idx| {
+                                    if (idx > 0) {
+                                        try var_args_list.append(self.allocator, ',');
+                                        try var_args_list.append(self.allocator, ' ');
+                                    }
+                                    try var_args_list.appendSlice(self.allocator, arg);
+                                }
+                                
+                                const var_args_str = try var_args_list.toOwnedSlice(self.allocator);
+                                defer self.allocator.free(var_args_str);
+                                
+                                const param_pattern = try std.fmt.allocPrint(self.allocator, "${s}", .{var_name});
                                 defer self.allocator.free(param_pattern);
-                                const new_body = try self.replaceInString(mixin_body, param_pattern, default_value);
+                                const new_body = try self.replaceInString(mixin_body, param_pattern, var_args_str);
+                                self.allocator.free(mixin_body);
+                                mixin_body = new_body;
+                            } else {
+                                const param_pattern = try std.fmt.allocPrint(self.allocator, "${s}", .{var_name});
+                                defer self.allocator.free(param_pattern);
+                                const new_body = try self.replaceInString(mixin_body, param_pattern, "");
                                 self.allocator.free(mixin_body);
                                 mixin_body = new_body;
                             }
                         }
 
+                        if (args.items.len < variable_args_start) {
+                            for (mixin.params.items[args.items.len..variable_args_start]) |param_name| {
+                                if (mixin.defaults.get(param_name)) |default_value| {
+                                    const param_pattern = try std.fmt.allocPrint(self.allocator, "${s}", .{param_name});
+                                    defer self.allocator.free(param_pattern);
+                                    const new_body = try self.replaceInString(mixin_body, param_pattern, default_value);
+                                    self.allocator.free(mixin_body);
+                                    mixin_body = new_body;
+                                }
+                            }
+                        }
+
+                        if (content_block) |content| {
+                            const processed_content = try self.processDirectivesWithDepth(content, depth + 1);
+                            defer self.allocator.free(processed_content);
+                            
+                            const content_pattern = "@content";
+                            if (std.mem.indexOf(u8, mixin_body, content_pattern)) |content_pos| {
+                                const before_content = mixin_body[0..content_pos];
+                                const after_content = mixin_body[content_pos + content_pattern.len..];
+                                const new_body = try std.fmt.allocPrint(self.allocator, "{s}{s}{s}", .{ before_content, processed_content, after_content });
+                                self.allocator.free(mixin_body);
+                                mixin_body = new_body;
+                            }
+                        }
                         
                         const expanded_body = try self.processDirectivesWithDepth(mixin_body, depth + 1);
                         defer self.allocator.free(expanded_body);
@@ -1171,4 +1258,77 @@ test "parse SCSS function with default value" {
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len == 1);
+}
+
+test "parse SCSS mixin with @content" {
+    const scss = "@mixin button { padding: 10px; @content; } .btn { @include button { color: red; } }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(rule.style.declarations.items.len >= 2);
+    
+    var found_padding = false;
+    var found_color = false;
+    for (rule.style.declarations.items) |decl| {
+        if (std.mem.eql(u8, decl.property, "padding")) {
+            found_padding = true;
+        }
+        if (std.mem.eql(u8, decl.property, "color")) {
+            found_color = true;
+        }
+    }
+    try std.testing.expect(found_padding);
+    try std.testing.expect(found_color);
+}
+
+test "parse SCSS mixin with @content and parameters" {
+    const scss = "@mixin button($color) { padding: 10px; background: $color; @content; } .btn { @include button(blue) { color: red; } }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(rule.style.declarations.items.len >= 3);
+}
+
+test "parse SCSS mixin with variable arguments" {
+    const scss = "@mixin box-shadow($shadows...) { box-shadow: $shadows; } .card { @include box-shadow(0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24)); }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(rule.style.declarations.items.len >= 1);
+    
+    var found_box_shadow = false;
+    for (rule.style.declarations.items) |decl| {
+        if (std.mem.eql(u8, decl.property, "box-shadow")) {
+            found_box_shadow = true;
+            try std.testing.expect(std.mem.containsAtLeast(u8, decl.value, 1, "rgba"));
+        }
+    }
+    try std.testing.expect(found_box_shadow);
 }

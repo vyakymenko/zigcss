@@ -473,6 +473,37 @@ zcss includes a comprehensive Tailwind utility registry covering:
 - **Borders**: border width, style, radius utilities
 - **Effects**: shadows, opacity utilities
 
+### SCSS Advanced Features
+
+zcss supports advanced SCSS features including mixins with content blocks and variable arguments:
+
+**Mixins with @content:**
+```scss
+@mixin button {
+    padding: 10px;
+    border: 1px solid #ccc;
+    @content;
+}
+
+.btn {
+    @include button {
+        color: red;
+        background: blue;
+    }
+}
+```
+
+**Variable Arguments:**
+```scss
+@mixin box-shadow($shadows...) {
+    box-shadow: $shadows;
+}
+
+.card {
+    @include box-shadow(0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24));
+}
+```
+
 ## 🏗️ Architecture
 
 zcss is built with performance in mind using a multi-stage compilation pipeline:
@@ -708,7 +739,7 @@ zcss input.css -o output.css --profile
 - [x] CSS-in-JS compilation - Template literals extraction
 - [x] PostCSS support - @apply, @custom-media, @nest directives
 - [x] Stylus support - Variables, indented syntax
-- [ ] Advanced nesting features (mixins, functions)
+- [x] Advanced nesting features ✅ — Mixins with @content, functions, variable arguments (...)
 - [x] Autoprefixer integration ✅ — Add vendor prefixes for CSS properties and values
 - [x] Custom property resolution ✅ — Resolve CSS custom properties (var()) with fallback support
 - [x] Advanced selector optimization ✅ — Universal selector removal, selector simplification, specificity calculation
