@@ -4,6 +4,20 @@
 
 **zcss** is a zero-dependency CSS compiler written in Zig, designed from the ground up to be the fastest CSS processing tool available. Leveraging Zig's compile-time optimizations, memory safety, and zero-cost abstractions, zcss delivers unmatched performance for CSS parsing, transformation, and compilation.
 
+## Table of Contents
+
+- [Performance](#-performance)
+- [Features](#-features)
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Examples](#-examples)
+- [Architecture](#️-architecture)
+- [API Reference](#-api-reference)
+- [Testing](#-testing)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
+
 ## 🚀 Performance
 
 zcss is engineered to be **the fastest CSS compiler in the world**. Key performance characteristics:
@@ -60,6 +74,7 @@ Sass:     920ms (compile + minify)
 - 🔄 **Custom Properties** — Full CSS custom properties (variables) support
 - 📐 **Media Queries** — Advanced media query parsing and optimization
 - 🎭 **Pseudo-classes** — Complete pseudo-class and pseudo-element support
+- 📋 **Preprocessor Support** — SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS
 
 ## 📦 Installation
 
@@ -105,45 +120,39 @@ Add to your `build.zig.zon`:
 # Compile a single CSS file
 zcss input.css -o output.css
 
-# Compile SCSS files
-zcss styles.scss -o styles.css
-
-# Compile SASS files
-zcss styles.sass -o styles.css
-
-# Compile LESS files
-zcss styles.less -o styles.css
-
-# Compile CSS Modules
-zcss component.module.css -o component.module.css
-
-# Compile PostCSS files
-zcss styles.postcss -o styles.css
-
-# Compile Stylus files
-zcss styles.styl -o styles.css
-
 # Compile with optimizations
-zcss input.css -o output.css --optimize
+zcss input.css -o output.css --optimize --minify
 
 # Watch mode for development
 zcss input.css -o output.css --watch
 
-# Compile multiple files
-zcss src/*.css -o dist/ --output-dir
-
 # Generate source maps
 zcss input.css -o output.css --source-map
 
-# Minify output
-zcss input.css -o output.css --minify
+# Compile multiple files
+zcss src/*.css -o dist/ --output-dir
+```
 
-# Combine all options
-zcss src/styles.css -o dist/styles.min.css \
-    --optimize \
-    --minify \
-    --source-map \
-    --autoprefix
+### Supported Formats
+
+zcss supports multiple CSS preprocessor formats:
+
+```bash
+# SCSS/SASS
+zcss styles.scss -o styles.css
+zcss styles.sass -o styles.css
+
+# LESS
+zcss styles.less -o styles.css
+
+# CSS Modules
+zcss component.module.css -o component.module.css
+
+# PostCSS
+zcss styles.postcss -o styles.css
+
+# Stylus
+zcss styles.styl -o styles.css
 ```
 
 ### Library Usage
@@ -207,31 +216,6 @@ pub fn main() !void {
 
 ## 📚 Examples
 
-### Basic Compilation
-
-```bash
-$ zcss styles.css -o styles.min.css --optimize
-```
-
-**Input (`styles.css`):**
-```css
-/* Main container */
-.container {
-    color: #333;
-    background-color: white;
-    padding: 20px;
-}
-
-.container:hover {
-    background-color: #f0f0f0;
-}
-```
-
-**Output (`styles.min.css`):**
-```css
-.container{color:#333;background-color:#fff;padding:20px}.container:hover{background-color:#f0f0f0}
-```
-
 ### CSS Nesting
 
 zcss supports the CSS Nesting specification:
@@ -291,84 +275,6 @@ zcss supports the CSS Nesting specification:
         margin: 0 auto;
     }
 }
-
-@media (min-width: 1024px) {
-    .container {
-        width: 970px;
-    }
-}
-```
-
-### Advanced Options
-
-```bash
-# Minify with custom options
-zcss input.css -o output.css \
-    --minify \
-    --remove-comments \
-    --optimize-selectors \
-    --remove-empty-rules
-
-# Compile with vendor prefixing
-zcss input.css -o output.css \
-    --autoprefix \
-    --browsers "last 2 versions" \
-    --browsers "> 1%" \
-    --browsers "not dead"
-
-# Process with custom plugins
-zcss input.css -o output.css \
-    --plugin ./plugins/custom-transform.zig
-
-# Parallel processing for multiple files
-zcss src/**/*.css -o dist/ \
-    --output-dir \
-    --parallel \
-    --jobs 8
-```
-
-### Integration Examples
-
-#### Build Script Integration
-
-```zig
-// build.zig
-const std = @import("std");
-const zcss = @import("zcss");
-
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
-    const compile_css = b.addExecutable(.{
-        .name = "compile-css",
-        .root_source_file = b.path("build/compile-css.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    compile_css.addModule("zcss", zcss_module);
-
-    const css_step = b.step("css", "Compile CSS files");
-    const compile_step = b.addRunArtifact(compile_css);
-    compile_step.addArgs(&.{ "src/styles.css", "-o", "dist/styles.min.css", "--optimize", "--minify" });
-    css_step.dependOn(&compile_step.step);
-}
-```
-
-#### Watch Mode for Development
-
-```bash
-# Watch a single file
-zcss src/styles.css -o dist/styles.css --watch
-
-# Watch entire directory
-zcss src/**/*.css -o dist/ --output-dir --watch
-
-# Watch with custom options
-zcss src/styles.css -o dist/styles.min.css \
-    --watch \
-    --optimize \
-    --source-map
 ```
 
 ## 🏗️ Architecture
@@ -381,21 +287,7 @@ zcss is built with performance in mind using a multi-stage compilation pipeline:
 - **Zero-copy tokenization** — Tokens reference original input without copying
 - **Streaming parser** — Can process large files without loading entirely into memory
 - **Error recovery** — Continues parsing after errors for better developer experience
-- **Optimized comment skipping** — Fast comment detection and skipping algorithm
-
-```zig
-// Parser architecture
-pub const Parser = struct {
-    input: []const u8,
-    pos: usize,
-    
-    pub fn parse(self: *Parser, allocator: Allocator) !AST {
-        // Recursive descent parsing
-        // Zero-copy token references
-        // Efficient error handling
-    }
-};
-```
+- **SIMD-optimized whitespace skipping** — Processes 32 bytes at a time for faster parsing
 
 ### Abstract Syntax Tree (AST)
 
@@ -404,61 +296,35 @@ pub const Parser = struct {
 - **Lazy evaluation** — Nodes computed only when needed
 - **Immutable by default** — Prevents accidental mutations
 
-```zig
-// AST node structure
-pub const Node = union(enum) {
-    stylesheet: Stylesheet,
-    rule: Rule,
-    declaration: Declaration,
-    selector: Selector,
-    // ... more node types
-};
-```
-
 ### Optimizer
 
 Multi-pass optimization pipeline:
 
 1. **Empty rule removal** ✅ — Remove rules with no declarations
-2. **Selector merging** ✅ — Merge rules with identical selectors
-3. **Redundant selector removal** ✅ — Remove selectors that are subsets of other selectors in the same rule
+2. **Selector merging** ✅ — Merge rules with identical selectors (hash-based, O(n) complexity)
+3. **Redundant selector removal** ✅ — Remove selectors that are subsets of other selectors
 4. **Shorthand property optimization** ✅ — Combine longhand properties into shorthand:
    - `margin-top`, `margin-right`, `margin-bottom`, `margin-left` → `margin`
    - `padding-top`, `padding-right`, `padding-bottom`, `padding-left` → `padding`
    - `border-width`, `border-style`, `border-color` → `border`
-   - Optimizes to 1, 2, 3, or 4-value shorthand based on equality
-5. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last, optimized with backwards iteration)
+   - `font-*` properties → `font`
+   - `background-*` properties → `background`
+5. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last)
 6. **Value optimization** ✅ — Advanced optimizations:
    - Hex color minification (`#ffffff` → `#fff`)
    - RGB to hex conversion (`rgb(255, 255, 255)` → `#fff`)
-   - CSS color name to hex conversion (`red` → `#f00`, `white` → `#fff`, etc.)
+   - CSS color name to hex conversion (`red` → `#f00`, `white` → `#fff`)
    - Transparent color optimization (`transparent` → `rgba(0,0,0,0)`)
-   - Zero unit removal (`0px` → `0`, `0em` → `0`, etc.)
+   - Zero unit removal (`0px` → `0`, `0em` → `0`)
    - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
 7. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
-
-```zig
-// Optimization passes
-pub const Optimizer = struct {
-    pub fn optimize(self: *Optimizer, stylesheet: *Stylesheet) !void {
-        try self.removeEmptyRules(stylesheet);
-        try self.mergeSelectors(stylesheet);
-        try self.removeRedundantSelectors(stylesheet);
-        try self.optimizeShorthandProperties(stylesheet);
-        try self.removeDuplicateDeclarations(stylesheet);
-        try self.optimizeValues(stylesheet);
-        try self.mergeMediaQueries(stylesheet);
-    }
-};
-```
 
 ### Code Generator
 
 - **Fast code generation** ✅ — Single-pass codegen with minimal allocations
 - **Optimized size estimation** ✅ — Accurate pre-allocation to reduce reallocations
-- **Efficient selector generation** ✅ — Optimized spacing logic, reduced redundant checks
+- **Efficient selector generation** ✅ — Optimized spacing logic
 - **Advanced minification** ✅ — Removes trailing semicolons, optimizes spacing
-- **Configurable output** — Pretty-print or minify
 - **Source map support** — Full source map generation
 - **Incremental output** — Stream output for large files
 
@@ -466,30 +332,14 @@ pub const Optimizer = struct {
 
 1. **Arena allocator** — Fast allocation for AST nodes
 2. **String interning** ✅ — Deduplicate repeated strings (property names, class names, identifiers)
-3. **SIMD operations** ✅ — Vectorized whitespace skipping for faster parsing
+3. **SIMD operations** ✅ — Vectorized whitespace skipping (32 bytes at a time)
 4. **Parallel parsing** — Multi-threaded parsing for large files
 5. **Zero-copy parsing** — Tokens reference original input
-6. **Comptime optimizations** ✅ — Leverage Zig's compile-time execution
-   - Character classification lookup tables computed at compile time
-   - Eliminates runtime function calls for character checks
-7. **Capacity estimation** ✅ — Pre-allocate ArrayLists with estimated sizes to reduce reallocations
+6. **Comptime optimizations** ✅ — Character classification lookup tables computed at compile time
+7. **Capacity estimation** ✅ — Pre-allocate ArrayLists with estimated sizes
 8. **Hash-based selector merging** ✅ — O(n²) → O(n) optimization using hash maps
-9. **Optimized character classification** ✅ — Lookup tables replace function calls for 10-20% faster parsing
-10. **Backwards iteration for duplicates** ✅ — Efficient duplicate removal by iterating backwards
-11. **Border shorthand optimization** ✅ — Combines border-width, border-style, border-color into border
-12. **Color name optimization** ✅ — Converts CSS color names (red, blue, etc.) to hex values for consistency
-13. **Redundant selector removal** ✅ — Removes selectors that are subsets of other selectors in the same rule
-14. **Media query merging** ✅ — Merges identical `@media` rules to reduce output size
-15. **Improved SIMD whitespace skipping** ✅ — Processes 32 bytes at a time for faster parsing
-16. **Font shorthand optimization** ✅ — Combines font-* properties into font shorthand
-17. **Background shorthand optimization** ✅ — Combines background-* properties into background shorthand
-
-### Memory Management
-
-- **Arena allocator** for AST nodes — Fast, batch deallocation
-- **General purpose allocator** for temporary data
-- **Custom allocators** for different phases
-- **Memory pooling** for frequently allocated structures
+9. **Optimized character classification** ✅ — Lookup tables replace function calls
+10. **Backwards iteration for duplicates** ✅ — Efficient duplicate removal
 
 ## 🔧 API Reference
 
@@ -563,7 +413,7 @@ zig build test --summary all
 
 ## 📊 Roadmap
 
-### Phase 1: Core Features (Current)
+### Phase 1: Core Features ✅ COMPLETED
 - [x] CSS3 parser implementation
 - [x] Basic optimization pipeline
 - [x] Minification
@@ -585,25 +435,20 @@ zig build test --summary all
 - [ ] Plugin system
 - [ ] Watch mode improvements
 
-### Phase 3: Performance & Polish
+### Phase 3: Performance & Polish ✅ MOSTLY COMPLETED
 - [x] Capacity estimation for ArrayLists
 - [x] Optimized character checks (inline functions)
 - [x] Faster whitespace skipping
 - [x] Output size estimation
-- [x] String interning for deduplication (pointer-based, no copying)
+- [x] String interning for deduplication
 - [x] SIMD-optimized whitespace skipping
-- [x] CSS optimizer with multiple passes:
-  - [x] Remove empty rules
-  - [x] Remove duplicate declarations
-  - [x] Value optimization (hex colors, zero units)
-  - [x] Advanced value optimization (rgb colors, comprehensive unit support)
-  - [x] Selector merging and optimization (hash-based, O(n) complexity)
+- [x] CSS optimizer with multiple passes
 - [x] Character classification lookup tables (comptime-computed)
 - [x] Hash-based selector merging optimization (O(n²) → O(n))
+- [x] Comprehensive test suite
 - [ ] Parallel parsing improvements
 - [ ] Incremental compilation
 - [ ] Better error messages with position tracking
-- [x] Comprehensive test suite (22/22 tests passing)
 - [ ] Performance profiling tools
 
 ### Phase 4: Ecosystem
