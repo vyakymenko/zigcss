@@ -1140,6 +1140,12 @@ The documentation site includes:
   - Skip merging operations when no rules to merge
   - Significantly improves performance for edge cases and small stylesheets
   - Reduces unnecessary allocations and iterations
+- [x] String operation optimizations ✅ — Optimize string operations for maximum performance
+  - Skip trimming when not needed (check whitespace before trimming)
+  - Use direct character checks instead of startsWith for better performance
+  - Add length checks before string operations to avoid unnecessary work
+  - Skip processing empty declarations and rules throughout optimizer
+  - Reduce allocations in hot paths
 
 ## 🤝 Contributing
 

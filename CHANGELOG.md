@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive test coverage for unused custom property removal
 
 ### Performance Improvements
+- Optimize string operations - skip trimming when not needed, use direct character checks
+- Add length checks before string operations to avoid unnecessary work
+- Skip processing empty declarations and rules throughout optimizer
+- Reduce allocations in hot paths by checking collection sizes first
 - Add early exit optimizations - significantly improves performance for edge cases and small stylesheets
 - Reduce unnecessary allocations and iterations by skipping optimization passes when no work is needed
 - Improve performance for empty stylesheets and rules with single declarations

@@ -959,16 +959,22 @@ pub const Optimizer = struct {
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
-                    try self.convertLogicalPropertiesInRule(style_rule, pool);
+                    if (style_rule.declarations.items.len > 0) {
+                        try self.convertLogicalPropertiesInRule(style_rule, pool);
+                    }
                 },
                 .at_rule => |*at_rule| {
                     if (at_rule.rules) |*rules| {
-                        for (rules.items) |*nested_rule| {
-                            switch (nested_rule.*) {
-                                .style => |*style_rule| {
-                                    try self.convertLogicalPropertiesInRule(style_rule, pool);
-                                },
-                                .at_rule => {},
+                        if (rules.items.len > 0) {
+                            for (rules.items) |*nested_rule| {
+                                switch (nested_rule.*) {
+                                    .style => |*style_rule| {
+                                        if (style_rule.declarations.items.len > 0) {
+                                            try self.convertLogicalPropertiesInRule(style_rule, pool);
+                                        }
+                                    },
+                                    .at_rule => {},
+                                }
                             }
                         }
                     }
@@ -978,6 +984,8 @@ pub const Optimizer = struct {
     }
 
     fn convertLogicalPropertiesInRule(self: *Optimizer, style_rule: *ast.StyleRule, pool: ?*string_pool.StringPool) !void {
+        if (style_rule.declarations.items.len == 0) return;
+        
         for (style_rule.declarations.items) |*decl| {
             const logical_prop = self.getPhysicalPropertyName(decl.property);
             if (logical_prop) |physical| {
@@ -1036,16 +1044,22 @@ pub const Optimizer = struct {
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
-                    try self.optimizeShorthandInRule(style_rule, pool);
+                    if (style_rule.declarations.items.len > 0) {
+                        try self.optimizeShorthandInRule(style_rule, pool);
+                    }
                 },
                 .at_rule => |*at_rule| {
                     if (at_rule.rules) |*rules| {
-                        for (rules.items) |*nested_rule| {
-                            switch (nested_rule.*) {
-                                .style => |*style_rule| {
-                                    try self.optimizeShorthandInRule(style_rule, pool);
-                                },
-                                .at_rule => {},
+                        if (rules.items.len > 0) {
+                            for (rules.items) |*nested_rule| {
+                                switch (nested_rule.*) {
+                                    .style => |*style_rule| {
+                                        if (style_rule.declarations.items.len > 0) {
+                                            try self.optimizeShorthandInRule(style_rule, pool);
+                                        }
+                                    },
+                                    .at_rule => {},
+                                }
                             }
                         }
                     }
@@ -1055,6 +1069,8 @@ pub const Optimizer = struct {
     }
 
     fn optimizeShorthandInRule(self: *Optimizer, style_rule: *ast.StyleRule, pool: ?*string_pool.StringPool) !void {
+        if (style_rule.declarations.items.len == 0) return;
+        
         var margin_top: ?[]const u8 = null;
         var margin_right: ?[]const u8 = null;
         var margin_bottom: ?[]const u8 = null;
