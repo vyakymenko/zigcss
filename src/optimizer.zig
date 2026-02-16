@@ -235,11 +235,23 @@ pub const Optimizer = struct {
             return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
         }
 
+        if (self.optimizeTransparent(trimmed)) |optimized| {
+            return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
+        }
+
         if (self.optimizeUnit(trimmed)) |optimized| {
             return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
         }
 
         return .{ .optimized = value, .was_optimized = false };
+    }
+
+    fn optimizeTransparent(self: *Optimizer, value: []const u8) ?[]const u8 {
+        _ = self;
+        if (std.mem.eql(u8, value, "transparent")) {
+            return "rgba(0,0,0,0)";
+        }
+        return null;
     }
 
     fn optimizeHexColor(self: *Optimizer, value: []const u8) ?[]const u8 {

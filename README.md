@@ -431,6 +431,7 @@ Multi-pass optimization pipeline:
    - Hex color minification (`#ffffff` → `#fff`)
    - RGB to hex conversion (`rgb(255, 255, 255)` → `#fff`)
    - CSS color name to hex conversion (`red` → `#f00`, `white` → `#fff`, etc.)
+   - Transparent color optimization (`transparent` → `rgba(0,0,0,0)`)
    - Zero unit removal (`0px` → `0`, `0em` → `0`, etc.)
    - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
 
