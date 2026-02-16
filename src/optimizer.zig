@@ -273,6 +273,10 @@ pub const Optimizer = struct {
             return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
         }
 
+        if (self.optimizeMathFunction(trimmed)) |optimized| {
+            return .{ .optimized = optimized, .was_optimized = true };
+        }
+
         return .{ .optimized = value, .was_optimized = false };
     }
 
@@ -414,6 +418,327 @@ pub const Optimizer = struct {
         }
 
         return null;
+    }
+
+    fn optimizeMathFunction(self: *Optimizer, value: []const u8) ?[]const u8 {
+        if (std.mem.startsWith(u8, value, "calc(")) {
+            return self.optimizeCalc(value);
+        }
+        if (std.mem.startsWith(u8, value, "min(")) {
+            return self.optimizeMinMax(value, "min");
+        }
+        if (std.mem.startsWith(u8, value, "max(")) {
+            return self.optimizeMinMax(value, "max");
+        }
+        if (std.mem.startsWith(u8, value, "clamp(")) {
+            return self.optimizeClamp(value);
+        }
+        return null;
+    }
+
+    fn optimizeCalc(self: *Optimizer, value: []const u8) ?[]const u8 {
+        if (value.len < 6 or value[value.len - 1] != ')') {
+            return null;
+        }
+
+        const content = std.mem.trim(u8, value[5..value.len - 1], " \t\n\r");
+        if (content.len == 0) {
+            return null;
+        }
+
+        if (self.evaluateMathExpression(content)) |result| {
+            return result;
+        }
+
+        if (self.canRemoveCalcWrapper(content)) {
+            const optimized = self.allocator.dupe(u8, content) catch return null;
+            return optimized;
+        }
+
+        return null;
+    }
+
+    fn optimizeMinMax(self: *Optimizer, value: []const u8, func_name: []const u8) ?[]const u8 {
+        const func_len = func_name.len;
+        if (value.len < func_len + 2 or value[value.len - 1] != ')') {
+            return null;
+        }
+
+        const content = std.mem.trim(u8, value[func_len + 1..value.len - 1], " \t\n\r");
+        if (content.len == 0) {
+            return null;
+        }
+
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit(self.allocator);
+
+        var depth: i32 = 0;
+        var start: usize = 0;
+        var i: usize = 0;
+
+        while (i < content.len) {
+            const ch = content[i];
+            if (ch == '(') {
+                depth += 1;
+            } else if (ch == ')') {
+                depth -= 1;
+            } else if (ch == ',' and depth == 0) {
+                const arg = std.mem.trim(u8, content[start..i], " \t\n\r");
+                if (arg.len > 0) {
+                    args.append(arg) catch return null;
+                }
+                start = i + 1;
+            }
+            i += 1;
+        }
+
+        if (start < content.len) {
+            const arg = std.mem.trim(u8, content[start..], " \t\n\r");
+            if (arg.len > 0) {
+                args.append(arg) catch return null;
+            }
+        }
+
+        if (args.items.len == 0) {
+            return null;
+        }
+
+        var evaluated_args = std.ArrayList(?f64).init(self.allocator);
+        defer evaluated_args.deinit(self.allocator);
+
+        var all_numeric = true;
+        for (args.items) |arg| {
+            if (self.parseNumericValue(arg)) |num| {
+                evaluated_args.append(num) catch return null;
+            } else {
+                evaluated_args.append(null) catch return null;
+                all_numeric = false;
+            }
+        }
+
+        if (all_numeric and evaluated_args.items.len > 0) {
+            var result: f64 = evaluated_args.items[0].?;
+            for (evaluated_args.items[1..]) |maybe_num| {
+                if (maybe_num) |num| {
+                    if (std.mem.eql(u8, func_name, "min")) {
+                        result = @min(result, num);
+                    } else {
+                        result = @max(result, num);
+                    }
+                }
+            }
+
+            const optimized = self.formatNumericValue(result) catch return null;
+            return optimized;
+        }
+
+        return null;
+    }
+
+    fn optimizeClamp(self: *Optimizer, value: []const u8) ?[]const u8 {
+        if (value.len < 7 or value[value.len - 1] != ')') {
+            return null;
+        }
+
+        const content = std.mem.trim(u8, value[6..value.len - 1], " \t\n\r");
+        if (content.len == 0) {
+            return null;
+        }
+
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit(self.allocator);
+
+        var depth: i32 = 0;
+        var start: usize = 0;
+        var i: usize = 0;
+
+        while (i < content.len) {
+            const ch = content[i];
+            if (ch == '(') {
+                depth += 1;
+            } else if (ch == ')') {
+                depth -= 1;
+            } else if (ch == ',' and depth == 0) {
+                const arg = std.mem.trim(u8, content[start..i], " \t\n\r");
+                if (arg.len > 0) {
+                    args.append(arg) catch return null;
+                }
+                start = i + 1;
+            }
+            i += 1;
+        }
+
+        if (start < content.len) {
+            const arg = std.mem.trim(u8, content[start..], " \t\n\r");
+            if (arg.len > 0) {
+                args.append(arg) catch return null;
+            }
+        }
+
+        if (args.items.len != 3) {
+            return null;
+        }
+
+        const min_val = self.parseNumericValue(args.items[0]);
+        const preferred_val = self.parseNumericValue(args.items[1]);
+        const max_val = self.parseNumericValue(args.items[2]);
+
+        if (min_val != null and preferred_val != null and max_val != null) {
+            const min = min_val.?;
+            const preferred = preferred_val.?;
+            const max = max_val.?;
+
+            const result = if (preferred < min) min else if (preferred > max) max else preferred;
+            const optimized = self.formatNumericValue(result) catch return null;
+            return optimized;
+        }
+
+        return null;
+    }
+
+    fn evaluateMathExpression(self: *Optimizer, expr: []const u8) ?[]const u8 {
+        const trimmed = std.mem.trim(u8, expr, " \t\n\r");
+        if (trimmed.len == 0) {
+            return null;
+        }
+
+        var parts = std.ArrayList([]const u8).init(self.allocator);
+        defer parts.deinit(self.allocator);
+
+        var operators = std.ArrayList(u8).init(self.allocator);
+        defer operators.deinit(self.allocator);
+
+        var i: usize = 0;
+        var start: usize = 0;
+        var depth: i32 = 0;
+
+        while (i < trimmed.len) {
+            const ch = trimmed[i];
+            if (ch == '(') {
+                depth += 1;
+                i += 1;
+            } else if (ch == ')') {
+                depth -= 1;
+                i += 1;
+            } else if ((ch == '+' or ch == '-' or ch == '*' or ch == '/') and depth == 0) {
+                if (i > start) {
+                    const part = std.mem.trim(u8, trimmed[start..i], " \t\n\r");
+                    if (part.len > 0) {
+                        parts.append(part) catch return null;
+                    }
+                }
+                operators.append(ch) catch return null;
+                i += 1;
+                start = i;
+            } else {
+                i += 1;
+            }
+        }
+
+        if (start < trimmed.len) {
+            const part = std.mem.trim(u8, trimmed[start..], " \t\n\r");
+            if (part.len > 0) {
+                parts.append(part) catch return null;
+            }
+        }
+
+        if (parts.items.len == 0) {
+            return null;
+        }
+
+        if (parts.items.len == 1) {
+            const num = self.parseNumericValue(parts.items[0]) orelse return null;
+            return self.formatNumericValue(num) catch null;
+        }
+
+        if (parts.items.len != operators.items.len + 1) {
+            return null;
+        }
+
+        var values = std.ArrayList(f64).init(self.allocator);
+        defer values.deinit(self.allocator);
+
+        for (parts.items) |part| {
+            const num = self.parseNumericValue(part) orelse return null;
+            values.append(num) catch return null;
+        }
+
+        var result = values.items[0];
+        for (operators.items, 1..) |op, idx| {
+            const next_val = values.items[idx];
+            result = switch (op) {
+                '+' => result + next_val,
+                '-' => result - next_val,
+                '*' => result * next_val,
+                '/' => if (next_val != 0) result / next_val else return null,
+                else => return null,
+            };
+        }
+
+        return self.formatNumericValue(result) catch null;
+    }
+
+    fn parseNumericValue(self: *Optimizer, value: []const u8) ?f64 {
+        _ = self;
+        const trimmed = std.mem.trim(u8, value, " \t\n\r");
+        if (trimmed.len == 0) {
+            return null;
+        }
+
+        const units = [_][]const u8{ "px", "em", "rem", "%", "pt", "pc", "in", "cm", "mm", "ex", "ch", "vw", "vh", "vmin", "vmax" };
+        var unit: ?[]const u8 = null;
+        var num_str = trimmed;
+
+        for (units) |u| {
+            if (std.mem.endsWith(u8, trimmed, u)) {
+                unit = u;
+                num_str = trimmed[0..trimmed.len - u.len];
+                break;
+            }
+        }
+
+        const num = std.fmt.parseFloat(f64, num_str) catch return null;
+
+        if (unit) |u| {
+            if (!std.mem.eql(u8, u, "px")) {
+                return null;
+            }
+        }
+
+        return num;
+    }
+
+    fn formatNumericValue(self: *Optimizer, value: f64) ![]const u8 {
+        if (value == 0.0) {
+            return try self.allocator.dupe(u8, "0");
+        }
+
+        if (@mod(value, 1.0) == 0.0) {
+            return try std.fmt.allocPrint(self.allocator, "{d}px", .{@as(i64, @intFromFloat(value))});
+        } else {
+            return try std.fmt.allocPrint(self.allocator, "{d}px", .{value});
+        }
+    }
+
+    fn canRemoveCalcWrapper(self: *Optimizer, content: []const u8) bool {
+        _ = self;
+        const trimmed = std.mem.trim(u8, content, " \t\n\r");
+        
+        var has_operators = false;
+        var depth: i32 = 0;
+        
+        for (trimmed) |ch| {
+            if (ch == '(') {
+                depth += 1;
+            } else if (ch == ')') {
+                depth -= 1;
+            } else if ((ch == '+' or ch == '-' or ch == '*' or ch == '/') and depth == 0) {
+                has_operators = true;
+                break;
+            }
+        }
+
+        return !has_operators;
     }
 
     fn optimizeShorthandProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {

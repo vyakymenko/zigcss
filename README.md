@@ -705,6 +705,11 @@ Multi-pass optimization pipeline:
    - Transparent color optimization (`transparent` → `rgba(0,0,0,0)`)
    - Zero unit removal (`0px` → `0`, `0em` → `0`)
    - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
+   - CSS Math Functions optimization ✅ — Optimize calc(), min(), max(), and clamp() expressions
+     - Evaluate constant expressions (`calc(10px + 5px)` → `15px`)
+     - Simplify nested calc() expressions
+     - Remove unnecessary calc() wrappers (`calc(10px)` → `10px`)
+     - Optimize min()/max()/clamp() with numeric values
 8. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
 9. **Container query merging** ✅ — Merge identical `@container` rules into a single rule
 10. **Cascade layer merging** ✅ — Merge identical `@layer` rules into a single rule
@@ -946,6 +951,18 @@ The documentation site includes:
 - [x] Container queries ✅ — Full container query support with merging optimization
 - [x] Cascade layers ✅ — Full CSS Cascade Layers support with merging optimization
 - [x] Tailwind @apply expansion ✅ — Expand Tailwind utility classes in @apply directives
+
+### Phase 6: Advanced Optimizations 🚧 IN PROGRESS
+- [x] CSS Math Functions optimization ✅ — Optimize calc(), min(), max(), and clamp() expressions
+  - Evaluate constant expressions at compile time
+  - Simplify nested calc() expressions
+  - Remove unnecessary calc() wrappers
+  - Optimize min()/max()/clamp() with numeric values
+- [ ] CSS Logical Properties optimization — Convert logical properties to physical equivalents when safe
+- [ ] Dead code elimination — Remove unused CSS rules and declarations
+- [ ] Critical CSS extraction — Extract above-the-fold CSS for faster initial render
+- [ ] Enhanced error messages — Provide suggestions and context for common errors
+- [ ] Advanced LSP features — Go to definition, find references, rename symbols
 
 ## 🤝 Contributing
 

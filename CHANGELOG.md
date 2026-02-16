@@ -64,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add parallel file processing - compile multiple files concurrently using all CPU cores
 - Add --output-dir flag support for batch compilation of multiple files
 - Add glob pattern support for input files (e.g., `src/*.css`)
+- Add CSS Math Functions optimization - optimize calc(), min(), max(), and clamp() expressions
+- Add constant expression evaluation for CSS Math Functions - evaluate constant expressions at compile time
+- Add calc() wrapper removal - remove unnecessary calc() wrappers when safe
+- Add min()/max()/clamp() numeric optimization - optimize math functions with numeric values
 
 ### Performance Improvements
 - Add cascade layer merging optimization - reduces CSS size by combining identical cascade layers
@@ -90,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optimize parser with capacity hints and faster whitespace skipping
 - Optimize character checks and string trimming
 - Use optimized character checks in selector parsing
+- Add CSS Math Functions optimization - reduces CSS size by evaluating and simplifying calc(), min(), max(), and clamp() expressions
+- Optimize constant math expressions at compile time for faster runtime performance
 
 ### Features
 - Add autoprefixer integration with vendor prefix support for CSS properties and values
