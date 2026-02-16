@@ -1782,23 +1782,27 @@ pub const Optimizer = struct {
     }
 
     fn reorderAtRules(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
-        var media_rules = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        if (stylesheet.rules.items.len == 0) return;
+        
+        const estimated_capacity = stylesheet.rules.items.len / 4;
+        var media_rules = try std.ArrayList(usize).initCapacity(self.allocator, estimated_capacity);
         defer media_rules.deinit(self.allocator);
-        var container_rules = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        var container_rules = try std.ArrayList(usize).initCapacity(self.allocator, estimated_capacity);
         defer container_rules.deinit(self.allocator);
-        var layer_rules = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        var layer_rules = try std.ArrayList(usize).initCapacity(self.allocator, estimated_capacity);
         defer layer_rules.deinit(self.allocator);
-        var other_rules = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        var other_rules = try std.ArrayList(usize).initCapacity(self.allocator, stylesheet.rules.items.len);
         defer other_rules.deinit(self.allocator);
 
         for (stylesheet.rules.items, 0..) |*rule, i| {
             if (rule.* == .at_rule) {
                 const at_rule = &rule.at_rule;
-                if (std.mem.eql(u8, at_rule.name, "media")) {
+                const name = at_rule.name;
+                if (name.len == 5 and std.mem.eql(u8, name, "media")) {
                     try media_rules.append(self.allocator, i);
-                } else if (std.mem.eql(u8, at_rule.name, "container")) {
+                } else if (name.len == 9 and std.mem.eql(u8, name, "container")) {
                     try container_rules.append(self.allocator, i);
-                } else if (std.mem.eql(u8, at_rule.name, "layer")) {
+                } else if (name.len == 5 and std.mem.eql(u8, name, "layer")) {
                     try layer_rules.append(self.allocator, i);
                 } else {
                     try other_rules.append(self.allocator, i);
@@ -1855,7 +1859,12 @@ pub const Optimizer = struct {
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
-            if (rule.* != .at_rule or !std.mem.eql(u8, rule.at_rule.name, "media")) {
+            if (rule.* != .at_rule) {
+                i += 1;
+                continue;
+            }
+            const name = rule.at_rule.name;
+            if (name.len != 5 or !std.mem.eql(u8, name, "media")) {
                 i += 1;
                 continue;
             }
@@ -1922,7 +1931,12 @@ pub const Optimizer = struct {
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
-            if (rule.* != .at_rule or !std.mem.eql(u8, rule.at_rule.name, "container")) {
+            if (rule.* != .at_rule) {
+                i += 1;
+                continue;
+            }
+            const name = rule.at_rule.name;
+            if (name.len != 9 or !std.mem.eql(u8, name, "container")) {
                 i += 1;
                 continue;
             }
@@ -1989,7 +2003,12 @@ pub const Optimizer = struct {
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
-            if (rule.* != .at_rule or !std.mem.eql(u8, rule.at_rule.name, "layer")) {
+            if (rule.* != .at_rule) {
+                i += 1;
+                continue;
+            }
+            const name = rule.at_rule.name;
+            if (name.len != 5 or !std.mem.eql(u8, name, "layer")) {
                 i += 1;
                 continue;
             }

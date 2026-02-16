@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improve browser parsing efficiency with better rule organization
 - Add unused custom property removal - reduces CSS size by eliminating unused custom property definitions after inlining
 - Improve CSS compilation performance by removing unnecessary custom property declarations
+- Optimize parser hot paths - reduce bounds checks in advance(), cache input lengths, optimize skipComment
+- Improve SIMD whitespace skipping - cache length and reduce pointer operations
+- Optimize codegen - cache flags, pre-calculate indices, extract common patterns
+- Optimize string pool - add early exits for empty strings, improve bounds checking
+- Optimize hash operations - cache counts, pre-allocate capacity, reduce reallocations
+- Optimize at-rule merging - use length checks before string comparisons for faster matching
 
 ### Features
 - Add advanced LSP features - go to definition, find references, and rename symbols

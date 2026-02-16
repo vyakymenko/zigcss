@@ -1098,6 +1098,26 @@ The documentation site includes:
   - Simplify nested calc() expressions
   - Remove unnecessary calc() wrappers
   - Optimize min()/max()/clamp() with numeric values
+- [x] Parser hot path optimizations ✅ — Optimize critical parsing functions
+  - Optimize advance() function - reduce bounds checks and improve flow
+  - Cache input length in estimate functions to avoid repeated lookups
+  - Optimize skipComment - use direct character access
+  - Improve SIMD whitespace skipping - cache length and reduce operations
+  - Optimize skipWhitespaceScalar - use local variable instead of pointer dereference
+- [x] Codegen optimizations ✅ — Reduce allocations and improve string operations
+  - Optimize generateStyleRule - cache minify flag, pre-calculate last index
+  - Extract generateSelectorPart to reduce code duplication
+  - Add early exit for single-part selectors
+  - Reduce conditional checks in hot loops
+- [x] String pool and hash optimizations ✅ — Improve interning and hashing performance
+  - Add early exits for empty strings in string pool intern functions
+  - Add bounds checking in internSlice to prevent invalid slices
+  - Optimize hashSelectors - add early exit for empty selectors, cache counts
+  - Pre-allocate capacity when merging declarations to reduce reallocations
+- [x] At-rule merge optimizations ✅ — Faster string comparisons and better capacity estimation
+  - Use length checks before mem.eql for faster comparisons
+  - Pre-allocate ArrayLists with better capacity estimates
+  - Reduce string comparisons in merge operations
 - [x] CSS Logical Properties optimization ✅ — Convert logical properties to physical equivalents when safe
   - Convert margin-inline-* and margin-block-* to margin-* properties
   - Convert padding-inline-* and padding-block-* to padding-* properties
