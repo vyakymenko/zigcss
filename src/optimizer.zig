@@ -72,6 +72,7 @@ pub const Optimizer = struct {
         try self.optimizeShorthandProperties(stylesheet);
         try self.removeDuplicateDeclarations(stylesheet);
         try self.optimizeValues(stylesheet);
+        try self.reorderAtRules(stylesheet);
         try self.mergeMediaQueries(stylesheet);
         try self.mergeContainerQueries(stylesheet);
         try self.mergeCascadeLayers(stylesheet);
@@ -1705,6 +1706,65 @@ pub const Optimizer = struct {
         return a_idx == a.parts.items.len;
     }
 
+    fn reorderAtRules(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        var media_rules = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        defer media_rules.deinit(self.allocator);
+        var container_rules = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        defer container_rules.deinit(self.allocator);
+        var layer_rules = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        defer layer_rules.deinit(self.allocator);
+        var other_rules = try std.ArrayList(usize).initCapacity(self.allocator, 0);
+        defer other_rules.deinit(self.allocator);
+
+        for (stylesheet.rules.items, 0..) |*rule, i| {
+            if (rule.* == .at_rule) {
+                const at_rule = &rule.at_rule;
+                if (std.mem.eql(u8, at_rule.name, "media")) {
+                    try media_rules.append(self.allocator, i);
+                } else if (std.mem.eql(u8, at_rule.name, "container")) {
+                    try container_rules.append(self.allocator, i);
+                } else if (std.mem.eql(u8, at_rule.name, "layer")) {
+                    try layer_rules.append(self.allocator, i);
+                } else {
+                    try other_rules.append(self.allocator, i);
+                }
+            } else {
+                try other_rules.append(self.allocator, i);
+            }
+        }
+
+        if (media_rules.items.len + container_rules.items.len + layer_rules.items.len == 0) {
+            return;
+        }
+
+        var reordered = try std.ArrayList(ast.Rule).initCapacity(self.allocator, stylesheet.rules.items.len);
+
+        for (other_rules.items) |idx| {
+            if (stylesheet.rules.items[idx] != .at_rule or
+                (!std.mem.eql(u8, stylesheet.rules.items[idx].at_rule.name, "media") and
+                 !std.mem.eql(u8, stylesheet.rules.items[idx].at_rule.name, "container") and
+                 !std.mem.eql(u8, stylesheet.rules.items[idx].at_rule.name, "layer")))
+            {
+                try reordered.append(self.allocator, stylesheet.rules.items[idx]);
+            }
+        }
+
+        for (media_rules.items) |idx| {
+            try reordered.append(self.allocator, stylesheet.rules.items[idx]);
+        }
+
+        for (container_rules.items) |idx| {
+            try reordered.append(self.allocator, stylesheet.rules.items[idx]);
+        }
+
+        for (layer_rules.items) |idx| {
+            try reordered.append(self.allocator, stylesheet.rules.items[idx]);
+        }
+
+        stylesheet.rules.deinit(self.allocator);
+        stylesheet.rules = reordered;
+    }
+
     fn mergeMediaQueries(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         var media_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
         defer {
@@ -2228,4 +2288,55 @@ test "remove unused custom properties with nested rules" {
     const root_style = stylesheet.rules.items[0].style;
     try std.testing.expect(root_style.declarations.items.len == 1);
     try std.testing.expect(std.mem.eql(u8, root_style.declarations.items[0].property, "--primary-color"));
+}
+
+test "reorder at-rules" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var pool = try allocator.create(string_pool.StringPool);
+    pool.* = string_pool.StringPool.init(allocator);
+    defer {
+        pool.deinit();
+        allocator.destroy(pool);
+    }
+
+    var stylesheet = try ast.Stylesheet.init(allocator);
+    stylesheet.string_pool = pool;
+    stylesheet.owns_string_pool = false;
+    defer stylesheet.deinit();
+
+    var media_rule1 = ast.AtRule.init(allocator);
+    media_rule1.name = try pool.intern("media");
+    media_rule1.prelude = try pool.intern("(min-width: 768px)");
+    try stylesheet.rules.append(allocator, ast.Rule{ .at_rule = media_rule1 });
+
+    var style_rule = try ast.StyleRule.init(allocator);
+    var selector = try ast.Selector.init(allocator);
+    try selector.parts.append(allocator, ast.SelectorPart{ .class = try pool.intern("button") });
+    try style_rule.selectors.append(allocator, selector);
+    try stylesheet.rules.append(allocator, ast.Rule{ .style = style_rule });
+
+    var container_rule = ast.AtRule.init(allocator);
+    container_rule.name = try pool.intern("container");
+    container_rule.prelude = try pool.intern("(min-width: 400px)");
+    try stylesheet.rules.append(allocator, ast.Rule{ .at_rule = container_rule });
+
+    var layer_rule = ast.AtRule.init(allocator);
+    layer_rule.name = try pool.intern("layer");
+    layer_rule.prelude = try pool.intern("theme");
+    try stylesheet.rules.append(allocator, ast.Rule{ .at_rule = layer_rule });
+
+    var optimizer = Optimizer.init(allocator);
+    try optimizer.reorderAtRules(&stylesheet);
+
+    try std.testing.expect(stylesheet.rules.items.len == 4);
+    try std.testing.expect(stylesheet.rules.items[0] == .style);
+    try std.testing.expect(stylesheet.rules.items[1] == .at_rule);
+    try std.testing.expect(std.mem.eql(u8, stylesheet.rules.items[1].at_rule.name, "media"));
+    try std.testing.expect(stylesheet.rules.items[2] == .at_rule);
+    try std.testing.expect(std.mem.eql(u8, stylesheet.rules.items[2].at_rule.name, "container"));
+    try std.testing.expect(stylesheet.rules.items[3] == .at_rule);
+    try std.testing.expect(std.mem.eql(u8, stylesheet.rules.items[3].at_rule.name, "layer"));
 }

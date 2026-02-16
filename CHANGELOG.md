@@ -8,12 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add at-rule reordering optimization - reorder @media, @container, and @layer rules for better compression and parsing efficiency
+- Group similar at-rules together to improve CSS compression
+- Add comprehensive test coverage for at-rule reordering
 - Add unused custom property removal optimization - automatically removes CSS custom property definitions that are no longer referenced after inlining
 - Add removeUnusedCustomProperties function to optimizer - removes unused custom property declarations from stylesheet
 - Add support for removing unused custom properties in nested rules (@media, @container, @layer)
 - Add comprehensive test coverage for unused custom property removal
 
 ### Performance Improvements
+- Add at-rule reordering - improves CSS compression by grouping similar at-rules together
+- Improve browser parsing efficiency with better rule organization
 - Add unused custom property removal - reduces CSS size by eliminating unused custom property definitions after inlining
 - Improve CSS compilation performance by removing unnecessary custom property declarations
 

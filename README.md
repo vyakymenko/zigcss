@@ -1129,6 +1129,11 @@ The documentation site includes:
   - Works with nested rules in @media, @container, and @layer at-rules
   - Reduces CSS size by eliminating unused custom property definitions
   - Improves performance by reducing CSS parsing overhead
+- [x] At-rule reordering ✅ — Reorder at-rules for better compression and parsing efficiency
+  - Groups @media, @container, and @layer rules together
+  - Improves CSS compression by grouping similar at-rules
+  - Enhances browser parsing efficiency with better rule organization
+  - Works seamlessly with at-rule merging optimizations
 
 ## 🤝 Contributing
 
