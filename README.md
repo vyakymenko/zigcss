@@ -1111,7 +1111,11 @@ The documentation site includes:
   - Supports nested rules in @media, @container, and @layer at-rules
   - Configurable via API with CriticalCssOptions
   - CLI support with --critical-classes, --critical-ids, and --critical-elements flags
-- [ ] Enhanced error messages — Provide suggestions and context for common errors
+- [x] Enhanced error messages ✅ — Provide suggestions and context for common errors
+  - Context-aware error messages with nearby code snippets
+  - Helpful suggestions for common mistakes (missing braces, colons, etc.)
+  - Improved error formatting with line numbers, column positions, and visual indicators
+  - Suggestions for fixing common syntax errors
 - [ ] Advanced LSP features — Go to definition, find references, rename symbols
 
 ## 🤝 Contributing

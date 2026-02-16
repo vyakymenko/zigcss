@@ -5,6 +5,8 @@ pub const ParseError = struct {
     line: usize,
     column: usize,
     message: []const u8,
+    suggestion: ?[]const u8 = null,
+    context: ?[]const u8 = null,
 
     pub const ErrorKind = enum {
         ExpectedOpeningBrace,
@@ -40,6 +42,19 @@ pub const ParseError = struct {
             .UnexpectedToken => "unexpected token",
             .UnexpectedEndOfFile => "unexpected end of file",
             .InvalidSyntax => "invalid syntax",
+        };
+    }
+
+    pub fn getSuggestion(kind: ErrorKind, context: ?[]const u8) ?[]const u8 {
+        _ = context;
+        return switch (kind) {
+            .ExpectedOpeningBrace => "Did you forget to add '{' after the selector?",
+            .ExpectedColon => "Did you forget to add ':' between the property and value?",
+            .ExpectedAtSign => "At-rules (like @media, @keyframes) must start with '@'",
+            .InvalidIdentifier => "Identifiers can only contain letters, numbers, hyphens, and underscores",
+            .UnexpectedToken => "Check for typos or missing punctuation",
+            .UnexpectedEndOfFile => "Did you forget to close a rule or declaration?",
+            .InvalidSyntax => "Check for missing braces, colons, or semicolons",
         };
     }
 };
@@ -121,7 +136,7 @@ pub fn formatErrorWithContext(
     else
         "";
 
-    var buffer = try std.ArrayList(u8).initCapacity(allocator, 256);
+    var buffer = try std.ArrayList(u8).initCapacity(allocator, 512);
     errdefer buffer.deinit(allocator);
 
     const writer = buffer.writer(allocator);
@@ -141,6 +156,19 @@ pub fn formatErrorWithContext(
         }
     }
     try writer.writeAll("^\n");
+
+    if (parse_error.suggestion) |suggestion| {
+        try writer.print("   |\n", .{});
+        try writer.print("   = help: {s}\n", .{suggestion});
+    } else if (ParseError.getSuggestion(parse_error.kind, parse_error.context)) |suggestion| {
+        try writer.print("   |\n", .{});
+        try writer.print("   = help: {s}\n", .{suggestion});
+    }
+
+    if (parse_error.context) |ctx| {
+        try writer.print("   |\n", .{});
+        try writer.print("   = note: {s}\n", .{ctx});
+    }
 
     return try buffer.toOwnedSlice(allocator);
 }

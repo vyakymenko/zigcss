@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add enhanced error messages with suggestions and context for common errors
+- Add context-aware error messages showing nearby code snippets
+- Add helpful suggestions for fixing common syntax errors (missing braces, colons, etc.)
+- Improve error formatting with better visual indicators and suggestions
 - Add critical CSS extraction - extract above-the-fold CSS for faster initial render
 - Add CriticalCssOptions API for configuring critical CSS extraction with critical selectors (classes, IDs, elements, attributes)
 - Add critical CSS extraction support for nested rules in @media, @container, and @layer at-rules

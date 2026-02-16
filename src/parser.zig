@@ -435,11 +435,28 @@ pub const Parser = struct {
     }
 
     fn makeError(self: *const Parser, kind: error_module.ParseError.ErrorKind) ParseError {
+        const suggestion = error_module.ParseError.getSuggestion(kind, null);
+        const context = self.getErrorContext();
         return ParseError{
             .kind = kind,
             .line = self.line,
             .column = self.column,
             .message = error_module.ParseError.getMessage(kind),
+            .suggestion = suggestion,
+            .context = context,
         };
+    }
+
+    fn getErrorContext(self: *const Parser) ?[]const u8 {
+        const max_context_len = 30;
+        const start = if (self.pos > max_context_len) self.pos - max_context_len else 0;
+        const end = @min(self.pos + max_context_len, self.input.len);
+        
+        if (end <= start) return null;
+        
+        const context_slice = self.input[start..end];
+        if (context_slice.len == 0) return null;
+        
+        return context_slice;
     }
 };
