@@ -15,11 +15,22 @@ pub fn skipWhitespaceSimd(input: []const u8, pos: *usize) void {
 
     var i = start_pos;
     const end = input.len - 32;
+    const Vec32 = @Vector(32, u8);
+    
+    var aligned_buffer: [32]u8 align(32) = undefined;
 
     while (i <= end) {
-        const Vec32 = @Vector(32, u8);
         const chunk_ptr: [*]const u8 = input[i..].ptr;
-        const chunk: Vec32 = @as(*const Vec32, @ptrCast(@alignCast(chunk_ptr))).*;
+        const alignment = @intFromPtr(chunk_ptr) % 32;
+        
+        const chunk: Vec32 = if (alignment == 0) blk: {
+            const aligned_ptr = @as(*const Vec32, @ptrCast(@alignCast(chunk_ptr)));
+            break :blk aligned_ptr.*;
+        } else blk: {
+            @memcpy(&aligned_buffer, input[i..][0..32]);
+            const aligned_ptr = @as(*const Vec32, @ptrCast(@alignCast(&aligned_buffer)));
+            break :blk aligned_ptr.*;
+        };
         
         const space_vec: Vec32 = @splat(' ');
         const tab_vec: Vec32 = @splat('\t');

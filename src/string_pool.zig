@@ -29,20 +29,30 @@ pub const StringPool = struct {
     fn preInternCommonKeywords(self: *StringPool) void {
         for (COMMON_CSS_KEYWORDS) |keyword| {
             const owned = self.allocator.dupe(u8, keyword) catch return;
-            self.common_keywords.put(keyword, owned) catch return;
+            if (self.common_keywords.get(keyword)) |old_value| {
+                self.allocator.free(old_value);
+            }
+            self.common_keywords.put(keyword, owned) catch {
+                self.allocator.free(owned);
+                return;
+            };
         }
     }
 
     pub fn deinit(self: *StringPool) void {
-        var it = self.strings.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
+        {
+            var it = self.strings.iterator();
+            while (it.next()) |entry| {
+                self.allocator.free(entry.key_ptr.*);
+            }
         }
         self.strings.deinit();
         
-        var common_it = self.common_keywords.iterator();
-        while (common_it.next()) |entry| {
-            self.allocator.free(entry.value_ptr.*);
+        {
+            var common_it = self.common_keywords.iterator();
+            while (common_it.next()) |entry| {
+                self.allocator.free(entry.value_ptr.*);
+            }
         }
         self.common_keywords.deinit();
     }
