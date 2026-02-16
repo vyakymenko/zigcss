@@ -115,7 +115,40 @@ The binary will be available at `zig-out/bin/zcss`.
 
 ### Pre-built Binaries
 
-*Coming soon — check [releases](https://github.com/vyakymenko/zcss/releases) for pre-built binaries.*
+Pre-built binaries are available for all supported platforms on the [releases page](https://github.com/vyakymenko/zcss/releases).
+
+**Supported Platforms:**
+- Linux (x86_64, aarch64)
+- macOS (x86_64, aarch64) 
+- Windows (x86_64)
+
+**Quick Install:**
+
+1. Download the appropriate binary for your platform from the [latest release](https://github.com/vyakymenko/zcss/releases/latest)
+2. Extract the archive
+3. Add the binary to your PATH or use it directly
+
+**Example (Linux/macOS):**
+```bash
+# Download and extract
+wget https://github.com/vyakymenko/zcss/releases/download/v0.1.0/zcss-0.1.0-x86_64-linux.tar.gz
+tar -xzf zcss-0.1.0-x86_64-linux.tar.gz
+
+# Make executable and move to PATH
+chmod +x zcss
+sudo mv zcss /usr/local/bin/
+```
+
+**Example (Windows):**
+```powershell
+# Download and extract
+Invoke-WebRequest -Uri "https://github.com/vyakymenko/zcss/releases/download/v0.1.0/zcss-0.1.0-x86_64-windows.zip" -OutFile "zcss.zip"
+Expand-Archive -Path zcss.zip -DestinationPath .
+
+# Add to PATH (PowerShell as Administrator)
+$env:Path += ";C:\path\to\zcss"
+[Environment]::SetEnvironmentVariable("Path", $env:Path, [EnvironmentVariableTarget]::Machine)
+```
 
 ### Using as a Library
 
@@ -868,7 +901,7 @@ zcss input.css -o output.css --profile
 - [x] Language server protocol (LSP) support ✅ — Full LSP server with diagnostics, hover, and completion
 - [x] Editor integrations ✅ — VSCode extension and Neovim configuration
 - [x] Build tool integrations ✅ — Zig build system integration with build helpers
-- [ ] Pre-built binaries for all platforms
+- [x] Pre-built binaries for all platforms ✅ — GitHub Actions CI/CD for automated builds and releases (Linux, macOS, Windows)
 - [ ] Package manager integration
 - [ ] Documentation site
 

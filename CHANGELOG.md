@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add GitHub Actions CI/CD workflows - automated builds and releases for all platforms
+- Add build workflow - test and build binaries for Linux, macOS, and Windows on every push
+- Add release workflow - automatically create GitHub releases with pre-built binaries on version tags
+- Add multi-platform binary support - x86_64 and aarch64 for Linux and macOS, x86_64 for Windows
+- Add pre-built binaries documentation - installation instructions for all supported platforms
 - Add VSCode extension - full VSCode integration with LSP support for CSS, SCSS, SASS, LESS, and Stylus files
 - Add VSCode extension configuration - package.json, TypeScript extension code, and build configuration
 - Add Neovim integration - complete Neovim configuration with nvim-lspconfig setup and key mappings
