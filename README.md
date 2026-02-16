@@ -389,21 +389,91 @@ pub const CompileResult = struct {
 
 ### Plugin System
 
+zcss includes a powerful plugin system that allows you to transform the AST during compilation. Plugins run after parsing and before optimization, giving you full control over CSS transformations.
+
+#### Basic Plugin Usage
+
+```zig
+const std = @import("std");
+const zcss = @import("zcss");
+
+fn myTransform(allocator: std.mem.Allocator, stylesheet: *zcss.ast.Stylesheet) !void {
+    // Transform the stylesheet AST
+    // For example, add a custom rule
+    var style_rule = try zcss.ast.StyleRule.init(stylesheet.allocator);
+    var selector = try zcss.ast.Selector.init(stylesheet.allocator);
+    try selector.parts.append(stylesheet.allocator, .{ .class = "custom-class" });
+    try style_rule.selectors.append(stylesheet.allocator, selector);
+    
+    var decl = zcss.ast.Declaration.init(stylesheet.allocator);
+    decl.property = "color";
+    decl.value = "blue";
+    try style_rule.declarations.append(stylesheet.allocator, decl);
+    
+    try stylesheet.rules.append(stylesheet.allocator, .{ .style = style_rule });
+}
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const css = ".container { color: red; }";
+    
+    const parser_trait = zcss.formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    const my_plugin = zcss.plugin.Plugin.init("my-transform", myTransform);
+    
+    const options = zcss.codegen.CodegenOptions{
+        .plugins = &.{my_plugin},
+        .optimize = true,
+        .minify = true,
+    };
+
+    const result = try zcss.codegen.generate(allocator, &stylesheet, options);
+    defer allocator.free(result);
+    
+    std.debug.print("Compiled CSS: {s}\n", .{result});
+}
+```
+
+#### Plugin Registry
+
+For multiple plugins, use the `PluginRegistry`:
+
+```zig
+var registry = try zcss.plugin.PluginRegistry.init(allocator);
+defer registry.deinit();
+
+const plugin1 = zcss.plugin.Plugin.init("plugin1", transform1);
+const plugin2 = zcss.plugin.Plugin.init("plugin2", transform2);
+
+try registry.add(plugin1);
+try registry.add(plugin2);
+
+try registry.run(&stylesheet);
+```
+
+#### Plugin API
+
 ```zig
 pub const Plugin = struct {
     name: []const u8,
-    transform: *const fn (allocator: Allocator, ast: *AST) anyerror!void,
+    transform: *const fn (allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet) anyerror!void,
+    
+    pub fn init(name: []const u8, transform_fn: *const fn (allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet) anyerror!void) Plugin;
 };
 
-// Example plugin
-const my_plugin = Plugin{
-    .name = "my-transform",
-    .transform = myTransform,
+pub const PluginRegistry = struct {
+    pub fn init(allocator: std.mem.Allocator) !PluginRegistry;
+    pub fn deinit(self: *PluginRegistry) void;
+    pub fn add(self: *PluginRegistry, plugin: Plugin) !void;
+    pub fn addSlice(self: *PluginRegistry, plugins: []const Plugin) !void;
+    pub fn run(self: *const PluginRegistry, stylesheet: *ast.Stylesheet) !void;
+    pub fn count(self: *const PluginRegistry) usize;
 };
-
-fn myTransform(allocator: Allocator, ast: *AST) !void {
-    // Transform AST
-}
 ```
 
 ## 🧪 Testing
@@ -445,7 +515,7 @@ zig build test --summary all
 - [x] Autoprefixer integration ✅ — Add vendor prefixes for CSS properties and values
 - [x] Custom property resolution ✅ — Resolve CSS custom properties (var()) with fallback support
 - [x] Advanced selector optimization ✅ — Universal selector removal, selector simplification, specificity calculation
-- [ ] Plugin system
+- [x] Plugin system ✅ — Extensible plugin architecture for custom AST transformations
 - [x] Watch mode improvements ✅ — Polling-based file watching with automatic recompilation
 - [x] Incremental compilation ✅ — Content hash-based change detection for faster watch mode
 

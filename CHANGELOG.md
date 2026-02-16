@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add plugin system - extensible plugin architecture for custom AST transformations
+- Add PluginRegistry for managing multiple plugins
+- Add plugin support to CodegenOptions for library API
 - Add incremental compilation - content hash-based change detection for faster watch mode
 - Add advanced selector optimization - universal selector removal, selector simplification, and specificity-based optimization
 - Add parallel file processing - compile multiple files concurrently using all CPU cores
