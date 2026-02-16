@@ -1,10 +1,12 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const optimizer = @import("optimizer.zig");
+const autoprefixer = @import("autoprefixer.zig");
 
 pub const CodegenOptions = struct {
     minify: bool = false,
     optimize: bool = false,
+    autoprefix: ?autoprefixer.AutoprefixOptions = null,
 };
 
 fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
@@ -45,8 +47,11 @@ fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
 }
 
 pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, options: CodegenOptions) ![]const u8 {
-    if (options.optimize) {
-        var opt = optimizer.Optimizer.init(allocator);
+    if (options.optimize or options.autoprefix != null) {
+        var opt = if (options.autoprefix) |autoprefix_opts|
+            optimizer.Optimizer.initWithAutoprefix(allocator, autoprefix_opts)
+        else
+            optimizer.Optimizer.init(allocator);
         try opt.optimize(stylesheet);
     }
 

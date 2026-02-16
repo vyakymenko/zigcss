@@ -123,6 +123,12 @@ zcss input.css -o output.css
 # Compile with optimizations
 zcss input.css -o output.css --optimize --minify
 
+# Add vendor prefixes
+zcss input.css -o output.css --autoprefix
+
+# Add vendor prefixes with specific browser support
+zcss input.css -o output.css --autoprefix --browsers "last 2 versions,> 1%"
+
 # Watch mode for development
 zcss input.css -o output.css --watch
 
@@ -198,7 +204,7 @@ pub fn main() !void {
         .minify = true,
         .source_map = true,
         .autoprefix = .{
-            .browsers = &[_][]const u8{ "last 2 versions", "> 1%" },
+            .browsers = &.{ "last 2 versions", "> 1%" },
         },
         .remove_comments = true,
         .optimize_selectors = true,
@@ -429,7 +435,7 @@ zig build test --summary all
 - [x] PostCSS support - @apply, @custom-media, @nest directives
 - [x] Stylus support - Variables, indented syntax
 - [ ] Advanced nesting features (mixins, functions)
-- [ ] Autoprefixer integration
+- [x] Autoprefixer integration ✅ — Add vendor prefixes for CSS properties and values
 - [x] Custom property resolution ✅ — Resolve CSS custom properties (var()) with fallback support
 - [ ] Advanced selector optimization
 - [ ] Plugin system

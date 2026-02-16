@@ -2,16 +2,28 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const string_pool = @import("string_pool.zig");
 const custom_properties = @import("custom_properties.zig");
+const autoprefixer = @import("autoprefixer.zig");
 
 pub const Optimizer = struct {
     allocator: std.mem.Allocator,
+    autoprefix_options: ?autoprefixer.AutoprefixOptions = null,
 
     pub fn init(allocator: std.mem.Allocator) Optimizer {
         return .{ .allocator = allocator };
     }
 
+    pub fn initWithAutoprefix(allocator: std.mem.Allocator, autoprefix_opts: autoprefixer.AutoprefixOptions) Optimizer {
+        return .{
+            .allocator = allocator,
+            .autoprefix_options = autoprefix_opts,
+        };
+    }
+
     pub fn optimize(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         try self.resolveCustomProperties(stylesheet);
+        if (self.autoprefix_options) |opts| {
+            try self.addAutoprefixes(stylesheet, opts);
+        }
         try self.removeEmptyRules(stylesheet);
         try self.mergeSelectors(stylesheet);
         try self.removeRedundantSelectors(stylesheet);
@@ -19,6 +31,11 @@ pub const Optimizer = struct {
         try self.removeDuplicateDeclarations(stylesheet);
         try self.optimizeValues(stylesheet);
         try self.mergeMediaQueries(stylesheet);
+    }
+
+    fn addAutoprefixes(self: *Optimizer, stylesheet: *ast.Stylesheet, options: autoprefixer.AutoprefixOptions) !void {
+        var prefixer = autoprefixer.Autoprefixer.init(self.allocator, options);
+        try prefixer.process(stylesheet);
     }
 
     fn resolveCustomProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {

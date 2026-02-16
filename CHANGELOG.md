@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use optimized character checks in selector parsing
 
 ### Features
+- Add autoprefixer integration with vendor prefix support for CSS properties and values
 - Add CSS custom property resolution with var() function support and fallback values
 - Add watch mode with automatic recompilation on file changes
 - Add basic CSS optimizer with multiple optimization passes

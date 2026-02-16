@@ -4,6 +4,7 @@ const ast = @import("ast.zig");
 const codegen = @import("codegen.zig");
 const error_module = @import("error.zig");
 const parser = @import("parser.zig");
+const autoprefixer = @import("autoprefixer.zig");
 
 const CompileConfig = struct {
     input_file: []const u8,
@@ -11,6 +12,7 @@ const CompileConfig = struct {
     optimize: bool,
     minify: bool,
     source_map: bool,
+    autoprefix: ?autoprefixer.AutoprefixOptions = null,
 };
 
 fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
@@ -53,6 +55,7 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     const options = codegen.CodegenOptions{
         .minify = config.minify,
         .optimize = config.optimize,
+        .autoprefix = config.autoprefix,
     };
 
     const result = try codegen.generate(allocator, &stylesheet, options);
@@ -116,10 +119,12 @@ pub fn main() !void {
     if (args.len < 2) {
         std.debug.print("Usage: zcss <input.css> [-o output.css] [options]\n", .{});
         std.debug.print("\nOptions:\n", .{});
-        std.debug.print("  -o, --output <file>     Output file\n", .{});
+        std.debug.print("  -o, --output <file>      Output file\n", .{});
         std.debug.print("  --optimize               Enable optimizations\n", .{});
         std.debug.print("  --minify                 Minify output\n", .{});
         std.debug.print("  --source-map             Generate source map\n", .{});
+        std.debug.print("  --autoprefix             Add vendor prefixes\n", .{});
+        std.debug.print("  --browsers <list>        Browser support (comma-separated)\n", .{});
         std.debug.print("  --watch                  Watch mode\n", .{});
         std.debug.print("  -h, --help               Show this help\n", .{});
         return;
@@ -131,6 +136,9 @@ pub fn main() !void {
     var minify_flag = false;
     var source_map_flag = false;
     var watch_flag = false;
+    var autoprefix_flag = false;
+    var browsers: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(allocator);
+    defer browsers.deinit();
 
     var i: usize = 2;
     while (i < args.len) : (i += 1) {
@@ -147,11 +155,32 @@ pub fn main() !void {
             source_map_flag = true;
         } else if (std.mem.eql(u8, args[i], "--watch")) {
             watch_flag = true;
+        } else if (std.mem.eql(u8, args[i], "--autoprefix")) {
+            autoprefix_flag = true;
+        } else if (std.mem.eql(u8, args[i], "--browsers")) {
+            if (i + 1 < args.len) {
+                const browsers_str = args[i + 1];
+                var iter = std.mem.splitSequence(u8, browsers_str, ",");
+                while (iter.next()) |browser| {
+                    const trimmed = std.mem.trim(u8, browser, " \t");
+                    if (trimmed.len > 0) {
+                        try browsers.append(trimmed);
+                    }
+                }
+                i += 1;
+            }
         } else if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
             std.debug.print("Usage: zcss <input.css> [-o output.css] [options]\n", .{});
             return;
         }
     }
+
+    const autoprefix_opts: ?autoprefixer.AutoprefixOptions = if (autoprefix_flag) blk: {
+        const browsers_slice = try browsers.toOwnedSlice();
+        break :blk autoprefixer.AutoprefixOptions{
+            .browsers = browsers_slice,
+        };
+    } else null;
 
     const config = CompileConfig{
         .input_file = input_file,
@@ -159,6 +188,7 @@ pub fn main() !void {
         .optimize = optimize_flag,
         .minify = minify_flag,
         .source_map = source_map_flag,
+        .autoprefix = autoprefix_opts,
     };
 
     if (watch_flag) {
