@@ -1,6 +1,6 @@
 # SCSS Advanced Features
 
-zcss supports advanced SCSS features including mixins with content blocks and variable arguments.
+zigcss supports advanced SCSS features including mixins with content blocks and variable arguments.
 
 ## Mixins with @content
 

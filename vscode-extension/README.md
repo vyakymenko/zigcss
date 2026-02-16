@@ -1,6 +1,6 @@
-# zcss VSCode Extension
+# zigcss VSCode Extension
 
-VSCode extension for zcss Language Server Protocol support.
+VSCode extension for zigcss Language Server Protocol support.
 
 ## Features
 
@@ -13,10 +13,10 @@ VSCode extension for zcss Language Server Protocol support.
 
 ### From Source
 
-1. Build zcss:
+1. Build zigcss:
    ```bash
-   git clone https://github.com/vyakymenko/zcss.git
-   cd zcss
+   git clone https://github.com/vyakymenko/zigcss.git
+   cd zigcss
    zig build -Doptimize=ReleaseFast
    ```
 
@@ -35,22 +35,22 @@ The extension can be configured in VSCode settings:
 
 ```json
 {
-  "zcss.languageServerPath": "zcss",
-  "zcss.languageServerArgs": ["--lsp"]
+  "zigcss.languageServerPath": "zigcss",
+  "zigcss.languageServerArgs": ["--lsp"]
 }
 ```
 
-If `zcss` is not in your PATH, provide the full path:
+If `zigcss` is not in your PATH, provide the full path:
 
 ```json
 {
-  "zcss.languageServerPath": "/path/to/zcss/zig-out/bin/zcss"
+  "zigcss.languageServerPath": "/path/to/zigcss/zig-out/bin/zigcss"
 }
 ```
 
 ## Requirements
 
-- zcss binary (built from source or installed)
+- zigcss binary (built from source or installed)
 - VSCode 1.74.0 or later
 
 ## Development

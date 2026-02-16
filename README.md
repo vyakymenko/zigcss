@@ -1,8 +1,8 @@
-# zcss
+# zigcss
 
 > **The world's fastest CSS compiler** — Built with Zig for uncompromising performance
 
-**zcss** is a zero-dependency CSS compiler written in Zig, designed from the ground up to be the fastest CSS processing tool available. Leveraging Zig's compile-time optimizations, memory safety, and zero-cost abstractions, zcss delivers unmatched performance for CSS parsing, transformation, and compilation.
+**zigcss** is a zero-dependency CSS compiler written in Zig, designed from the ground up to be the fastest CSS processing tool available. Leveraging Zig's compile-time optimizations, memory safety, and zero-cost abstractions, zigcss delivers unmatched performance for CSS parsing, transformation, and compilation.
 
 ## Table of Contents
 
@@ -21,7 +21,7 @@
 
 ## 🚀 Performance
 
-zcss is engineered to be **the fastest CSS compiler in the world**. Key performance characteristics:
+zigcss is engineered to be **the fastest CSS compiler in the world**. Key performance characteristics:
 
 - **Zero runtime dependencies** — Single binary, no external libraries
 - **Compile-time optimizations** — Leverages Zig's comptime for maximum efficiency
@@ -34,40 +34,40 @@ zcss is engineered to be **the fastest CSS compiler in the world**. Key performa
 Performance tested on a MacBook Pro M3 (16GB RAM) with real-world CSS workloads. All tools tested with minification and optimization enabled.
 
 #### Small CSS (~100 bytes)
-| Compiler | **Total Time** | Speedup vs zcss |
+| Compiler | **Total Time** | Speedup vs zigcss |
 |----------|----------------|-----------------|
-| **zcss** | **11.1ms** | 1x (baseline) |
+| **zigcss** | **11.1ms** | 1x (baseline) |
 | Lightning CSS | 546.3ms | **49x slower** |
 | esbuild | 599.2ms | **54x slower** |
 | cssnano | 764.3ms | **69x slower** |
 | PostCSS | 773.2ms | **70x slower** |
 | Sass | 766.1ms | **69x slower** |
 
-**zcss is 49-70x faster** than competitors for small files.
+**zigcss is 49-70x faster** than competitors for small files.
 
 #### Medium CSS (~10KB, typical production bundle)
-| Compiler | **Total Time** | Speedup vs zcss |
+| Compiler | **Total Time** | Speedup vs zigcss |
 |----------|----------------|-----------------|
-| **zcss** | **10.6ms** | 1x (baseline) |
+| **zigcss** | **10.6ms** | 1x (baseline) |
 | Lightning CSS | 558.0ms | **53x slower** |
 | esbuild | 595.0ms | **56x slower** |
 | PostCSS | 667.5ms | **63x slower** |
 | cssnano | 744.6ms | **70x slower** |
 | Sass | 803.0ms | **76x slower** |
 
-**zcss is 53-76x faster** than competitors for medium-sized files.
+**zigcss is 53-76x faster** than competitors for medium-sized files.
 
 #### Large CSS (~100KB, complex stylesheet)
-| Compiler | **Total Time** | Speedup vs zcss |
+| Compiler | **Total Time** | Speedup vs zigcss |
 |----------|----------------|-----------------|
-| **zcss** | **27.0ms** | 1x (baseline) |
+| **zigcss** | **27.0ms** | 1x (baseline) |
 | Lightning CSS | 646.9ms | **24x slower** |
 | esbuild | 619.2ms | **23x slower** |
 | PostCSS | 699.8ms | **26x slower** |
 | cssnano | 867.0ms | **32x slower** |
 | Sass | 830.3ms | **31x slower** |
 
-**zcss is 23-32x faster** than competitors for large files.
+**zigcss is 23-32x faster** than competitors for large files.
 
 #### Tailwind CSS Build Comparison
 
@@ -95,7 +95,7 @@ Performance comparison of Tailwind CSS build process vs processing Tailwind-gene
 - **Startup time**: Instant (no VM or interpreter startup)
 - **Real-world**: Processes typical 10KB production CSS in **10.6ms** vs 558ms (Lightning CSS), 595ms (esbuild), or 803ms (Sass)
 
-#### Why zcss is Faster
+#### Why zigcss is Faster
 
 1. **Native compilation** - Compiled to machine code, not interpreted
 2. **Zero-copy parsing** - Minimal allocations, string interning for efficiency
@@ -129,20 +129,20 @@ Performance comparison of Tailwind CSS build process vs processing Tailwind-gene
 
 **npm (Node.js):**
 ```bash
-npm install -g zcss
+npm install -g zigcss
 ```
 
 The npm package automatically downloads the appropriate pre-built binary for your platform. If a pre-built binary is not available, you can build from source (requires Zig 0.15.2+).
 
 **Homebrew (macOS):**
 ```bash
-brew tap vyakymenko/zcss
-brew install zcss
+brew tap vyakymenko/zigcss
+brew install zigcss
 ```
 
 Or install from source:
 ```bash
-brew install --build-from-source Formula/zcss.rb
+brew install --build-from-source Formula/zigcss.rb
 ```
 
 ### From Source
@@ -152,16 +152,16 @@ brew install --build-from-source Formula/zcss.rb
 - C compiler (for linking)
 
 ```bash
-git clone https://github.com/vyakymenko/zcss.git
-cd zcss
+git clone https://github.com/vyakymenko/zigcss.git
+cd zigcss
 zig build -Doptimize=ReleaseFast
 ```
 
-The binary will be available at `zig-out/bin/zcss`.
+The binary will be available at `zig-out/bin/zigcss`.
 
 ### Pre-built Binaries
 
-Pre-built binaries are available for all supported platforms on the [releases page](https://github.com/vyakymenko/zcss/releases).
+Pre-built binaries are available for all supported platforms on the [releases page](https://github.com/vyakymenko/zigcss/releases).
 
 **Supported Platforms:**
 - Linux (x86_64, aarch64)
@@ -170,29 +170,29 @@ Pre-built binaries are available for all supported platforms on the [releases pa
 
 **Quick Install:**
 
-1. Download the appropriate binary for your platform from the [latest release](https://github.com/vyakymenko/zcss/releases/latest)
+1. Download the appropriate binary for your platform from the [latest release](https://github.com/vyakymenko/zigcss/releases/latest)
 2. Extract the archive
 3. Add the binary to your PATH or use it directly
 
 **Example (Linux/macOS):**
 ```bash
 # Download and extract
-wget https://github.com/vyakymenko/zcss/releases/download/v0.1.0/zcss-0.1.0-x86_64-linux.tar.gz
-tar -xzf zcss-0.1.0-x86_64-linux.tar.gz
+wget https://github.com/vyakymenko/zigcss/releases/download/v0.1.0/zigcss-0.1.0-x86_64-linux.tar.gz
+tar -xzf zigcss-0.1.0-x86_64-linux.tar.gz
 
 # Make executable and move to PATH
-chmod +x zcss
-sudo mv zcss /usr/local/bin/
+chmod +x zigcss
+sudo mv zigcss /usr/local/bin/
 ```
 
 **Example (Windows):**
 ```powershell
 # Download and extract
-Invoke-WebRequest -Uri "https://github.com/vyakymenko/zcss/releases/download/v0.1.0/zcss-0.1.0-x86_64-windows.zip" -OutFile "zcss.zip"
-Expand-Archive -Path zcss.zip -DestinationPath .
+Invoke-WebRequest -Uri "https://github.com/vyakymenko/zigcss/releases/download/v0.1.0/zigcss-0.1.0-x86_64-windows.zip" -OutFile "zigcss.zip"
+Expand-Archive -Path zigcss.zip -DestinationPath .
 
 # Add to PATH (PowerShell as Administrator)
-$env:Path += ";C:\path\to\zcss"
+$env:Path += ";C:\path\to\zigcss"
 [Environment]::SetEnvironmentVariable("Path", $env:Path, [EnvironmentVariableTarget]::Machine)
 ```
 
@@ -205,8 +205,8 @@ Add to your `build.zig.zon`:
     .name = "my-project",
     .version = "0.1.0",
     .dependencies = .{
-        .zcss = .{
-            .path = "../zcss",
+        .zigcss = .{
+            .path = "../zigcss",
         },
     },
 }
@@ -214,17 +214,17 @@ Add to your `build.zig.zon`:
 
 ### Build Integration
 
-zcss provides build helpers for seamless integration with Zig's build system. Automatically compile CSS files as part of your build process:
+zigcss provides build helpers for seamless integration with Zig's build system. Automatically compile CSS files as part of your build process:
 
-**1. Add zcss as a dependency in `build.zig.zon`:**
+**1. Add zigcss as a dependency in `build.zig.zon`:**
 
 ```zig
 .{
     .name = "my-project",
     .version = "0.1.0",
     .dependencies = .{
-        .zcss = .{
-            .path = "../zcss",
+        .zigcss = .{
+            .path = "../zigcss",
         },
     },
 }
@@ -239,23 +239,23 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zcss_dep = b.dependency("zcss", .{
+    const zigcss_dep = b.dependency("zigcss", .{
         .target = target,
         .optimize = optimize,
     });
 
-    const zcss_exe = zcss_dep.artifact("zcss");
-    const zcss_path = zcss_dep.path("");
+    const zigcss_exe = zigcss_dep.artifact("zigcss");
+    const zigcss_path = zigcss_dep.path("");
 
     const build_helpers = @import("build_helpers.zig");
-    const build_helpers_path = b.pathJoin(&.{ zcss_path, "build_helpers.zig" });
+    const build_helpers_path = b.pathJoin(&.{ zigcss_path, "build_helpers.zig" });
     const build_helpers_module = b.createModule(.{
         .root_source_file = b.path(build_helpers_path),
     });
 
     const css_step = build_helpers.addCssCompileStep(
         b,
-        zcss_exe,
+        zigcss_exe,
         "zig-out/css",
     );
 
@@ -282,8 +282,8 @@ pub fn build(b: *std.Build) void {
 
 **Build Helper API:**
 
-- `addCssCompileStep(builder, zcss_exe, output_dir)` - Create a CSS compilation step
-- `addCssCompileStepTo(builder, zcss_exe, output_dir, step)` - Create and attach to a build step
+- `addCssCompileStep(builder, zigcss_exe, output_dir)` - Create a CSS compilation step
+- `addCssCompileStepTo(builder, zigcss_exe, output_dir, step)` - Create and attach to a build step
 - `css_step.addInputFile(file)` - Add a single CSS file to compile
 - `css_step.addInputFiles(files)` - Add multiple CSS files
 - `css_step.setOptimize(bool)` - Enable/disable optimizations
@@ -301,53 +301,53 @@ CSS files are automatically compiled when you run `zig build`, and the compiled 
 
 ```bash
 # Compile a single CSS file
-zcss input.css -o output.css
+zigcss input.css -o output.css
 
 # Compile with optimizations
-zcss input.css -o output.css --optimize --minify
+zigcss input.css -o output.css --optimize --minify
 
 # Add vendor prefixes
-zcss input.css -o output.css --autoprefix
+zigcss input.css -o output.css --autoprefix
 
 # Add vendor prefixes with specific browser support
-zcss input.css -o output.css --autoprefix --browsers "last 2 versions,> 1%"
+zigcss input.css -o output.css --autoprefix --browsers "last 2 versions,> 1%"
 
 # Watch mode for development
-zcss input.css -o output.css --watch
+zigcss input.css -o output.css --watch
 
 # Generate source maps
-zcss input.css -o output.css --source-map
+zigcss input.css -o output.css --source-map
 
 # Extract critical CSS for above-the-fold content
-zcss input.css -o critical.css --critical-classes "header,button,card" --critical-ids "nav" --critical-elements "div,body"
+zigcss input.css -o critical.css --critical-classes "header,button,card" --critical-ids "nav" --critical-elements "div,body"
 
 # Compile multiple files
-zcss src/*.css -o dist/ --output-dir
+zigcss src/*.css -o dist/ --output-dir
 
 # Start Language Server Protocol server
-zcss --lsp
+zigcss --lsp
 ```
 
 ### Supported Formats
 
-zcss supports multiple CSS preprocessor formats:
+zigcss supports multiple CSS preprocessor formats:
 
 ```bash
 # SCSS/SASS
-zcss styles.scss -o styles.css
-zcss styles.sass -o styles.css
+zigcss styles.scss -o styles.css
+zigcss styles.sass -o styles.css
 
 # LESS
-zcss styles.less -o styles.css
+zigcss styles.less -o styles.css
 
 # CSS Modules
-zcss component.module.css -o component.module.css
+zigcss component.module.css -o component.module.css
 
 # PostCSS
-zcss styles.postcss -o styles.css
+zigcss styles.postcss -o styles.css
 
 # Stylus
-zcss styles.styl -o styles.css
+zigcss styles.styl -o styles.css
 ```
 
 ### Library Usage
@@ -356,7 +356,7 @@ zcss styles.styl -o styles.css
 
 ```zig
 const std = @import("std");
-const zcss = @import("zcss");
+const zigcss = @import("zigcss");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -364,7 +364,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     const css = ".container { color: red; }";
-    const result = try zcss.compile(allocator, css, .{
+    const result = try zigcss.compile(allocator, css, .{
         .optimize = true,
         .source_map = true,
     });
@@ -378,7 +378,7 @@ pub fn main() !void {
 
 ```zig
 const std = @import("std");
-const zcss = @import("zcss");
+const zigcss = @import("zigcss");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -388,7 +388,7 @@ pub fn main() !void {
     const css = try std.fs.cwd().readFileAlloc(allocator, "styles.css", 10 * 1024 * 1024);
     defer allocator.free(css);
 
-    const options = zcss.CompileOptions{
+    const options = zigcss.CompileOptions{
         .optimize = true,
         .minify = true,
         .source_map = true,
@@ -399,7 +399,7 @@ pub fn main() !void {
         .optimize_selectors = true,
     };
 
-    const result = try zcss.compile(allocator, css, options);
+    const result = try zigcss.compile(allocator, css, options);
     defer result.deinit(allocator);
 
     try std.fs.cwd().writeFileAlloc(allocator, "styles.min.css", result.css);
@@ -413,7 +413,7 @@ pub fn main() !void {
 
 ### CSS Nesting
 
-zcss supports the CSS Nesting specification:
+zigcss supports the CSS Nesting specification:
 
 **Input:**
 ```css
@@ -474,7 +474,7 @@ zcss supports the CSS Nesting specification:
 
 ### Container Queries
 
-zcss supports CSS Container Queries, allowing styles to be applied based on the size of a containing element rather than the viewport:
+zigcss supports CSS Container Queries, allowing styles to be applied based on the size of a containing element rather than the viewport:
 
 ```css
 .card {
@@ -499,7 +499,7 @@ Container queries are automatically optimized by merging identical `@container` 
 
 ### Cascade Layers
 
-zcss supports CSS Cascade Layers, allowing you to control the cascade order of your styles:
+zigcss supports CSS Cascade Layers, allowing you to control the cascade order of your styles:
 
 ```css
 @layer theme {
@@ -525,7 +525,7 @@ Cascade layers are automatically optimized by merging identical `@layer` rules w
 
 ### Tailwind @apply Expansion
 
-zcss supports Tailwind CSS `@apply` directive expansion, automatically converting utility classes into CSS declarations:
+zigcss supports Tailwind CSS `@apply` directive expansion, automatically converting utility classes into CSS declarations:
 
 **Input:**
 ```css
@@ -548,7 +548,7 @@ zcss supports Tailwind CSS `@apply` directive expansion, automatically convertin
 }
 ```
 
-zcss includes a comprehensive Tailwind utility registry covering:
+zigcss includes a comprehensive Tailwind utility registry covering:
 - **Spacing**: padding, margin utilities (p-*, px-*, py-*, m-*, mx-*, my-*, etc.)
 - **Colors**: text and background colors (text-*, bg-*)
 - **Typography**: font sizes, weights, styles, transforms
@@ -560,7 +560,7 @@ zcss includes a comprehensive Tailwind utility registry covering:
 
 ### Dead Code Elimination
 
-zcss can remove unused CSS rules based on a list of used selectors (classes, IDs, elements, attributes). This is useful for removing CSS that's not referenced in your HTML/JavaScript:
+zigcss can remove unused CSS rules based on a list of used selectors (classes, IDs, elements, attributes). This is useful for removing CSS that's not referenced in your HTML/JavaScript:
 
 **Input CSS:**
 ```css
@@ -575,7 +575,7 @@ span { color: white; }
 **Usage:**
 ```zig
 const std = @import("std");
-const zcss = @import("zcss");
+const zigcss = @import("zigcss");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -589,17 +589,17 @@ pub fn main() !void {
     const used_ids = [_][]const u8{"used-id", "header"};
     const used_elements = [_][]const u8{"div", "body"};
 
-    const dead_code_opts = zcss.optimizer.DeadCodeOptions{
+    const dead_code_opts = zigcss.optimizer.DeadCodeOptions{
         .used_classes = &used_classes,
         .used_ids = &used_ids,
         .used_elements = &used_elements,
     };
 
-    const parser_trait = zcss.formats.getParser(.css);
+    const parser_trait = zigcss.formats.getParser(.css);
     var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
-    const result = try zcss.codegen.generate(allocator, &stylesheet, .{
+    const result = try zigcss.codegen.generate(allocator, &stylesheet, .{
         .optimize = true,
         .dead_code = dead_code_opts,
     });
@@ -620,7 +620,7 @@ Dead code elimination works with nested rules in `@media`, `@container`, and `@l
 
 ### Critical CSS Extraction
 
-zcss can extract critical CSS for above-the-fold content, keeping only the CSS rules needed for initial page render. This improves First Contentful Paint (FCP) and Largest Contentful Paint (LCP) metrics by reducing the amount of CSS that needs to be parsed and applied before the page becomes interactive.
+zigcss can extract critical CSS for above-the-fold content, keeping only the CSS rules needed for initial page render. This improves First Contentful Paint (FCP) and Largest Contentful Paint (LCP) metrics by reducing the amount of CSS that needs to be parsed and applied before the page becomes interactive.
 
 **Input CSS:**
 ```css
@@ -635,7 +635,7 @@ span { color: white; }
 **Usage:**
 ```zig
 const std = @import("std");
-const zcss = @import("zcss");
+const zigcss = @import("zigcss");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -649,17 +649,17 @@ pub fn main() !void {
     const critical_ids = [_][]const u8{"critical-nav", "header"};
     const critical_elements = [_][]const u8{"div", "body"};
 
-    const critical_css_opts = zcss.optimizer.CriticalCssOptions{
+    const critical_css_opts = zigcss.optimizer.CriticalCssOptions{
         .critical_classes = &critical_classes,
         .critical_ids = &critical_ids,
         .critical_elements = &critical_elements,
     };
 
-    const parser_trait = zcss.formats.getParser(.css);
+    const parser_trait = zigcss.formats.getParser(.css);
     var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
-    const result = try zcss.codegen.generate(allocator, &stylesheet, .{
+    const result = try zigcss.codegen.generate(allocator, &stylesheet, .{
         .optimize = true,
         .critical_css = critical_css_opts,
     });
@@ -681,12 +681,12 @@ Critical CSS extraction works with nested rules in `@media`, `@container`, and `
 **CLI Usage:**
 ```bash
 # Extract critical CSS with specific classes, IDs, and elements
-zcss styles.css -o critical.css --critical-classes "header,button,card" --critical-ids "nav,header" --critical-elements "div,body"
+zigcss styles.css -o critical.css --critical-classes "header,button,card" --critical-ids "nav,header" --critical-elements "div,body"
 ```
 
 ### SCSS Advanced Features
 
-zcss supports advanced SCSS features including mixins with content blocks and variable arguments:
+zigcss supports advanced SCSS features including mixins with content blocks and variable arguments:
 
 **Mixins with @content:**
 ```scss
@@ -717,11 +717,11 @@ zcss supports advanced SCSS features including mixins with content blocks and va
 
 ### Language Server Protocol (LSP) Support
 
-zcss includes a full LSP server implementation for editor integration:
+zigcss includes a full LSP server implementation for editor integration:
 
 **Start the LSP server:**
 ```bash
-zcss --lsp
+zigcss --lsp
 ```
 
 **Supported LSP Features:**
@@ -735,16 +735,16 @@ zcss --lsp
 
 **Editor Integration:**
 
-zcss provides official editor integrations for popular editors:
+zigcss provides official editor integrations for popular editors:
 
 #### VSCode Integration
 
 **Option 1: Use the VSCode Extension (Recommended)**
 
-1. Build zcss:
+1. Build zigcss:
    ```bash
-   git clone https://github.com/vyakymenko/zcss.git
-   cd zcss
+   git clone https://github.com/vyakymenko/zigcss.git
+   cd zigcss
    zig build -Doptimize=ReleaseFast
    ```
 
@@ -762,15 +762,15 @@ zcss provides official editor integrations for popular editors:
 Add to your `.vscode/settings.json`:
 ```json
 {
-  "zcss.languageServerPath": "zcss",
-  "zcss.languageServerArgs": ["--lsp"]
+  "zigcss.languageServerPath": "zigcss",
+  "zigcss.languageServerArgs": ["--lsp"]
 }
 ```
 
-If `zcss` is not in your PATH, provide the full path:
+If `zigcss` is not in your PATH, provide the full path:
 ```json
 {
-  "zcss.languageServerPath": "/path/to/zcss/zig-out/bin/zcss"
+  "zigcss.languageServerPath": "/path/to/zigcss/zig-out/bin/zigcss"
 }
 ```
 
@@ -789,8 +789,8 @@ The VSCode extension provides:
    use {
      'neovim/nvim-lspconfig',
      config = function()
-       require('lspconfig').zcss.setup({
-         cmd = {'zcss', '--lsp'},
+       require('lspconfig').zigcss.setup({
+         cmd = {'zigcss', '--lsp'},
          filetypes = {'css', 'scss', 'sass', 'less', 'stylus'},
        })
      end
@@ -814,11 +814,11 @@ The LSP server can be integrated with any editor that supports LSP:
 - **Sublime Text**: Use with `LSP` package
 - **Atom**: Use with `atom-languageclient`
 
-All integrations use the standard LSP protocol via `zcss --lsp`.
+All integrations use the standard LSP protocol via `zigcss --lsp`.
 
 ## 🏗️ Architecture
 
-zcss is built with performance in mind using a multi-stage compilation pipeline:
+zigcss is built with performance in mind using a multi-stage compilation pipeline:
 
 ### Parser
 
@@ -939,23 +939,23 @@ pub const CompileResult = struct {
 
 ### Plugin System
 
-zcss includes a powerful plugin system that allows you to transform the AST during compilation. Plugins run after parsing and before optimization, giving you full control over CSS transformations.
+zigcss includes a powerful plugin system that allows you to transform the AST during compilation. Plugins run after parsing and before optimization, giving you full control over CSS transformations.
 
 #### Basic Plugin Usage
 
 ```zig
 const std = @import("std");
-const zcss = @import("zcss");
+const zigcss = @import("zigcss");
 
-fn myTransform(allocator: std.mem.Allocator, stylesheet: *zcss.ast.Stylesheet) !void {
+fn myTransform(allocator: std.mem.Allocator, stylesheet: *zigcss.ast.Stylesheet) !void {
     // Transform the stylesheet AST
     // For example, add a custom rule
-    var style_rule = try zcss.ast.StyleRule.init(stylesheet.allocator);
-    var selector = try zcss.ast.Selector.init(stylesheet.allocator);
+    var style_rule = try zigcss.ast.StyleRule.init(stylesheet.allocator);
+    var selector = try zigcss.ast.Selector.init(stylesheet.allocator);
     try selector.parts.append(stylesheet.allocator, .{ .class = "custom-class" });
     try style_rule.selectors.append(stylesheet.allocator, selector);
     
-    var decl = zcss.ast.Declaration.init(stylesheet.allocator);
+    var decl = zigcss.ast.Declaration.init(stylesheet.allocator);
     decl.property = "color";
     decl.value = "blue";
     try style_rule.declarations.append(stylesheet.allocator, decl);
@@ -970,19 +970,19 @@ pub fn main() !void {
 
     const css = ".container { color: red; }";
     
-    const parser_trait = zcss.formats.getParser(.css);
+    const parser_trait = zigcss.formats.getParser(.css);
     var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
-    const my_plugin = zcss.plugin.Plugin.init("my-transform", myTransform);
+    const my_plugin = zigcss.plugin.Plugin.init("my-transform", myTransform);
     
-    const options = zcss.codegen.CodegenOptions{
+    const options = zigcss.codegen.CodegenOptions{
         .plugins = &.{my_plugin},
         .optimize = true,
         .minify = true,
     };
 
-    const result = try zcss.codegen.generate(allocator, &stylesheet, options);
+    const result = try zigcss.codegen.generate(allocator, &stylesheet, options);
     defer allocator.free(result);
     
     std.debug.print("Compiled CSS: {s}\n", .{result});
@@ -994,11 +994,11 @@ pub fn main() !void {
 For multiple plugins, use the `PluginRegistry`:
 
 ```zig
-var registry = try zcss.plugin.PluginRegistry.init(allocator);
+var registry = try zigcss.plugin.PluginRegistry.init(allocator);
 defer registry.deinit();
 
-const plugin1 = zcss.plugin.Plugin.init("plugin1", transform1);
-const plugin2 = zcss.plugin.Plugin.init("plugin2", transform2);
+const plugin1 = zigcss.plugin.Plugin.init("plugin1", transform1);
+const plugin2 = zigcss.plugin.Plugin.init("plugin2", transform2);
 
 try registry.add(plugin1);
 try registry.add(plugin2);
@@ -1044,12 +1044,12 @@ zig build bench
 zig build test --summary all
 
 # Compile with performance profiling
-zcss input.css -o output.css --profile
+zigcss input.css -o output.css --profile
 ```
 
 ## 📚 Documentation
 
-Comprehensive documentation is available at **[https://vyakymenko.github.io/zcss/](https://vyakymenko.github.io/zcss/)**
+Comprehensive documentation is available at **[https://vyakymenko.github.io/zigcss/](https://vyakymenko.github.io/zigcss/)**
 
 The documentation site includes:
 - Getting started guide
@@ -1210,8 +1210,8 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 ### Development Setup
 
 ```bash
-git clone https://github.com/vyakymenko/zcss.git
-cd zcss
+git clone https://github.com/vyakymenko/zigcss.git
+cd zigcss
 zig build test
 ```
 
@@ -1264,7 +1264,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Author**: Valentyn Yakymenko
 - **GitHub**: [@vyakymenko](https://github.com/vyakymenko)
-- **Issues**: [GitHub Issues](https://github.com/vyakymenko/zcss/issues)
+- **Issues**: [GitHub Issues](https://github.com/vyakymenko/zigcss/issues)
 
 ## 📚 Resources
 

@@ -1,7 +1,7 @@
 {
-  "name": "zcss-docs",
+  "name": "zigcss-docs",
   "version": "1.0.0",
-  "description": "Documentation site for zcss",
+  "description": "Documentation site for zigcss",
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",

@@ -449,9 +449,9 @@ pub fn main() !void {
     }
 
     if (args.len < 2) {
-        std.debug.print("Usage: zcss <input.css> [-o output.css] [options]\n", .{});
-        std.debug.print("       zcss <input1.css> <input2.css> ... [-o output-dir/] [--output-dir] [options]\n", .{});
-        std.debug.print("       zcss --lsp          Start Language Server Protocol server\n", .{});
+        std.debug.print("Usage: zigcss <input.css> [-o output.css] [options]\n", .{});
+        std.debug.print("       zigcss <input1.css> <input2.css> ... [-o output-dir/] [--output-dir] [options]\n", .{});
+        std.debug.print("       zigcss --lsp          Start Language Server Protocol server\n", .{});
         std.debug.print("\nOptions:\n", .{});
         std.debug.print("  -o, --output <file>      Output file or directory\n", .{});
         std.debug.print("  --output-dir             Treat output as directory (for multiple files)\n", .{});
@@ -568,7 +568,7 @@ pub fn main() !void {
                 i += 1;
             }
         } else if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
-            std.debug.print("Usage: zcss <input.css> [-o output.css] [options]\n", .{});
+            std.debug.print("Usage: zigcss <input.css> [-o output.css] [options]\n", .{});
             return;
         } else if (args[i][0] != '-') {
             var expanded = try expandGlob(allocator, args[i]);

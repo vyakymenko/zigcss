@@ -1,6 +1,6 @@
 # Preprocessor Support
 
-zcss supports multiple CSS preprocessor formats, allowing you to use your preferred syntax while benefiting from zcss's performance.
+zigcss supports multiple CSS preprocessor formats, allowing you to use your preferred syntax while benefiting from zigcss's performance.
 
 ## Supported Formats
 
@@ -91,20 +91,20 @@ spacing-unit = 8px
 
 ## Compilation
 
-All formats are compiled using the same zcss command:
+All formats are compiled using the same zigcss command:
 
 ```bash
 # SCSS
-zcss styles.scss -o styles.css
+zigcss styles.scss -o styles.css
 
 # LESS
-zcss styles.less -o styles.css
+zigcss styles.less -o styles.css
 
 # PostCSS
-zcss styles.postcss -o styles.css
+zigcss styles.postcss -o styles.css
 
 # Stylus
-zcss styles.styl -o styles.css
+zigcss styles.styl -o styles.css
 ```
 
 ## Next Steps

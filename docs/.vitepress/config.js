@@ -1,12 +1,12 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'zcss',
+  title: 'zigcss',
   description: 'The world\'s fastest CSS compiler - Built with Zig for uncompromising performance',
-  base: '/zcss/',
+  base: '/zigcss/',
   
   head: [
-    ['link', { rel: 'icon', href: '/zcss/favicon.ico' }],
+    ['link', { rel: 'icon', href: '/zigcss/favicon.ico' }],
     ['meta', { name: 'theme-color', content: '#3eaf7c' }],
   ],
 
@@ -18,7 +18,7 @@ export default defineConfig({
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'API', link: '/api/compile-options' },
       { text: 'Examples', link: '/examples/css-nesting' },
-      { text: 'GitHub', link: 'https://github.com/vyakymenko/zcss' },
+      { text: 'GitHub', link: 'https://github.com/vyakymenko/zigcss' },
     ],
 
     sidebar: {
@@ -74,7 +74,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/vyakymenko/zcss' },
+      { icon: 'github', link: 'https://github.com/vyakymenko/zigcss' },
     ],
 
     footer: {

@@ -1,10 +1,10 @@
 # Getting Started
 
-zcss is a high-performance CSS compiler built with Zig. This guide will help you get started with zcss.
+zigcss is a high-performance CSS compiler built with Zig. This guide will help you get started with zigcss.
 
-## What is zcss?
+## What is zigcss?
 
-zcss is a zero-dependency CSS compiler that processes CSS and various CSS preprocessor formats (SCSS, SASS, LESS, Stylus, PostCSS) into optimized, production-ready CSS.
+zigcss is a zero-dependency CSS compiler that processes CSS and various CSS preprocessor formats (SCSS, SASS, LESS, Stylus, PostCSS) into optimized, production-ready CSS.
 
 ## Key Features
 
@@ -22,17 +22,17 @@ See the [Installation Guide](/guide/installation) for detailed installation inst
 
 ```bash
 # Compile a CSS file
-zcss input.css -o output.css
+zigcss input.css -o output.css
 
 # With optimizations
-zcss input.css -o output.css --optimize --minify
+zigcss input.css -o output.css --optimize --minify
 
 # Watch mode for development
-zcss input.css -o output.css --watch
+zigcss input.css -o output.css --watch
 ```
 
 ## Next Steps
 
-- [Installation](/guide/installation) — Install zcss on your system
+- [Installation](/guide/installation) — Install zigcss on your system
 - [Quick Start](/guide/quick-start) — Learn the basics
-- [Examples](/examples/css-nesting) — See zcss in action
+- [Examples](/examples/css-nesting) — See zigcss in action

@@ -1,14 +1,14 @@
--- zcss Language Server Protocol configuration for Neovim
+-- zigcss Language Server Protocol configuration for Neovim
 -- Requires nvim-lspconfig plugin
 
 local nvim_lsp = require('lspconfig')
 
 local configs = require('lspconfig.configs')
 
-if not configs.zcss then
-  configs.zcss = {
+if not configs.zigcss then
+  configs.zigcss = {
     default_config = {
-      cmd = {'zcss', '--lsp'},
+      cmd = {'zigcss', '--lsp'},
       filetypes = {'css', 'scss', 'sass', 'less', 'stylus'},
       root_dir = function(fname)
         return require('lspconfig.util').root_pattern('.git', 'package.json', 'build.zig')(fname)
@@ -43,4 +43,4 @@ if not configs.zcss then
   }
 end
 
-nvim_lsp.zcss.setup{}
+nvim_lsp.zigcss.setup{}

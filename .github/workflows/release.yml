@@ -20,27 +20,27 @@ jobs:
             arch: x86_64
             target: x86_64-linux
             zig-version: 0.15.2
-            binary-name: zcss
+            binary-name: zigcss
           - os: ubuntu-latest
             arch: aarch64
             target: aarch64-linux
             zig-version: 0.15.2
-            binary-name: zcss
+            binary-name: zigcss
           - os: macos-latest
             arch: x86_64
             target: x86_64-macos
             zig-version: 0.15.2
-            binary-name: zcss
+            binary-name: zigcss
           - os: macos-latest
             arch: aarch64
             target: aarch64-macos
             zig-version: 0.15.2
-            binary-name: zcss
+            binary-name: zigcss
           - os: windows-latest
             arch: x86_64
             target: x86_64-windows
             zig-version: 0.15.2
-            binary-name: zcss.exe
+            binary-name: zigcss.exe
 
     steps:
       - name: Checkout code
@@ -70,21 +70,21 @@ jobs:
             mkdir -p release
             cp zig-out/bin/${{ matrix.binary-name }} release/
             cd release
-            powershell -Command "Compress-Archive -Path '${{ matrix.binary-name }}' -DestinationPath '../zcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip' -Force"
+            powershell -Command "Compress-Archive -Path '${{ matrix.binary-name }}' -DestinationPath '../zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip' -Force"
             cd ..
           else
             mkdir -p release
             cp zig-out/bin/${{ matrix.binary-name }} release/
             cd release
-            tar czf ../zcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz ${{ matrix.binary-name }}
+            tar czf ../zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz ${{ matrix.binary-name }}
             cd ..
           fi
 
       - name: Upload Release Asset
         uses: actions/upload-artifact@v4
         with:
-          name: zcss-${{ matrix.target }}
-          path: zcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.*
+          name: zigcss-${{ matrix.target }}
+          path: zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.*
 
   create-release:
     name: Create Release
@@ -108,7 +108,7 @@ jobs:
         with:
           files: artifacts/**/*
           body: |
-            ## zcss ${{ steps.version.outputs.VERSION }}
+            ## zigcss ${{ steps.version.outputs.VERSION }}
 
             Pre-built binaries for all supported platforms.
 
@@ -124,7 +124,7 @@ jobs:
 
             ### Performance
 
-            zcss is the world's fastest CSS compiler, processing typical production CSS files 80-130x faster than competitors.
+            zigcss is the world's fastest CSS compiler, processing typical production CSS files 80-130x faster than competitors.
 
           draft: false
           prerelease: false

@@ -1,6 +1,6 @@
 # Container Queries
 
-zcss supports CSS Container Queries, allowing styles to be applied based on the size of a containing element rather than the viewport.
+zigcss supports CSS Container Queries, allowing styles to be applied based on the size of a containing element rather than the viewport.
 
 ## Basic Container Query
 
@@ -39,7 +39,7 @@ zcss supports CSS Container Queries, allowing styles to be applied based on the 
 
 ## Container Query Merging
 
-zcss automatically merges identical container queries:
+zigcss automatically merges identical container queries:
 
 **Input:**
 

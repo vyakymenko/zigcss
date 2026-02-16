@@ -4,7 +4,7 @@ const Build = std.Build;
 pub const CssCompileStep = struct {
     step: Build.Step,
     builder: *Build,
-    zcss_exe: *Build.Step.Compile,
+    zigcss_exe: *Build.Step.Compile,
     input_files: std.ArrayList([]const u8),
     output_dir: []const u8,
     optimize: bool,
@@ -15,7 +15,7 @@ pub const CssCompileStep = struct {
 
     pub fn init(
         builder: *Build,
-        zcss_exe: *Build.Step.Compile,
+        zigcss_exe: *Build.Step.Compile,
         output_dir: []const u8,
     ) *CssCompileStep {
         const self = builder.allocator.create(CssCompileStep) catch @panic("OOM");
@@ -27,7 +27,7 @@ pub const CssCompileStep = struct {
                 .makeFn = make,
             }),
             .builder = builder,
-            .zcss_exe = zcss_exe,
+            .zigcss_exe = zigcss_exe,
             .input_files = std.ArrayList([]const u8).init(builder.allocator),
             .output_dir = output_dir,
             .optimize = false,
@@ -79,8 +79,8 @@ pub const CssCompileStep = struct {
         _ = progress;
         const self = @fieldParentPtr(CssCompileStep, "step", step);
 
-        const run_cmd = self.builder.addRunArtifact(self.zcss_exe);
-        run_cmd.step.dependOn(&self.zcss_exe.step);
+        const run_cmd = self.builder.addRunArtifact(self.zigcss_exe);
+        run_cmd.step.dependOn(&self.zigcss_exe.step);
 
         if (self.input_files.items.len == 0) {
             return error.NoInputFiles;
@@ -130,19 +130,19 @@ pub const CssCompileStep = struct {
 
 pub fn addCssCompileStep(
     builder: *Build,
-    zcss_exe: *Build.Step.Compile,
+    zigcss_exe: *Build.Step.Compile,
     output_dir: []const u8,
 ) *CssCompileStep {
-    return CssCompileStep.init(builder, zcss_exe, output_dir);
+    return CssCompileStep.init(builder, zigcss_exe, output_dir);
 }
 
 pub fn addCssCompileStepTo(
     builder: *Build,
-    zcss_exe: *Build.Step.Compile,
+    zigcss_exe: *Build.Step.Compile,
     output_dir: []const u8,
     step: *Build.Step,
 ) *CssCompileStep {
-    const css_step = addCssCompileStep(builder, zcss_exe, output_dir);
+    const css_step = addCssCompileStep(builder, zigcss_exe, output_dir);
     step.dependOn(&css_step.step);
     return css_step;
 }

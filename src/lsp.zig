@@ -239,7 +239,7 @@ pub const LspServer = struct {
                     const col: i64 = @intCast(column);
                     const col_char = if (col - 1 > 0) col - 1 else 0;
                     try diagnostics.writer(self.allocator).print(
-                        "{{\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zcss\"}}",
+                        "{{\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zigcss\"}}",
                         .{ line - 1, col_char, line - 1, column, message });
                 },
             }
@@ -254,7 +254,7 @@ pub const LspServer = struct {
                 
                 const error_msg = @errorName(err);
                 try diagnostics.writer(self.allocator).print(
-                    "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":1}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zcss\"}}",
+                    "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":1}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zigcss\"}}",
                     .{error_msg});
             }
         }

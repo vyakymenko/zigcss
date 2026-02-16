@@ -92,10 +92,10 @@ function timeCommand(cmd) {
     }
 }
 
-function benchmarkZcss(file) {
+function benchmarkZigcss(file) {
     const start = process.hrtime.bigint();
     try {
-        execSync(`./zig-out/bin/zcss ${file} -o /dev/null --minify --optimize`, {
+        execSync(`./zig-out/bin/zigcss ${file} -o /dev/null --minify --optimize`, {
             stdio: 'pipe',
             timeout: 30000
         });
@@ -147,9 +147,9 @@ function benchmarkTailwind(inputFile, contentFile, outputFile) {
 }
 
 const results = {
-    small: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] },
-    medium: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] },
-    large: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] }
+    small: { zigcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] },
+    medium: { zigcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] },
+    large: { zigcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] }
 };
 
 const tailwindResults = {
@@ -180,7 +180,7 @@ if (!fs.existsSync('bench-tailwind-small-out.css') ||
 // Warmup
 console.log('Warming up...');
 for (let i = 0; i < warmup; i++) {
-    benchmarkZcss('bench-small.css');
+    benchmarkZigcss('bench-small.css');
     benchmarkLightningCSS('bench-small.css');
     benchmarkCssnano('bench-small.css');
     benchmarkEsbuild('bench-small.css');
@@ -190,8 +190,8 @@ for (let i = 0; i < warmup; i++) {
 // Benchmark small
 console.log('Benchmarking small CSS...');
 for (let i = 0; i < iterations; i++) {
-    const zcss = benchmarkZcss('bench-small.css');
-    if (zcss !== null) results.small.zcss.push(zcss);
+    const zigcss = benchmarkZigcss('bench-small.css');
+    if (zigcss !== null) results.small.zigcss.push(zigcss);
     
     const postcss = benchmarkPostCSS('bench-small.css');
     if (postcss !== null) results.small.postcss.push(postcss);
@@ -232,8 +232,8 @@ for (let i = 0; i < iterations; i++) {
 // Benchmark medium
 console.log('Benchmarking medium CSS...');
 for (let i = 0; i < iterations; i++) {
-    const zcss = benchmarkZcss('bench-medium.css');
-    if (zcss !== null) results.medium.zcss.push(zcss);
+    const zigcss = benchmarkZigcss('bench-medium.css');
+    if (zigcss !== null) results.medium.zigcss.push(zigcss);
     
     const postcss = benchmarkPostCSS('bench-medium.css');
     if (postcss !== null) results.medium.postcss.push(postcss);
@@ -274,8 +274,8 @@ for (let i = 0; i < iterations; i++) {
 // Benchmark large
 console.log('Benchmarking large CSS...');
 for (let i = 0; i < iterations; i++) {
-    const zcss = benchmarkZcss('bench-large.css');
-    if (zcss !== null) results.large.zcss.push(zcss);
+    const zigcss = benchmarkZigcss('bench-large.css');
+    if (zigcss !== null) results.large.zigcss.push(zigcss);
     
     const postcss = benchmarkPostCSS('bench-large.css');
     if (postcss !== null) results.large.postcss.push(postcss);
@@ -327,7 +327,7 @@ function formatTime(ms) {
 console.log('\n=== Benchmark Results ===\n');
 
 console.log('Small CSS (~100 bytes):');
-console.log(`  zcss:         ${formatTime(avg(results.small.zcss))}`);
+console.log(`  zigcss:         ${formatTime(avg(results.small.zigcss))}`);
 console.log(`  LightningCSS: ${formatTime(avg(results.small.lightningcss))}`);
 console.log(`  cssnano:      ${formatTime(avg(results.small.cssnano))}`);
 console.log(`  esbuild:      ${formatTime(avg(results.small.esbuild))}`);
@@ -337,7 +337,7 @@ console.log(`  Less:         ${formatTime(avg(results.small.less))}`);
 console.log(`  Stylus:       ${formatTime(avg(results.small.stylus))}`);
 
 console.log('\nMedium CSS (~10KB):');
-console.log(`  zcss:         ${formatTime(avg(results.medium.zcss))}`);
+console.log(`  zigcss:         ${formatTime(avg(results.medium.zigcss))}`);
 console.log(`  LightningCSS: ${formatTime(avg(results.medium.lightningcss))}`);
 console.log(`  cssnano:      ${formatTime(avg(results.medium.cssnano))}`);
 console.log(`  esbuild:      ${formatTime(avg(results.medium.esbuild))}`);
@@ -347,7 +347,7 @@ console.log(`  Less:         ${formatTime(avg(results.medium.less))}`);
 console.log(`  Stylus:       ${formatTime(avg(results.medium.stylus))}`);
 
 console.log('\nLarge CSS (~100KB):');
-console.log(`  zcss:         ${formatTime(avg(results.large.zcss))}`);
+console.log(`  zigcss:         ${formatTime(avg(results.large.zigcss))}`);
 console.log(`  LightningCSS: ${formatTime(avg(results.large.lightningcss))}`);
 console.log(`  cssnano:      ${formatTime(avg(results.large.cssnano))}`);
 console.log(`  esbuild:      ${formatTime(avg(results.large.esbuild))}`);
@@ -392,7 +392,7 @@ try { fs.unlinkSync('bench-tailwind-large-out.css'); } catch (e) {}
 // Output JSON for README update
 const jsonResults = {
     small: {
-        zcss: avg(results.small.zcss),
+        zigcss: avg(results.small.zigcss),
         lightningcss: avg(results.small.lightningcss),
         cssnano: avg(results.small.cssnano),
         esbuild: avg(results.small.esbuild),
@@ -402,7 +402,7 @@ const jsonResults = {
         stylus: avg(results.small.stylus)
     },
     medium: {
-        zcss: avg(results.medium.zcss),
+        zigcss: avg(results.medium.zigcss),
         lightningcss: avg(results.medium.lightningcss),
         cssnano: avg(results.medium.cssnano),
         esbuild: avg(results.medium.esbuild),
@@ -412,7 +412,7 @@ const jsonResults = {
         stylus: avg(results.medium.stylus)
     },
     large: {
-        zcss: avg(results.large.zcss),
+        zigcss: avg(results.large.zigcss),
         lightningcss: avg(results.large.lightningcss),
         cssnano: avg(results.large.cssnano),
         esbuild: avg(results.large.esbuild),

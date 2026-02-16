@@ -1,10 +1,10 @@
 # Build Integration
 
-zcss provides build helpers for seamless integration with Zig's build system. Automatically compile CSS files as part of your build process.
+zigcss provides build helpers for seamless integration with Zig's build system. Automatically compile CSS files as part of your build process.
 
 ## Setup
 
-### 1. Add zcss as a Dependency
+### 1. Add zigcss as a Dependency
 
 Add to your `build.zig.zon`:
 
@@ -13,8 +13,8 @@ Add to your `build.zig.zon`:
     .name = "my-project",
     .version = "0.1.0",
     .dependencies = .{
-        .zcss = .{
-            .path = "../zcss",
+        .zigcss = .{
+            .path = "../zigcss",
         },
     },
 }
@@ -29,23 +29,23 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zcss_dep = b.dependency("zcss", .{
+    const zigcss_dep = b.dependency("zigcss", .{
         .target = target,
         .optimize = optimize,
     });
 
-    const zcss_exe = zcss_dep.artifact("zcss");
-    const zcss_path = zcss_dep.path("");
+    const zigcss_exe = zigcss_dep.artifact("zigcss");
+    const zigcss_path = zigcss_dep.path("");
 
     const build_helpers = @import("build_helpers.zig");
-    const build_helpers_path = b.pathJoin(&.{ zcss_path, "build_helpers.zig" });
+    const build_helpers_path = b.pathJoin(&.{ zigcss_path, "build_helpers.zig" });
     const build_helpers_module = b.createModule(.{
         .root_source_file = b.path(build_helpers_path),
     });
 
     const css_step = build_helpers.addCssCompileStep(
         b,
-        zcss_exe,
+        zigcss_exe,
         "zig-out/css",
     );
 
@@ -78,14 +78,14 @@ pub fn build(b: *std.Build) void {
 // Create a CSS compilation step
 const css_step = build_helpers.addCssCompileStep(
     builder,
-    zcss_exe,
+    zigcss_exe,
     output_dir,
 );
 
 // Or attach to an existing step
 const css_step = build_helpers.addCssCompileStepTo(
     builder,
-    zcss_exe,
+    zigcss_exe,
     output_dir,
     existing_step,
 );
@@ -129,7 +129,7 @@ pub fn build(b: *std.Build) void {
 
     const css_step = build_helpers.addCssCompileStep(
         b,
-        zcss_exe,
+        zigcss_exe,
         "zig-out/www/css",
     );
 

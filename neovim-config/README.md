@@ -1,12 +1,12 @@
-# zcss Neovim Integration
+# zigcss Neovim Integration
 
-Neovim configuration for zcss Language Server Protocol support.
+Neovim configuration for zigcss Language Server Protocol support.
 
 ## Requirements
 
 - Neovim 0.5.0 or later
 - [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig) plugin
-- zcss binary (built from source)
+- zigcss binary (built from source)
 
 ## Installation
 
@@ -18,8 +18,8 @@ Add to your `plugins.lua` or `init.lua`:
 use {
   'neovim/nvim-lspconfig',
   config = function()
-    require('lspconfig').zcss.setup({
-      cmd = {'zcss', '--lsp'},
+    require('lspconfig').zigcss.setup({
+      cmd = {'zigcss', '--lsp'},
       filetypes = {'css', 'scss', 'sass', 'less', 'stylus'},
     })
   end
@@ -30,12 +30,12 @@ use {
 
 1. Copy `init.lua` to your Neovim config directory:
    ```bash
-   cp neovim-config/init.lua ~/.config/nvim/lua/zcss.lua
+   cp neovim-config/init.lua ~/.config/nvim/lua/zigcss.lua
    ```
 
 2. Require it in your Neovim config:
    ```lua
-   require('zcss')
+   require('zigcss')
    ```
 
 ### Configuration
@@ -51,8 +51,8 @@ The configuration includes:
 You can customize the setup by modifying the configuration:
 
 ```lua
-require('lspconfig').zcss.setup({
-  cmd = {'/path/to/zcss', '--lsp'},
+require('lspconfig').zigcss.setup({
+  cmd = {'/path/to/zigcss', '--lsp'},
   filetypes = {'css', 'scss'},
   settings = {
     -- Add custom settings here

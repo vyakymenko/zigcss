@@ -1,6 +1,6 @@
 # CSS Nesting
 
-zcss supports the CSS Nesting specification, allowing you to nest selectors for better organization and readability.
+zigcss supports the CSS Nesting specification, allowing you to nest selectors for better organization and readability.
 
 ## Basic Nesting
 

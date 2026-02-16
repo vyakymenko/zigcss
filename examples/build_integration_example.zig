@@ -4,25 +4,25 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zcss_dep = b.dependency("zcss", .{
+    const zigcss_dep = b.dependency("zigcss", .{
         .target = target,
         .optimize = optimize,
     });
 
-    const zcss_module = zcss_dep.module("zcss");
+    const zigcss_module = zigcss_dep.module("zigcss");
     
-    const zcss_exe = zcss_dep.artifact("zcss");
+    const zigcss_exe = zigcss_dep.artifact("zigcss");
 
     const build_helpers = @import("build_helpers.zig");
-    const zcss_path = zcss_dep.path("");
+    const zigcss_path = zigcss_dep.path("");
 
-    const build_helpers_module = b.addModule("zcss-build-helpers", .{
-        .root_source_file = b.path(b.pathJoin(&.{ zcss_path, "build_helpers.zig" })),
+    const build_helpers_module = b.addModule("zigcss-build-helpers", .{
+        .root_source_file = b.path(b.pathJoin(&.{ zigcss_path, "build_helpers.zig" })),
     });
 
     const css_step = build_helpers.addCssCompileStep(
         b,
-        zcss_exe,
+        zigcss_exe,
         "zig-out/css",
     );
 
@@ -43,7 +43,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    exe.root_module.addImport("zcss", zcss_module);
+    exe.root_module.addImport("zigcss", zigcss_module);
 
     b.installArtifact(exe);
 }

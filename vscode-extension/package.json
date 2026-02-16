@@ -1,9 +1,9 @@
 {
-  "name": "zcss-language-server",
-  "displayName": "zcss Language Server",
-  "description": "Language Server Protocol support for zcss - the world's fastest CSS compiler",
+  "name": "zigcss-language-server",
+  "displayName": "zigcss Language Server",
+  "description": "Language Server Protocol support for zigcss - the world's fastest CSS compiler",
   "version": "0.1.0",
-  "publisher": "zcss",
+  "publisher": "zigcss",
   "engines": {
     "vscode": "^1.74.0"
   },
@@ -48,17 +48,17 @@
       }
     ],
     "configuration": {
-      "title": "zcss",
+      "title": "zigcss",
       "properties": {
-        "zcss.languageServerPath": {
+        "zigcss.languageServerPath": {
           "type": "string",
-          "default": "zcss",
-          "description": "Path to the zcss binary. Use 'zcss' if it's in your PATH, or provide the full path."
+          "default": "zigcss",
+          "description": "Path to the zigcss binary. Use 'zigcss' if it's in your PATH, or provide the full path."
         },
-        "zcss.languageServerArgs": {
+        "zigcss.languageServerArgs": {
           "type": "array",
           "default": ["--lsp"],
-          "description": "Arguments to pass to the zcss language server"
+          "description": "Arguments to pass to the zigcss language server"
         }
       }
     }

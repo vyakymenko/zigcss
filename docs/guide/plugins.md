@@ -1,22 +1,22 @@
 # Plugin System
 
-zcss includes a powerful plugin system that allows you to transform the AST during compilation. Plugins run after parsing and before optimization, giving you full control over CSS transformations.
+zigcss includes a powerful plugin system that allows you to transform the AST during compilation. Plugins run after parsing and before optimization, giving you full control over CSS transformations.
 
 ## Basic Plugin Usage
 
 ```zig
 const std = @import("std");
-const zcss = @import("zcss");
+const zigcss = @import("zigcss");
 
-fn myTransform(allocator: std.mem.Allocator, stylesheet: *zcss.ast.Stylesheet) !void {
+fn myTransform(allocator: std.mem.Allocator, stylesheet: *zigcss.ast.Stylesheet) !void {
     // Transform the stylesheet AST
     // For example, add a custom rule
-    var style_rule = try zcss.ast.StyleRule.init(stylesheet.allocator);
-    var selector = try zcss.ast.Selector.init(stylesheet.allocator);
+    var style_rule = try zigcss.ast.StyleRule.init(stylesheet.allocator);
+    var selector = try zigcss.ast.Selector.init(stylesheet.allocator);
     try selector.parts.append(stylesheet.allocator, .{ .class = "custom-class" });
     try style_rule.selectors.append(stylesheet.allocator, selector);
     
-    var decl = zcss.ast.Declaration.init(stylesheet.allocator);
+    var decl = zigcss.ast.Declaration.init(stylesheet.allocator);
     decl.property = "color";
     decl.value = "blue";
     try style_rule.declarations.append(stylesheet.allocator, decl);
@@ -31,19 +31,19 @@ pub fn main() !void {
 
     const css = ".container { color: red; }";
     
-    const parser_trait = zcss.formats.getParser(.css);
+    const parser_trait = zigcss.formats.getParser(.css);
     var stylesheet = try parser_trait.parseFn(allocator, css);
     defer stylesheet.deinit();
 
-    const my_plugin = zcss.plugin.Plugin.init("my-transform", myTransform);
+    const my_plugin = zigcss.plugin.Plugin.init("my-transform", myTransform);
     
-    const options = zcss.codegen.CodegenOptions{
+    const options = zigcss.codegen.CodegenOptions{
         .plugins = &.{my_plugin},
         .optimize = true,
         .minify = true,
     };
 
-    const result = try zcss.codegen.generate(allocator, &stylesheet, options);
+    const result = try zigcss.codegen.generate(allocator, &stylesheet, options);
     defer allocator.free(result);
     
     std.debug.print("Compiled CSS: {s}\n", .{result});
@@ -55,11 +55,11 @@ pub fn main() !void {
 For multiple plugins, use the `PluginRegistry`:
 
 ```zig
-var registry = try zcss.plugin.PluginRegistry.init(allocator);
+var registry = try zigcss.plugin.PluginRegistry.init(allocator);
 defer registry.deinit();
 
-const plugin1 = zcss.plugin.Plugin.init("plugin1", transform1);
-const plugin2 = zcss.plugin.Plugin.init("plugin2", transform2);
+const plugin1 = zigcss.plugin.Plugin.init("plugin1", transform1);
+const plugin2 = zigcss.plugin.Plugin.init("plugin2", transform2);
 
 try registry.add(plugin1);
 try registry.add(plugin2);
@@ -105,7 +105,7 @@ Plugins are executed in the order they are added to the registry:
 ## Example: Custom Property Transformer
 
 ```zig
-fn transformCustomProperties(allocator: std.mem.Allocator, stylesheet: *zcss.ast.Stylesheet) !void {
+fn transformCustomProperties(allocator: std.mem.Allocator, stylesheet: *zigcss.ast.Stylesheet) !void {
     // Find all :root rules and extract custom properties
     for (stylesheet.rules.items) |*rule| {
         if (rule.* == .style) {
@@ -120,7 +120,7 @@ fn transformCustomProperties(allocator: std.mem.Allocator, stylesheet: *zcss.ast
     }
 }
 
-const custom_props_plugin = zcss.plugin.Plugin.init("custom-props", transformCustomProperties);
+const custom_props_plugin = zigcss.plugin.Plugin.init("custom-props", transformCustomProperties);
 ```
 
 ## Best Practices

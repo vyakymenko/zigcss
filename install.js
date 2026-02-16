@@ -10,7 +10,7 @@ const PLATFORM = process.platform;
 const ARCH = process.arch;
 
 const BIN_DIR = path.join(__dirname, 'bin');
-const BIN_PATH = path.join(BIN_DIR, PLATFORM === 'win32' ? 'zcss.exe' : 'zcss');
+const BIN_PATH = path.join(BIN_DIR, PLATFORM === 'win32' ? 'zigcss.exe' : 'zigcss');
 
 function getDownloadUrl() {
   const platformMap = {
@@ -25,7 +25,7 @@ function getDownloadUrl() {
   }
 
   const ext = PLATFORM === 'win32' ? 'zip' : 'tar.gz';
-  return `https://github.com/vyakymenko/zcss/releases/download/v${VERSION}/zcss-${VERSION}-${target}.${ext}`;
+  return `https://github.com/vyakymenko/zigcss/releases/download/v${VERSION}/zigcss-${VERSION}-${target}.${ext}`;
 }
 
 function downloadFile(url, dest) {
@@ -73,7 +73,7 @@ function extractArchive(archivePath, destDir) {
 
 async function install() {
   if (fs.existsSync(BIN_PATH)) {
-    console.log('zcss binary already exists, skipping download');
+    console.log('zigcss binary already exists, skipping download');
     return;
   }
 
@@ -85,7 +85,7 @@ async function install() {
   const archivePath = path.join(BIN_DIR, path.basename(url));
   const tempDir = path.join(BIN_DIR, 'temp');
 
-  console.log(`Downloading zcss ${VERSION} for ${PLATFORM} ${ARCH}...`);
+  console.log(`Downloading zigcss ${VERSION} for ${PLATFORM} ${ARCH}...`);
 
   try {
     await downloadFile(url, archivePath);
@@ -96,7 +96,7 @@ async function install() {
     
     extractArchive(archivePath, tempDir);
     
-    const extractedBin = path.join(tempDir, PLATFORM === 'win32' ? 'zcss.exe' : 'zcss');
+    const extractedBin = path.join(tempDir, PLATFORM === 'win32' ? 'zigcss.exe' : 'zigcss');
     if (fs.existsSync(extractedBin)) {
       fs.copyFileSync(extractedBin, BIN_PATH);
       if (PLATFORM !== 'win32') {
@@ -109,19 +109,19 @@ async function install() {
     fs.rmSync(tempDir, { recursive: true, force: true });
     fs.unlinkSync(archivePath);
     
-    console.log('✓ zcss installed successfully!');
+    console.log('✓ zigcss installed successfully!');
   } catch (err) {
     if (err.message.includes('404') || err.message.includes('Failed to download')) {
       console.warn(`⚠ Pre-built binary not available for ${PLATFORM} ${ARCH}`);
       console.warn('Building from source requires Zig 0.15.2+');
       console.warn('Install Zig: https://ziglang.org/download/');
-      console.warn('Then build: git clone https://github.com/vyakymenko/zcss.git && cd zcss && zig build');
+      console.warn('Then build: git clone https://github.com/vyakymenko/zigcss.git && cd zigcss && zig build');
     } else {
       console.error(`✗ Installation failed: ${err.message}`);
       console.error('You can build from source:');
       console.error('  1. Install Zig: https://ziglang.org/download/');
-      console.error('  2. git clone https://github.com/vyakymenko/zcss.git');
-      console.error('  3. cd zcss && zig build');
+      console.error('  2. git clone https://github.com/vyakymenko/zigcss.git');
+      console.error('  3. cd zigcss && zig build');
     }
     process.exit(1);
   }

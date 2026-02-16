@@ -17,23 +17,23 @@
 node install.js
 
 # Test binary
-./bin/zcss --version
+./bin/zigcss --version
 
 # Test via npm link (in project directory)
 npm link
 
 # In another directory
-npm link zcss
-zcss --version
+npm link zigcss
+zigcss --version
 ```
 
 ## Package Structure
 
 ```
-zcss/
+zigcss/
 ├── bin/              # Platform-specific binaries (created by install.js)
-│   ├── zcss          # macOS/Linux binary
-│   └── zcss.exe      # Windows binary
+│   ├── zigcss          # macOS/Linux binary
+│   └── zigcss.exe      # Windows binary
 ├── index.js          # Node.js wrapper script
 ├── install.js        # Post-install script to download binaries
 ├── package.json      # npm package configuration
@@ -43,7 +43,7 @@ zcss/
 ## Binary Distribution
 
 Binaries are downloaded from GitHub Releases:
-- Format: `zcss-{version}-{platform}.{ext}`
+- Format: `zigcss-{version}-{platform}.{ext}`
 - Platforms: `x86_64-linux`, `aarch64-linux`, `x86_64-macos`, `aarch64-macos`, `x86_64-windows`
 - Extensions: `.tar.gz` (Unix), `.zip` (Windows)
 

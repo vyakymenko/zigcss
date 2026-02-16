@@ -1,10 +1,10 @@
-# zcss
+# zigcss
 
 > **The world's fastest CSS compiler** — Built with Zig for uncompromising performance
 
-**zcss** is a zero-dependency CSS compiler written in Zig, designed from the ground up to be the fastest CSS processing tool available. Leveraging Zig's compile-time optimizations, memory safety, and zero-cost abstractions, zcss delivers unmatched performance for CSS parsing, transformation, and compilation.
+**zigcss** is a zero-dependency CSS compiler written in Zig, designed from the ground up to be the fastest CSS processing tool available. Leveraging Zig's compile-time optimizations, memory safety, and zero-cost abstractions, zigcss delivers unmatched performance for CSS parsing, transformation, and compilation.
 
-## 🚀 Why zcss?
+## 🚀 Why zigcss?
 
 - ⚡ **81-127x faster** than PostCSS and Sass for small files
 - 🔒 **Memory safe** — Zig's safety guarantees prevent common bugs
@@ -17,21 +17,21 @@
 
 ```bash
 # Install via npm
-npm install -g zcss
+npm install -g zigcss
 
 # Or via Homebrew
-brew tap vyakymenko/zcss
-brew install zcss
+brew tap vyakymenko/zigcss
+brew install zigcss
 
 # Compile CSS
-zcss input.css -o output.css --optimize --minify
+zigcss input.css -o output.css --optimize --minify
 ```
 
 ## Performance
 
 Performance tested on a MacBook Pro M3 (16GB RAM) with real-world CSS workloads.
 
-| File Size | zcss | PostCSS | Sass |
+| File Size | zigcss | PostCSS | Sass |
 |-----------|------|---------|------|
 | Small (~100 bytes) | **6.7ms** | 546.9ms (81.6x slower) | 855.0ms (127.6x slower) |
 | Medium (~10KB) | **6.7ms** | 570.1ms (85.4x slower) | 589.7ms (88.2x slower) |
@@ -61,4 +61,4 @@ Performance tested on a MacBook Pro M3 (16GB RAM) with real-world CSS workloads.
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-[View on GitHub](https://github.com/vyakymenko/zcss)
+[View on GitHub](https://github.com/vyakymenko/zigcss)

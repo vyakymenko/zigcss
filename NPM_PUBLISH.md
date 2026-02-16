@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-1. **npm account** with access to publish `zcss` package
+1. **npm account** with access to publish `zigcss` package
 2. **GitHub releases** set up (binaries must be available)
 3. **Version** updated in `package.json`
 
@@ -50,7 +50,7 @@ npm publish
 node install.js
 
 # Verify binary works
-./bin/zcss --version
+./bin/zigcss --version
 ```
 
 ### Test Package Locally
@@ -60,21 +60,21 @@ node install.js
 npm pack
 
 # In another directory, install the tarball
-npm install /path/to/zcss-0.1.0.tgz
+npm install /path/to/zigcss-0.1.0.tgz
 
 # Test the binary
-zcss --version
+zigcss --version
 ```
 
 ### Test npm link
 
 ```bash
-# In zcss directory
+# In zigcss directory
 npm link
 
 # In another project
-npm link zcss
-zcss input.css -o output.css
+npm link zigcss
+zigcss input.css -o output.css
 ```
 
 ## Package Contents
@@ -107,7 +107,7 @@ Binaries are downloaded from GitHub Releases during `npm install`:
 
 If binary unavailable, users can build:
 ```bash
-git clone https://github.com/vyakymenko/zcss.git
-cd zcss
+git clone https://github.com/vyakymenko/zigcss.git
+cd zigcss
 zig build -Doptimize=ReleaseFast
 ```

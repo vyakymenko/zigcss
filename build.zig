@@ -4,14 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const root_module = b.addModule("zcss", .{
+    const root_module = b.addModule("zigcss", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const exe = b.addExecutable(.{
-        .name = "zcss",
+        .name = "zigcss",
         .root_module = root_module,
     });
 
@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const test_module = b.addModule("zcss", .{
+    const test_module = b.addModule("zigcss", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -41,14 +41,14 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    const bench_module = b.addModule("zcss-bench", .{
+    const bench_module = b.addModule("zigcss-bench", .{
         .root_source_file = b.path("src/benchmarks.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const bench_exe = b.addExecutable(.{
-        .name = "zcss-bench",
+        .name = "zigcss-bench",
         .root_module = bench_module,
     });
 

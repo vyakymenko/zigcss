@@ -1,6 +1,6 @@
 # CompileOptions
 
-`CompileOptions` controls how zcss compiles CSS.
+`CompileOptions` controls how zigcss compiles CSS.
 
 ## Structure
 
@@ -91,7 +91,7 @@ Array of plugins to run during compilation. Plugins run after parsing and before
 ## Example
 
 ```zig
-const options = zcss.CompileOptions{
+const options = zigcss.CompileOptions{
     .optimize = true,
     .minify = true,
     .source_map = true,

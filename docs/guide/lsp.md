@@ -1,11 +1,11 @@
 # Language Server Protocol (LSP) Support
 
-zcss includes a full LSP server implementation for editor integration, providing real-time diagnostics, hover information, and code completion.
+zigcss includes a full LSP server implementation for editor integration, providing real-time diagnostics, hover information, and code completion.
 
 ## Starting the LSP Server
 
 ```bash
-zcss --lsp
+zigcss --lsp
 ```
 
 The LSP server communicates via JSON-RPC over stdin/stdout, following the Language Server Protocol specification.
@@ -51,10 +51,10 @@ Full support for document open, change, and close events:
 
 **Option 1: Use the VSCode Extension (Recommended)**
 
-1. Build zcss:
+1. Build zigcss:
    ```bash
-   git clone https://github.com/vyakymenko/zcss.git
-   cd zcss
+   git clone https://github.com/vyakymenko/zigcss.git
+   cd zigcss
    zig build -Doptimize=ReleaseFast
    ```
 
@@ -73,16 +73,16 @@ Add to your `.vscode/settings.json`:
 
 ```json
 {
-  "zcss.languageServerPath": "zcss",
-  "zcss.languageServerArgs": ["--lsp"]
+  "zigcss.languageServerPath": "zigcss",
+  "zigcss.languageServerArgs": ["--lsp"]
 }
 ```
 
-If `zcss` is not in your PATH, provide the full path:
+If `zigcss` is not in your PATH, provide the full path:
 
 ```json
 {
-  "zcss.languageServerPath": "/path/to/zcss/zig-out/bin/zcss"
+  "zigcss.languageServerPath": "/path/to/zigcss/zig-out/bin/zigcss"
 }
 ```
 
@@ -94,8 +94,8 @@ If `zcss` is not in your PATH, provide the full path:
 use {
   'neovim/nvim-lspconfig',
   config = function()
-    require('lspconfig').zcss.setup({
-      cmd = {'zcss', '--lsp'},
+    require('lspconfig').zigcss.setup({
+      cmd = {'zigcss', '--lsp'},
       filetypes = {'css', 'scss', 'sass', 'less', 'stylus'},
     })
   end
@@ -118,7 +118,7 @@ The LSP server can be integrated with any editor that supports LSP:
 - **Sublime Text**: Use with `LSP` package
 - **Atom**: Use with `atom-languageclient`
 
-All integrations use the standard LSP protocol via `zcss --lsp`.
+All integrations use the standard LSP protocol via `zigcss --lsp`.
 
 ## Supported File Types
 
@@ -131,5 +131,5 @@ All integrations use the standard LSP protocol via `zcss --lsp`.
 
 ## Next Steps
 
-- [Installation](/guide/installation) — Install zcss
+- [Installation](/guide/installation) — Install zigcss
 - [Quick Start](/guide/quick-start) — Learn the basics

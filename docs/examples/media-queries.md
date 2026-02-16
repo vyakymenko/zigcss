@@ -1,6 +1,6 @@
 # Media Queries
 
-zcss supports advanced media query parsing and optimization, including automatic merging of identical media queries.
+zigcss supports advanced media query parsing and optimization, including automatic merging of identical media queries.
 
 ## Basic Media Query
 
@@ -68,7 +68,7 @@ zcss supports advanced media query parsing and optimization, including automatic
 
 ## Media Query Merging
 
-zcss automatically merges identical media queries:
+zigcss automatically merges identical media queries:
 
 **Input:**
 

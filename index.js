@@ -4,10 +4,10 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const binPath = path.join(__dirname, 'bin', process.platform === 'win32' ? 'zcss.exe' : 'zcss');
+const binPath = path.join(__dirname, 'bin', process.platform === 'win32' ? 'zigcss.exe' : 'zigcss');
 
 if (!fs.existsSync(binPath)) {
-  console.error('zcss binary not found. Please run: npm install');
+  console.error('zigcss binary not found. Please run: npm install');
   process.exit(1);
 }
 
@@ -22,6 +22,6 @@ child.on('exit', (code) => {
 });
 
 child.on('error', (err) => {
-  console.error(`Failed to start zcss: ${err.message}`);
+  console.error(`Failed to start zigcss: ${err.message}`);
   process.exit(1);
 });

@@ -72,15 +72,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add release workflow - automatically create GitHub releases with pre-built binaries on version tags
 - Add multi-platform binary support - x86_64 and aarch64 for Linux and macOS, x86_64 for Windows
 - Add pre-built binaries documentation - installation instructions for all supported platforms
-- Add npm package integration - install zcss globally via `npm install -g zcss`
+- Add npm package integration - install zigcss globally via `npm install -g zigcss`
 - Add npm install script - automatically downloads appropriate binary for platform during npm install
-- Add Homebrew formula - install zcss via Homebrew on macOS with `brew tap vyakymenko/zcss && brew install zcss`
+- Add Homebrew formula - install zigcss via Homebrew on macOS with `brew tap vyakymenko/zigcss && brew install zigcss`
 - Add package manager installation instructions to README
 - Add VSCode extension - full VSCode integration with LSP support for CSS, SCSS, SASS, LESS, and Stylus files
 - Add VSCode extension configuration - package.json, TypeScript extension code, and build configuration
 - Add Neovim integration - complete Neovim configuration with nvim-lspconfig setup and key mappings
 - Add editor integration documentation - comprehensive setup guides for VSCode and Neovim
-- Add VSCode workspace settings - recommended settings for zcss development
+- Add VSCode workspace settings - recommended settings for zigcss development
 - Add Language Server Protocol (LSP) support - full LSP server implementation for editor integration
 - Add LSP diagnostics - real-time error and warning reporting for CSS parsing issues
 - Add LSP hover information - hover support for CSS properties with descriptions and value types

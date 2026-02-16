@@ -10,8 +10,8 @@ import {
 let client: LanguageClient;
 
 export function activate(context: vscode.ExtensionContext) {
-    const config = vscode.workspace.getConfiguration('zcss');
-    const serverPath = config.get<string>('languageServerPath', 'zcss');
+    const config = vscode.workspace.getConfiguration('zigcss');
+    const serverPath = config.get<string>('languageServerPath', 'zigcss');
     const serverArgs = config.get<string[]>('languageServerArgs', ['--lsp']);
 
     const serverOptions: ServerOptions = {
@@ -41,8 +41,8 @@ export function activate(context: vscode.ExtensionContext) {
     };
 
     client = new LanguageClient(
-        'zcssLanguageServer',
-        'zcss Language Server',
+        'zigcssLanguageServer',
+        'zigcss Language Server',
         serverOptions,
         clientOptions
     );

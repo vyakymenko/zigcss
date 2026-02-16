@@ -1,6 +1,6 @@
 # Plugin API
 
-zcss includes a powerful plugin system that allows you to transform the AST during compilation.
+zigcss includes a powerful plugin system that allows you to transform the AST during compilation.
 
 ## Plugin Structure
 
@@ -101,12 +101,12 @@ fn myTransform(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet) !void 
 
 ```zig
 fn addCustomRule(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet) !void {
-    var style_rule = try zcss.ast.StyleRule.init(stylesheet.allocator);
-    var selector = try zcss.ast.Selector.init(stylesheet.allocator);
+    var style_rule = try zigcss.ast.StyleRule.init(stylesheet.allocator);
+    var selector = try zigcss.ast.Selector.init(stylesheet.allocator);
     try selector.parts.append(stylesheet.allocator, .{ .class = "custom-class" });
     try style_rule.selectors.append(stylesheet.allocator, selector);
     
-    var decl = zcss.ast.Declaration.init(stylesheet.allocator);
+    var decl = zigcss.ast.Declaration.init(stylesheet.allocator);
     decl.property = "color";
     decl.value = "blue";
     try style_rule.declarations.append(stylesheet.allocator, decl);
@@ -114,7 +114,7 @@ fn addCustomRule(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet) !voi
     try stylesheet.rules.append(stylesheet.allocator, .{ .style = style_rule });
 }
 
-const my_plugin = zcss.plugin.Plugin.init("add-custom-rule", addCustomRule);
+const my_plugin = zigcss.plugin.Plugin.init("add-custom-rule", addCustomRule);
 ```
 
 ## Plugin Execution Order

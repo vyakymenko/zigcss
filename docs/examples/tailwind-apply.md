@@ -1,6 +1,6 @@
 # Tailwind @apply Expansion
 
-zcss supports Tailwind CSS `@apply` directive expansion, automatically converting utility classes into CSS declarations.
+zigcss supports Tailwind CSS `@apply` directive expansion, automatically converting utility classes into CSS declarations.
 
 ## Basic @apply
 
@@ -29,7 +29,7 @@ zcss supports Tailwind CSS `@apply` directive expansion, automatically convertin
 
 ## Supported Utilities
 
-zcss includes a comprehensive Tailwind utility registry covering:
+zigcss includes a comprehensive Tailwind utility registry covering:
 
 ### Spacing
 

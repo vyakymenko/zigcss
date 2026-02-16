@@ -1,6 +1,6 @@
 # Custom Properties (CSS Variables)
 
-zcss supports CSS custom properties (CSS variables) with full `var()` function support and fallback values.
+zigcss supports CSS custom properties (CSS variables) with full `var()` function support and fallback values.
 
 ## Basic Usage
 

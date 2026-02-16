@@ -40,7 +40,7 @@ Frees all memory associated with the `CompileResult`. Must be called when done w
 ## Example
 
 ```zig
-const result = try zcss.compile(allocator, css, options);
+const result = try zigcss.compile(allocator, css, options);
 defer result.deinit(allocator);
 
 // Use result.css
@@ -57,7 +57,7 @@ if (result.source_map) |map| {
 `CompileResult` owns its memory. Always call `deinit()` when done:
 
 ```zig
-const result = try zcss.compile(allocator, css, options);
+const result = try zigcss.compile(allocator, css, options);
 defer result.deinit(allocator); // Always free memory
 
 // Use result...

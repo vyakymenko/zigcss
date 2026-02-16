@@ -1,6 +1,6 @@
 # Quick Start
 
-This guide will walk you through the basics of using zcss.
+This guide will walk you through the basics of using zigcss.
 
 ## Command Line Usage
 
@@ -8,67 +8,67 @@ This guide will walk you through the basics of using zcss.
 
 ```bash
 # Compile a single CSS file
-zcss input.css -o output.css
+zigcss input.css -o output.css
 ```
 
 ### With Optimizations
 
 ```bash
 # Compile with optimizations and minification
-zcss input.css -o output.css --optimize --minify
+zigcss input.css -o output.css --optimize --minify
 ```
 
 ### Add Vendor Prefixes
 
 ```bash
 # Add vendor prefixes automatically
-zcss input.css -o output.css --autoprefix
+zigcss input.css -o output.css --autoprefix
 
 # With specific browser support
-zcss input.css -o output.css --autoprefix --browsers "last 2 versions,> 1%"
+zigcss input.css -o output.css --autoprefix --browsers "last 2 versions,> 1%"
 ```
 
 ### Watch Mode
 
 ```bash
 # Watch for changes and recompile automatically
-zcss input.css -o output.css --watch
+zigcss input.css -o output.css --watch
 ```
 
 ### Generate Source Maps
 
 ```bash
 # Generate source maps for debugging
-zcss input.css -o output.css --source-map
+zigcss input.css -o output.css --source-map
 ```
 
 ### Compile Multiple Files
 
 ```bash
 # Compile multiple files to a directory
-zcss src/*.css -o dist/ --output-dir
+zigcss src/*.css -o dist/ --output-dir
 ```
 
 ## Supported Formats
 
-zcss supports multiple CSS preprocessor formats:
+zigcss supports multiple CSS preprocessor formats:
 
 ```bash
 # SCSS/SASS
-zcss styles.scss -o styles.css
-zcss styles.sass -o styles.css
+zigcss styles.scss -o styles.css
+zigcss styles.sass -o styles.css
 
 # LESS
-zcss styles.less -o styles.css
+zigcss styles.less -o styles.css
 
 # CSS Modules
-zcss component.module.css -o component.module.css
+zigcss component.module.css -o component.module.css
 
 # PostCSS
-zcss styles.postcss -o styles.css
+zigcss styles.postcss -o styles.css
 
 # Stylus
-zcss styles.styl -o styles.css
+zigcss styles.styl -o styles.css
 ```
 
 ## Library Usage
@@ -77,7 +77,7 @@ zcss styles.styl -o styles.css
 
 ```zig
 const std = @import("std");
-const zcss = @import("zcss");
+const zigcss = @import("zigcss");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -85,7 +85,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     const css = ".container { color: red; }";
-    const result = try zcss.compile(allocator, css, .{
+    const result = try zigcss.compile(allocator, css, .{
         .optimize = true,
         .source_map = true,
     });
@@ -99,7 +99,7 @@ pub fn main() !void {
 
 ```zig
 const std = @import("std");
-const zcss = @import("zcss");
+const zigcss = @import("zigcss");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -109,7 +109,7 @@ pub fn main() !void {
     const css = try std.fs.cwd().readFileAlloc(allocator, "styles.css", 10 * 1024 * 1024);
     defer allocator.free(css);
 
-    const options = zcss.CompileOptions{
+    const options = zigcss.CompileOptions{
         .optimize = true,
         .minify = true,
         .source_map = true,
@@ -120,7 +120,7 @@ pub fn main() !void {
         .optimize_selectors = true,
     };
 
-    const result = try zcss.compile(allocator, css, options);
+    const result = try zigcss.compile(allocator, css, options);
     defer result.deinit(allocator);
 
     try std.fs.cwd().writeFileAlloc(allocator, "styles.min.css", result.css);

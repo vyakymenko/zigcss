@@ -1,6 +1,6 @@
 # Optimization
 
-zcss includes a comprehensive optimization pipeline that reduces CSS size while maintaining functionality.
+zigcss includes a comprehensive optimization pipeline that reduces CSS size while maintaining functionality.
 
 ## Optimization Passes
 
@@ -157,16 +157,16 @@ Merges identical `@layer` rules:
 
 ```bash
 # Enable all optimizations
-zcss input.css -o output.css --optimize
+zigcss input.css -o output.css --optimize
 
 # With minification
-zcss input.css -o output.css --optimize --minify
+zigcss input.css -o output.css --optimize --minify
 ```
 
 ### Library API
 
 ```zig
-const options = zcss.CompileOptions{
+const options = zigcss.CompileOptions{
     .optimize = true,
     .minify = true,
     .remove_comments = true,
@@ -184,5 +184,5 @@ Optimizations are designed to be fast:
 
 ## Next Steps
 
-- [Performance Guide](/guide/performance) — Learn about zcss performance
+- [Performance Guide](/guide/performance) — Learn about zigcss performance
 - [Examples](/examples/css-nesting) — See optimization in action
