@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add documentation site - comprehensive documentation built with VitePress
+- Add VitePress configuration - modern documentation site with search, navigation, and GitHub Pages deployment
+- Add documentation pages - getting started guide, installation, API reference, examples, and advanced topics
+- Add GitHub Pages deployment workflow - automated documentation deployment on push to main/development branches
+- Add documentation site link to README - direct link to documentation site
 - Add GitHub Actions CI/CD workflows - automated builds and releases for all platforms
 - Add build workflow - test and build binaries for Linux, macOS, and Windows on every push
 - Add release workflow - automatically create GitHub releases with pre-built binaries on version tags

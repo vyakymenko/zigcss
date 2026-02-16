@@ -15,6 +15,7 @@
 - [API Reference](#-api-reference)
 - [Testing](#-testing)
 - [Roadmap](#-roadmap)
+- [Documentation](#-documentation)
 - [Contributing](#-contributing)
 - [License](#-license)
 
@@ -874,6 +875,20 @@ zig build test --summary all
 zcss input.css -o output.css --profile
 ```
 
+## 📚 Documentation
+
+Comprehensive documentation is available at **[https://vyakymenko.github.io/zcss/](https://vyakymenko.github.io/zcss/)**
+
+The documentation site includes:
+- Getting started guide
+- Installation instructions
+- API reference
+- Examples and tutorials
+- Performance benchmarks
+- Plugin system documentation
+- Build integration guide
+- LSP support guide
+
 ## 📊 Roadmap
 
 ### Phase 1: Core Features ✅ COMPLETED
@@ -915,13 +930,13 @@ zcss input.css -o output.css --profile
 - [x] Incremental compilation ✅ — Content-based change detection for faster watch mode
 - [x] Performance profiling tools ✅ — Built-in profiling with timing and memory metrics
 
-### Phase 4: Ecosystem
+### Phase 4: Ecosystem ✅ COMPLETED
 - [x] Language server protocol (LSP) support ✅ — Full LSP server with diagnostics, hover, and completion
 - [x] Editor integrations ✅ — VSCode extension and Neovim configuration
 - [x] Build tool integrations ✅ — Zig build system integration with build helpers
 - [x] Pre-built binaries for all platforms ✅ — GitHub Actions CI/CD for automated builds and releases (Linux, macOS, Windows)
 - [x] Package manager integration ✅ — npm package and Homebrew formula for easy installation
-- [ ] Documentation site
+- [x] Documentation site ✅ — Comprehensive documentation site with VitePress, deployed to GitHub Pages
 
 ### Phase 5: Advanced CSS Features ✅ COMPLETED
 - [x] CSS Modules support

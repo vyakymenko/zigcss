@@ -1,0 +1,13 @@
+{
+  "name": "zcss-docs",
+  "version": "1.0.0",
+  "description": "Documentation site for zcss",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.0.0"
+  }
+}
