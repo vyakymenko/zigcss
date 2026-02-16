@@ -19,27 +19,27 @@ jobs:
           - os: ubuntu-latest
             arch: x86_64
             target: x86_64-linux
-            zig-version: 0.12.0
+            zig-version: 0.15.2
             binary-name: zcss
           - os: ubuntu-latest
             arch: aarch64
             target: aarch64-linux
-            zig-version: 0.12.0
+            zig-version: 0.15.2
             binary-name: zcss
           - os: macos-latest
             arch: x86_64
             target: x86_64-macos
-            zig-version: 0.12.0
+            zig-version: 0.15.2
             binary-name: zcss
           - os: macos-latest
             arch: aarch64
             target: aarch64-macos
-            zig-version: 0.12.0
+            zig-version: 0.15.2
             binary-name: zcss
           - os: windows-latest
             arch: x86_64
             target: x86_64-windows
-            zig-version: 0.12.0
+            zig-version: 0.15.2
             binary-name: zcss.exe
 
     steps:

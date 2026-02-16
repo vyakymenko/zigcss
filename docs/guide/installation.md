@@ -28,7 +28,7 @@ brew install --build-from-source Formula/zcss.rb
 ## From Source
 
 **Requirements:**
-- Zig 0.12.0 or later
+- Zig 0.15.2 or later
 - C compiler (for linking)
 
 ```bash
