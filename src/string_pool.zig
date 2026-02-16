@@ -20,6 +20,8 @@ pub const StringPool = struct {
     }
 
     pub fn intern(self: *StringPool, str: []const u8) ![]const u8 {
+        if (str.len == 0) return "";
+        
         const entry = try self.strings.getOrPut(str);
         if (!entry.found_existing) {
             const owned = try self.allocator.dupe(u8, str);
@@ -29,7 +31,11 @@ pub const StringPool = struct {
     }
 
     pub fn internSlice(self: *StringPool, start: usize, end: usize, input: []const u8) ![]const u8 {
-        const str = input[start..end];
+        if (start >= end or start >= input.len) return "";
+        const actual_end = @min(end, input.len);
+        if (start == actual_end) return "";
+        
+        const str = input[start..actual_end];
         return self.intern(str);
     }
 };

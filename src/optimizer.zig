@@ -289,8 +289,12 @@ pub const Optimizer = struct {
                 const target_rule = &stylesheet.rules.items[target_idx];
                 
                 if (target_rule.* == .style and self.selectorsEqual(&target_rule.style.selectors, &rule.style.selectors)) {
-                    for (rule.style.declarations.items) |*decl| {
-                        try target_rule.style.declarations.append(self.allocator, decl.*);
+                    const decl_count = rule.style.declarations.items.len;
+                    if (decl_count > 0) {
+                        try target_rule.style.declarations.ensureUnusedCapacity(self.allocator, decl_count);
+                        for (rule.style.declarations.items) |*decl| {
+                            try target_rule.style.declarations.append(self.allocator, decl.*);
+                        }
                     }
                     rule.style.declarations.items.len = 0;
                     rule.deinit();
@@ -307,9 +311,17 @@ pub const Optimizer = struct {
 
     fn hashSelectors(self: *Optimizer, selectors: *std.ArrayList(ast.Selector)) usize {
         _ = self;
+        if (selectors.items.len == 0) return 0;
+        
         var hash: u64 = 0;
+        const selector_count = selectors.items.len;
+        hash = hash *% 31 +% @as(u64, selector_count);
+        
         for (selectors.items) |selector| {
-            hash = hash *% 31 +% @as(u64, selector.parts.items.len);
+            const part_count = selector.parts.items.len;
+            hash = hash *% 31 +% @as(u64, part_count);
+            if (part_count == 0) continue;
+            
             for (selector.parts.items) |part| {
                 hash = hash *% 31 +% @as(u64, @intFromEnum(@as(std.meta.Tag(ast.SelectorPart), part)));
                 hash = hash *% 31 +% @as(u64, switch (part) {
