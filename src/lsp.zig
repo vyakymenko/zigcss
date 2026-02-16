@@ -79,6 +79,12 @@ pub const LspServer = struct {
             try self.handleHover(&response, root);
         } else if (std.mem.eql(u8, method, "textDocument/completion")) {
             try self.handleCompletion(&response, root);
+        } else if (std.mem.eql(u8, method, "textDocument/definition")) {
+            try self.handleDefinition(&response, root);
+        } else if (std.mem.eql(u8, method, "textDocument/references")) {
+            try self.handleReferences(&response, root);
+        } else if (std.mem.eql(u8, method, "textDocument/rename")) {
+            try self.handleRename(&response, root);
         } else {
             try response.writer(self.allocator).print(",\"error\":{{\"code\":-32601,\"message\":\"Method not found\"}}", .{});
         }
@@ -402,6 +408,227 @@ pub const LspServer = struct {
         .{ .property = "font-weight", .description = "**font-weight** - Sets the font weight\n\nValues: `normal` | `bold` | `bolder` | `lighter` | `100-900` | `inherit` | `initial` | `unset`" },
         .{ .property = "border", .description = "**border** - Sets border on all sides\n\nValues: `<border-width>` `<border-style>` `<border-color>` | `inherit` | `initial` | `unset`" },
     };
+    
+    fn handleDefinition(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
+        const params = root.object.get("params") orelse return error.InvalidRequest;
+        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
+        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
+        const position = params.object.get("position") orelse return error.InvalidRequest;
+        
+        const doc = self.documents.get(uri.string) orelse {
+            try response.writer(self.allocator).print(",\"result\":null", .{});
+            return;
+        };
+        
+        const line = if (position.object.get("line")) |l| l.integer else 0;
+        const character = if (position.object.get("character")) |c| c.integer else 0;
+        
+        const pos = self.getPosition(doc.text, line, character);
+        const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
+            try response.writer(self.allocator).print(",\"result\":null", .{});
+            return;
+        };
+        
+        const definition_pos = self.findDefinition(doc.text, symbol) orelse {
+            try response.writer(self.allocator).print(",\"result\":null", .{});
+            return;
+        };
+        
+        const def_line_col = self.getLineColumn(doc.text, definition_pos);
+        try response.writer(self.allocator).print(
+            ",\"result\":{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}}}}",
+            .{ uri.string, def_line_col.line, def_line_col.column, def_line_col.line, def_line_col.column + symbol.len }
+        );
+    }
+    
+    fn handleReferences(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
+        const params = root.object.get("params") orelse return error.InvalidRequest;
+        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
+        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
+        const position = params.object.get("position") orelse return error.InvalidRequest;
+        
+        const doc = self.documents.get(uri.string) orelse {
+            try response.writer(self.allocator).print(",\"result\":[]", .{});
+            return;
+        };
+        
+        const line = if (position.object.get("line")) |l| l.integer else 0;
+        const character = if (position.object.get("character")) |c| c.integer else 0;
+        
+        const pos = self.getPosition(doc.text, line, character);
+        const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
+            try response.writer(self.allocator).print(",\"result\":[]", .{});
+            return;
+        };
+        
+        var locations = std.ArrayList(u8).init(self.allocator);
+        defer locations.deinit(self.allocator);
+        try locations.append(self.allocator, '[');
+        
+        var first = true;
+        var search_pos: usize = 0;
+        while (self.findNextReference(doc.text, symbol, &search_pos)) |ref_pos| {
+            if (!first) try locations.append(self.allocator, ',');
+            first = false;
+            
+            const ref_line_col = self.getLineColumn(doc.text, ref_pos);
+            try locations.writer(self.allocator).print(
+                "{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}}}}",
+                .{ uri.string, ref_line_col.line, ref_line_col.column, ref_line_col.line, ref_line_col.column + symbol.len }
+            );
+        }
+        
+        try locations.append(self.allocator, ']');
+        const locations_str = try locations.toOwnedSlice(self.allocator);
+        defer self.allocator.free(locations_str);
+        
+        try response.writer(self.allocator).print(",\"result\":{s}", .{locations_str});
+    }
+    
+    fn handleRename(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
+        const params = root.object.get("params") orelse return error.InvalidRequest;
+        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
+        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
+        const position = params.object.get("position") orelse return error.InvalidRequest;
+        const new_name = params.object.get("newName") orelse return error.InvalidRequest;
+        
+        const doc = self.documents.get(uri.string) orelse {
+            try response.writer(self.allocator).print(",\"error\":{{\"code\":-32602,\"message\":\"Document not found\"}}", .{});
+            return;
+        };
+        
+        const line = if (position.object.get("line")) |l| l.integer else 0;
+        const character = if (position.object.get("character")) |c| c.integer else 0;
+        
+        const pos = self.getPosition(doc.text, line, character);
+        const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
+            try response.writer(self.allocator).print(",\"error\":{{\"code\":-32602,\"message\":\"Symbol not found\"}}", .{});
+            return;
+        };
+        
+        var changes = std.ArrayList(u8).init(self.allocator);
+        defer changes.deinit(self.allocator);
+        try changes.writer(self.allocator).print("{{\"{s}\":[", .{uri.string});
+        
+        var first = true;
+        var search_pos: usize = 0;
+        while (self.findNextReference(doc.text, symbol, &search_pos)) |ref_pos| {
+            if (!first) try changes.append(self.allocator, ',');
+            first = false;
+            
+            const ref_line_col = self.getLineColumn(doc.text, ref_pos);
+            try changes.writer(self.allocator).print(
+                "{{\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}},\"newText\":\"{s}\"}}",
+                .{ ref_line_col.line, ref_line_col.column, ref_line_col.line, ref_line_col.column + symbol.len, new_name.string }
+            );
+        }
+        
+        try changes.append(self.allocator, ']');
+        try changes.append(self.allocator, '}');
+        const changes_str = try changes.toOwnedSlice(self.allocator);
+        defer self.allocator.free(changes_str);
+        
+        try response.writer(self.allocator).print(",\"result\":{{\"changes\":{s}}}", .{changes_str});
+    }
+    
+    fn getPosition(self: *LspServer, text: []const u8, line: i64, character: i64) usize {
+        _ = self;
+        var line_num: i64 = 0;
+        var i: usize = 0;
+        while (i < text.len and line_num < line) {
+            if (text[i] == '\n') {
+                line_num += 1;
+            }
+            i += 1;
+        }
+        const char_usize: usize = @intCast(@max(character, 0));
+        return @min(i + char_usize, text.len);
+    }
+    
+    fn getLineColumn(self: *LspServer, text: []const u8, pos: usize) struct { line: i64, column: i64 } {
+        _ = self;
+        var line: i64 = 0;
+        var column: i64 = 0;
+        var i: usize = 0;
+        while (i < pos and i < text.len) {
+            if (text[i] == '\n') {
+                line += 1;
+                column = 0;
+            } else {
+                column += 1;
+            }
+            i += 1;
+        }
+        return .{ .line = line, .column = column };
+    }
+    
+    fn getSymbolAtPosition(self: *LspServer, text: []const u8, pos: usize) ?[]const u8 {
+        _ = self;
+        if (pos >= text.len) return null;
+        
+        var start = pos;
+        while (start > 0 and (std.ascii.isAlphanumeric(text[start - 1]) or text[start - 1] == '-' or text[start - 1] == '_')) {
+            start -= 1;
+        }
+        
+        var end = pos;
+        while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '-' or text[end] == '_')) {
+            end += 1;
+        }
+        
+        if (start < end) {
+            return text[start..end];
+        }
+        return null;
+    }
+    
+    fn findDefinition(self: *LspServer, text: []const u8, symbol: []const u8) ?usize {
+        _ = self;
+        var pos: usize = 0;
+        while (pos < text.len) {
+            if (std.mem.startsWith(u8, text[pos..], ".") and pos + 1 < text.len) {
+                const class_start = pos + 1;
+                var class_end = class_start;
+                while (class_end < text.len and (std.ascii.isAlphanumeric(text[class_end]) or text[class_end] == '-' or text[class_end] == '_')) {
+                    class_end += 1;
+                }
+                if (std.mem.eql(u8, text[class_start..class_end], symbol)) {
+                    return class_start;
+                }
+                pos = class_end;
+            } else if (std.mem.startsWith(u8, text[pos..], "#") and pos + 1 < text.len) {
+                const id_start = pos + 1;
+                var id_end = id_start;
+                while (id_end < text.len and (std.ascii.isAlphanumeric(text[id_end]) or text[id_end] == '-' or text[id_end] == '_')) {
+                    id_end += 1;
+                }
+                if (std.mem.eql(u8, text[id_start..id_end], symbol)) {
+                    return id_start;
+                }
+                pos = id_end;
+            } else {
+                pos += 1;
+            }
+        }
+        return null;
+    }
+    
+    fn findNextReference(self: *LspServer, text: []const u8, symbol: []const u8, search_pos: *usize) ?usize {
+        _ = self;
+        while (search_pos.* < text.len) {
+            const found = std.mem.indexOfPos(u8, text, search_pos.*, symbol) orelse return null;
+            search_pos.* = found + symbol.len;
+            
+            const before = if (found > 0) text[found - 1] else ' ';
+            const after = if (found + symbol.len < text.len) text[found + symbol.len] else ' ';
+            
+            if ((before == '.' or before == '#' or before == ' ' or before == '\n' or before == '\t' or before == '{' or before == ',' or before == ':') and
+                (after == ' ' or after == '\n' or after == '\t' or after == '{' or after == '}' or after == ',' or after == ';' or after == ':' or after == ')')) {
+                return found;
+            }
+        }
+        return null;
+    }
     
     const COMMON_CSS_PROPERTIES = [_][]const u8{
         "color",

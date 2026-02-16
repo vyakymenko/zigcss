@@ -702,6 +702,9 @@ zcss --lsp
 - **Hover** - Hover information for CSS properties with descriptions and value types
 - **Completion** - Code completion for common CSS properties
 - **Text Document Sync** - Full support for document open, change, and close events
+- **Go to Definition** - Jump to where CSS classes, IDs, and custom properties are defined
+- **Find References** - Find all references to CSS classes, IDs, and custom properties
+- **Rename** - Rename CSS classes, IDs, and custom properties across all references
 
 **Editor Integration:**
 
@@ -1116,7 +1119,11 @@ The documentation site includes:
   - Helpful suggestions for common mistakes (missing braces, colons, etc.)
   - Improved error formatting with line numbers, column positions, and visual indicators
   - Suggestions for fixing common syntax errors
-- [ ] Advanced LSP features — Go to definition, find references, rename symbols
+- [x] Advanced LSP features ✅ — Go to definition, find references, rename symbols
+  - Go to definition for CSS classes, IDs, and custom properties
+  - Find all references to CSS symbols across the document
+  - Rename symbols with automatic updates to all references
+  - Full LSP protocol support for navigation and refactoring
 
 ## 🤝 Contributing
 
