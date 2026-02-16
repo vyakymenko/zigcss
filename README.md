@@ -316,15 +316,20 @@ Multi-pass optimization pipeline:
    - `border-width`, `border-style`, `border-color` → `border`
    - `font-*` properties → `font`
    - `background-*` properties → `background`
-5. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last)
-6. **Value optimization** ✅ — Advanced optimizations:
+5. **Advanced selector optimization** ✅ — Intelligent selector optimizations:
+   - Universal selector removal (`*` removed when redundant)
+   - Selector simplification (redundant combinators removed)
+   - Selector specificity calculation for better optimization
+   - Improved redundant selector detection using specificity
+6. **Duplicate declaration removal** ✅ — Remove duplicate properties (keeps last)
+7. **Value optimization** ✅ — Advanced optimizations:
    - Hex color minification (`#ffffff` → `#fff`)
    - RGB to hex conversion (`rgb(255, 255, 255)` → `#fff`)
    - CSS color name to hex conversion (`red` → `#f00`, `white` → `#fff`)
    - Transparent color optimization (`transparent` → `rgba(0,0,0,0)`)
    - Zero unit removal (`0px` → `0`, `0em` → `0`)
    - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
-7. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
+8. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
 
 ### Code Generator
 
@@ -347,6 +352,7 @@ Multi-pass optimization pipeline:
 8. **Hash-based selector merging** ✅ — O(n²) → O(n) optimization using hash maps
 9. **Optimized character classification** ✅ — Lookup tables replace function calls
 10. **Backwards iteration for duplicates** ✅ — Efficient duplicate removal
+11. **Advanced selector optimization** ✅ — Universal selector removal, selector simplification, specificity-based optimization
 
 ## 🔧 API Reference
 
@@ -438,7 +444,7 @@ zig build test --summary all
 - [ ] Advanced nesting features (mixins, functions)
 - [x] Autoprefixer integration ✅ — Add vendor prefixes for CSS properties and values
 - [x] Custom property resolution ✅ — Resolve CSS custom properties (var()) with fallback support
-- [ ] Advanced selector optimization
+- [x] Advanced selector optimization ✅ — Universal selector removal, selector simplification, specificity calculation
 - [ ] Plugin system
 - [x] Watch mode improvements ✅ — Polling-based file watching with automatic recompilation
 

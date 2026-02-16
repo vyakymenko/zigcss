@@ -8,11 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add advanced selector optimization - universal selector removal, selector simplification, and specificity-based optimization
 - Add parallel file processing - compile multiple files concurrently using all CPU cores
 - Add --output-dir flag support for batch compilation of multiple files
 - Add glob pattern support for input files (e.g., `src/*.css`)
 
 ### Performance Improvements
+- Add advanced selector optimization with universal selector removal and selector simplification
 - Add font and background shorthand optimizations
 - Add redundant selector removal and media query merging optimizations
 - Add transparent color optimization

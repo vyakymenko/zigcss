@@ -25,6 +25,7 @@ pub const Optimizer = struct {
             try self.addAutoprefixes(stylesheet, opts);
         }
         try self.removeEmptyRules(stylesheet);
+        try self.optimizeSelectors(stylesheet);
         try self.mergeSelectors(stylesheet);
         try self.removeRedundantSelectors(stylesheet);
         try self.optimizeShorthandProperties(stylesheet);
@@ -761,6 +762,149 @@ pub const Optimizer = struct {
         }
     }
 
+    fn optimizeSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        var i: usize = 0;
+        while (i < stylesheet.rules.items.len) {
+            const rule = &stylesheet.rules.items[i];
+            switch (rule.*) {
+                .style => |*style_rule| {
+                    var j: usize = 0;
+                    while (j < style_rule.selectors.items.len) {
+                        const selector = &style_rule.selectors.items[j];
+                        if (self.simplifySelector(selector)) {
+                            if (selector.parts.items.len == 0) {
+                                selector.deinit();
+                                _ = style_rule.selectors.swapRemove(j);
+                                continue;
+                            }
+                        }
+                        j += 1;
+                    }
+                },
+                .at_rule => |*at_rule| {
+                    if (at_rule.rules) |*rules| {
+                        for (rules.items) |*nested_rule| {
+                            switch (nested_rule.*) {
+                                .style => |*style_rule| {
+                                    var j: usize = 0;
+                                    while (j < style_rule.selectors.items.len) {
+                                        const selector = &style_rule.selectors.items[j];
+                                        if (self.simplifySelector(selector)) {
+                                            if (selector.parts.items.len == 0) {
+                                                selector.deinit();
+                                                _ = style_rule.selectors.swapRemove(j);
+                                                continue;
+                                            }
+                                        }
+                                        j += 1;
+                                    }
+                                },
+                                .at_rule => {},
+                            }
+                        }
+                    }
+                },
+            }
+            i += 1;
+        }
+    }
+
+    fn simplifySelector(self: *Optimizer, selector: *ast.Selector) bool {
+        _ = self;
+        var modified = false;
+        var i: usize = 0;
+        
+        while (i < selector.parts.items.len) {
+            const part = &selector.parts.items[i];
+            
+            if (part.* == .universal) {
+                if (i == 0 and selector.parts.items.len > 1) {
+                    const next_part = &selector.parts.items[i + 1];
+                    if (next_part.* == .combinator) {
+                        selector.parts.items[i].deinit(selector.allocator);
+                        _ = selector.parts.swapRemove(i);
+                        modified = true;
+                        continue;
+                    }
+                }
+                if (i > 0) {
+                    const prev_part = &selector.parts.items[i - 1];
+                    if (prev_part.* == .combinator) {
+                        const combinator = prev_part.combinator;
+                        if (combinator == .descendant) {
+                            selector.parts.items[i].deinit(selector.allocator);
+                            _ = selector.parts.swapRemove(i);
+                            modified = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+            
+            if (part.* == .combinator) {
+                if (i == 0) {
+                    selector.parts.items[i].deinit(selector.allocator);
+                    _ = selector.parts.swapRemove(i);
+                    modified = true;
+                    continue;
+                }
+                if (i + 1 >= selector.parts.items.len) {
+                    selector.parts.items[i].deinit(selector.allocator);
+                    _ = selector.parts.swapRemove(i);
+                    modified = true;
+                    continue;
+                }
+                const prev_part = &selector.parts.items[i - 1];
+                const next_part = &selector.parts.items[i + 1];
+                if (prev_part.* == .combinator or next_part.* == .combinator) {
+                    selector.parts.items[i].deinit(selector.allocator);
+                    _ = selector.parts.swapRemove(i);
+                    modified = true;
+                    continue;
+                }
+            }
+            
+            i += 1;
+        }
+        
+        return modified;
+    }
+
+    fn calculateSpecificity(self: *Optimizer, selector: *const ast.Selector) struct { ids: u32, classes: u32, elements: u32 } {
+        _ = self;
+        var ids: u32 = 0;
+        var classes: u32 = 0;
+        var elements: u32 = 0;
+        
+        for (selector.parts.items) |part| {
+            switch (part) {
+                .id => ids += 1,
+                .class => classes += 1,
+                .attribute => classes += 1,
+                .pseudo_class => classes += 1,
+                .type => elements += 1,
+                .pseudo_element => elements += 1,
+                .universal => {},
+                .combinator => {},
+            }
+        }
+        
+        return .{ .ids = ids, .classes = classes, .elements = elements };
+    }
+
+    fn compareSpecificity(self: *Optimizer, a: *const ast.Selector, b: *const ast.Selector) i32 {
+        const spec_a = self.calculateSpecificity(a);
+        const spec_b = self.calculateSpecificity(b);
+        
+        if (spec_a.ids != spec_b.ids) {
+            return @as(i32, @intCast(spec_a.ids)) - @as(i32, @intCast(spec_b.ids));
+        }
+        if (spec_a.classes != spec_b.classes) {
+            return @as(i32, @intCast(spec_a.classes)) - @as(i32, @intCast(spec_b.classes));
+        }
+        return @as(i32, @intCast(spec_a.elements)) - @as(i32, @intCast(spec_b.elements));
+    }
+
     fn removeRedundantSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
@@ -783,6 +927,11 @@ pub const Optimizer = struct {
                     }
                     const other = &rule.style.selectors.items[k];
                     if (self.isSelectorSubset(selector, other)) {
+                        is_redundant = true;
+                        break;
+                    }
+                    const specificity_diff = self.compareSpecificity(selector, other);
+                    if (specificity_diff == 0 and self.selectorEqual(selector, other)) {
                         is_redundant = true;
                         break;
                     }
