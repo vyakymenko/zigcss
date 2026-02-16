@@ -52,6 +52,7 @@ jobs:
           version: ${{ matrix.zig-version }}
 
       - name: Build Release Binary
+        shell: bash
         run: |
           if [ "${{ matrix.target }}" == "aarch64-linux" ]; then
             zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux
@@ -61,6 +62,7 @@ jobs:
 
       - name: Get Version
         id: version
+        shell: bash
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Create Archive
@@ -101,6 +103,7 @@ jobs:
 
       - name: Get Version
         id: version
+        shell: bash
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Create Release
