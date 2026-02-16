@@ -412,6 +412,32 @@ zcss supports CSS Container Queries, allowing styles to be applied based on the 
 
 Container queries are automatically optimized by merging identical `@container` rules, similar to media query optimization.
 
+### Cascade Layers
+
+zcss supports CSS Cascade Layers, allowing you to control the cascade order of your styles:
+
+```css
+@layer theme {
+    .button {
+        color: red;
+    }
+}
+
+@layer utilities {
+    .button {
+        color: blue;
+    }
+}
+
+@layer theme {
+    .link {
+        color: green;
+    }
+}
+```
+
+Cascade layers are automatically optimized by merging identical `@layer` rules with the same name, reducing CSS size while maintaining cascade order.
+
 ## 🏗️ Architecture
 
 zcss is built with performance in mind using a multi-stage compilation pipeline:
@@ -462,6 +488,7 @@ Multi-pass optimization pipeline:
    - Comprehensive unit support (px, em, rem, %, pt, pc, in, cm, mm, ex, ch, vw, vh, vmin, vmax)
 8. **Media query merging** ✅ — Merge identical `@media` rules into a single rule
 9. **Container query merging** ✅ — Merge identical `@container` rules into a single rule
+10. **Cascade layer merging** ✅ — Merge identical `@layer` rules into a single rule
 
 ### Code Generator
 
@@ -684,7 +711,7 @@ zcss input.css -o output.css --profile
 - [x] PostCSS plugin compatibility layer
 - [x] CSS Grid/Flexbox optimizations ✅ — Flexbox and Grid shorthand property optimizations
 - [x] Container queries ✅ — Full container query support with merging optimization
-- [ ] Cascade layers
+- [x] Cascade layers ✅ — Full CSS Cascade Layers support with merging optimization
 - [ ] Tailwind @apply expansion
 
 ## 🤝 Contributing

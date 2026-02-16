@@ -649,6 +649,85 @@ test "container query parsing" {
     try std.testing.expect(std.mem.eql(u8, rule.at_rule.name, "container"));
 }
 
+test "cascade layer parsing" {
+    const css = "@layer utilities { .button { color: red; } }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .at_rule);
+    try std.testing.expect(std.mem.eql(u8, rule.at_rule.name, "layer"));
+    try std.testing.expect(std.mem.eql(u8, rule.at_rule.prelude, "utilities"));
+}
+
+test "cascade layer merging" {
+    const css = "@layer theme { .button { color: red; } } @layer theme { .link { color: blue; } }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    var opt = optimizer.Optimizer.init(allocator);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    defer allocator.free(result);
+
+    var layer_count: usize = 0;
+    var i: usize = 0;
+    while (i < result.len) {
+        if (i + 6 <= result.len and std.mem.eql(u8, result[i..i+6], "@layer")) {
+            layer_count += 1;
+            i += 6;
+        } else {
+            i += 1;
+        }
+    }
+    try std.testing.expect(layer_count == 1);
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".button"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".link"));
+}
+
+test "cascade layer anonymous merging" {
+    const css = "@layer { .a { color: red; } } @layer { .b { color: blue; } }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    var opt = optimizer.Optimizer.init(allocator);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    defer allocator.free(result);
+
+    var layer_count: usize = 0;
+    var i: usize = 0;
+    while (i < result.len) {
+        if (i + 6 <= result.len and std.mem.eql(u8, result[i..i+6], "@layer")) {
+            layer_count += 1;
+            i += 6;
+        } else {
+            i += 1;
+        }
+    }
+    try std.testing.expect(layer_count == 1);
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".a"));
+    try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".b"));
+}
+
 test "flexbox shorthand optimization" {
     const css = ".flex { flex-grow: 1; flex-shrink: 1; flex-basis: 0%; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

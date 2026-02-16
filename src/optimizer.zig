@@ -33,6 +33,7 @@ pub const Optimizer = struct {
         try self.optimizeValues(stylesheet);
         try self.mergeMediaQueries(stylesheet);
         try self.mergeContainerQueries(stylesheet);
+        try self.mergeCascadeLayers(stylesheet);
     }
 
     fn addAutoprefixes(self: *Optimizer, stylesheet: *ast.Stylesheet, options: autoprefixer.AutoprefixOptions) !void {
@@ -1177,7 +1178,8 @@ pub const Optimizer = struct {
                     const other_rule = &stylesheet.rules.items[other_idx];
                     
                     if (other_rule.at_rule.rules) |*other_rules| {
-                        for (other_rules.items) |nested_rule| {
+                        while (other_rules.items.len > 0) {
+                            const nested_rule = other_rules.swapRemove(0);
                             try merged_rules.append(self.allocator, nested_rule);
                         }
                     }
@@ -1241,7 +1243,74 @@ pub const Optimizer = struct {
                     const other_rule = &stylesheet.rules.items[other_idx];
                     
                     if (other_rule.at_rule.rules) |*other_rules| {
-                        for (other_rules.items) |nested_rule| {
+                        while (other_rules.items.len > 0) {
+                            const nested_rule = other_rules.swapRemove(0);
+                            try merged_rules.append(self.allocator, nested_rule);
+                        }
+                    }
+                    j += 1;
+                }
+            }
+        }
+
+        std.mem.sort(usize, indices_to_remove.items, {}, comptime std.sort.desc(usize));
+        for (indices_to_remove.items) |idx| {
+            stylesheet.rules.items[idx].deinit();
+            _ = stylesheet.rules.swapRemove(idx);
+        }
+    }
+
+    fn mergeCascadeLayers(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        var layer_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
+        defer {
+            var it = layer_map.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit(self.allocator);
+            }
+            layer_map.deinit();
+        }
+
+        var i: usize = 0;
+        while (i < stylesheet.rules.items.len) {
+            const rule = &stylesheet.rules.items[i];
+            if (rule.* != .at_rule or !std.mem.eql(u8, rule.at_rule.name, "layer")) {
+                i += 1;
+                continue;
+            }
+
+            const prelude = rule.at_rule.prelude;
+            const normalized_prelude = if (prelude.len > 0) prelude else "";
+            const gop = try layer_map.getOrPut(normalized_prelude);
+            if (!gop.found_existing) {
+                gop.value_ptr.* = try std.ArrayList(usize).initCapacity(self.allocator, 4);
+            }
+            try gop.value_ptr.append(self.allocator, i);
+            i += 1;
+        }
+
+        var indices_to_remove = try std.ArrayList(usize).initCapacity(self.allocator, 8);
+        defer indices_to_remove.deinit(self.allocator);
+
+        var it = layer_map.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.items.len > 1) {
+                const first_idx = entry.value_ptr.items[0];
+                const first_rule = &stylesheet.rules.items[first_idx];
+                
+                if (first_rule.at_rule.rules == null) {
+                    first_rule.at_rule.rules = try std.ArrayList(ast.Rule).initCapacity(self.allocator, 0);
+                }
+                var merged_rules = &first_rule.at_rule.rules.?;
+
+                var j: usize = 1;
+                while (j < entry.value_ptr.items.len) {
+                    const other_idx = entry.value_ptr.items[j];
+                    try indices_to_remove.append(self.allocator, other_idx);
+                    const other_rule = &stylesheet.rules.items[other_idx];
+                    
+                    if (other_rule.at_rule.rules) |*other_rules| {
+                        while (other_rules.items.len > 0) {
+                            const nested_rule = other_rules.swapRemove(0);
                             try merged_rules.append(self.allocator, nested_rule);
                         }
                     }

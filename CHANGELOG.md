@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add CSS Cascade Layers support - full parsing and optimization for @layer at-rules
+- Add cascade layer merging optimization - merge identical @layer rules for smaller output
+- Add cascade layer test coverage
 - Add CSS Grid/Flexbox shorthand optimizations - combine flex-grow/flex-shrink/flex-basis into flex, grid-template-* into grid-template, row-gap/column-gap into gap
 - Add container query support - full CSS Container Queries parsing and optimization
 - Add container query merging optimization - merge identical @container rules for smaller output
@@ -31,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add glob pattern support for input files (e.g., `src/*.css`)
 
 ### Performance Improvements
+- Add cascade layer merging optimization - reduces CSS size by combining identical cascade layers
+- Fix memory safety issue in media query, container query, and cascade layer merging - properly move rules instead of copying to prevent double-free
 - Add CSS Grid/Flexbox shorthand optimizations - reduces CSS size by combining related Grid and Flexbox properties into shorthand form
 - Add container query merging optimization - reduces CSS size by combining identical container queries
 - Add performance profiling infrastructure for identifying bottlenecks and measuring improvements
