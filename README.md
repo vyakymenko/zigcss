@@ -107,6 +107,8 @@ Performance tested on a MacBook Pro M3 (16GB RAM) with real-world CSS workloads.
 npm install -g zcss
 ```
 
+The npm package automatically downloads the appropriate pre-built binary for your platform. If a pre-built binary is not available, you can build from source (requires Zig 0.15.2+).
+
 **Homebrew (macOS):**
 ```bash
 brew tap vyakymenko/zcss

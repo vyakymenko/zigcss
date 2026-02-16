@@ -4,8 +4,15 @@
   "description": "The world's fastest CSS compiler - Built with Zig for uncompromising performance",
   "main": "index.js",
   "bin": {
-    "zcss": "./bin/zcss"
+    "zcss": "./index.js"
   },
+  "files": [
+    "bin/",
+    "index.js",
+    "install.js",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "install": "node install.js",
     "postinstall": "node install.js"
@@ -37,6 +44,8 @@
   "engines": {
     "node": ">=14.0.0"
   },
+  "optionalDependencies": {},
+  "preferGlobal": true,
   "os": [
     "darwin",
     "linux",

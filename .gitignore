@@ -9,3 +9,5 @@ zig-cache/
 *.exe
 .DS_Store
 *.log
+bin/
+node_modules/

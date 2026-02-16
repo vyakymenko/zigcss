@@ -70,10 +70,25 @@ function benchmarkStylus(file) {
     return timeCommand(cmd);
 }
 
+function benchmarkLightningCSS(file) {
+    const cmd = `npx --yes lightningcss-cli ${file} --minify -o /dev/null 2>/dev/null`;
+    return timeCommand(cmd);
+}
+
+function benchmarkCssnano(file) {
+    const cmd = `npx --yes cssnano-cli ${file} /dev/null 2>/dev/null`;
+    return timeCommand(cmd);
+}
+
+function benchmarkEsbuild(file) {
+    const cmd = `npx --yes esbuild --loader=css --minify ${file} --outfile=/dev/null 2>/dev/null`;
+    return timeCommand(cmd);
+}
+
 const results = {
-    small: { zcss: [], postcss: [], sass: [], less: [], stylus: [] },
-    medium: { zcss: [], postcss: [], sass: [], less: [], stylus: [] },
-    large: { zcss: [], postcss: [], sass: [], less: [], stylus: [] }
+    small: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] },
+    medium: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] },
+    large: { zcss: [], lightningcss: [], cssnano: [], esbuild: [], postcss: [], sass: [], less: [], stylus: [] }
 };
 
 const iterations = 10;
@@ -85,7 +100,9 @@ console.log('Running benchmarks (this may take a while)...\n');
 console.log('Warming up...');
 for (let i = 0; i < warmup; i++) {
     benchmarkZcss('bench-small.css');
-    benchmarkPostCSS('bench-small.css');
+    benchmarkLightningCSS('bench-small.css');
+    benchmarkCssnano('bench-small.css');
+    benchmarkEsbuild('bench-small.css');
 }
 
 // Benchmark small
@@ -105,6 +122,15 @@ for (let i = 0; i < iterations; i++) {
     
     const stylus = benchmarkStylus('bench-small.css');
     if (stylus !== null) results.small.stylus.push(stylus);
+    
+    const lightningcss = benchmarkLightningCSS('bench-small.css');
+    if (lightningcss !== null) results.small.lightningcss.push(lightningcss);
+    
+    const cssnano = benchmarkCssnano('bench-small.css');
+    if (cssnano !== null) results.small.cssnano.push(cssnano);
+    
+    const esbuild = benchmarkEsbuild('bench-small.css');
+    if (esbuild !== null) results.small.esbuild.push(esbuild);
 }
 
 // Benchmark medium
@@ -124,6 +150,15 @@ for (let i = 0; i < iterations; i++) {
     
     const stylus = benchmarkStylus('bench-medium.css');
     if (stylus !== null) results.medium.stylus.push(stylus);
+    
+    const lightningcss = benchmarkLightningCSS('bench-medium.css');
+    if (lightningcss !== null) results.medium.lightningcss.push(lightningcss);
+    
+    const cssnano = benchmarkCssnano('bench-medium.css');
+    if (cssnano !== null) results.medium.cssnano.push(cssnano);
+    
+    const esbuild = benchmarkEsbuild('bench-medium.css');
+    if (esbuild !== null) results.medium.esbuild.push(esbuild);
 }
 
 // Benchmark large
@@ -143,6 +178,15 @@ for (let i = 0; i < iterations; i++) {
     
     const stylus = benchmarkStylus('bench-large.css');
     if (stylus !== null) results.large.stylus.push(stylus);
+    
+    const lightningcss = benchmarkLightningCSS('bench-large.css');
+    if (lightningcss !== null) results.large.lightningcss.push(lightningcss);
+    
+    const cssnano = benchmarkCssnano('bench-large.css');
+    if (cssnano !== null) results.large.cssnano.push(cssnano);
+    
+    const esbuild = benchmarkEsbuild('bench-large.css');
+    if (esbuild !== null) results.large.esbuild.push(esbuild);
 }
 
 function avg(arr) {
@@ -159,25 +203,34 @@ function formatTime(ms) {
 console.log('\n=== Benchmark Results ===\n');
 
 console.log('Small CSS (~100 bytes):');
-console.log(`  zcss:    ${formatTime(avg(results.small.zcss))}`);
-console.log(`  PostCSS: ${formatTime(avg(results.small.postcss))}`);
-console.log(`  Sass:    ${formatTime(avg(results.small.sass))}`);
-console.log(`  Less:    ${formatTime(avg(results.small.less))}`);
-console.log(`  Stylus:  ${formatTime(avg(results.small.stylus))}`);
+console.log(`  zcss:         ${formatTime(avg(results.small.zcss))}`);
+console.log(`  LightningCSS: ${formatTime(avg(results.small.lightningcss))}`);
+console.log(`  cssnano:      ${formatTime(avg(results.small.cssnano))}`);
+console.log(`  esbuild:      ${formatTime(avg(results.small.esbuild))}`);
+console.log(`  PostCSS:      ${formatTime(avg(results.small.postcss))}`);
+console.log(`  Sass:         ${formatTime(avg(results.small.sass))}`);
+console.log(`  Less:         ${formatTime(avg(results.small.less))}`);
+console.log(`  Stylus:       ${formatTime(avg(results.small.stylus))}`);
 
 console.log('\nMedium CSS (~10KB):');
-console.log(`  zcss:    ${formatTime(avg(results.medium.zcss))}`);
-console.log(`  PostCSS: ${formatTime(avg(results.medium.postcss))}`);
-console.log(`  Sass:    ${formatTime(avg(results.medium.sass))}`);
-console.log(`  Less:    ${formatTime(avg(results.medium.less))}`);
-console.log(`  Stylus:  ${formatTime(avg(results.medium.stylus))}`);
+console.log(`  zcss:         ${formatTime(avg(results.medium.zcss))}`);
+console.log(`  LightningCSS: ${formatTime(avg(results.medium.lightningcss))}`);
+console.log(`  cssnano:      ${formatTime(avg(results.medium.cssnano))}`);
+console.log(`  esbuild:      ${formatTime(avg(results.medium.esbuild))}`);
+console.log(`  PostCSS:      ${formatTime(avg(results.medium.postcss))}`);
+console.log(`  Sass:         ${formatTime(avg(results.medium.sass))}`);
+console.log(`  Less:         ${formatTime(avg(results.medium.less))}`);
+console.log(`  Stylus:       ${formatTime(avg(results.medium.stylus))}`);
 
 console.log('\nLarge CSS (~100KB):');
-console.log(`  zcss:    ${formatTime(avg(results.large.zcss))}`);
-console.log(`  PostCSS: ${formatTime(avg(results.large.postcss))}`);
-console.log(`  Sass:    ${formatTime(avg(results.large.sass))}`);
-console.log(`  Less:    ${formatTime(avg(results.large.less))}`);
-console.log(`  Stylus:  ${formatTime(avg(results.large.stylus))}`);
+console.log(`  zcss:         ${formatTime(avg(results.large.zcss))}`);
+console.log(`  LightningCSS: ${formatTime(avg(results.large.lightningcss))}`);
+console.log(`  cssnano:      ${formatTime(avg(results.large.cssnano))}`);
+console.log(`  esbuild:      ${formatTime(avg(results.large.esbuild))}`);
+console.log(`  PostCSS:      ${formatTime(avg(results.large.postcss))}`);
+console.log(`  Sass:         ${formatTime(avg(results.large.sass))}`);
+console.log(`  Less:         ${formatTime(avg(results.large.less))}`);
+console.log(`  Stylus:       ${formatTime(avg(results.large.stylus))}`);
 
 // Cleanup
 fs.unlinkSync('bench-small.css');
@@ -188,6 +241,9 @@ fs.unlinkSync('bench-large.css');
 const jsonResults = {
     small: {
         zcss: avg(results.small.zcss),
+        lightningcss: avg(results.small.lightningcss),
+        cssnano: avg(results.small.cssnano),
+        esbuild: avg(results.small.esbuild),
         postcss: avg(results.small.postcss),
         sass: avg(results.small.sass),
         less: avg(results.small.less),
@@ -195,6 +251,9 @@ const jsonResults = {
     },
     medium: {
         zcss: avg(results.medium.zcss),
+        lightningcss: avg(results.medium.lightningcss),
+        cssnano: avg(results.medium.cssnano),
+        esbuild: avg(results.medium.esbuild),
         postcss: avg(results.medium.postcss),
         sass: avg(results.medium.sass),
         less: avg(results.medium.less),
@@ -202,6 +261,9 @@ const jsonResults = {
     },
     large: {
         zcss: avg(results.large.zcss),
+        lightningcss: avg(results.large.lightningcss),
+        cssnano: avg(results.large.cssnano),
+        esbuild: avg(results.large.esbuild),
         postcss: avg(results.large.postcss),
         sass: avg(results.large.sass),
         less: avg(results.large.less),
