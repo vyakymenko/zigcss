@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add early exit optimizations - skip optimization passes when no work is needed
+- Add early exits for empty stylesheets and rules in all optimization functions
+- Skip duplicate removal when <= 1 declaration for better performance
+- Skip merging operations when no rules to merge
 - Add at-rule reordering optimization - reorder @media, @container, and @layer rules for better compression and parsing efficiency
 - Group similar at-rules together to improve CSS compression
 - Add comprehensive test coverage for at-rule reordering
@@ -17,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add comprehensive test coverage for unused custom property removal
 
 ### Performance Improvements
+- Add early exit optimizations - significantly improves performance for edge cases and small stylesheets
+- Reduce unnecessary allocations and iterations by skipping optimization passes when no work is needed
+- Improve performance for empty stylesheets and rules with single declarations
 - Add at-rule reordering - improves CSS compression by grouping similar at-rules together
 - Improve browser parsing efficiency with better rule organization
 - Add unused custom property removal - reduces CSS size by eliminating unused custom property definitions after inlining

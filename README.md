@@ -1134,6 +1134,12 @@ The documentation site includes:
   - Improves CSS compression by grouping similar at-rules
   - Enhances browser parsing efficiency with better rule organization
   - Works seamlessly with at-rule merging optimizations
+- [x] Early exit optimizations ✅ — Skip optimization passes when no work is needed
+  - Early exits for empty stylesheets and rules
+  - Skip duplicate removal when <= 1 declaration
+  - Skip merging operations when no rules to merge
+  - Significantly improves performance for edge cases and small stylesheets
+  - Reduces unnecessary allocations and iterations
 
 ## 🤝 Contributing
 

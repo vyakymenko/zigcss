@@ -65,17 +65,19 @@ pub const Optimizer = struct {
         if (self.critical_css_options) |_| {
             try self.extractCriticalCss(stylesheet);
         }
-        try self.optimizeSelectors(stylesheet);
-        try self.mergeSelectors(stylesheet);
-        try self.removeRedundantSelectors(stylesheet);
-        try self.optimizeLogicalProperties(stylesheet);
-        try self.optimizeShorthandProperties(stylesheet);
-        try self.removeDuplicateDeclarations(stylesheet);
-        try self.optimizeValues(stylesheet);
-        try self.reorderAtRules(stylesheet);
-        try self.mergeMediaQueries(stylesheet);
-        try self.mergeContainerQueries(stylesheet);
-        try self.mergeCascadeLayers(stylesheet);
+        if (stylesheet.rules.items.len > 0) {
+            try self.optimizeSelectors(stylesheet);
+            try self.mergeSelectors(stylesheet);
+            try self.removeRedundantSelectors(stylesheet);
+            try self.optimizeLogicalProperties(stylesheet);
+            try self.optimizeShorthandProperties(stylesheet);
+            try self.removeDuplicateDeclarations(stylesheet);
+            try self.optimizeValues(stylesheet);
+            try self.reorderAtRules(stylesheet);
+            try self.mergeMediaQueries(stylesheet);
+            try self.mergeContainerQueries(stylesheet);
+            try self.mergeCascadeLayers(stylesheet);
+        }
     }
 
     fn addAutoprefixes(self: *Optimizer, stylesheet: *ast.Stylesheet, options: autoprefixer.AutoprefixOptions) !void {
@@ -247,6 +249,8 @@ pub const Optimizer = struct {
     }
 
     fn mergeSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len <= 1) return;
+        
         var selector_map = std.AutoHashMap(usize, usize).init(self.allocator);
         defer selector_map.deinit();
 
@@ -385,6 +389,8 @@ pub const Optimizer = struct {
     }
 
     fn optimizeValues(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         if (stylesheet.string_pool) |pool| {
             for (stylesheet.rules.items) |*rule| {
                 switch (rule.*) {
@@ -918,6 +924,8 @@ pub const Optimizer = struct {
     }
 
     fn optimizeLogicalProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         const pool = stylesheet.string_pool;
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
@@ -993,6 +1001,8 @@ pub const Optimizer = struct {
     }
 
     fn optimizeShorthandProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         const pool = stylesheet.string_pool;
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
@@ -1457,6 +1467,8 @@ pub const Optimizer = struct {
     }
 
     fn removeDuplicateDeclarations(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
@@ -1480,6 +1492,8 @@ pub const Optimizer = struct {
 
     fn removeDuplicatesInRule(self: *Optimizer, style_rule: *ast.StyleRule) !void {
         _ = self;
+        if (style_rule.declarations.items.len <= 1) return;
+        
         var seen = std.StringHashMap(void).init(style_rule.allocator);
         defer seen.deinit();
 
@@ -1496,6 +1510,8 @@ pub const Optimizer = struct {
     }
 
     fn optimizeSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
@@ -1639,6 +1655,8 @@ pub const Optimizer = struct {
     }
 
     fn removeRedundantSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
@@ -1766,6 +1784,8 @@ pub const Optimizer = struct {
     }
 
     fn mergeMediaQueries(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         var media_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
         defer {
             var it = media_map.iterator();
@@ -1831,6 +1851,8 @@ pub const Optimizer = struct {
     }
 
     fn mergeContainerQueries(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         var container_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
         defer {
             var it = container_map.iterator();
@@ -1896,6 +1918,8 @@ pub const Optimizer = struct {
     }
 
     fn mergeCascadeLayers(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
+        if (stylesheet.rules.items.len == 0) return;
+        
         var layer_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
         defer {
             var it = layer_map.iterator();
