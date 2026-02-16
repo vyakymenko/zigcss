@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Features
+- Add Language Server Protocol (LSP) support - full LSP server implementation for editor integration
+- Add LSP diagnostics - real-time error and warning reporting for CSS parsing issues
+- Add LSP hover information - hover support for CSS properties with descriptions and value types
+- Add LSP code completion - code completion for common CSS properties
+- Add --lsp CLI flag to start LSP server mode
+- Add LspServer module with JSON-RPC protocol handling and text document synchronization
 - Add Tailwind @apply expansion - automatically expand Tailwind utility classes in @apply directives into CSS declarations
 - Add SCSS @content directive support - mixins can now accept content blocks using @content
 - Add SCSS variable arguments support - mixins and functions can accept variable arguments using ... syntax
