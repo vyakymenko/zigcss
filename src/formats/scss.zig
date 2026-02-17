@@ -840,8 +840,9 @@ pub const Parser = struct {
                     const media_block = try self.allocator.dupe(u8, input[media_start..end]);
                     try hoisted_media.append(self.allocator, media_block);
                     i = end;
+                    continue;
                 } else {
-                    try result.appendSlice(self.allocator, input[media_start..i]);
+                    i = media_start;
                 }
             } else {
                 try result.append(self.allocator, ch);
