@@ -805,51 +805,50 @@ pub const Parser = struct {
                 try result.append(self.allocator, ch);
                 i += 1;
                 continue;
-            } else if (in_rule) {
+            } else if (in_rule and i + 5 < input.len) {
                 var check_pos = i;
-                const original_i = i;
                 skipWhitespaceInSlice(input, &check_pos);
                 if (check_pos + 5 < input.len and std.mem.eql(u8, input[check_pos..check_pos+6], "@media")) {
-                    if (check_pos > original_i) {
-                        try result.appendSlice(self.allocator, input[original_i..check_pos]);
+                    if (check_pos > i) {
+                        try result.appendSlice(self.allocator, input[i..check_pos]);
                     }
                     const media_start = check_pos;
                     i = check_pos + 6;
                     skipWhitespaceInSlice(input, &i);
-                
-                var paren_depth: usize = 0;
-                var media_brace_depth: usize = 0;
-                var in_string = false;
-                var string_char: u8 = 0;
-                var media_end: ?usize = null;
-                
-                while (i < input.len) {
-                    const media_ch = input[i];
-                    if (!in_string) {
-                        if (media_ch == '"' or media_ch == '\'') {
-                            in_string = true;
-                            string_char = media_ch;
-                        } else if (media_ch == '(') {
-                            paren_depth += 1;
-                        } else if (media_ch == ')') {
-                            paren_depth -= 1;
-                        } else if (media_ch == '{') {
-                            media_brace_depth += 1;
-                        } else if (media_ch == '}') {
-                            media_brace_depth -= 1;
-                            if (media_brace_depth == 0) {
-                                media_end = i + 1;
-                                break;
+                    
+                    var paren_depth: usize = 0;
+                    var media_brace_depth: usize = 0;
+                    var in_string = false;
+                    var string_char: u8 = 0;
+                    var media_end: ?usize = null;
+                    
+                    while (i < input.len) {
+                        const media_ch = input[i];
+                        if (!in_string) {
+                            if (media_ch == '"' or media_ch == '\'') {
+                                in_string = true;
+                                string_char = media_ch;
+                            } else if (media_ch == '(') {
+                                paren_depth += 1;
+                            } else if (media_ch == ')') {
+                                paren_depth -= 1;
+                            } else if (media_ch == '{') {
+                                media_brace_depth += 1;
+                            } else if (media_ch == '}') {
+                                media_brace_depth -= 1;
+                                if (media_brace_depth == 0) {
+                                    media_end = i + 1;
+                                    break;
+                                }
+                            }
+                        } else {
+                            if (media_ch == string_char and (i == 0 or input[i - 1] != '\\')) {
+                                in_string = false;
                             }
                         }
-                    } else {
-                        if (media_ch == string_char and (i == 0 or input[i - 1] != '\\')) {
-                            in_string = false;
-                        }
+                        i += 1;
                     }
-                    i += 1;
-                }
-                
+                    
                     if (media_end) |end| {
                         const media_block = try self.allocator.dupe(u8, input[media_start..end]);
                         try hoisted_media.append(self.allocator, media_block);
