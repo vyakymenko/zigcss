@@ -665,7 +665,46 @@ pub const Parser = struct {
                 last_i = i;
             }
             
-            if (input[i] == '$' and i + 1 < input.len) {
+            if (input[i] == '#' and i + 1 < input.len and input[i + 1] == '{') {
+                i += 2;
+                var brace_count: usize = 1;
+                const interp_start = i;
+                var interp_end: ?usize = null;
+                
+                while (i < input.len) {
+                    if (input[i] == '{') {
+                        brace_count += 1;
+                    } else if (input[i] == '}') {
+                        brace_count -= 1;
+                        if (brace_count == 0) {
+                            interp_end = i;
+                            i += 1;
+                            break;
+                        }
+                    }
+                    i += 1;
+                }
+                
+                if (interp_end) |end| {
+                    const interp_expr = std.mem.trim(u8, input[interp_start..end], " \t\n\r");
+                    const processed_expr = try self.processDirectivesWithDepth(interp_expr, depth + 1);
+                    defer self.allocator.free(processed_expr);
+                    
+                    const evaluated = self.evaluateArithmetic(processed_expr) catch {
+                        try result.appendSlice(self.allocator, processed_expr);
+                        continue;
+                    };
+                    defer self.allocator.free(evaluated);
+                    
+                    try result.appendSlice(self.allocator, evaluated);
+                    continue;
+                } else {
+                    try result.append(self.allocator, '#');
+                    try result.append(self.allocator, '{');
+                    i = interp_start;
+                    continue;
+                }
+            } else if (input[i] == '$' and i + 1 < input.len) {
                 const var_start = i + 1;
                 var var_end = var_start;
 
@@ -1148,6 +1187,9 @@ pub const Parser = struct {
                     if (paren_end) |end| {
                         const inner = expr_copy[paren_start + 1..end];
                         std.debug.print("DEBUG: Found parentheses, inner=\"{s}\"\n", .{inner});
+                        const before_paren = std.mem.trim(u8, expr_copy[0..paren_start], " \t\n\r");
+                        const is_function_call = before_paren.len > 0 and std.ascii.isAlphabetic(before_paren[before_paren.len - 1]);
+                        
                         const result = try self.evaluateSimpleArithmetic(inner);
                         if (result) |res| {
                             std.debug.print("DEBUG: Evaluated inner to \"{s}\"\n", .{res});
@@ -1162,6 +1204,10 @@ pub const Parser = struct {
                             break;
                         } else {
                             std.debug.print("DEBUG: evaluateSimpleArithmetic returned null for inner\n", .{});
+                            if (is_function_call or inner.len > 0 and inner[0] == '$') {
+                                std.debug.print("DEBUG: Looks like a function call or variable reference, returning as-is\n", .{});
+                                return expr_copy;
+                            }
                         }
                     }
                 }
@@ -1206,6 +1252,11 @@ pub const Parser = struct {
             return null;
         }
 
+        if (trimmed[0] == '$') {
+            std.debug.print("DEBUG: Expression starts with $, treating as variable reference, returning null\n", .{});
+            return null;
+        }
+
         var parts = try std.ArrayList([]const u8).initCapacity(self.allocator, 4);
         defer parts.deinit(self.allocator);
         var operators = try std.ArrayList(u8).initCapacity(self.allocator, 4);
@@ -1223,10 +1274,31 @@ pub const Parser = struct {
             } else if (ch == ')') {
                 depth -= 1;
                 i += 1;
+            } else if (ch == '$' and depth == 0) {
+                var var_end = i + 1;
+                while (var_end < trimmed.len) {
+                    const var_ch = trimmed[var_end];
+                    if (std.ascii.isAlphanumeric(var_ch) or var_ch == '-' or var_ch == '_') {
+                        var_end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if (var_end > i + 1) {
+                    i = var_end;
+                    continue;
+                }
+                i += 1;
             } else if ((ch == '+' or ch == '-' or ch == '*' or ch == '/') and depth == 0) {
+                if (i > start and trimmed[start] == '$') {
+                    return null;
+                }
                 if (i > start) {
                     const part = std.mem.trim(u8, trimmed[start..i], " \t\n\r");
                     if (part.len > 0) {
+                        if (part[0] == '$') {
+                            return null;
+                        }
                         try parts.append(self.allocator, part);
                     }
                 }
@@ -1241,12 +1313,21 @@ pub const Parser = struct {
         if (start < trimmed.len) {
             const part = std.mem.trim(u8, trimmed[start..], " \t\n\r");
             if (part.len > 0) {
+                if (part[0] == '$') {
+                    return null;
+                }
                 try parts.append(self.allocator, part);
             }
         }
 
         if (parts.items.len == 0) {
             return null;
+        }
+
+        for (parts.items) |part| {
+            if (part.len > 0 and part[0] == '$') {
+                return null;
+            }
         }
 
         std.debug.print("DEBUG: Parts: {d}, Operators: {d}\n", .{ parts.items.len, operators.items.len });
