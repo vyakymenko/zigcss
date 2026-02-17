@@ -803,9 +803,10 @@ pub const Parser = struct {
                 }
                 try result.append(self.allocator, ch);
                 i += 1;
-            } else if (in_rule and i + 6 < input.len and std.mem.eql(u8, input[i..i+7], "@media ")) {
+            } else if (in_rule and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
                 const media_start = i;
-                i += 7;
+                i += 6;
+                skipWhitespaceInSlice(input, &i);
                 
                 var paren_depth: usize = 0;
                 var media_brace_depth: usize = 0;
