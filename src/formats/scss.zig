@@ -2300,7 +2300,7 @@ pub const Parser = struct {
                     if (nested_content.len == 0) {
                         try result.append(self.allocator, '}');
                         try result.append(self.allocator, '\n');
-                        i = content_end;
+                        i = content_end + 1;
                         continue;
                     }
                     
