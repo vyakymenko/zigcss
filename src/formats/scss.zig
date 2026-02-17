@@ -797,10 +797,10 @@ pub const Parser = struct {
                 i += 1;
             } else if (brace_depth > 0 and ch == '@' and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
                 const media_start = i;
-                i += 6;
+                var media_i = i + 6;
                 
-                while (i < input.len and std.ascii.isWhitespace(input[i])) {
-                    i += 1;
+                while (media_i < input.len and std.ascii.isWhitespace(input[media_i])) {
+                    media_i += 1;
                 }
                 
                 var paren_depth: usize = 0;
@@ -809,8 +809,8 @@ pub const Parser = struct {
                 var string_char: u8 = 0;
                 var media_end: ?usize = null;
                 
-                while (i < input.len) {
-                    const media_ch = input[i];
+                while (media_i < input.len) {
+                    const media_ch = input[media_i];
                     if (!in_string) {
                         if (media_ch == '"' or media_ch == '\'') {
                             in_string = true;
@@ -824,16 +824,16 @@ pub const Parser = struct {
                         } else if (media_ch == '}') {
                             media_brace_depth -= 1;
                             if (media_brace_depth == 0) {
-                                media_end = i + 1;
+                                media_end = media_i + 1;
                                 break;
                             }
                         }
                     } else {
-                        if (media_ch == string_char and (i == 0 or input[i - 1] != '\\')) {
+                        if (media_ch == string_char and (media_i == 0 or input[media_i - 1] != '\\')) {
                             in_string = false;
                         }
                     }
-                    i += 1;
+                    media_i += 1;
                 }
                 
                 if (media_end) |end| {
@@ -841,13 +841,11 @@ pub const Parser = struct {
                     try hoisted_media.append(self.allocator, media_block);
                     i = end;
                     continue;
-                } else {
-                    i = media_start;
                 }
-            } else {
-                try result.append(self.allocator, ch);
-                i += 1;
             }
+            
+            try result.append(self.allocator, ch);
+            i += 1;
         }
         
         const output = try result.toOwnedSlice(self.allocator);
