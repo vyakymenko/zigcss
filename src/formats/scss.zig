@@ -846,11 +846,13 @@ pub const Parser = struct {
                     try hoisted_media.append(self.allocator, media_block);
                     i = end;
                     continue;
+                } else {
+                    i = media_start;
                 }
-            } else {
-                try result.append(self.allocator, ch);
-                i += 1;
             }
+            
+            try result.append(self.allocator, ch);
+            i += 1;
         }
         
         const output = try result.toOwnedSlice(self.allocator);
