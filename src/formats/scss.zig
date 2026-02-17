@@ -121,7 +121,10 @@ pub const Parser = struct {
         const processed_input = try self.processDirectives(input_without_directives);
         defer self.allocator.free(processed_input);
         
-        const flattened_input = try self.flattenNestedSelectors(processed_input, null);
+        const hoisted_input = try self.hoistMediaQueriesFromRules(processed_input);
+        defer self.allocator.free(hoisted_input);
+        
+        const flattened_input = try self.flattenNestedSelectors(hoisted_input, null);
         defer self.allocator.free(flattened_input);
         
         
@@ -779,8 +782,6 @@ pub const Parser = struct {
         }
         
         var i: usize = 0;
-        var in_rule = false;
-        var rule_start: usize = 0;
         var brace_depth: usize = 0;
         
         while (i < input.len) {
@@ -788,73 +789,64 @@ pub const Parser = struct {
             
             if (ch == '{') {
                 brace_depth += 1;
-                if (brace_depth == 1) {
-                    in_rule = true;
-                    rule_start = i;
-                }
                 try result.append(self.allocator, ch);
                 i += 1;
-                continue;
             } else if (ch == '}') {
                 brace_depth -= 1;
-                if (brace_depth == 0) {
-                    in_rule = false;
-                }
                 try result.append(self.allocator, ch);
                 i += 1;
-                continue;
-            } else if (in_rule and ch == '@') {
-                if (i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
-                    const media_start = i;
-                    i += 6;
-                    skipWhitespaceInSlice(input, &i);
-                    
-                    var paren_depth: usize = 0;
-                    var media_brace_depth: usize = 0;
-                    var in_string = false;
-                    var string_char: u8 = 0;
-                    var media_end: ?usize = null;
-                    
-                    while (i < input.len) {
-                        const media_ch = input[i];
-                        if (!in_string) {
-                            if (media_ch == '"' or media_ch == '\'') {
-                                in_string = true;
-                                string_char = media_ch;
-                            } else if (media_ch == '(') {
-                                paren_depth += 1;
-                            } else if (media_ch == ')') {
-                                paren_depth -= 1;
-                            } else if (media_ch == '{') {
-                                media_brace_depth += 1;
-                            } else if (media_ch == '}') {
-                                media_brace_depth -= 1;
-                                if (media_brace_depth == 0) {
-                                    media_end = i + 1;
-                                    break;
-                                }
-                            }
-                        } else {
-                            if (media_ch == string_char and (i == 0 or input[i - 1] != '\\')) {
-                                in_string = false;
+            } else if (brace_depth > 0 and ch == '@' and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                const media_start = i;
+                i += 6;
+                
+                while (i < input.len and std.ascii.isWhitespace(input[i])) {
+                    i += 1;
+                }
+                
+                var paren_depth: usize = 0;
+                var media_brace_depth: usize = 0;
+                var in_string = false;
+                var string_char: u8 = 0;
+                var media_end: ?usize = null;
+                
+                while (i < input.len) {
+                    const media_ch = input[i];
+                    if (!in_string) {
+                        if (media_ch == '"' or media_ch == '\'') {
+                            in_string = true;
+                            string_char = media_ch;
+                        } else if (media_ch == '(') {
+                            paren_depth += 1;
+                        } else if (media_ch == ')') {
+                            paren_depth -= 1;
+                        } else if (media_ch == '{') {
+                            media_brace_depth += 1;
+                        } else if (media_ch == '}') {
+                            media_brace_depth -= 1;
+                            if (media_brace_depth == 0) {
+                                media_end = i + 1;
+                                break;
                             }
                         }
-                        i += 1;
-                    }
-                    
-                    if (media_end) |end| {
-                        const media_block = try self.allocator.dupe(u8, input[media_start..end]);
-                        try hoisted_media.append(self.allocator, media_block);
-                        i = end;
-                        continue;
                     } else {
-                        i = media_start;
+                        if (media_ch == string_char and (i == 0 or input[i - 1] != '\\')) {
+                            in_string = false;
+                        }
                     }
+                    i += 1;
                 }
+                
+                if (media_end) |end| {
+                    const media_block = try self.allocator.dupe(u8, input[media_start..end]);
+                    try hoisted_media.append(self.allocator, media_block);
+                    i = end;
+                } else {
+                    try result.appendSlice(self.allocator, input[media_start..i]);
+                }
+            } else {
+                try result.append(self.allocator, ch);
+                i += 1;
             }
-            
-            try result.append(self.allocator, ch);
-            i += 1;
         }
         
         const output = try result.toOwnedSlice(self.allocator);
