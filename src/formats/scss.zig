@@ -1003,11 +1003,51 @@ pub const Parser = struct {
             } else if (input[i] == '@' and i + 7 <= input.len) {
                 
                 const saved_i = i;
+                
+                if (i + 6 <= input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                    const media_start = i;
+                    i += 6;
+                    skipWhitespaceInSlice(input, &i);
+                    var brace_count: usize = 0;
+                    var paren_count: usize = 0;
+                    var in_string = false;
+                    var string_char: u8 = 0;
+                    
+                    while (i < input.len) {
+                        const ch = input[i];
+                        if (!in_string) {
+                            if (ch == '(') {
+                                paren_count += 1;
+                            } else if (ch == ')') {
+                                paren_count -= 1;
+                            } else if (ch == '{') {
+                                brace_count += 1;
+                            } else if (ch == '}') {
+                                if (brace_count == 0) {
+                                    i += 1;
+                                    break;
+                                }
+                                brace_count -= 1;
+                            } else if (ch == '"' or ch == '\'') {
+                                in_string = true;
+                                string_char = ch;
+                            }
+                        } else {
+                            if (ch == string_char and (i == 0 or input[i-1] != '\\')) {
+                                in_string = false;
+                            }
+                        }
+                        i += 1;
+                    }
+                    try result.appendSlice(self.allocator, input[media_start..i]);
+                    continue;
+                }
+                
                 i += 1;
                 
-                if (i + 7 <= input.len and std.mem.eql(u8, input[i..i+7], "include")) {
+                if (i + 6 <= input.len and std.mem.eql(u8, input[saved_i..saved_i+8], "@include")) {
                     
-                    i += 7;
+                    i = saved_i + 8;
                     skipWhitespaceInSlice(input, &i);
                     const mixin_start = i;
                     
