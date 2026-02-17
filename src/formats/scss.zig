@@ -2027,10 +2027,17 @@ pub const Parser = struct {
                                 paren_depth_check += 1;
                             } else if (ch == ')') {
                                 paren_depth_check -= 1;
-                            } else if ((ch == '.' or ch == '#' or (ch == '&' and check_i + 1 < nested_content.len and nested_content[check_i + 1] != ':')) and paren_depth_check == 0) {
+                            } else if ((ch == '.' or ch == '#' or ch == '&') and paren_depth_check == 0) {
                                 var sel_end = check_i + 1;
-                                while (sel_end < nested_content.len and (std.ascii.isAlphanumeric(nested_content[sel_end]) or nested_content[sel_end] == '-' or nested_content[sel_end] == '_')) {
+                                if (ch == '&' and sel_end < nested_content.len and nested_content[sel_end] == ':') {
                                     sel_end += 1;
+                                    while (sel_end < nested_content.len and (std.ascii.isAlphanumeric(nested_content[sel_end]) or nested_content[sel_end] == '-' or nested_content[sel_end] == '_')) {
+                                        sel_end += 1;
+                                    }
+                                } else {
+                                    while (sel_end < nested_content.len and (std.ascii.isAlphanumeric(nested_content[sel_end]) or nested_content[sel_end] == '-' or nested_content[sel_end] == '_')) {
+                                        sel_end += 1;
+                                    }
                                 }
                                 while (sel_end < nested_content.len and (nested_content[sel_end] == ' ' or nested_content[sel_end] == '\t' or nested_content[sel_end] == '\n')) {
                                     sel_end += 1;
