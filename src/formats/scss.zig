@@ -123,9 +123,16 @@ pub const Parser = struct {
         
         const hoisted_input = try self.hoistMediaQueriesFromRules(processed_input);
         defer self.allocator.free(hoisted_input);
+        std.debug.print("DEBUG: After hoistMediaQueriesFromRules: len={d}, preview='{s}'\n", .{ hoisted_input.len, if (hoisted_input.len > 150) hoisted_input[0..150] else hoisted_input });
         
         const flattened_input = try self.flattenNestedSelectors(hoisted_input, null);
         defer self.allocator.free(flattened_input);
+        std.debug.print("DEBUG: After flattenNestedSelectors: len={d}, preview='{s}'\n", .{ flattened_input.len, if (flattened_input.len > 150) flattened_input[0..150] else flattened_input });
+        if (std.mem.indexOf(u8, flattened_input, "@media")) |media_pos| {
+            std.debug.print("DEBUG: @media found in flattened_input at pos={d}, context='{s}'\n", .{ media_pos, if (media_pos + 50 <= flattened_input.len) flattened_input[media_pos..media_pos+50] else flattened_input[media_pos..] });
+        } else {
+            std.debug.print("DEBUG: @media NOT found in flattened_input!\n", .{});
+        }
         
         
         var css_p = css_parser.Parser.init(self.allocator, flattened_input);
@@ -796,6 +803,7 @@ pub const Parser = struct {
                 try result.append(self.allocator, ch);
                 i += 1;
             } else if (brace_depth > 0 and ch == '@' and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                std.debug.print("DEBUG: hoistMediaQueriesFromRules: @media detected at i={d}, brace_depth={d}\n", .{ i, brace_depth });
                 const media_start = i;
                 var media_i = i + 6;
                 
@@ -839,10 +847,12 @@ pub const Parser = struct {
                 
                 if (media_end) |end| {
                     const media_block = try self.allocator.dupe(u8, input[media_start..end]);
+                    std.debug.print("DEBUG: hoistMediaQueriesFromRules: extracted media block, start={d}, end={d}, block='{s}'\n", .{ media_start, end, if (media_block.len > 100) media_block[0..100] else media_block });
                     try hoisted_media.append(self.allocator, media_block);
                     i = end;
                     continue;
                 } else {
+                    std.debug.print("DEBUG: hoistMediaQueriesFromRules: media_end is null, appending char\n", .{});
                     try result.append(self.allocator, ch);
                     i += 1;
                 }
@@ -861,11 +871,14 @@ pub const Parser = struct {
             self.allocator.free(output);
             
             for (hoisted_media.items) |media_block| {
+                std.debug.print("DEBUG: hoistMediaQueriesFromRules: appending hoisted media block, len={d}, preview='{s}'\n", .{ media_block.len, if (media_block.len > 100) media_block[0..100] else media_block });
                 try final_output.append(self.allocator, '\n');
                 try final_output.appendSlice(self.allocator, media_block);
             }
             
-            return try final_output.toOwnedSlice(self.allocator);
+            const final_result = try final_output.toOwnedSlice(self.allocator);
+            std.debug.print("DEBUG: hoistMediaQueriesFromRules: final result len={d}, preview='{s}'\n", .{ final_result.len, if (final_result.len > 150) final_result[0..150] else final_result });
+            return final_result;
         }
         
         return output;
@@ -1005,6 +1018,8 @@ pub const Parser = struct {
                 const saved_i = i;
                 
                 if (i + 6 <= input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                    std.debug.print("DEBUG: @media detected at i={d}, input_len={d}, preview='{s}'\n", .{ i, input.len, if (input.len > i + 50) input[i..i+50] else input[i..] });
+                    
                     const media_start = i;
                     i += 6;
                     skipWhitespaceInSlice(input, &i);
@@ -1039,6 +1054,10 @@ pub const Parser = struct {
                         }
                         i += 1;
                     }
+                    
+                    const media_slice = input[media_start..i];
+                    std.debug.print("DEBUG: @media block extracted: start={d}, end={d}, brace_count={d}, slice='{s}'\n", .{ media_start, i, brace_count, if (media_slice.len > 100) media_slice[0..100] else media_slice });
+                    
                     try result.appendSlice(self.allocator, input[media_start..i]);
                     continue;
                 }
@@ -1241,13 +1260,26 @@ pub const Parser = struct {
                         const body_with_vars_processed = try self.processVariableDeclarationsInMixin(mixin_body, &temp_vars);
                         defer self.allocator.free(body_with_vars_processed);
                         
+                        // #region agent log
+                        const log_file_a = std.fs.cwd().createFile("/Users/vyakymenko/Documents/git/GitHub/zcss/.cursor/debug.log", .{ .truncate = false }) catch null;
+                        if (log_file_a) |file| {
+                            defer file.close();
+                            const log_msg_a = std.fmt.allocPrint(self.allocator, "{{\"runId\":\"run1\",\"hypothesisId\":\"E\",\"location\":\"scss.zig:1241\",\"message\":\"Mixin body before processDirectivesWithDepth\",\"data\":{{\"mixin_name\":\"{s}\",\"body_preview\":\"{s}\",\"body_len\":{d}}},\"timestamp\":{d}}}\n", .{ mixin_name, if (body_with_vars_processed.len > 100) body_with_vars_processed[0..100] else body_with_vars_processed, body_with_vars_processed.len, std.time.timestamp() }) catch "";
+                            defer self.allocator.free(log_msg_a);
+                            _ = file.writeAll(log_msg_a) catch {};
+                        }
+                        // #endregion agent log
+                        
                         const expanded_body = try self.processDirectivesWithDepth(body_with_vars_processed, depth + 1);
                         defer self.allocator.free(expanded_body);
+                        std.debug.print("DEBUG: After processDirectivesWithDepth: mixin={s}, expanded='{s}'\n", .{ mixin_name, if (expanded_body.len > 100) expanded_body[0..100] else expanded_body });
                         
                         const cleaned_body = try self.removeVariableDeclarations(expanded_body);
                         defer self.allocator.free(cleaned_body);
+                        std.debug.print("DEBUG: After removeVariableDeclarations: mixin={s}, cleaned='{s}'\n", .{ mixin_name, if (cleaned_body.len > 100) cleaned_body[0..100] else cleaned_body });
                         
                         try result.appendSlice(self.allocator, cleaned_body);
+                        std.debug.print("DEBUG: After appendSlice: result_len={d}\n", .{result.items.len});
                         
                         if (i <= saved_i) {
                             const data_str6 = std.fmt.allocPrint(self.allocator, "{{\"i\":{},\"saved_i\":{},\"ERROR\":\"i_not_advancing\"}}", .{ i, saved_i }) catch "";
@@ -2217,11 +2249,15 @@ pub const Parser = struct {
             skipWhitespaceInSlice(input, &i);
             if (i >= input.len) {
                 if (before_skip < input.len) {
+                    std.debug.print("DEBUG: flattenNestedSelectors: appending remaining input from {d}, len={d}\n", .{ before_skip, input.len - before_skip });
                     try result.appendSlice(self.allocator, input[before_skip..]);
                 }
                 break;
             }
             const content_start = i;
+            if (i < input.len and input[i] == '@' and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                std.debug.print("DEBUG: flattenNestedSelectors: @media found after whitespace skip, i={d}, before_skip={d}\n", .{ i, before_skip });
+            }
             
             if (input[i] == '}') {
                 if (selector_stack.items.len > 0) {
@@ -2234,6 +2270,7 @@ pub const Parser = struct {
             }
             
             if (input[i] == '@' and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                std.debug.print("DEBUG: flattenNestedSelectors: @media detected at i={d}, input[i]='{c}', input[i..i+10]='{s}'\n", .{ i, input[i], if (i + 10 <= input.len) input[i..i+10] else input[i..] });
                 const media_start = i;
                 var media_i = i + 6;
                 skipWhitespaceInSlice(input, &media_i);
@@ -2259,9 +2296,18 @@ pub const Parser = struct {
                 }
                 
                 if (media_end) |end| {
+                    const media_slice = input[media_start..end];
+                    std.debug.print("DEBUG: flattenNestedSelectors: extracted @media block, start={d}, end={d}, slice_len={d}, slice='{s}'\n", .{ media_start, end, media_slice.len, if (media_slice.len > 100) media_slice[0..100] else media_slice });
+                    std.debug.print("DEBUG: flattenNestedSelectors: before_skip={d}, content_start={d}, will append from {d} to {d}\n", .{ before_skip, content_start, media_start, end });
+                    if (before_skip < content_start) {
+                        std.debug.print("DEBUG: flattenNestedSelectors: appending skipped whitespace: '{s}'\n", .{input[before_skip..content_start]});
+                        try result.appendSlice(self.allocator, input[before_skip..content_start]);
+                    }
                     try result.appendSlice(self.allocator, input[media_start..end]);
                     i = end;
                     continue;
+                } else {
+                    std.debug.print("DEBUG: flattenNestedSelectors: @media end not found!\n", .{});
                 }
             }
             
