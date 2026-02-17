@@ -2008,18 +2008,27 @@ pub const Parser = struct {
                         continue;
                     }
                     
-                    const parent_copy = try self.allocator.dupe(u8, full_sel_str);
-                    const flattened_nested = try self.flattenNestedSelectors(nested_content, parent_copy);
-                    defer {
-                        self.allocator.free(flattened_nested);
-                        self.allocator.free(parent_copy);
+                    const nested_trimmed = std.mem.trim(u8, nested_content, " \t\n\r");
+                    const has_nested_selectors = std.mem.indexOf(u8, nested_trimmed, "&") != null or 
+                                                (std.mem.indexOf(u8, nested_trimmed, ".") != null and std.mem.indexOf(u8, nested_trimmed, "{") != null) or
+                                                (std.mem.indexOf(u8, nested_trimmed, "#") != null and std.mem.indexOf(u8, nested_trimmed, "{") != null);
+                    
+                    if (has_nested_selectors) {
+                        const parent_copy = try self.allocator.dupe(u8, full_sel_str);
+                        const flattened_nested = try self.flattenNestedSelectors(nested_content, parent_copy);
+                        defer {
+                            self.allocator.free(flattened_nested);
+                            self.allocator.free(parent_copy);
+                        }
+                        // #region agent log
+                        const log_entry4 = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:flattened_result\",\"message\":\"Got flattened nested result\",\"data\":{{\"flattened_len\":{d},\"flattened_preview\":\"{s}\"}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"A\"}}\n", .{ flattened_nested.len, if (flattened_nested.len > 50) flattened_nested[0..50] else flattened_nested, std.time.timestamp() });
+                        defer self.allocator.free(log_entry4);
+                        _ = log_file.writeAll(log_entry4) catch {};
+                        // #endregion agent log
+                        try result.appendSlice(self.allocator, flattened_nested);
+                    } else {
+                        try result.appendSlice(self.allocator, nested_content);
                     }
-                    // #region agent log
-                    const log_entry4 = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:flattened_result\",\"message\":\"Got flattened nested result\",\"data\":{{\"flattened_len\":{d},\"flattened_preview\":\"{s}\"}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"A\"}}\n", .{ flattened_nested.len, if (flattened_nested.len > 50) flattened_nested[0..50] else flattened_nested, std.time.timestamp() });
-                    defer self.allocator.free(log_entry4);
-                    _ = log_file.writeAll(log_entry4) catch {};
-                    // #endregion agent log
-                    try result.appendSlice(self.allocator, flattened_nested);
                     
                     i = content_end;
                     if (selector_stack.items.len > 0) {
