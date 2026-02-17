@@ -2193,6 +2193,37 @@ pub const Parser = struct {
                 continue;
             }
             
+            if (input[i] == '@' and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                var media_i = i + 6;
+                skipWhitespaceInSlice(input, &media_i);
+                var media_brace_depth: usize = 0;
+                var media_end: ?usize = null;
+                
+                while (media_i < input.len) {
+                    const media_ch = input[media_i];
+                    if (media_ch == '{') {
+                        media_brace_depth += 1;
+                    } else if (media_ch == '}') {
+                        if (media_brace_depth == 0) {
+                            media_end = media_i + 1;
+                            break;
+                        }
+                        media_brace_depth -= 1;
+                        if (media_brace_depth == 0) {
+                            media_end = media_i + 1;
+                            break;
+                        }
+                    }
+                    media_i += 1;
+                }
+                
+                if (media_end) |end| {
+                    try result.appendSlice(self.allocator, input[i..end]);
+                    i = end;
+                    continue;
+                }
+            }
+            
             const sel_start = i;
             var found_brace = false;
             var brace_pos: usize = 0;
