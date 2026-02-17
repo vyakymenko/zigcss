@@ -121,7 +121,10 @@ pub const Parser = struct {
         const processed_input = try self.processDirectives(input_without_directives);
         defer self.allocator.free(processed_input);
         
-        const flattened_input = try self.flattenNestedSelectors(processed_input, null);
+        const hoisted_input = try self.hoistMediaQueriesFromRules(processed_input);
+        defer self.allocator.free(hoisted_input);
+        
+        const flattened_input = try self.flattenNestedSelectors(hoisted_input, null);
         defer self.allocator.free(flattened_input);
         
         
@@ -803,7 +806,7 @@ pub const Parser = struct {
                 try result.append(self.allocator, ch);
                 i += 1;
                 continue;
-            } else if (in_rule and i + 5 < input.len) {
+            } else if (in_rule) {
                 var check_pos = i;
                 skipWhitespaceInSlice(input, &check_pos);
                 if (check_pos + 5 < input.len and std.mem.eql(u8, input[check_pos..check_pos+6], "@media")) {
@@ -853,8 +856,15 @@ pub const Parser = struct {
                         i = end;
                         continue;
                     } else {
-                        i = media_start;
+                        i = check_pos;
+                        try result.appendSlice(self.allocator, input[i..check_pos + 6]);
+                        i = check_pos + 6;
+                        continue;
                     }
+                } else if (check_pos > i) {
+                    try result.appendSlice(self.allocator, input[i..check_pos]);
+                    i = check_pos;
+                    continue;
                 }
             }
             
