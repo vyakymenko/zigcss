@@ -1974,6 +1974,9 @@ pub const Parser = struct {
                     const full_sel_str = try full_sel.toOwnedSlice(self.allocator);
                     defer self.allocator.free(full_sel_str);
                     
+                    const full_sel_copy = try self.allocator.dupe(u8, full_sel_str);
+                    try selector_stack.append(self.allocator, full_sel_copy);
+                    
                     try result.appendSlice(self.allocator, full_sel_str);
                     try result.append(self.allocator, ' ');
                     try result.append(self.allocator, '{');
