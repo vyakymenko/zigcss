@@ -633,6 +633,102 @@ pub const Parser = struct {
         }
     }
 
+    fn processVariableDeclarationsInMixin(self: *Parser, input: []const u8, temp_vars: *std.StringHashMap([]const u8)) std.mem.Allocator.Error![]const u8 {
+        var result = try std.ArrayList(u8).initCapacity(self.allocator, input.len);
+        errdefer result.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < input.len) {
+            if (input[i] == '$' and i + 1 < input.len) {
+                const var_start = i;
+                i += 1;
+                const name_start = i;
+
+                while (i < input.len and (std.ascii.isAlphanumeric(input[i]) or input[i] == '-' or input[i] == '_')) {
+                    i += 1;
+                }
+
+                if (i < input.len and input[i] == ':') {
+                    const var_name = input[name_start..i];
+                    i += 1;
+                    skipWhitespaceInSlice(input, &i);
+                    const value_start = i;
+
+                    while (i < input.len) {
+                        if (input[i] == ';' or input[i] == '\n') {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    const value = std.mem.trim(u8, input[value_start..i], " \t\n\r");
+                    const processed_value = try self.processDirectivesWithDepth(value, 0);
+                    defer self.allocator.free(processed_value);
+                    
+                    const value_copy = try self.allocator.dupe(u8, processed_value);
+                    try temp_vars.put(var_name, value_copy);
+                    
+                    if (i < input.len and (input[i] == ';' or input[i] == '\n')) {
+                        i += 1;
+                    }
+                    continue;
+                } else {
+                    i = var_start;
+                }
+            }
+            try result.append(self.allocator, input[i]);
+            i += 1;
+        }
+
+        var output = try result.toOwnedSlice(self.allocator);
+        var it = temp_vars.iterator();
+        while (it.next()) |entry| {
+            const pattern = try std.fmt.allocPrint(self.allocator, "${s}", .{entry.key_ptr.*});
+            defer self.allocator.free(pattern);
+            const new_output = try self.replaceInString(output, pattern, entry.value_ptr.*);
+            self.allocator.free(output);
+            output = new_output;
+        }
+
+        return output;
+    }
+
+    fn removeVariableDeclarations(self: *Parser, input: []const u8) std.mem.Allocator.Error![]const u8 {
+        var result = try std.ArrayList(u8).initCapacity(self.allocator, input.len);
+        errdefer result.deinit(self.allocator);
+
+        var i: usize = 0;
+        while (i < input.len) {
+            if (input[i] == '$' and i + 1 < input.len) {
+                const var_start = i;
+                i += 1;
+
+                while (i < input.len and (std.ascii.isAlphanumeric(input[i]) or input[i] == '-' or input[i] == '_')) {
+                    i += 1;
+                }
+
+                if (i < input.len and input[i] == ':') {
+                    i += 1;
+                    skipWhitespaceInSlice(input, &i);
+
+                    while (i < input.len) {
+                        if (input[i] == ';' or input[i] == '\n') {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                } else {
+                    i = var_start;
+                }
+            }
+            try result.append(self.allocator, input[i]);
+            i += 1;
+        }
+
+        return try result.toOwnedSlice(self.allocator);
+    }
+
     fn processDirectives(self: *Parser, input: []const u8) std.mem.Allocator.Error![]const u8 {
         return self.processDirectivesWithDepth(input, 0);
     }
@@ -914,10 +1010,25 @@ pub const Parser = struct {
                             }
                         }
                         
-                        const expanded_body = try self.processDirectivesWithDepth(mixin_body, depth + 1);
+                        var temp_vars = std.StringHashMap([]const u8).init(self.allocator);
+                        defer {
+                            var it = temp_vars.iterator();
+                            while (it.next()) |entry| {
+                                self.allocator.free(entry.value_ptr.*);
+                            }
+                            temp_vars.deinit();
+                        }
+                        
+                        const body_with_vars_processed = try self.processVariableDeclarationsInMixin(mixin_body, &temp_vars);
+                        defer self.allocator.free(body_with_vars_processed);
+                        
+                        const expanded_body = try self.processDirectivesWithDepth(body_with_vars_processed, depth + 1);
                         defer self.allocator.free(expanded_body);
                         
-                        try result.appendSlice(self.allocator, expanded_body);
+                        const cleaned_body = try self.removeVariableDeclarations(expanded_body);
+                        defer self.allocator.free(cleaned_body);
+                        
+                        try result.appendSlice(self.allocator, cleaned_body);
                         
                         if (i <= saved_i) {
                             const data_str6 = std.fmt.allocPrint(self.allocator, "{{\"i\":{},\"saved_i\":{},\"ERROR\":\"i_not_advancing\"}}", .{ i, saved_i }) catch "";
