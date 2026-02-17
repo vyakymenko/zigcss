@@ -121,7 +121,10 @@ pub const Parser = struct {
         const processed_input = try self.processDirectives(input_without_directives);
         defer self.allocator.free(processed_input);
         
-        const flattened_input = try self.flattenNestedSelectors(processed_input, null);
+        const hoisted_input = try self.hoistMediaQueriesFromRules(processed_input);
+        defer self.allocator.free(hoisted_input);
+        
+        const flattened_input = try self.flattenNestedSelectors(hoisted_input, null);
         defer self.allocator.free(flattened_input);
         
         
@@ -800,7 +803,6 @@ pub const Parser = struct {
                     media_i += 1;
                 }
                 
-                var paren_depth: usize = 0;
                 var media_brace_depth: usize = 0;
                 var in_string = false;
                 var string_char: u8 = 0;
@@ -812,18 +814,14 @@ pub const Parser = struct {
                         if (media_ch == '"' or media_ch == '\'') {
                             in_string = true;
                             string_char = media_ch;
-                        } else if (media_ch == '(') {
-                            paren_depth += 1;
-                        } else if (media_ch == ')') {
-                            paren_depth -= 1;
                         } else if (media_ch == '{') {
                             media_brace_depth += 1;
                         } else if (media_ch == '}') {
-                            media_brace_depth -= 1;
                             if (media_brace_depth == 0) {
                                 media_end = media_i + 1;
                                 break;
                             }
+                            media_brace_depth -= 1;
                         }
                     } else {
                         if (media_ch == string_char and (media_i == 0 or input[media_i - 1] != '\\')) {
@@ -847,7 +845,7 @@ pub const Parser = struct {
         
         const output = try result.toOwnedSlice(self.allocator);
         if (hoisted_media.items.len > 0) {
-            var final_output = try std.ArrayList(u8).initCapacity(self.allocator, output.len + hoisted_media.items.len * 100);
+            var final_output = try std.ArrayList(u8).initCapacity(self.allocator, output.len + hoisted_media.items.len * 200);
             defer final_output.deinit(self.allocator);
             
             try final_output.appendSlice(self.allocator, output);
