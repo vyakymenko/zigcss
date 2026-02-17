@@ -805,10 +805,13 @@ pub const Parser = struct {
                 try result.append(self.allocator, ch);
                 i += 1;
                 continue;
-            } else if (in_rule and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
-                const media_start = i;
-                i += 6;
-                skipWhitespaceInSlice(input, &i);
+            } else if (in_rule) {
+                var check_pos = i;
+                skipWhitespaceInSlice(input, &check_pos);
+                if (check_pos + 5 < input.len and std.mem.eql(u8, input[check_pos..check_pos+6], "@media")) {
+                    const media_start = check_pos;
+                    i = check_pos + 6;
+                    skipWhitespaceInSlice(input, &i);
                 
                 var paren_depth: usize = 0;
                 var media_brace_depth: usize = 0;
@@ -843,13 +846,14 @@ pub const Parser = struct {
                     i += 1;
                 }
                 
-                if (media_end) |end| {
-                    const media_block = try self.allocator.dupe(u8, input[media_start..end]);
-                    try hoisted_media.append(self.allocator, media_block);
-                    i = end;
-                    continue;
-                } else {
-                    i = media_start;
+                    if (media_end) |end| {
+                        const media_block = try self.allocator.dupe(u8, input[media_start..end]);
+                        try hoisted_media.append(self.allocator, media_block);
+                        i = end;
+                        continue;
+                    } else {
+                        i = media_start;
+                    }
                 }
             }
             
