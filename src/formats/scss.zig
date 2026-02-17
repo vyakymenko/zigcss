@@ -121,7 +121,10 @@ pub const Parser = struct {
         const processed_input = try self.processDirectives(input_without_directives);
         defer self.allocator.free(processed_input);
         
-        const flattened_input = try self.flattenNestedSelectors(processed_input, null);
+        const hoisted_input = try self.hoistMediaQueriesFromRules(processed_input);
+        defer self.allocator.free(hoisted_input);
+        
+        const flattened_input = try self.flattenNestedSelectors(hoisted_input, null);
         defer self.allocator.free(flattened_input);
         
         
@@ -692,6 +695,182 @@ pub const Parser = struct {
         return output;
     }
 
+    const HoistedMediaResult = struct {
+        non_media: []const u8,
+        media_blocks: std.ArrayList([]const u8),
+    };
+
+    fn hoistMediaQueries(self: *Parser, input: []const u8) std.mem.Allocator.Error!HoistedMediaResult {
+        var non_media = try std.ArrayList(u8).initCapacity(self.allocator, input.len);
+        errdefer non_media.deinit(self.allocator);
+        
+        var media_blocks = try std.ArrayList([]const u8).initCapacity(self.allocator, 4);
+        errdefer {
+            for (media_blocks.items) |block| {
+                self.allocator.free(block);
+            }
+            media_blocks.deinit(self.allocator);
+        }
+
+        var i: usize = 0;
+        while (i < input.len) {
+            if (i + 6 < input.len and std.mem.eql(u8, input[i..i+7], "@media ")) {
+                const media_start = i;
+                i += 7;
+                
+                var paren_depth: usize = 0;
+                var brace_depth: usize = 0;
+                var in_string = false;
+                var string_char: u8 = 0;
+                var media_end: ?usize = null;
+                
+                while (i < input.len) {
+                    const ch = input[i];
+                    if (!in_string) {
+                        if (ch == '"' or ch == '\'') {
+                            in_string = true;
+                            string_char = ch;
+                        } else if (ch == '(') {
+                            paren_depth += 1;
+                        } else if (ch == ')') {
+                            paren_depth -= 1;
+                        } else if (ch == '{') {
+                            brace_depth += 1;
+                        } else if (ch == '}') {
+                            brace_depth -= 1;
+                            if (brace_depth == 0) {
+                                media_end = i + 1;
+                                break;
+                            }
+                        }
+                    } else {
+                        if (ch == string_char and (i == 0 or input[i - 1] != '\\')) {
+                            in_string = false;
+                        }
+                    }
+                    i += 1;
+                }
+                
+                if (media_end) |end| {
+                    const media_block = try self.allocator.dupe(u8, input[media_start..end]);
+                    try media_blocks.append(self.allocator, media_block);
+                    i = end;
+                    continue;
+                }
+            }
+            try non_media.append(self.allocator, input[i]);
+            i += 1;
+        }
+
+        return HoistedMediaResult{
+            .non_media = try non_media.toOwnedSlice(self.allocator),
+            .media_blocks = media_blocks,
+        };
+    }
+
+    fn hoistMediaQueriesFromRules(self: *Parser, input: []const u8) std.mem.Allocator.Error![]const u8 {
+        var result = try std.ArrayList(u8).initCapacity(self.allocator, input.len);
+        errdefer result.deinit(self.allocator);
+        
+        var hoisted_media = try std.ArrayList([]const u8).initCapacity(self.allocator, 4);
+        defer {
+            for (hoisted_media.items) |block| {
+                self.allocator.free(block);
+            }
+            hoisted_media.deinit(self.allocator);
+        }
+        
+        var i: usize = 0;
+        var in_rule = false;
+        var rule_start: usize = 0;
+        var brace_depth: usize = 0;
+        
+        while (i < input.len) {
+            const ch = input[i];
+            
+            if (ch == '{') {
+                brace_depth += 1;
+                if (brace_depth == 1) {
+                    in_rule = true;
+                    rule_start = i;
+                }
+                try result.append(self.allocator, ch);
+                i += 1;
+            } else if (ch == '}') {
+                brace_depth -= 1;
+                if (brace_depth == 0) {
+                    in_rule = false;
+                }
+                try result.append(self.allocator, ch);
+                i += 1;
+            } else if (in_rule and i + 6 < input.len and std.mem.eql(u8, input[i..i+7], "@media ")) {
+                const media_start = i;
+                i += 7;
+                
+                var paren_depth: usize = 0;
+                var media_brace_depth: usize = 0;
+                var in_string = false;
+                var string_char: u8 = 0;
+                var media_end: ?usize = null;
+                
+                while (i < input.len) {
+                    const media_ch = input[i];
+                    if (!in_string) {
+                        if (media_ch == '"' or media_ch == '\'') {
+                            in_string = true;
+                            string_char = media_ch;
+                        } else if (media_ch == '(') {
+                            paren_depth += 1;
+                        } else if (media_ch == ')') {
+                            paren_depth -= 1;
+                        } else if (media_ch == '{') {
+                            media_brace_depth += 1;
+                        } else if (media_ch == '}') {
+                            media_brace_depth -= 1;
+                            if (media_brace_depth == 0) {
+                                media_end = i + 1;
+                                break;
+                            }
+                        }
+                    } else {
+                        if (media_ch == string_char and (i == 0 or input[i - 1] != '\\')) {
+                            in_string = false;
+                        }
+                    }
+                    i += 1;
+                }
+                
+                if (media_end) |end| {
+                    const media_block = try self.allocator.dupe(u8, input[media_start..end]);
+                    try hoisted_media.append(self.allocator, media_block);
+                    i = end;
+                    continue;
+                }
+            } else {
+                try result.append(self.allocator, ch);
+                i += 1;
+            }
+        }
+        
+        const output = try result.toOwnedSlice(self.allocator);
+        if (hoisted_media.items.len > 0) {
+            var final_output = try std.ArrayList(u8).initCapacity(self.allocator, output.len + hoisted_media.items.len * 100);
+            defer final_output.deinit(self.allocator);
+            
+            try final_output.appendSlice(self.allocator, output);
+            self.allocator.free(output);
+            
+            for (hoisted_media.items) |media_block| {
+                try final_output.append(self.allocator, '\n');
+                try final_output.appendSlice(self.allocator, media_block);
+            }
+            
+            return try final_output.toOwnedSlice(self.allocator);
+        }
+        
+        return output;
+    }
+
     fn removeVariableDeclarations(self: *Parser, input: []const u8) std.mem.Allocator.Error![]const u8 {
         var result = try std.ArrayList(u8).initCapacity(self.allocator, input.len);
         errdefer result.deinit(self.allocator);
@@ -1028,7 +1207,29 @@ pub const Parser = struct {
                         const cleaned_body = try self.removeVariableDeclarations(expanded_body);
                         defer self.allocator.free(cleaned_body);
                         
-                        try result.appendSlice(self.allocator, cleaned_body);
+                        var hoisted_result = try self.hoistMediaQueries(cleaned_body);
+                        defer {
+                            self.allocator.free(hoisted_result.non_media);
+                            for (hoisted_result.media_blocks.items) |block| {
+                                self.allocator.free(block);
+                            }
+                            hoisted_result.media_blocks.deinit(self.allocator);
+                        }
+                        
+                        const non_media_trimmed = std.mem.trim(u8, hoisted_result.non_media, " \t\n\r");
+                        if (non_media_trimmed.len > 0) {
+                            try result.appendSlice(self.allocator, hoisted_result.non_media);
+                        }
+                        
+                        if (hoisted_result.media_blocks.items.len > 0) {
+                            if (non_media_trimmed.len == 0) {
+                                try result.append(self.allocator, '\n');
+                            }
+                            for (hoisted_result.media_blocks.items) |media_block| {
+                                try result.appendSlice(self.allocator, media_block);
+                                try result.append(self.allocator, '\n');
+                            }
+                        }
                         
                         if (i <= saved_i) {
                             const data_str6 = std.fmt.allocPrint(self.allocator, "{{\"i\":{},\"saved_i\":{},\"ERROR\":\"i_not_advancing\"}}", .{ i, saved_i }) catch "";
