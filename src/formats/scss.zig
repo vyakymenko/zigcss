@@ -1203,29 +1203,7 @@ pub const Parser = struct {
                         const cleaned_body = try self.removeVariableDeclarations(expanded_body);
                         defer self.allocator.free(cleaned_body);
                         
-                        var hoisted_result = try self.hoistMediaQueries(cleaned_body);
-                        defer {
-                            self.allocator.free(hoisted_result.non_media);
-                            for (hoisted_result.media_blocks.items) |block| {
-                                self.allocator.free(block);
-                            }
-                            hoisted_result.media_blocks.deinit(self.allocator);
-                        }
-                        
-                        const non_media_trimmed = std.mem.trim(u8, hoisted_result.non_media, " \t\n\r");
-                        if (non_media_trimmed.len > 0) {
-                            try result.appendSlice(self.allocator, hoisted_result.non_media);
-                        }
-                        
-                        if (hoisted_result.media_blocks.items.len > 0) {
-                            if (non_media_trimmed.len == 0) {
-                                try result.append(self.allocator, '\n');
-                            }
-                            for (hoisted_result.media_blocks.items) |media_block| {
-                                try result.appendSlice(self.allocator, media_block);
-                                try result.append(self.allocator, '\n');
-                            }
-                        }
+                        try result.appendSlice(self.allocator, cleaned_body);
                         
                         if (i <= saved_i) {
                             const data_str6 = std.fmt.allocPrint(self.allocator, "{{\"i\":{},\"saved_i\":{},\"ERROR\":\"i_not_advancing\"}}", .{ i, saved_i }) catch "";
