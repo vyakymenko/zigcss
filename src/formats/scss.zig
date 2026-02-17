@@ -711,9 +711,10 @@ pub const Parser = struct {
 
         var i: usize = 0;
         while (i < input.len) {
-            if (i + 6 < input.len and std.mem.eql(u8, input[i..i+7], "@media ")) {
+            if (i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
                 const media_start = i;
-                i += 7;
+                i += 6;
+                skipWhitespaceInSlice(input, &i);
                 
                 var paren_depth: usize = 0;
                 var brace_depth: usize = 0;
