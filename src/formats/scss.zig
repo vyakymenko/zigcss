@@ -121,10 +121,7 @@ pub const Parser = struct {
         const processed_input = try self.processDirectives(input_without_directives);
         defer self.allocator.free(processed_input);
         
-        const hoisted_input = try self.hoistMediaQueriesFromRules(processed_input);
-        defer self.allocator.free(hoisted_input);
-        
-        const flattened_input = try self.flattenNestedSelectors(hoisted_input, null);
+        const flattened_input = try self.flattenNestedSelectors(processed_input, null);
         defer self.allocator.free(flattened_input);
         
         
