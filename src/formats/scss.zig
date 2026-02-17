@@ -807,8 +807,12 @@ pub const Parser = struct {
                 continue;
             } else if (in_rule) {
                 var check_pos = i;
+                const original_i = i;
                 skipWhitespaceInSlice(input, &check_pos);
                 if (check_pos + 5 < input.len and std.mem.eql(u8, input[check_pos..check_pos+6], "@media")) {
+                    if (check_pos > original_i) {
+                        try result.appendSlice(self.allocator, input[original_i..check_pos]);
+                    }
                     const media_start = check_pos;
                     i = check_pos + 6;
                     skipWhitespaceInSlice(input, &i);
