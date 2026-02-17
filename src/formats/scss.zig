@@ -135,7 +135,7 @@ pub const Parser = struct {
         switch (result) {
             .success => |s| return s,
             .parse_error => |parse_error| {
-                const error_msg = error_module.formatErrorWithContext(self.allocator, processed_input, "processed_scss", parse_error) catch |err| {
+                const error_msg = error_module.formatErrorWithContext(self.allocator, flattened_input, "processed_scss", parse_error) catch |err| {
                     std.debug.print("Parse error at line {d}, column {d}: {s}\n", .{ parse_error.line, parse_error.column, parse_error.message });
                     return err;
                 };
@@ -1945,12 +1945,31 @@ pub const Parser = struct {
                     var full_sel = try std.ArrayList(u8).initCapacity(self.allocator, selector_raw.len * 3);
                     errdefer full_sel.deinit(self.allocator);
                     
-                    for (selector_stack.items) |parent| {
-                        try full_sel.appendSlice(self.allocator, parent);
-                        try full_sel.append(self.allocator, ' ');
-                    }
+                    const selector_has_ampersand = std.mem.indexOf(u8, selector_raw, "&") != null;
                     
-                    try full_sel.appendSlice(self.allocator, selector_raw);
+                    if (selector_has_ampersand) {
+                        var j: usize = 0;
+                        while (j < selector_raw.len) {
+                            if (j < selector_raw.len and selector_raw[j] == '&' and (j == 0 or !std.ascii.isAlphanumeric(selector_raw[j - 1]))) {
+                                if (selector_stack.items.len > 0) {
+                                    const parent = selector_stack.items[selector_stack.items.len - 1];
+                                    try full_sel.appendSlice(self.allocator, parent);
+                                }
+                                j += 1;
+                            } else {
+                                try full_sel.append(self.allocator, selector_raw[j]);
+                                j += 1;
+                            }
+                        }
+                    } else {
+                        if (selector_stack.items.len > 0) {
+                            for (selector_stack.items) |parent| {
+                                try full_sel.appendSlice(self.allocator, parent);
+                                try full_sel.append(self.allocator, ' ');
+                            }
+                        }
+                        try full_sel.appendSlice(self.allocator, selector_raw);
+                    }
                     
                     const full_sel_str = try full_sel.toOwnedSlice(self.allocator);
                     defer self.allocator.free(full_sel_str);
