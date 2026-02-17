@@ -819,7 +819,9 @@ pub const Parser = struct {
                                 media_end = media_i + 1;
                                 break;
                             }
-                            media_brace_depth -= 1;
+                            if (media_brace_depth > 0) {
+                                media_brace_depth -= 1;
+                            }
                         }
                     } else {
                         if (media_ch == string_char and (media_i == 0 or input[media_i - 1] != '\\')) {
