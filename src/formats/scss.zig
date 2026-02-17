@@ -2004,18 +2004,58 @@ pub const Parser = struct {
                     // #endregion agent log
                     
                     if (nested_content.len == 0) {
+                        try result.append(self.allocator, '}');
+                        try result.append(self.allocator, '\n');
                         i = content_end;
                         continue;
                     }
                     
-                    const nested_trimmed = std.mem.trim(u8, nested_content, " \t\n\r");
-                    const has_nested_selectors = std.mem.indexOf(u8, nested_trimmed, "&") != null or 
-                                                (std.mem.indexOf(u8, nested_trimmed, ".") != null and std.mem.indexOf(u8, nested_trimmed, "{") != null) or
-                                                (std.mem.indexOf(u8, nested_trimmed, "#") != null and std.mem.indexOf(u8, nested_trimmed, "{") != null);
+                    var first_selector_pos: ?usize = null;
+                    var paren_depth_check: usize = 0;
+                    var in_quotes_check = false;
+                    var quote_char_check: u8 = 0;
                     
-                    if (has_nested_selectors) {
+                    var check_i: usize = 0;
+                    while (check_i < nested_content.len) {
+                        const ch = nested_content[check_i];
+                        if (!in_quotes_check) {
+                            if (ch == '"' or ch == '\'') {
+                                in_quotes_check = true;
+                                quote_char_check = ch;
+                            } else if (ch == '(') {
+                                paren_depth_check += 1;
+                            } else if (ch == ')') {
+                                paren_depth_check -= 1;
+                            } else if ((ch == '.' or ch == '#' or (ch == '&' and check_i + 1 < nested_content.len and nested_content[check_i + 1] != ':')) and paren_depth_check == 0) {
+                                var sel_end = check_i + 1;
+                                while (sel_end < nested_content.len and nested_content[sel_end] != '{' and nested_content[sel_end] != ' ' and nested_content[sel_end] != '\t' and nested_content[sel_end] != '\n' and nested_content[sel_end] != ':') {
+                                    sel_end += 1;
+                                }
+                                if (sel_end < nested_content.len and nested_content[sel_end] == '{') {
+                                    first_selector_pos = check_i;
+                                    break;
+                                }
+                            }
+                        } else if (ch == quote_char_check and (check_i == 0 or nested_content[check_i - 1] != '\\')) {
+                            in_quotes_check = false;
+                        }
+                        check_i += 1;
+                    }
+                    
+                    if (first_selector_pos) |sel_pos| {
+                        if (sel_pos > 0) {
+                            const declarations_before = std.mem.trim(u8, nested_content[0..sel_pos], " \t\n\r");
+                            if (declarations_before.len > 0) {
+                                try result.appendSlice(self.allocator, declarations_before);
+                                try result.append(self.allocator, '\n');
+                            }
+                        }
+                        try result.append(self.allocator, '}');
+                        try result.append(self.allocator, '\n');
+                        
+                        const content_with_selectors = nested_content[sel_pos..];
                         const parent_copy = try self.allocator.dupe(u8, full_sel_str);
-                        const flattened_nested = try self.flattenNestedSelectors(nested_content, parent_copy);
+                        const flattened_nested = try self.flattenNestedSelectors(content_with_selectors, parent_copy);
                         defer {
                             self.allocator.free(flattened_nested);
                             self.allocator.free(parent_copy);
@@ -2028,6 +2068,8 @@ pub const Parser = struct {
                         try result.appendSlice(self.allocator, flattened_nested);
                     } else {
                         try result.appendSlice(self.allocator, nested_content);
+                        try result.append(self.allocator, '}');
+                        try result.append(self.allocator, '\n');
                     }
                     
                     i = content_end;
@@ -2035,8 +2077,6 @@ pub const Parser = struct {
                         const popped = selector_stack.orderedRemove(selector_stack.items.len - 1);
                         self.allocator.free(popped);
                     }
-                    try result.append(self.allocator, '}');
-                    try result.append(self.allocator, '\n');
                 } else {
                     try result.appendSlice(self.allocator, input[sel_start..brace_pos + 1]);
                     i = brace_pos + 1;
