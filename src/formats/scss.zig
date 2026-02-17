@@ -844,23 +844,29 @@ pub const Parser = struct {
             }
         }
         
-        const output = try result.toOwnedSlice(self.allocator);
+        var output = try result.toOwnedSlice(self.allocator);
+        defer self.allocator.free(output);
+        
         if (hoisted_media.items.len > 0) {
             var final_output = try std.ArrayList(u8).initCapacity(self.allocator, output.len + hoisted_media.items.len * 200);
-            defer final_output.deinit(self.allocator);
+            errdefer final_output.deinit(self.allocator);
             
-            try final_output.appendSlice(self.allocator, output);
-            self.allocator.free(output);
+            const trimmed_output = std.mem.trim(u8, output, " \t\n\r");
+            if (trimmed_output.len > 0) {
+                try final_output.appendSlice(self.allocator, trimmed_output);
+            }
             
             for (hoisted_media.items) |media_block| {
-                try final_output.append(self.allocator, '\n');
+                if (final_output.items.len > 0) {
+                    try final_output.append(self.allocator, '\n');
+                }
                 try final_output.appendSlice(self.allocator, media_block);
             }
             
             return try final_output.toOwnedSlice(self.allocator);
         }
         
-        return output;
+        return try self.allocator.dupe(u8, output);
     }
 
     fn removeVariableDeclarations(self: *Parser, input: []const u8) std.mem.Allocator.Error![]const u8 {
