@@ -2194,6 +2194,7 @@ pub const Parser = struct {
             }
             
             if (input[i] == '@' and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                const media_start = i;
                 var media_i = i + 6;
                 skipWhitespaceInSlice(input, &media_i);
                 var media_brace_depth: usize = 0;
@@ -2218,7 +2219,7 @@ pub const Parser = struct {
                 }
                 
                 if (media_end) |end| {
-                    try result.appendSlice(self.allocator, input[i..end]);
+                    try result.appendSlice(self.allocator, input[media_start..end]);
                     i = end;
                     continue;
                 }
