@@ -807,10 +807,9 @@ pub const Parser = struct {
                 i += 1;
                 continue;
             } else if (in_rule and ch == '@') {
-                var check_pos = i;
-                if (check_pos + 5 < input.len and std.mem.eql(u8, input[check_pos..check_pos+6], "@media")) {
-                    const media_start = check_pos;
-                    i = check_pos + 6;
+                if (i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
+                    const media_start = i;
+                    i += 6;
                     skipWhitespaceInSlice(input, &i);
                     
                     var paren_depth: usize = 0;
@@ -852,7 +851,7 @@ pub const Parser = struct {
                         i = end;
                         continue;
                     } else {
-                        i = check_pos;
+                        i = media_start;
                     }
                 }
             }
