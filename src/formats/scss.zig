@@ -857,8 +857,6 @@ pub const Parser = struct {
                         continue;
                     } else {
                         i = check_pos;
-                        try result.appendSlice(self.allocator, input[i..check_pos + 6]);
-                        i = check_pos + 6;
                         continue;
                     }
                 } else if (check_pos > i) {
