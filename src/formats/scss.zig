@@ -1990,10 +1990,11 @@ pub const Parser = struct {
                             brace_count += 1;
                         } else if (ch == '}') {
                             brace_count -= 1;
+                            if (brace_count == 0) {
+                                break;
+                            }
                         }
-                        if (brace_count > 0) {
-                            content_end += 1;
-                        }
+                        content_end += 1;
                     }
                     
                     const nested_content = input[nested_start..content_end];
@@ -2028,7 +2029,10 @@ pub const Parser = struct {
                                 paren_depth_check -= 1;
                             } else if ((ch == '.' or ch == '#' or (ch == '&' and check_i + 1 < nested_content.len and nested_content[check_i + 1] != ':')) and paren_depth_check == 0) {
                                 var sel_end = check_i + 1;
-                                while (sel_end < nested_content.len and nested_content[sel_end] != '{' and nested_content[sel_end] != ' ' and nested_content[sel_end] != '\t' and nested_content[sel_end] != '\n' and nested_content[sel_end] != ':') {
+                                while (sel_end < nested_content.len and (std.ascii.isAlphanumeric(nested_content[sel_end]) or nested_content[sel_end] == '-' or nested_content[sel_end] == '_')) {
+                                    sel_end += 1;
+                                }
+                                while (sel_end < nested_content.len and (nested_content[sel_end] == ' ' or nested_content[sel_end] == '\t' or nested_content[sel_end] == '\n')) {
                                     sel_end += 1;
                                 }
                                 if (sel_end < nested_content.len and nested_content[sel_end] == '{') {
@@ -2066,16 +2070,23 @@ pub const Parser = struct {
                         _ = log_file.writeAll(log_entry4) catch {};
                         // #endregion agent log
                         try result.appendSlice(self.allocator, flattened_nested);
+                        
+                        i = content_end + 1;
+                        if (selector_stack.items.len > 0) {
+                            const popped = selector_stack.orderedRemove(selector_stack.items.len - 1);
+                            self.allocator.free(popped);
+                        }
+                        continue;
                     } else {
                         try result.appendSlice(self.allocator, nested_content);
                         try result.append(self.allocator, '}');
                         try result.append(self.allocator, '\n');
-                    }
-                    
-                    i = content_end;
-                    if (selector_stack.items.len > 0) {
-                        const popped = selector_stack.orderedRemove(selector_stack.items.len - 1);
-                        self.allocator.free(popped);
+                        
+                        i = content_end + 1;
+                        if (selector_stack.items.len > 0) {
+                            const popped = selector_stack.orderedRemove(selector_stack.items.len - 1);
+                            self.allocator.free(popped);
+                        }
                     }
                 } else {
                     try result.appendSlice(self.allocator, input[sel_start..brace_pos + 1]);
