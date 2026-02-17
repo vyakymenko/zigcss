@@ -819,8 +819,10 @@ pub const Parser = struct {
                                 media_end = media_i + 1;
                                 break;
                             }
-                            if (media_brace_depth > 0) {
-                                media_brace_depth -= 1;
+                            media_brace_depth -= 1;
+                            if (media_brace_depth == 0) {
+                                media_end = media_i + 1;
+                                break;
                             }
                         }
                     } else {
