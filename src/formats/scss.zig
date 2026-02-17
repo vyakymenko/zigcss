@@ -829,6 +829,10 @@ pub const Parser = struct {
                     media_i += 1;
                 }
                 
+                if (media_end == null) {
+                    media_i = i + 6;
+                }
+                
                 if (media_end) |end| {
                     const media_block = try self.allocator.dupe(u8, input[media_start..end]);
                     try hoisted_media.append(self.allocator, media_block);
@@ -844,29 +848,23 @@ pub const Parser = struct {
             }
         }
         
-        var output = try result.toOwnedSlice(self.allocator);
-        defer self.allocator.free(output);
-        
+        const output = try result.toOwnedSlice(self.allocator);
         if (hoisted_media.items.len > 0) {
             var final_output = try std.ArrayList(u8).initCapacity(self.allocator, output.len + hoisted_media.items.len * 200);
             errdefer final_output.deinit(self.allocator);
             
-            const trimmed_output = std.mem.trim(u8, output, " \t\n\r");
-            if (trimmed_output.len > 0) {
-                try final_output.appendSlice(self.allocator, trimmed_output);
-            }
+            try final_output.appendSlice(self.allocator, output);
+            self.allocator.free(output);
             
             for (hoisted_media.items) |media_block| {
-                if (final_output.items.len > 0) {
-                    try final_output.append(self.allocator, '\n');
-                }
+                try final_output.append(self.allocator, '\n');
                 try final_output.appendSlice(self.allocator, media_block);
             }
             
             return try final_output.toOwnedSlice(self.allocator);
         }
         
-        return try self.allocator.dupe(u8, output);
+        return output;
     }
 
     fn removeVariableDeclarations(self: *Parser, input: []const u8) std.mem.Allocator.Error![]const u8 {
