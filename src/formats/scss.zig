@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../ast.zig");
 const css_parser = @import("../parser.zig");
+const error_module = @import("../error.zig");
 
 const Mixin = struct {
     name: []const u8,
@@ -74,6 +75,11 @@ pub const Parser = struct {
     mixins: std.StringHashMap(*Mixin),
     functions: std.StringHashMap(*Function),
 
+    const NumericValue = struct {
+        value: f64,
+        unit: ?[]const u8,
+    };
+
     pub fn init(allocator: std.mem.Allocator, input: []const u8) Parser {
         return .{
             .input = input,
@@ -114,10 +120,30 @@ pub const Parser = struct {
         defer self.allocator.free(input_without_directives);
         const processed_input = try self.processDirectives(input_without_directives);
         defer self.allocator.free(processed_input);
-
-        var css_p = css_parser.Parser.init(self.allocator, processed_input);
-        const stylesheet = try css_p.parse();
-        return stylesheet;
+        
+        const flattened_input = try self.flattenNestedSelectors(processed_input, null);
+        defer self.allocator.free(flattened_input);
+        
+        
+        var css_p = css_parser.Parser.init(self.allocator, flattened_input);
+        defer if (css_p.owns_pool) {
+            css_p.string_pool.deinit();
+            self.allocator.destroy(css_p.string_pool);
+        };
+        
+        const result = css_p.parseWithErrorInfo();
+        switch (result) {
+            .success => |s| return s,
+            .parse_error => |parse_error| {
+                const error_msg = error_module.formatErrorWithContext(self.allocator, processed_input, "processed_scss", parse_error) catch |err| {
+                    std.debug.print("Parse error at line {d}, column {d}: {s}\n", .{ parse_error.line, parse_error.column, parse_error.message });
+                    return err;
+                };
+                defer self.allocator.free(error_msg);
+                std.debug.print("{s}\n", .{error_msg});
+                return error.ParseError;
+            },
+        }
     }
 
     fn matchKeyword(self: *Parser, keyword: []const u8) bool {
@@ -476,6 +502,15 @@ pub const Parser = struct {
 
         var i: usize = 0;
         while (i < self.input.len) {
+            if (i + 1 < self.input.len and self.input[i] == '/' and self.input[i + 1] == '/') {
+                while (i < self.input.len and self.input[i] != '\n') {
+                    i += 1;
+                }
+                if (i < self.input.len) {
+                    i += 1;
+                }
+                continue;
+            }
             if (self.input[i] == '$' and i + 1 < self.input.len) {
                 const var_start = i;
                 i += 1;
@@ -498,6 +533,28 @@ pub const Parser = struct {
                     continue;
                 } else {
                     i = var_start;
+                }
+            } else if (self.input[i] == '%' and i + 1 < self.input.len) {
+                const placeholder_start = i;
+                i += 1;
+                while (i < self.input.len and (std.ascii.isAlphanumeric(self.input[i]) or self.input[i] == '-' or self.input[i] == '_')) {
+                    i += 1;
+                }
+                self.skipWhitespaceAt(&i);
+                if (i < self.input.len and self.input[i] == '{') {
+                    i += 1;
+                    var brace_count: usize = 1;
+                    while (i < self.input.len and brace_count > 0) {
+                        if (self.input[i] == '{') {
+                            brace_count += 1;
+                        } else if (self.input[i] == '}') {
+                            brace_count -= 1;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                } else {
+                    i = placeholder_start;
                 }
             } else if (self.input[i] == '@' and i + 1 < self.input.len) {
                 const at_start = i;
@@ -525,6 +582,31 @@ pub const Parser = struct {
                             }
                             i += 1;
                         }
+                    }
+                    continue;
+                } else if (std.mem.eql(u8, keyword, "extend") or 
+                           std.mem.eql(u8, keyword, "for") or 
+                           std.mem.eql(u8, keyword, "if") or 
+                           std.mem.eql(u8, keyword, "else") or 
+                           std.mem.eql(u8, keyword, "while") or 
+                           std.mem.eql(u8, keyword, "each")) {
+                    self.skipWhitespaceAt(&i);
+                    while (i < self.input.len and self.input[i] != '{' and self.input[i] != ';' and self.input[i] != '\n') {
+                        i += 1;
+                    }
+                    if (i < self.input.len and self.input[i] == '{') {
+                        i += 1;
+                        var brace_count: usize = 1;
+                        while (i < self.input.len and brace_count > 0) {
+                            if (self.input[i] == '{') {
+                                brace_count += 1;
+                            } else if (self.input[i] == '}') {
+                                brace_count -= 1;
+                            }
+                            i += 1;
+                        }
+                    } else if (i < self.input.len and (self.input[i] == ';' or self.input[i] == '\n')) {
+                        i += 1;
                     }
                     continue;
                 } else {
@@ -571,14 +653,12 @@ pub const Parser = struct {
         while (i < input.len) {
             loop_count += 1;
             if (loop_count > max_iterations) {
-                
-                return error.OutOfMemory;
+                return try self.allocator.dupe(u8, input);
             }
             if (i == last_i) {
                 stuck_count += 1;
                 if (stuck_count > 100) {
-                    
-                    return error.OutOfMemory;
+                    return try self.allocator.dupe(u8, input);
                 }
             } else {
                 stuck_count = 0;
@@ -813,7 +893,7 @@ pub const Parser = struct {
                 } else {
                     i = saved_i;
                 }
-            } else if ((std.ascii.isAlphabetic(input[i]) or input[i] == '-') and (i == 0 or !std.ascii.isAlphanumeric(input[i - 1]) and input[i - 1] != '_' and input[i - 1] != '-')) {
+            } else if (std.ascii.isAlphabetic(input[i]) and (i == 0 or (!std.ascii.isAlphanumeric(input[i - 1]) and input[i - 1] != '_' and input[i - 1] != '-'))) {
                 
                 const func_start = i;
                 var func_end = i;
@@ -823,23 +903,34 @@ pub const Parser = struct {
 
                 if (func_end < input.len and input[func_end] == '(') {
                     const func_name = input[func_start..func_end];
-                    if (self.functions.get(func_name)) |func| {
-                        func_end += 1;
-                        skipWhitespaceInSlice(input, &func_end);
-                        const arg_start = func_end;
-                        var paren_count: usize = 1;
-                        while (func_end < input.len and paren_count > 0) {
-                            if (input[func_end] == '(') {
-                                paren_count += 1;
-                            } else if (input[func_end] == ')') {
-                                paren_count -= 1;
-                            }
-                            if (paren_count > 0) {
-                                func_end += 1;
-                            }
+                    func_end += 1;
+                    skipWhitespaceInSlice(input, &func_end);
+                    const arg_start = func_end;
+                    var paren_count: usize = 1;
+                    while (func_end < input.len and paren_count > 0) {
+                        if (input[func_end] == '(') {
+                            paren_count += 1;
+                        } else if (input[func_end] == ')') {
+                            paren_count -= 1;
                         }
-                        const args_str = std.mem.trim(u8, input[arg_start..func_end], " \t");
-                        const result_value = try self.evaluateFunctionWithDepth(func, args_str, depth);
+                        if (paren_count > 0) {
+                            func_end += 1;
+                        }
+                    }
+                    const args_str = std.mem.trim(u8, input[arg_start..func_end], " \t");
+                    
+                    if (try self.evaluateBuiltinFunction(func_name, args_str, depth + 1)) |result_value| {
+                        defer self.allocator.free(result_value);
+                        if (std.mem.eql(u8, func_name, "if")) {
+                            std.debug.print("DEBUG: if function result: \"{s}\" (len={d})\n", .{ result_value, result_value.len });
+                        }
+                        try result.appendSlice(self.allocator, result_value);
+                        i = func_end + 1;
+                        continue;
+                    }
+                    
+                    if (self.functions.get(func_name)) |func| {
+                        const result_value = try self.evaluateFunctionWithDepth(func, args_str, depth + 1);
                         defer self.allocator.free(result_value);
                         try result.appendSlice(self.allocator, result_value);
                         i = func_end + 1;
@@ -884,6 +975,19 @@ pub const Parser = struct {
 
     fn evaluateFunction(self: *Parser, func: *Function, args_str: []const u8) std.mem.Allocator.Error![]const u8 {
         return self.evaluateFunctionWithDepth(func, args_str, 0);
+    }
+
+    fn evaluateBuiltinFunction(self: *Parser, func_name: []const u8, args_str: []const u8, depth: usize) std.mem.Allocator.Error!?[]const u8 {
+        if (std.mem.eql(u8, func_name, "map-get")) {
+            return try self.evaluateMapGet(args_str, depth);
+        } else if (std.mem.eql(u8, func_name, "lighten")) {
+            return try self.evaluateLighten(args_str, depth);
+        } else if (std.mem.eql(u8, func_name, "lightness")) {
+            return try self.evaluateLightness(args_str, depth);
+        } else if (std.mem.eql(u8, func_name, "if")) {
+            return try self.evaluateIf(args_str, depth);
+        }
+        return null;
     }
 
     fn evaluateFunctionWithDepth(self: *Parser, func: *Function, args_str: []const u8, depth: usize) std.mem.Allocator.Error![]const u8 {
@@ -950,9 +1054,9 @@ pub const Parser = struct {
         var return_start: ?usize = null;
         i = 0;
         while (i < func_body.len) {
-            if (i + 6 < func_body.len and std.mem.eql(u8, func_body[i..i+6], "@return")) {
-                i += 6;
-                self.skipWhitespaceAt(&i);
+            if (i + 7 <= func_body.len and std.mem.eql(u8, func_body[i..i+7], "@return")) {
+                i += 7;
+                skipWhitespaceInSlice(func_body, &i);
                 return_start = i;
                 break;
             }
@@ -964,13 +1068,920 @@ pub const Parser = struct {
             while (end < func_body.len and func_body[end] != ';' and func_body[end] != '}') {
                 end += 1;
             }
-            const return_value = std.mem.trim(u8, func_body[start..end], " \t");
-            const processed_value = try self.processDirectivesWithDepth(return_value, depth);
+            const return_value_raw = func_body[start..end];
+            const return_value = std.mem.trim(u8, return_value_raw, " \t\n\r");
+            if (return_value.len == 0) {
+                return try self.allocator.dupe(u8, "");
+            }
+            
+            const processed_value = try self.processDirectivesWithDepth(return_value, depth + 1);
             defer self.allocator.free(processed_value);
-            return try self.allocator.dupe(u8, processed_value);
+            
+            if (processed_value.len == 0) {
+                return try self.allocator.dupe(u8, return_value);
+            }
+            
+            const evaluated = self.evaluateArithmetic(processed_value) catch {
+                if (processed_value.len > 0) {
+                    return try self.allocator.dupe(u8, processed_value);
+                }
+                return try self.allocator.dupe(u8, return_value);
+            };
+            defer self.allocator.free(evaluated);
+            
+            if (evaluated.len == 0) {
+                if (processed_value.len > 0) {
+                    return try self.allocator.dupe(u8, processed_value);
+                }
+                return try self.allocator.dupe(u8, return_value);
+            }
+            
+            return try self.allocator.dupe(u8, evaluated);
         }
 
+        const processed_body = try self.processDirectivesWithDepth(func_body, depth + 1);
+        defer self.allocator.free(processed_body);
+        if (processed_body.len > 0) {
+            return try self.allocator.dupe(u8, processed_body);
+        }
+        
         return try self.allocator.dupe(u8, "");
+    }
+
+    fn evaluateArithmetic(self: *Parser, expr: []const u8) std.mem.Allocator.Error![]const u8 {
+        const trimmed = std.mem.trim(u8, expr, " \t\n\r");
+        if (trimmed.len == 0) {
+            return try self.allocator.dupe(u8, expr);
+        }
+
+        var expr_copy = try self.allocator.dupe(u8, trimmed);
+        errdefer self.allocator.free(expr_copy);
+
+        var iterations: usize = 0;
+        while (iterations < 20) {
+            iterations += 1;
+            std.debug.print("DEBUG: evaluateArithmetic iteration {}, expr_copy=\"{s}\"\n", .{ iterations, expr_copy });
+            var found_parens = false;
+
+            var i: usize = 0;
+            while (i < expr_copy.len) {
+                if (expr_copy[i] == '(') {
+                    found_parens = true;
+                    const paren_start = i;
+                    i += 1;
+                    var paren_count: usize = 1;
+                    var paren_end: ?usize = null;
+                    
+                    while (i < expr_copy.len and paren_count > 0) {
+                        if (expr_copy[i] == '(') {
+                            paren_count += 1;
+                        } else if (expr_copy[i] == ')') {
+                            paren_count -= 1;
+                            if (paren_count == 0) {
+                                paren_end = i;
+                                break;
+                            }
+                        }
+                        i += 1;
+                    }
+                    
+                    if (paren_end) |end| {
+                        const inner = expr_copy[paren_start + 1..end];
+                        std.debug.print("DEBUG: Found parentheses, inner=\"{s}\"\n", .{inner});
+                        const result = try self.evaluateSimpleArithmetic(inner);
+                        if (result) |res| {
+                            std.debug.print("DEBUG: Evaluated inner to \"{s}\"\n", .{res});
+                            var new_expr = try std.ArrayList(u8).initCapacity(self.allocator, expr_copy.len);
+                            defer new_expr.deinit(self.allocator);
+                            try new_expr.appendSlice(self.allocator, expr_copy[0..paren_start]);
+                            try new_expr.appendSlice(self.allocator, res);
+                            try new_expr.appendSlice(self.allocator, expr_copy[end + 1..]);
+                            self.allocator.free(expr_copy);
+                            expr_copy = try new_expr.toOwnedSlice(self.allocator);
+                            std.debug.print("DEBUG: New expr_copy after replacement=\"{s}\"\n", .{expr_copy});
+                            break;
+                        } else {
+                            std.debug.print("DEBUG: evaluateSimpleArithmetic returned null for inner\n", .{});
+                        }
+                    }
+                }
+                i += 1;
+            }
+
+            if (!found_parens) {
+                std.debug.print("DEBUG: No parentheses found, evaluating \"{s}\"\n", .{expr_copy});
+                const result = try self.evaluateSimpleArithmetic(expr_copy);
+                if (result) |res| {
+                    std.debug.print("DEBUG: evaluateSimpleArithmetic returned \"{s}\", returning it\n", .{res});
+                    self.allocator.free(expr_copy);
+                    return res;
+                } else {
+                    std.debug.print("DEBUG: evaluateSimpleArithmetic returned null, returning expr_copy=\"{s}\"\n", .{expr_copy});
+                }
+                return expr_copy;
+            }
+        }
+
+        std.debug.print("DEBUG: Final evaluation of \"{s}\"\n", .{expr_copy});
+        const final_result = try self.evaluateSimpleArithmetic(expr_copy);
+        if (final_result) |res| {
+            std.debug.print("DEBUG: Final result=\"{s}\"\n", .{res});
+            self.allocator.free(expr_copy);
+            return res;
+        } else {
+            std.debug.print("DEBUG: Final evaluateSimpleArithmetic returned null\n", .{});
+        }
+        
+        if (expr_copy.len > 0) {
+            return expr_copy;
+        }
+        
+        return try self.allocator.dupe(u8, trimmed);
+    }
+
+    fn evaluateSimpleArithmetic(self: *Parser, expr: []const u8) std.mem.Allocator.Error!?[]const u8 {
+        const trimmed = std.mem.trim(u8, expr, " \t\n\r");
+        std.debug.print("DEBUG: evaluateSimpleArithmetic called with \"{s}\"\n", .{trimmed});
+        if (trimmed.len == 0) {
+            return null;
+        }
+
+        var parts = try std.ArrayList([]const u8).initCapacity(self.allocator, 4);
+        defer parts.deinit(self.allocator);
+        var operators = try std.ArrayList(u8).initCapacity(self.allocator, 4);
+        defer operators.deinit(self.allocator);
+
+        var i: usize = 0;
+        var start: usize = 0;
+        var depth: i32 = 0;
+
+        while (i < trimmed.len) {
+            const ch = trimmed[i];
+            if (ch == '(') {
+                depth += 1;
+                i += 1;
+            } else if (ch == ')') {
+                depth -= 1;
+                i += 1;
+            } else if ((ch == '+' or ch == '-' or ch == '*' or ch == '/') and depth == 0) {
+                if (i > start) {
+                    const part = std.mem.trim(u8, trimmed[start..i], " \t\n\r");
+                    if (part.len > 0) {
+                        try parts.append(self.allocator, part);
+                    }
+                }
+                try operators.append(self.allocator, ch);
+                i += 1;
+                start = i;
+            } else {
+                i += 1;
+            }
+        }
+
+        if (start < trimmed.len) {
+            const part = std.mem.trim(u8, trimmed[start..], " \t\n\r");
+            if (part.len > 0) {
+                try parts.append(self.allocator, part);
+            }
+        }
+
+        if (parts.items.len == 0) {
+            return null;
+        }
+
+        std.debug.print("DEBUG: Parts: {d}, Operators: {d}\n", .{ parts.items.len, operators.items.len });
+        for (parts.items, 0..) |part, idx| {
+            std.debug.print("DEBUG:   part[{}]=\"{s}\"\n", .{ idx, part });
+        }
+        for (operators.items, 0..) |op, idx| {
+            std.debug.print("DEBUG:   op[{}]='{c}'\n", .{ idx, op });
+        }
+
+        if (parts.items.len == 1 and operators.items.len == 0) {
+            const part_str = parts.items[0];
+            if (part_str.len == 0) {
+                return null;
+            }
+            std.debug.print("DEBUG: Single part, returning \"{s}\"\n", .{part_str});
+            return try self.allocator.dupe(u8, part_str);
+        }
+
+        if (parts.items.len != operators.items.len + 1) {
+            std.debug.print("DEBUG: Mismatch: parts={d}, operators={d}, returning null\n", .{ parts.items.len, operators.items.len });
+            return null;
+        }
+
+        var values = try std.ArrayList(NumericValue).initCapacity(self.allocator, 4);
+        defer {
+            for (values.items) |v| {
+                if (v.unit) |u| self.allocator.free(u);
+            }
+            values.deinit(self.allocator);
+        }
+
+        for (parts.items) |part| {
+            std.debug.print("DEBUG: Parsing part \"{s}\"\n", .{part});
+            const parsed = self.parseNumericWithUnit(part) catch |err| {
+                std.debug.print("DEBUG: parseNumericWithUnit failed for \"{s}\": {s}\n", .{ part, @errorName(err) });
+                return null;
+            };
+            std.debug.print("DEBUG: Parsed: value={d}, unit={?s}\n", .{ parsed.value, parsed.unit });
+            try values.append(self.allocator, parsed);
+        }
+
+        if (values.items.len == 0) {
+            std.debug.print("DEBUG: No values parsed, returning null\n", .{});
+            return null;
+        }
+
+        var result_value = values.items[0].value;
+        var result_unit: ?[]const u8 = if (values.items[0].unit) |u| try self.allocator.dupe(u8, u) else null;
+        errdefer if (result_unit) |u| self.allocator.free(u);
+        std.debug.print("DEBUG: Starting with result_value={d}, result_unit={?s}\n", .{ result_value, result_unit });
+        
+        for (operators.items, 1..) |op, idx| {
+            std.debug.print("DEBUG: Processing op='{c}', next_val.value={d}, next_val.unit={?s}\n", .{ op, values.items[idx].value, values.items[idx].unit });
+            const next_val = values.items[idx];
+            const old_unit = result_unit;
+            
+            result_value = switch (op) {
+                '+' => result_value + next_val.value,
+                '-' => result_value - next_val.value,
+                '*' => result_value * next_val.value,
+                '/' => if (next_val.value == 0) return null else result_value / next_val.value,
+                else => return null,
+            };
+            
+            result_unit = switch (op) {
+                '+' => if (result_unit == null and next_val.unit != null) 
+                    try self.allocator.dupe(u8, next_val.unit.?)
+                    else if (result_unit != null and next_val.unit == null) 
+                    result_unit
+                    else if (result_unit != null and next_val.unit != null and std.mem.eql(u8, result_unit.?, next_val.unit.?)) 
+                    try self.allocator.dupe(u8, result_unit.?)
+                    else {
+                        std.debug.print("DEBUG: Addition unit mismatch, returning null\n", .{});
+                        return null;
+                    },
+                '-' => if (result_unit == null and next_val.unit != null) {
+                        std.debug.print("DEBUG: Subtraction: result_unit null but next_val has unit, returning null\n", .{});
+                        return null;
+                    }
+                    else if (result_unit != null and next_val.unit == null) 
+                    result_unit
+                    else if (result_unit != null and next_val.unit != null and std.mem.eql(u8, result_unit.?, next_val.unit.?)) 
+                    try self.allocator.dupe(u8, result_unit.?)
+                    else {
+                        std.debug.print("DEBUG: Subtraction unit mismatch, returning null\n", .{});
+                        return null;
+                    },
+                '*' => blk: {
+                    std.debug.print("DEBUG: Multiplication: result_unit={?s}, next_val.unit={?s}\n", .{ result_unit, next_val.unit });
+                    break :blk if (result_unit != null) 
+                        try self.allocator.dupe(u8, result_unit.?)
+                    else if (next_val.unit != null) 
+                        try self.allocator.dupe(u8, next_val.unit.?)
+                    else null;
+                },
+                '/' => if (next_val.unit == null) 
+                    if (result_unit) |u| try self.allocator.dupe(u8, u) else null
+                    else if (result_unit != null and std.mem.eql(u8, result_unit.?, next_val.unit.?)) 
+                    null
+                    else 
+                    if (result_unit) |u| try self.allocator.dupe(u8, u) else null,
+                else => {
+                    std.debug.print("DEBUG: Unknown operator '{c}', returning null\n", .{op});
+                    return null;
+                },
+            };
+            std.debug.print("DEBUG: After op '{c}': result_value={d}, result_unit={?s}\n", .{ op, result_value, result_unit });
+            
+            if (old_unit) |ou| {
+                if (result_unit == null or !std.mem.eql(u8, ou, result_unit.?)) {
+                    self.allocator.free(ou);
+                }
+            }
+        }
+        
+        const result = NumericValue{ .value = result_value, .unit = result_unit };
+
+        const formatted = try self.formatNumericWithUnit(result.value, result.unit);
+        return formatted;
+    }
+
+    fn parseNumericWithUnit(self: *Parser, value: []const u8) std.mem.Allocator.Error!NumericValue {
+        const trimmed = std.mem.trim(u8, value, " \t\n\r");
+        if (trimmed.len == 0) {
+            return error.OutOfMemory;
+        }
+
+        const units = [_][]const u8{ "vmin", "vmax", "rem", "em", "px", "%", "pt", "pc", "in", "cm", "mm", "ex", "ch", "vw", "vh" };
+        var unit: ?[]const u8 = null;
+        var num_str = trimmed;
+
+        for (units) |u| {
+            if (trimmed.len >= u.len and std.mem.eql(u8, trimmed[trimmed.len - u.len..], u)) {
+                unit = try self.allocator.dupe(u8, u);
+                num_str = trimmed[0..trimmed.len - u.len];
+                break;
+            }
+        }
+
+        std.debug.print("DEBUG: parseNumericWithUnit: trimmed=\"{s}\", num_str=\"{s}\", unit={?s}\n", .{ trimmed, num_str, unit });
+        const num = std.fmt.parseFloat(f64, num_str) catch |err| {
+            std.debug.print("DEBUG: parseFloat failed for \"{s}\": {s}\n", .{ num_str, @errorName(err) });
+            return error.OutOfMemory;
+        };
+
+        return .{ .value = num, .unit = unit };
+    }
+
+    fn formatNumericWithUnit(self: *Parser, value: f64, unit: ?[]const u8) ![]const u8 {
+        if (unit) |u| {
+            if (@mod(value, 1.0) == 0.0) {
+                const result = try std.fmt.allocPrint(self.allocator, "{d}{s}", .{ @as(i64, @intFromFloat(value)), u });
+                self.allocator.free(u);
+                return result;
+            } else {
+                const result = try std.fmt.allocPrint(self.allocator, "{d}{s}", .{ value, u });
+                self.allocator.free(u);
+                return result;
+            }
+        } else {
+            if (@mod(value, 1.0) == 0.0) {
+                return try std.fmt.allocPrint(self.allocator, "{d}", .{@as(i64, @intFromFloat(value))});
+            } else {
+                return try std.fmt.allocPrint(self.allocator, "{d}", .{value});
+            }
+        }
+    }
+
+    fn parseFunctionArgs(self: *Parser, args_str: []const u8, depth: usize) std.mem.Allocator.Error!std.ArrayList([]const u8) {
+        var args = try std.ArrayList([]const u8).initCapacity(self.allocator, 0);
+        errdefer {
+            for (args.items) |arg| {
+                self.allocator.free(arg);
+            }
+            args.deinit(self.allocator);
+        }
+
+        var i: usize = 0;
+        var arg_start: usize = 0;
+        var paren_count: usize = 0;
+        while (i < args_str.len) {
+            if (args_str[i] == '(') {
+                paren_count += 1;
+            } else if (args_str[i] == ')') {
+                paren_count -= 1;
+            } else if (args_str[i] == ',' and paren_count == 0) {
+                const arg = std.mem.trim(u8, args_str[arg_start..i], " \t");
+                if (arg.len > 0) {
+                    const processed_arg = try self.processDirectivesWithDepth(arg, depth + 1);
+                    defer self.allocator.free(processed_arg);
+                    const arg_copy = try self.allocator.dupe(u8, processed_arg);
+                    try args.append(self.allocator, arg_copy);
+                }
+                i += 1;
+                skipWhitespaceInSlice(args_str, &i);
+                arg_start = i;
+                continue;
+            }
+            i += 1;
+        }
+        const arg = std.mem.trim(u8, args_str[arg_start..], " \t");
+        if (arg.len > 0) {
+            const processed_arg = try self.processDirectivesWithDepth(arg, depth + 1);
+            defer self.allocator.free(processed_arg);
+            const arg_copy = try self.allocator.dupe(u8, processed_arg);
+            try args.append(self.allocator, arg_copy);
+        }
+        return args;
+    }
+
+    fn evaluateMapGet(self: *Parser, args_str: []const u8, depth: usize) std.mem.Allocator.Error!?[]const u8 {
+        var args = try self.parseFunctionArgs(args_str, depth);
+        defer {
+            for (args.items) |arg| {
+                self.allocator.free(arg);
+            }
+            args.deinit(self.allocator);
+        }
+
+        if (args.items.len != 2) {
+            return null;
+        }
+
+        const map_var = args.items[0];
+        const key = args.items[1];
+
+        var map_value: []const u8 = undefined;
+        var map_value_owned: ?[]const u8 = null;
+        defer if (map_value_owned) |mv| self.allocator.free(mv);
+
+        if (map_var.len > 0 and map_var[0] == '$') {
+            const var_name = map_var[1..];
+            map_value = self.variables.get(var_name) orelse return null;
+        } else {
+            map_value_owned = try self.processDirectivesWithDepth(map_var, depth + 1);
+            map_value = map_value_owned.?;
+        }
+
+        const map_str = std.mem.trim(u8, map_value, " \t\n\r");
+        if (map_str.len < 2 or map_str[0] != '(' or map_str[map_str.len - 1] != ')') {
+            return null;
+        }
+
+        const map_content = map_str[1..map_str.len - 1];
+        var i: usize = 0;
+        while (i < map_content.len) {
+            skipWhitespaceInSlice(map_content, &i);
+            if (i >= map_content.len) break;
+
+            const key_start = i;
+            while (i < map_content.len and map_content[i] != ':') {
+                i += 1;
+            }
+            if (i >= map_content.len) break;
+
+            const map_key = std.mem.trim(u8, map_content[key_start..i], " \t");
+            i += 1;
+            skipWhitespaceInSlice(map_content, &i);
+
+            const value_start = i;
+            var value_paren_count: usize = 0;
+            while (i < map_content.len) {
+                if (map_content[i] == '(') {
+                    value_paren_count += 1;
+                } else if (map_content[i] == ')') {
+                    if (value_paren_count == 0) break;
+                    value_paren_count -= 1;
+                } else if (map_content[i] == ',' and value_paren_count == 0) {
+                    break;
+                }
+                i += 1;
+            }
+
+            const map_value_str = std.mem.trim(u8, map_content[value_start..i], " \t");
+            if (std.mem.eql(u8, map_key, key)) {
+                return try self.allocator.dupe(u8, map_value_str);
+            }
+
+            if (i < map_content.len and map_content[i] == ',') {
+                i += 1;
+            }
+        }
+
+        return null;
+    }
+
+    fn parseColor(_: *Parser, color_str: []const u8) ?[3]u8 {
+        const trimmed = std.mem.trim(u8, color_str, " \t\n\r");
+        if (trimmed.len == 0) return null;
+
+        if (trimmed[0] == '#') {
+            if (trimmed.len == 4) {
+                const r = std.fmt.parseInt(u8, trimmed[1..2], 16) catch return null;
+                const g = std.fmt.parseInt(u8, trimmed[2..3], 16) catch return null;
+                const b = std.fmt.parseInt(u8, trimmed[3..4], 16) catch return null;
+                return [3]u8{ r * 17, g * 17, b * 17 };
+            } else if (trimmed.len == 7) {
+                const r = std.fmt.parseInt(u8, trimmed[1..3], 16) catch return null;
+                const g = std.fmt.parseInt(u8, trimmed[3..5], 16) catch return null;
+                const b = std.fmt.parseInt(u8, trimmed[5..7], 16) catch return null;
+                return [3]u8{ r, g, b };
+            }
+        } else if (std.mem.eql(u8, trimmed, "black")) {
+            return [3]u8{ 0, 0, 0 };
+        } else if (std.mem.eql(u8, trimmed, "white")) {
+            return [3]u8{ 255, 255, 255 };
+        }
+
+        return null;
+    }
+
+    fn formatColor(self: *Parser, rgb: [3]u8) ![]const u8 {
+        return try std.fmt.allocPrint(self.allocator, "#{x:0>2}{x:0>2}{x:0>2}", .{ rgb[0], rgb[1], rgb[2] });
+    }
+
+    fn evaluateLighten(self: *Parser, args_str: []const u8, depth: usize) std.mem.Allocator.Error!?[]const u8 {
+        var args = try self.parseFunctionArgs(args_str, depth);
+        defer {
+            for (args.items) |arg| {
+                self.allocator.free(arg);
+            }
+            args.deinit(self.allocator);
+        }
+
+        if (args.items.len != 2) {
+            return null;
+        }
+
+        var color_str = args.items[0];
+        const amount_str = args.items[1];
+
+        var color_resolved = color_str;
+        var color_owned: ?[]const u8 = null;
+        defer if (color_owned) |co| self.allocator.free(co);
+
+        if (color_str.len > 0 and color_str[0] == '$') {
+            const var_name = color_str[1..];
+            if (self.variables.get(var_name)) |var_value| {
+                color_owned = try self.processDirectivesWithDepth(var_value, depth + 1);
+                color_resolved = color_owned.?;
+            } else {
+                return null;
+            }
+        }
+
+        const rgb = parseColor(self, color_resolved) orelse {
+            return null;
+        };
+
+        var amount_str_clean = std.mem.trim(u8, amount_str, " \t\n\r");
+        if (std.mem.endsWith(u8, amount_str_clean, "%")) {
+            amount_str_clean = amount_str_clean[0..amount_str_clean.len - 1];
+        }
+        const amount = std.fmt.parseFloat(f64, amount_str_clean) catch {
+            std.debug.print("DEBUG: evaluateLighten: parseFloat failed for \"{s}\"\n", .{amount_str_clean});
+            return null;
+        };
+        const lighten_factor = amount / 100.0;
+
+        var new_rgb: [3]u8 = undefined;
+        for (0..3) |i| {
+            const old = rgb[i];
+            const lightened = @as(f64, @floatFromInt(old)) + (255.0 - @as(f64, @floatFromInt(old))) * lighten_factor;
+            new_rgb[i] = @as(u8, @intFromFloat(@min(255.0, @max(0.0, lightened))));
+        }
+
+        return try self.formatColor(new_rgb);
+    }
+
+    fn evaluateLightness(self: *Parser, args_str: []const u8, depth: usize) std.mem.Allocator.Error!?[]const u8 {
+        var args = try self.parseFunctionArgs(args_str, depth);
+        defer {
+            for (args.items) |arg| {
+                self.allocator.free(arg);
+            }
+            args.deinit(self.allocator);
+        }
+
+        if (args.items.len != 1) {
+            return null;
+        }
+
+        var color_str = args.items[0];
+        var color_resolved = color_str;
+        var color_owned: ?[]const u8 = null;
+        defer if (color_owned) |co| self.allocator.free(co);
+
+        if (color_str.len > 0 and color_str[0] == '$') {
+            const var_name = color_str[1..];
+            if (self.variables.get(var_name)) |var_value| {
+                color_owned = try self.processDirectivesWithDepth(var_value, depth + 1);
+                color_resolved = color_owned.?;
+            } else {
+                return null;
+            }
+        }
+
+        const rgb = parseColor(self, color_resolved) orelse return null;
+
+        const r = @as(f64, @floatFromInt(rgb[0])) / 255.0;
+        const g = @as(f64, @floatFromInt(rgb[1])) / 255.0;
+        const b = @as(f64, @floatFromInt(rgb[2])) / 255.0;
+
+        const max = @max(@max(r, g), b);
+        const min = @min(@min(r, g), b);
+        const lightness = ((max + min) / 2.0) * 100.0;
+
+        return try std.fmt.allocPrint(self.allocator, "{d}%", .{lightness});
+    }
+
+    fn evaluateComparison(self: *Parser, condition: []const u8, depth: usize) std.mem.Allocator.Error!bool {
+        const processed = try self.processDirectivesWithDepth(condition, depth + 1);
+        defer self.allocator.free(processed);
+        
+        const trimmed = std.mem.trim(u8, processed, " \t\n\r");
+        
+        var i: usize = 0;
+        while (i < trimmed.len) {
+            const ch = trimmed[i];
+            if (ch == '>' or ch == '<' or ch == '=' or ch == '!') {
+                const op_start = i;
+                i += 1;
+                if (i < trimmed.len and trimmed[i] == '=') {
+                    i += 1;
+                }
+                const op = trimmed[op_start..i];
+                
+                const left_str = std.mem.trim(u8, trimmed[0..op_start], " \t\n\r");
+                const right_str = std.mem.trim(u8, trimmed[i..], " \t\n\r");
+                
+                const left_processed = try self.processDirectivesWithDepth(left_str, depth + 1);
+                defer self.allocator.free(left_processed);
+                const right_processed = try self.processDirectivesWithDepth(right_str, depth + 1);
+                defer self.allocator.free(right_processed);
+                
+                const left_eval = self.evaluateArithmetic(left_processed) catch left_processed;
+                defer if (left_eval.ptr != left_processed.ptr) self.allocator.free(left_eval);
+                const right_eval = self.evaluateArithmetic(right_processed) catch right_processed;
+                defer if (right_eval.ptr != right_processed.ptr) self.allocator.free(right_eval);
+                
+                const left_num = self.parseNumericWithUnit(left_eval) catch {
+                    return false;
+                };
+                defer if (left_num.unit) |u| self.allocator.free(u);
+                
+                var right_str_clean = right_eval;
+                if (std.mem.endsWith(u8, right_eval, "%")) {
+                    right_str_clean = right_eval[0..right_eval.len - 1];
+                }
+                const right_num = self.parseNumericWithUnit(right_str_clean) catch {
+                    return false;
+                };
+                defer if (right_num.unit) |u| self.allocator.free(u);
+                
+                const result = if (std.mem.eql(u8, op, ">"))
+                    left_num.value > right_num.value
+                else if (std.mem.eql(u8, op, "<"))
+                    left_num.value < right_num.value
+                else if (std.mem.eql(u8, op, ">="))
+                    left_num.value >= right_num.value
+                else if (std.mem.eql(u8, op, "<="))
+                    left_num.value <= right_num.value
+                else if (std.mem.eql(u8, op, "=="))
+                    left_num.value == right_num.value
+                else if (std.mem.eql(u8, op, "!="))
+                    left_num.value != right_num.value
+                else
+                    return false;
+                
+                return result;
+            }
+            i += 1;
+        }
+        
+        const evaluated = self.evaluateArithmetic(trimmed) catch trimmed;
+        defer if (evaluated.ptr != trimmed.ptr) self.allocator.free(evaluated);
+        
+        const num_val = self.parseNumericWithUnit(evaluated) catch {
+            const trimmed_eval = std.mem.trim(u8, evaluated, " \t\n\r");
+            return trimmed_eval.len > 0 and !std.mem.eql(u8, trimmed_eval, "0") and !std.mem.eql(u8, trimmed_eval, "false");
+        };
+        defer if (num_val.unit) |u| self.allocator.free(u);
+        
+        return num_val.value != 0.0;
+    }
+
+    fn evaluateIf(self: *Parser, args_str: []const u8, depth: usize) std.mem.Allocator.Error!?[]const u8 {
+        var args = try self.parseFunctionArgs(args_str, depth);
+        defer {
+            for (args.items) |arg| {
+                self.allocator.free(arg);
+            }
+            args.deinit(self.allocator);
+        }
+
+        if (args.items.len != 3) {
+            return null;
+        }
+
+        const condition_str = args.items[0];
+        const if_true = args.items[1];
+        const if_false = args.items[2];
+
+        const condition = std.mem.trim(u8, condition_str, " \t\n\r");
+        
+        var is_true = false;
+        if (std.mem.eql(u8, condition, "true")) {
+            is_true = true;
+        } else if (std.mem.eql(u8, condition, "false")) {
+            is_true = false;
+        } else {
+            is_true = try self.evaluateComparison(condition, depth + 1);
+        }
+
+        return if (is_true) try self.allocator.dupe(u8, if_true) else try self.allocator.dupe(u8, if_false);
+    }
+
+    fn flattenNestedSelectors(self: *Parser, input: []const u8, parent_selector: ?[]const u8) std.mem.Allocator.Error![]const u8 {
+        // #region agent log
+        const log_entry = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:entry\",\"message\":\"Entering flattenNestedSelectors\",\"data\":{{\"input_len\":{d},\"input_preview\":\"{s}\"}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"A\"}}\n", .{ input.len, if (input.len > 50) input[0..50] else input, std.time.timestamp() });
+        defer self.allocator.free(log_entry);
+        const log_file = std.fs.cwd().createFile("/Users/vyakymenko/Documents/git/GitHub/zcss/.cursor/debug.log", .{ .truncate = false }) catch {
+            _ = std.fs.cwd().writeFile(.{ .sub_path = "/Users/vyakymenko/Documents/git/GitHub/zcss/.cursor/debug.log", .data = log_entry }) catch {};
+            return try self.allocator.dupe(u8, "");
+        };
+        defer log_file.close();
+        _ = log_file.writeAll(log_entry) catch {};
+        // #endregion agent log
+        
+        if (input.len == 0) {
+            return try self.allocator.dupe(u8, "");
+        }
+        
+        var result = try std.ArrayList(u8).initCapacity(self.allocator, input.len * 2);
+        errdefer result.deinit(self.allocator);
+        
+        var selector_stack = try std.ArrayList([]const u8).initCapacity(self.allocator, 10);
+        defer {
+            for (selector_stack.items) |sel| {
+                self.allocator.free(sel);
+            }
+            selector_stack.deinit(self.allocator);
+        }
+        
+        var parent_selector_in_stack = false;
+        if (parent_selector) |parent| {
+            const parent_copy = try self.allocator.dupe(u8, parent);
+            try selector_stack.append(self.allocator, parent_copy);
+            parent_selector_in_stack = true;
+        }
+        
+        var i: usize = 0;
+        var has_selector = false;
+        while (i < input.len) {
+            const before_skip = i;
+            skipWhitespaceInSlice(input, &i);
+            if (i >= input.len) {
+                if (before_skip < input.len) {
+                    try result.appendSlice(self.allocator, input[before_skip..]);
+                }
+                break;
+            }
+            const content_start = i;
+            
+            if (input[i] == '}') {
+                if (selector_stack.items.len > 0) {
+                    const popped = selector_stack.orderedRemove(selector_stack.items.len - 1);
+                    self.allocator.free(popped);
+                }
+                try result.append(self.allocator, input[i]);
+                i += 1;
+                continue;
+            }
+            
+            const sel_start = i;
+            var found_brace = false;
+            var brace_pos: usize = 0;
+            var paren_depth: usize = 0;
+            var in_quotes = false;
+            var quote_char: u8 = 0;
+            
+            while (i < input.len) {
+                const ch = input[i];
+                if (!in_quotes) {
+                    if (ch == '"' or ch == '\'') {
+                        in_quotes = true;
+                        quote_char = ch;
+                    } else if (ch == '(') {
+                        paren_depth += 1;
+                    } else if (ch == ')') {
+                        paren_depth -= 1;
+                    } else if (ch == '{' and paren_depth == 0) {
+                        found_brace = true;
+                        brace_pos = i;
+                        break;
+                    }
+                } else if (ch == quote_char and (i == 0 or input[i - 1] != '\\')) {
+                    in_quotes = false;
+                }
+                i += 1;
+            }
+            
+            if (found_brace) {
+                has_selector = true;
+                const selector_raw = std.mem.trim(u8, input[sel_start..brace_pos], " \t\n\r");
+                
+                // #region agent log
+                const log_entry2 = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:found_brace\",\"message\":\"Found selector with brace\",\"data\":{{\"selector_raw\":\"{s}\",\"stack_len\":{d}}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"A\"}}\n", .{ selector_raw, selector_stack.items.len, std.time.timestamp() });
+                defer self.allocator.free(log_entry2);
+                _ = log_file.writeAll(log_entry2) catch {};
+                // #endregion agent log
+                
+                if (selector_raw.len > 0 and selector_raw[0] != '@') {
+                    var full_sel = try std.ArrayList(u8).initCapacity(self.allocator, selector_raw.len * 3);
+                    errdefer full_sel.deinit(self.allocator);
+                    
+                    for (selector_stack.items) |parent| {
+                        try full_sel.appendSlice(self.allocator, parent);
+                        try full_sel.append(self.allocator, ' ');
+                    }
+                    
+                    try full_sel.appendSlice(self.allocator, selector_raw);
+                    
+                    const full_sel_str = try full_sel.toOwnedSlice(self.allocator);
+                    defer self.allocator.free(full_sel_str);
+                    
+                    try result.appendSlice(self.allocator, full_sel_str);
+                    try result.append(self.allocator, ' ');
+                    try result.append(self.allocator, '{');
+                    try result.append(self.allocator, '\n');
+                    
+                    i = brace_pos + 1;
+                    
+                    var brace_count: usize = 1;
+                    const nested_start = i;
+                    var content_end = i;
+                    while (content_end < input.len and brace_count > 0) {
+                        const ch = input[content_end];
+                        if (ch == '{') {
+                            brace_count += 1;
+                        } else if (ch == '}') {
+                            brace_count -= 1;
+                        }
+                        if (brace_count > 0) {
+                            content_end += 1;
+                        }
+                    }
+                    
+                    const nested_content = input[nested_start..content_end];
+                    // #region agent log
+                    const log_entry3 = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:nested_content\",\"message\":\"Extracted nested content\",\"data\":{{\"nested_len\":{d},\"nested_preview\":\"{s}\",\"nested_full\":\"{s}\",\"parent_selector\":\"{s}\"}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"B\"}}\n", .{ nested_content.len, if (nested_content.len > 50) nested_content[0..50] else nested_content, nested_content, full_sel_str, std.time.timestamp() });
+                    defer self.allocator.free(log_entry3);
+                    _ = log_file.writeAll(log_entry3) catch {};
+                    // #endregion agent log
+                    
+                    if (nested_content.len == 0) {
+                        i = content_end;
+                        continue;
+                    }
+                    
+                    const parent_copy = try self.allocator.dupe(u8, full_sel_str);
+                    const flattened_nested = try self.flattenNestedSelectors(nested_content, parent_copy);
+                    defer {
+                        self.allocator.free(flattened_nested);
+                        self.allocator.free(parent_copy);
+                    }
+                    // #region agent log
+                    const log_entry4 = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:flattened_result\",\"message\":\"Got flattened nested result\",\"data\":{{\"flattened_len\":{d},\"flattened_preview\":\"{s}\"}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"A\"}}\n", .{ flattened_nested.len, if (flattened_nested.len > 50) flattened_nested[0..50] else flattened_nested, std.time.timestamp() });
+                    defer self.allocator.free(log_entry4);
+                    _ = log_file.writeAll(log_entry4) catch {};
+                    // #endregion agent log
+                    try result.appendSlice(self.allocator, flattened_nested);
+                    
+                    i = content_end;
+                    if (selector_stack.items.len > 0) {
+                        const popped = selector_stack.orderedRemove(selector_stack.items.len - 1);
+                        self.allocator.free(popped);
+                    }
+                    try result.append(self.allocator, '}');
+                    try result.append(self.allocator, '\n');
+                } else {
+                    try result.appendSlice(self.allocator, input[sel_start..brace_pos + 1]);
+                    i = brace_pos + 1;
+                }
+            } else {
+                // #region agent log
+                const log_entry5 = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:no_brace\",\"message\":\"No brace found, copying content\",\"data\":{{\"has_selector\":{},\"remaining_len\":{d},\"remaining_preview\":\"{s}\"}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"A\"}}\n", .{ has_selector, input.len - i, if (input.len - i > 50) input[i..i+50] else input[i..], std.time.timestamp() });
+                defer self.allocator.free(log_entry5);
+                _ = log_file.writeAll(log_entry5) catch {};
+                // #endregion agent log
+                
+                if (!has_selector) {
+                    if (parent_selector_in_stack and selector_stack.items.len > 0) {
+                        const last_selector = selector_stack.items[selector_stack.items.len - 1];
+                        if (parent_selector) |parent| {
+                            if (std.mem.eql(u8, last_selector, parent)) {
+                                const popped = selector_stack.orderedRemove(selector_stack.items.len - 1);
+                                self.allocator.free(popped);
+                                parent_selector_in_stack = false;
+                            }
+                        }
+                    }
+                    if (content_start < input.len) {
+                        try result.appendSlice(self.allocator, input[content_start..]);
+                    }
+                    break;
+                }
+                while (i < input.len) {
+                    if (input[i] == '}') {
+                        break;
+                    }
+                    i += 1;
+                }
+                if (i > content_start) {
+                    try result.appendSlice(self.allocator, input[content_start..i]);
+                }
+                if (i < input.len and input[i] == '}') {
+                    if (selector_stack.items.len > 0) {
+                        const popped = selector_stack.orderedRemove(selector_stack.items.len - 1);
+                        self.allocator.free(popped);
+                    }
+                    try result.append(self.allocator, input[i]);
+                    i += 1;
+                }
+            }
+        }
+        
+        const final_result = try result.toOwnedSlice(self.allocator);
+        // #region agent log
+        const log_entry6 = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:exit\",\"message\":\"Exiting flattenNestedSelectors\",\"data\":{{\"result_len\":{d},\"result_preview\":\"{s}\"}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"A\"}}\n", .{ final_result.len, if (final_result.len > 50) final_result[0..50] else final_result, std.time.timestamp() });
+        defer self.allocator.free(log_entry6);
+        _ = log_file.writeAll(log_entry6) catch {};
+        // #endregion agent log
+        return final_result;
     }
 
     fn parseVariable(self: *Parser) !void {
