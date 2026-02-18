@@ -2577,6 +2577,9 @@ pub const Parser = struct {
                     defer self.allocator.free(log_entry3);
                     _ = log_file.writeAll(log_entry3) catch {};
                     // #endregion agent log
+                    if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null) {
+                        std.debug.print("DEBUG: flattenNestedSelectors: .comp-0 nested_content='{s}'\n", .{nested_content});
+                    }
                     
                     if (nested_content.len == 0) {
                         try result.append(self.allocator, '}');
@@ -2641,9 +2644,14 @@ pub const Parser = struct {
                     }
                     
                     if (first_selector_pos) |sel_pos| {
+                        std.debug.print("DEBUG: flattenNestedSelectors: first_selector_pos={d}, first_atrule_pos={?d}, nested_content_len={d}\n", .{ sel_pos, first_atrule_pos, nested_content.len });
+                        if (sel_pos > 0 and sel_pos <= nested_content.len) {
+                            std.debug.print("DEBUG: flattenNestedSelectors: content before selector (0..{d}): '{s}'\n", .{ sel_pos, nested_content[0..sel_pos] });
+                        }
                         const declarations_end = if (first_atrule_pos) |at_pos| at_pos else sel_pos;
                         if (declarations_end > 0) {
                             const declarations_before = std.mem.trim(u8, nested_content[0..declarations_end], " \t\n\r");
+                            std.debug.print("DEBUG: flattenNestedSelectors: declarations_before='{s}', len={d}, declarations_end={d}\n", .{ declarations_before, declarations_before.len, declarations_end });
                             if (declarations_before.len > 0) {
                                 try result.appendSlice(self.allocator, declarations_before);
                                 try result.append(self.allocator, '\n');
@@ -2651,6 +2659,7 @@ pub const Parser = struct {
                         }
                         
                         if (first_atrule_pos) |at_pos| {
+                            std.debug.print("DEBUG: flattenNestedSelectors: processing at-rule at pos={d}, sel_pos={d}\n", .{ at_pos, sel_pos });
                             var atrule_end = at_pos;
                             var atrule_brace_count: usize = 0;
                             while (atrule_end < sel_pos) {
@@ -2667,6 +2676,7 @@ pub const Parser = struct {
                                 atrule_end += 1;
                             }
                             const atrules_before = std.mem.trim(u8, nested_content[at_pos..atrule_end], " \t\n\r");
+                            std.debug.print("DEBUG: flattenNestedSelectors: atrules_before='{s}', len={d}, atrule_end={d}\n", .{ atrules_before, atrules_before.len, atrule_end });
                             if (atrules_before.len > 0) {
                                 try result.appendSlice(self.allocator, atrules_before);
                                 try result.append(self.allocator, '\n');
