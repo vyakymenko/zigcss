@@ -2799,8 +2799,19 @@ pub const Parser = struct {
             const ch = self.input[self.pos];
             if (std.ascii.isWhitespace(ch)) {
                 self.advance();
-            } else if (ch == '/' and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '*') {
-                self.skipComment();
+            } else if (ch == '/' and self.pos + 1 < self.input.len) {
+                if (self.input[self.pos + 1] == '*') {
+                    self.skipComment();
+                } else if (self.input[self.pos + 1] == '/') {
+                    while (self.pos < self.input.len and self.input[self.pos] != '\n') {
+                        self.advance();
+                    }
+                    if (self.pos < self.input.len) {
+                        self.advance();
+                    }
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
