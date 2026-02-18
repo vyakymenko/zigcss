@@ -2545,6 +2545,10 @@ pub const Parser = struct {
                     const full_sel_str = try full_sel.toOwnedSlice(self.allocator);
                     defer self.allocator.free(full_sel_str);
                     
+                    if (std.mem.indexOf(u8, selector_raw, ".title") != null) {
+                        std.debug.print("DEBUG: flattenNestedSelectors: processing .title, selector_raw='{s}', stack_len={d}, full_sel_str='{s}'\n", .{ selector_raw, selector_stack.items.len, full_sel_str });
+                    }
+                    
                     const full_sel_copy = try self.allocator.dupe(u8, full_sel_str);
                     try selector_stack.append(self.allocator, full_sel_copy);
                     
@@ -2687,6 +2691,9 @@ pub const Parser = struct {
                         try result.append(self.allocator, '\n');
                         
                         const content_with_selectors = nested_content[sel_pos..];
+                        if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null) {
+                            std.debug.print("DEBUG: flattenNestedSelectors: .comp-0 content_with_selectors='{s}', parent='{s}'\n", .{ content_with_selectors, full_sel_str });
+                        }
                         const parent_copy = try self.allocator.dupe(u8, full_sel_str);
                         const flattened_nested = try self.flattenNestedSelectors(content_with_selectors, parent_copy);
                         defer {
@@ -2698,6 +2705,9 @@ pub const Parser = struct {
                         defer self.allocator.free(log_entry4);
                         _ = log_file.writeAll(log_entry4) catch {};
                         // #endregion agent log
+                        if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null) {
+                            std.debug.print("DEBUG: flattenNestedSelectors: .comp-0 flattened_nested (full, len={d}): '{s}'\n", .{ flattened_nested.len, flattened_nested });
+                        }
                         try result.appendSlice(self.allocator, flattened_nested);
                         
                         i = content_end + 1;
