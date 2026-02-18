@@ -156,6 +156,25 @@ pub const Parser = struct {
         switch (result) {
             .success => |s| return s,
             .parse_error => |parse_error| {
+                const error_pos = if (parse_error.column > 1) parse_error.column - 1 else 0;
+                const context_start = if (error_pos > 200) error_pos - 200 else 0;
+                const context_end = if (error_pos + 300 < flattened_input.len) error_pos + 300 else flattened_input.len;
+                std.debug.print("DEBUG: Parse error at column {d} (pos {d}), line {d}, context='{s}'\n", .{ parse_error.column, error_pos, parse_error.line, flattened_input[context_start..context_end] });
+                if (error_pos < flattened_input.len) {
+                    std.debug.print("DEBUG: Character at error pos: '{c}' (0x{x})\n", .{ flattened_input[error_pos], flattened_input[error_pos] });
+                }
+                if (std.mem.indexOf(u8, flattened_input[context_start..context_end], ".comp-0")) |comp_pos| {
+                    const abs_comp_pos = context_start + comp_pos;
+                    const comp_context_start = if (abs_comp_pos > 50) abs_comp_pos - 50 else 0;
+                    const comp_context_end = if (abs_comp_pos + 150 < flattened_input.len) abs_comp_pos + 150 else flattened_input.len;
+                    std.debug.print("DEBUG: Found .comp-0 at pos {d}, context='{s}'\n", .{ abs_comp_pos, flattened_input[comp_context_start..comp_context_end] });
+                }
+                if (std.mem.indexOf(u8, flattened_input[context_start..context_end], "font-size: 0.75rem")) |fs_pos| {
+                    const abs_fs_pos = context_start + fs_pos;
+                    const fs_context_start = if (abs_fs_pos > 50) abs_fs_pos - 50 else 0;
+                    const fs_context_end = if (abs_fs_pos + 100 < flattened_input.len) abs_fs_pos + 100 else flattened_input.len;
+                    std.debug.print("DEBUG: Found 'font-size: 0.75rem' at pos {d}, context='{s}'\n", .{ abs_fs_pos, flattened_input[fs_context_start..fs_context_end] });
+                }
                 const error_msg = error_module.formatErrorWithContext(self.allocator, flattened_input, "processed_scss", parse_error) catch |err| {
                     std.debug.print("Parse error at line {d}, column {d}: {s}\n", .{ parse_error.line, parse_error.column, parse_error.message });
                     return err;
