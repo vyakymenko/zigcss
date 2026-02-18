@@ -94,20 +94,26 @@ pub const Parser = struct {
     pub fn parse(self: *Parser) !ast.Stylesheet {
         self.skipWhitespace();
 
+        std.debug.print("DEBUG: parse() starting, input_len={d}, first_50='{s}'\n", .{ self.input.len, if (self.input.len > 50) self.input[0..50] else self.input });
         while (self.pos < self.input.len) {
-            if (self.peek() == '$') {
+            const ch = self.peek();
+            std.debug.print("DEBUG: parse() loop: pos={d}, ch='{c}'\n", .{ self.pos, ch });
+            if (ch == '$') {
                 try self.parseVariable();
                 self.skipWhitespace();
-            } else if (self.peek() == '@') {
+            } else if (ch == '@') {
                 const saved_pos = self.pos;
                 self.advance();
                 if (self.matchKeyword("mixin")) {
+                    std.debug.print("DEBUG: parse() found @mixin at pos={d}\n", .{saved_pos});
                     try self.parseMixin();
                     self.skipWhitespace();
                 } else if (self.matchKeyword("function")) {
+                    std.debug.print("DEBUG: parse() found @function at pos={d}\n", .{saved_pos});
                     try self.parseFunction();
                     self.skipWhitespace();
                 } else {
+                    std.debug.print("DEBUG: parse() found @ but not mixin/function at pos={d}, char='{c}'\n", .{ saved_pos, if (saved_pos < self.input.len) self.input[saved_pos] else '?' });
                     self.pos = saved_pos;
                     break;
                 }
@@ -180,7 +186,7 @@ pub const Parser = struct {
     }
 
     fn parseMixin(self: *Parser) !void {
-        
+        std.debug.print("DEBUG: parseMixin called at pos={d}\n", .{self.pos});
         self.skipWhitespace();
 
         const name_start = self.pos;
@@ -362,6 +368,7 @@ pub const Parser = struct {
         mixin.params = params;
         mixin.defaults = defaults;
         mixin.variable_args = variable_args;
+        std.debug.print("DEBUG: Registering mixin '{s}', body_preview='{s}'\n", .{ name_copy, if (mixin.body.len > 100) mixin.body[0..100] else mixin.body });
         try self.mixins.put(name_copy, mixin);
     }
 
@@ -1152,8 +1159,8 @@ pub const Parser = struct {
                 
                 i += 1;
                 
-                if (i + 6 <= input.len and std.mem.eql(u8, input[saved_i..saved_i+8], "@include")) {
-                    
+                if (saved_i + 8 <= input.len and std.mem.eql(u8, input[saved_i..saved_i+8], "@include")) {
+                    std.debug.print("DEBUG: @include detected at saved_i={d}, input_len={d}, preview='{s}'\n", .{ saved_i, input.len, if (input.len > saved_i + 50) input[saved_i..saved_i+50] else input[saved_i..] });
                     i = saved_i + 8;
                     skipWhitespaceInSlice(input, &i);
                     const mixin_start = i;
@@ -1245,8 +1252,9 @@ pub const Parser = struct {
                         }
                     }
 
+                    std.debug.print("DEBUG: Looking up mixin '{s}'\n", .{mixin_name});
                     if (self.mixins.get(mixin_name)) |mixin| {
-                        
+                        std.debug.print("DEBUG: Mixin '{s}' found, body='{s}'\n", .{ mixin_name, if (mixin.body.len > 100) mixin.body[0..100] else mixin.body });
                         var mixin_body: []u8 = try self.allocator.dupe(u8, mixin.body);
                         defer self.allocator.free(mixin_body);
 
@@ -1376,7 +1384,11 @@ pub const Parser = struct {
                         
                         continue;
                     } else {
-                        
+                        std.debug.print("DEBUG: Mixin '{s}' NOT found! Available mixins:\n", .{mixin_name});
+                        var mixin_it = self.mixins.iterator();
+                        while (mixin_it.next()) |entry| {
+                            std.debug.print("DEBUG:   - '{s}'\n", .{entry.key_ptr.*});
+                        }
                         i = saved_i;
                     }
                 } else {
