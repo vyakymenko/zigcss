@@ -146,6 +146,18 @@ pub const Parser = struct {
             const comp_context_end = if (comp_pos + 200 < flattened_input.len) comp_pos + 200 else flattened_input.len;
             std.debug.print("DEBUG: .comp-0 in flattened_input at pos {d}: '{s}'\n", .{ comp_pos, flattened_input[comp_pos..comp_context_end] });
         }
+        if (414 < flattened_input.len) {
+            const pos414_start = if (414 > 100) 414 - 100 else 0;
+            const pos414_end = if (414 + 50 < flattened_input.len) 414 + 50 else flattened_input.len;
+            std.debug.print("DEBUG: CSS at pos 414 (absolute, pos {d}-{d}): '{s}'\n", .{ pos414_start, pos414_end, flattened_input[pos414_start..pos414_end] });
+            std.debug.print("DEBUG: Character at pos 414: '{c}' (0x{x})\n", .{ flattened_input[414], flattened_input[414] });
+            if (414 > 0) {
+                std.debug.print("DEBUG: Character at pos 413: '{c}' (0x{x})\n", .{ flattened_input[413], flattened_input[413] });
+            }
+            if (414 > 1) {
+                std.debug.print("DEBUG: Character at pos 412: '{c}' (0x{x})\n", .{ flattened_input[412], flattened_input[412] });
+            }
+        }
         if (std.mem.indexOf(u8, flattened_input, "@media")) |pos| {
             std.debug.print("DEBUG: @media at pos={d} in CSS parser input, context='{s}'\n", .{ pos, if (pos + 30 <= flattened_input.len) flattened_input[pos..pos+30] else flattened_input[pos..] });
         }
@@ -161,20 +173,69 @@ pub const Parser = struct {
             .success => |s| return s,
             .parse_error => |parse_error| {
                 const error_pos = if (parse_error.column > 1) parse_error.column - 1 else 0;
-                const context_start = if (error_pos > 200) error_pos - 200 else 0;
-                const context_end = if (error_pos + 300 < flattened_input.len) error_pos + 300 else flattened_input.len;
-                std.debug.print("DEBUG: Parse error at column {d} (pos {d}), line {d}, input_len={d}\n", .{ parse_error.column, error_pos, parse_error.line, flattened_input.len });
-                if (context_start < context_end) {
-                    std.debug.print("DEBUG: Context around error (pos {d}-{d}): '{s}'\n", .{ context_start, context_end, flattened_input[context_start..context_end] });
+                std.debug.print("DEBUG: Parse error at column {d} (calculated pos {d}), line {d}, input_len={d}\n", .{ parse_error.column, error_pos, parse_error.line, flattened_input.len });
+                std.debug.print("DEBUG: Note: parseIdentifier failed at pos=414, but error reports column 13 (pos 12). Checking actual CSS at pos 414...\n", .{});
+                if (414 < flattened_input.len) {
+                    const pos414_start = if (414 > 200) 414 - 200 else 0;
+                    const pos414_end = if (414 + 100 < flattened_input.len) 414 + 100 else flattened_input.len;
+                    std.debug.print("DEBUG: CSS at actual error pos 414 (pos {d}-{d}): '{s}'\n", .{ pos414_start, pos414_end, flattened_input[pos414_start..pos414_end] });
+                    std.debug.print("DEBUG: Character at pos 414: '{c}' (0x{x})\n", .{ flattened_input[414], flattened_input[414] });
+                    var i: usize = if (414 > 100) 414 - 100 else 0;
+                    var found_colon: ?usize = null;
+                    var found_semicolon: ?usize = null;
+                    while (i < 414 and i < flattened_input.len) {
+                        if (flattened_input[i] == ':') found_colon = i;
+                        if (flattened_input[i] == ';') found_semicolon = i;
+                        i += 1;
+                    }
+                    if (found_colon) |colon_pos| {
+                        const colon_end = if (colon_pos + 100 < flattened_input.len) colon_pos + 100 else flattened_input.len;
+                        std.debug.print("DEBUG: Last ':' before error at pos {d}: '{s}'\n", .{ colon_pos, flattened_input[colon_pos..colon_end] });
+                    }
+                    if (found_semicolon) |semi_pos| {
+                        const semi_end = if (semi_pos + 100 < flattened_input.len) semi_pos + 100 else flattened_input.len;
+                        std.debug.print("DEBUG: Last ';' before error at pos {d}: '{s}'\n", .{ semi_pos, flattened_input[semi_pos..semi_end] });
+                    }
                 }
+                
                 if (error_pos < flattened_input.len) {
+                    const error_context_start = if (error_pos > 150) error_pos - 150 else 0;
+                    const error_context_end = if (error_pos + 150 < flattened_input.len) error_pos + 150 else flattened_input.len;
+                    std.debug.print("DEBUG: Actual error context (pos {d}-{d}): '{s}'\n", .{ error_context_start, error_context_end, flattened_input[error_context_start..error_context_end] });
+                    const rel_pos_in_context = error_pos - error_context_start;
+                    std.debug.print("DEBUG: Error position {d} is at relative position {d} in context\n", .{ error_pos, rel_pos_in_context });
+                    if (rel_pos_in_context < error_context_end - error_context_start) {
+                        std.debug.print("DEBUG: Character at relative pos {d} in context: '{c}' (0x{x})\n", .{ rel_pos_in_context, flattened_input[error_pos], flattened_input[error_pos] });
+                    }
+                    std.debug.print("DEBUG: Bytes at error pos {d}: ", .{error_pos});
+                    const byte_start = if (error_pos > 20) error_pos - 20 else 0;
+                    const byte_end = if (error_pos + 30 < flattened_input.len) error_pos + 30 else flattened_input.len;
+                    for (flattened_input[byte_start..byte_end]) |b| {
+                        std.debug.print("'{c}'", .{if (b >= 32 and b < 127) b else '?'});
+                    }
+                    std.debug.print("\n", .{});
+                    
                     const char_before = if (error_pos > 0) flattened_input[error_pos - 1] else '?';
                     const char_at = flattened_input[error_pos];
                     const char_after = if (error_pos + 1 < flattened_input.len) flattened_input[error_pos + 1] else '?';
-                    std.debug.print("DEBUG: Chars around error pos: '{c}' '{c}' '{c}' (0x{x} 0x{x} 0x{x})\n", .{ char_before, char_at, char_after, char_before, char_at, char_after });
-                    const error_context_start = if (error_pos > 200) error_pos - 200 else 0;
-                    const error_context_end = if (error_pos + 200 < flattened_input.len) error_pos + 200 else flattened_input.len;
-                    std.debug.print("DEBUG: Exact error context (pos {d}-{d}): '{s}'\n", .{ error_context_start, error_context_end, flattened_input[error_context_start..error_context_end] });
+                    std.debug.print("DEBUG: Chars at error pos {d}: before='{c}' (0x{x}), at='{c}' (0x{x}), after='{c}' (0x{x})\n", .{ error_pos, char_before, char_before, char_at, char_at, char_after, char_after });
+                    
+                    var i: usize = if (error_pos > 50) error_pos - 50 else 0;
+                    var found_brace: ?usize = null;
+                    var found_semicolon: ?usize = null;
+                    while (i < error_pos and i < flattened_input.len) {
+                        if (flattened_input[i] == '{') found_brace = i;
+                        if (flattened_input[i] == ';') found_semicolon = i;
+                        i += 1;
+                    }
+                    if (found_brace) |brace_pos| {
+                        const brace_end = if (brace_pos + 100 < flattened_input.len) brace_pos + 100 else flattened_input.len;
+                        std.debug.print("DEBUG: Last '{{' before error at pos {d}: '{s}'\n", .{ brace_pos, flattened_input[brace_pos..brace_end] });
+                    }
+                    if (found_semicolon) |semi_pos| {
+                        const semi_end = if (semi_pos + 100 < flattened_input.len) semi_pos + 100 else flattened_input.len;
+                        std.debug.print("DEBUG: Last ';' before error at pos {d}: '{s}'\n", .{ semi_pos, flattened_input[semi_pos..semi_end] });
+                    }
                     if (std.mem.indexOf(u8, flattened_input[error_context_start..error_context_end], ".comp-0 .title")) |rel_pos| {
                         const abs_pos = error_context_start + rel_pos;
                         std.debug.print("DEBUG: Found '.comp-0 .title' at absolute pos {d} (relative {d} in context)\n", .{ abs_pos, rel_pos });
@@ -182,20 +243,20 @@ pub const Parser = struct {
                         const title_context_end = if (abs_pos + 150 < flattened_input.len) abs_pos + 150 else flattened_input.len;
                         std.debug.print("DEBUG: Context around '.comp-0 .title': '{s}'\n", .{ flattened_input[title_context_start..title_context_end] });
                     }
+                    if (std.mem.indexOf(u8, flattened_input[error_context_start..error_context_end], ".comp-0")) |comp_pos| {
+                        const abs_comp_pos = error_context_start + comp_pos;
+                        const comp_context_start = if (abs_comp_pos > 50) abs_comp_pos - 50 else 0;
+                        const comp_context_end = if (abs_comp_pos + 150 < flattened_input.len) abs_comp_pos + 150 else flattened_input.len;
+                        std.debug.print("DEBUG: Found .comp-0 at pos {d}, context='{s}'\n", .{ abs_comp_pos, flattened_input[comp_context_start..comp_context_end] });
+                    }
+                    if (std.mem.indexOf(u8, flattened_input[error_context_start..error_context_end], "font-size: 0.75rem")) |fs_pos| {
+                        const abs_fs_pos = error_context_start + fs_pos;
+                        const fs_context_start = if (abs_fs_pos > 50) abs_fs_pos - 50 else 0;
+                        const fs_context_end = if (abs_fs_pos + 100 < flattened_input.len) abs_fs_pos + 100 else flattened_input.len;
+                        std.debug.print("DEBUG: Found 'font-size: 0.75rem' at pos {d}, context='{s}'\n", .{ abs_fs_pos, flattened_input[fs_context_start..fs_context_end] });
+                    }
                 } else {
                     std.debug.print("DEBUG: Error pos {d} is beyond input length {d}!\n", .{ error_pos, flattened_input.len });
-                }
-                if (std.mem.indexOf(u8, flattened_input[context_start..context_end], ".comp-0")) |comp_pos| {
-                    const abs_comp_pos = context_start + comp_pos;
-                    const comp_context_start = if (abs_comp_pos > 50) abs_comp_pos - 50 else 0;
-                    const comp_context_end = if (abs_comp_pos + 150 < flattened_input.len) abs_comp_pos + 150 else flattened_input.len;
-                    std.debug.print("DEBUG: Found .comp-0 at pos {d}, context='{s}'\n", .{ abs_comp_pos, flattened_input[comp_context_start..comp_context_end] });
-                }
-                if (std.mem.indexOf(u8, flattened_input[context_start..context_end], "font-size: 0.75rem")) |fs_pos| {
-                    const abs_fs_pos = context_start + fs_pos;
-                    const fs_context_start = if (abs_fs_pos > 50) abs_fs_pos - 50 else 0;
-                    const fs_context_end = if (abs_fs_pos + 100 < flattened_input.len) abs_fs_pos + 100 else flattened_input.len;
-                    std.debug.print("DEBUG: Found 'font-size: 0.75rem' at pos {d}, context='{s}'\n", .{ abs_fs_pos, flattened_input[fs_context_start..fs_context_end] });
                 }
                 const error_msg = error_module.formatErrorWithContext(self.allocator, flattened_input, "processed_scss", parse_error) catch |err| {
                     std.debug.print("Parse error at line {d}, column {d}: {s}\n", .{ parse_error.line, parse_error.column, parse_error.message });
@@ -2581,8 +2642,8 @@ pub const Parser = struct {
                     defer self.allocator.free(log_entry3);
                     _ = log_file.writeAll(log_entry3) catch {};
                     // #endregion agent log
-                    if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null) {
-                        std.debug.print("DEBUG: flattenNestedSelectors: .comp-0 nested_content='{s}'\n", .{nested_content});
+                    if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null or std.mem.indexOf(u8, nested_content, "&:hover") != null) {
+                        std.debug.print("DEBUG: flattenNestedSelectors: nested_content (full): '{s}'\n", .{nested_content});
                     }
                     
                     if (nested_content.len == 0) {
@@ -2691,8 +2752,8 @@ pub const Parser = struct {
                         try result.append(self.allocator, '\n');
                         
                         const content_with_selectors = nested_content[sel_pos..];
-                        if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null) {
-                            std.debug.print("DEBUG: flattenNestedSelectors: .comp-0 content_with_selectors='{s}', parent='{s}'\n", .{ content_with_selectors, full_sel_str });
+                        if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null or std.mem.indexOf(u8, content_with_selectors, "&:hover") != null or std.mem.indexOf(u8, content_with_selectors, "transform") != null) {
+                            std.debug.print("DEBUG: flattenNestedSelectors: content_with_selectors='{s}', parent='{s}'\n", .{ content_with_selectors, full_sel_str });
                         }
                         const parent_copy = try self.allocator.dupe(u8, full_sel_str);
                         const flattened_nested = try self.flattenNestedSelectors(content_with_selectors, parent_copy);
@@ -2717,6 +2778,9 @@ pub const Parser = struct {
                         }
                         continue;
                     } else {
+                        if (std.mem.indexOf(u8, nested_content, "transform") != null) {
+                            std.debug.print("DEBUG: flattenNestedSelectors: No nested selectors, appending nested_content directly: '{s}'\n", .{nested_content});
+                        }
                         try result.appendSlice(self.allocator, nested_content);
                         try result.append(self.allocator, '}');
                         try result.append(self.allocator, '\n');

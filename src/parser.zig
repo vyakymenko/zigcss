@@ -175,7 +175,7 @@ pub const Parser = struct {
         std.debug.print("DEBUG: parseStyleRule after '{{', pos={d}, char='{c}', starting declarations\n", .{ self.pos, char_after_brace });
 
         while (self.pos < input_len and self.input[self.pos] != '}') {
-            std.debug.print("DEBUG: parseStyleRule declaration loop, pos={d}, char='{c}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
+            std.debug.print("DEBUG: parseStyleRule declaration loop, pos={d}, char='{c}', context='{s}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?', if (self.pos + 30 < input_len) self.input[self.pos..self.pos+30] else if (self.pos < input_len) self.input[self.pos..] else "" });
             const decl = try self.parseDeclaration();
             try rule.declarations.append(self.allocator, decl);
             self.skipWhitespace();
@@ -381,6 +381,7 @@ pub const Parser = struct {
         const input_len = self.input.len;
         
         if (start >= input_len) {
+            std.debug.print("DEBUG: parseIdentifier failed: start pos {d} >= input_len {d}\n", .{ start, input_len });
             return error.InvalidIdentifier;
         }
         
@@ -388,7 +389,7 @@ pub const Parser = struct {
         if (first == '-') {
             self.pos += 1;
         } else if (!isAlpha(first) and first != '_') {
-            std.debug.print("DEBUG: parseIdentifier failed at pos={d}, char='{c}' (0x{x}), context='{s}'\n", .{ start, first, first, if (start + 20 <= input_len) self.input[start..start+20] else if (start < input_len) self.input[start..] else "" });
+            std.debug.print("DEBUG: parseIdentifier failed at pos={d}, char='{c}' (0x{x}), line={d}, column={d}, context='{s}'\n", .{ start, first, first, self.line, self.column, if (start + 20 <= input_len) self.input[start..start+20] else if (start < input_len) self.input[start..] else "" });
             return error.InvalidIdentifier;
         }
 
