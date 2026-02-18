@@ -2586,6 +2586,7 @@ pub const Parser = struct {
                     }
                     
                     var first_selector_pos: ?usize = null;
+                    var first_atrule_pos: ?usize = null;
                     var paren_depth_check: usize = 0;
                     var in_quotes_check = false;
                     var quote_char_check: u8 = 0;
@@ -2601,6 +2602,18 @@ pub const Parser = struct {
                                 paren_depth_check += 1;
                             } else if (ch == ')') {
                                 paren_depth_check -= 1;
+                            } else if (ch == '@' and paren_depth_check == 0) {
+                                if (check_i + 5 < nested_content.len and std.mem.eql(u8, nested_content[check_i..check_i+6], "@media")) {
+                                    if (first_atrule_pos == null) {
+                                        first_atrule_pos = check_i;
+                                    }
+                                } else if (check_i + 7 < nested_content.len and std.mem.eql(u8, nested_content[check_i..check_i+8], "@include")) {
+                                    if (first_atrule_pos == null) {
+                                        first_atrule_pos = check_i;
+                                    }
+                                } else if (first_atrule_pos == null) {
+                                    first_atrule_pos = check_i;
+                                }
                             } else if ((ch == '.' or ch == '#' or ch == '&') and paren_depth_check == 0) {
                                 var sel_end = check_i + 1;
                                 if (ch == '&' and sel_end < nested_content.len and nested_content[sel_end] == ':') {
@@ -2628,10 +2641,34 @@ pub const Parser = struct {
                     }
                     
                     if (first_selector_pos) |sel_pos| {
-                        if (sel_pos > 0) {
-                            const declarations_before = std.mem.trim(u8, nested_content[0..sel_pos], " \t\n\r");
+                        const declarations_end = if (first_atrule_pos) |at_pos| at_pos else sel_pos;
+                        if (declarations_end > 0) {
+                            const declarations_before = std.mem.trim(u8, nested_content[0..declarations_end], " \t\n\r");
                             if (declarations_before.len > 0) {
                                 try result.appendSlice(self.allocator, declarations_before);
+                                try result.append(self.allocator, '\n');
+                            }
+                        }
+                        
+                        if (first_atrule_pos) |at_pos| {
+                            var atrule_end = at_pos;
+                            var atrule_brace_count: usize = 0;
+                            while (atrule_end < sel_pos) {
+                                const ch = nested_content[atrule_end];
+                                if (ch == '{') {
+                                    atrule_brace_count += 1;
+                                } else if (ch == '}') {
+                                    atrule_brace_count -= 1;
+                                    if (atrule_brace_count == 0) {
+                                        atrule_end += 1;
+                                        break;
+                                    }
+                                }
+                                atrule_end += 1;
+                            }
+                            const atrules_before = std.mem.trim(u8, nested_content[at_pos..atrule_end], " \t\n\r");
+                            if (atrules_before.len > 0) {
+                                try result.appendSlice(self.allocator, atrules_before);
                                 try result.append(self.allocator, '\n');
                             }
                         }
