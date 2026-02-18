@@ -146,16 +146,16 @@ pub const Parser = struct {
             const comp_context_end = if (comp_pos + 200 < flattened_input.len) comp_pos + 200 else flattened_input.len;
             std.debug.print("DEBUG: .comp-0 in flattened_input at pos {d}: '{s}'\n", .{ comp_pos, flattened_input[comp_pos..comp_context_end] });
         }
-        if (414 < flattened_input.len) {
-            const pos414_start = if (414 > 100) 414 - 100 else 0;
-            const pos414_end = if (414 + 50 < flattened_input.len) 414 + 50 else flattened_input.len;
-            std.debug.print("DEBUG: CSS at pos 414 (absolute, pos {d}-{d}): '{s}'\n", .{ pos414_start, pos414_end, flattened_input[pos414_start..pos414_end] });
-            std.debug.print("DEBUG: Character at pos 414: '{c}' (0x{x})\n", .{ flattened_input[414], flattened_input[414] });
-            if (414 > 0) {
-                std.debug.print("DEBUG: Character at pos 413: '{c}' (0x{x})\n", .{ flattened_input[413], flattened_input[413] });
+        if (210 < flattened_input.len) {
+            const pos210_start = if (210 > 100) 210 - 100 else 0;
+            const pos210_end = if (210 + 50 < flattened_input.len) 210 + 50 else flattened_input.len;
+            std.debug.print("DEBUG: CSS at pos 210 (absolute, pos {d}-{d}): '{s}'\n", .{ pos210_start, pos210_end, flattened_input[pos210_start..pos210_end] });
+            std.debug.print("DEBUG: Character at pos 210: '{c}' (0x{x})\n", .{ flattened_input[210], flattened_input[210] });
+            if (210 > 0) {
+                std.debug.print("DEBUG: Character at pos 209: '{c}' (0x{x})\n", .{ flattened_input[209], flattened_input[209] });
             }
-            if (414 > 1) {
-                std.debug.print("DEBUG: Character at pos 412: '{c}' (0x{x})\n", .{ flattened_input[412], flattened_input[412] });
+            if (210 > 1) {
+                std.debug.print("DEBUG: Character at pos 208: '{c}' (0x{x})\n", .{ flattened_input[208], flattened_input[208] });
             }
         }
         if (std.mem.indexOf(u8, flattened_input, "@media")) |pos| {
