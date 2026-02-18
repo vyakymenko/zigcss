@@ -802,21 +802,43 @@ pub const Parser = struct {
         
         var i: usize = 0;
         var brace_depth: usize = 0;
-        var selector_start: ?usize = null;
-        var selector_end: ?usize = null;
+        var current_selector_start: ?usize = null;
+        var current_selector_end: ?usize = null;
         
         while (i < input.len) {
             const ch = input[i];
             
             if (ch == '{') {
-                if (brace_depth == 0 and selector_start == null) {
+                if (brace_depth == 0) {
+                    current_selector_start = null;
+                    current_selector_end = null;
                     var j = i;
                     while (j > 0 and std.ascii.isWhitespace(input[j - 1])) {
                         j -= 1;
                     }
                     if (j > 0) {
-                        selector_start = 0;
-                        selector_end = j;
+                        const sel_end = j;
+                        var sel_start = j;
+                        while (sel_start > 0) {
+                            const prev_ch = input[sel_start - 1];
+                            if (prev_ch == ';' or prev_ch == '}') {
+                                break;
+                            }
+                            if (!std.ascii.isWhitespace(prev_ch)) {
+                                sel_start -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        if (sel_start < sel_end) {
+                            while (sel_start < sel_end and std.ascii.isWhitespace(input[sel_start])) {
+                                sel_start += 1;
+                            }
+                            if (sel_start < sel_end) {
+                                current_selector_start = sel_start;
+                                current_selector_end = sel_end;
+                            }
+                        }
                     }
                 }
                 brace_depth += 1;
@@ -825,8 +847,8 @@ pub const Parser = struct {
             } else if (ch == '}') {
                 brace_depth -= 1;
                 if (brace_depth == 0) {
-                    selector_start = null;
-                    selector_end = null;
+                    current_selector_start = null;
+                    current_selector_end = null;
                 }
                 try result.append(self.allocator, ch);
                 i += 1;
@@ -900,8 +922,8 @@ pub const Parser = struct {
                     
                     var parent_selector: ?[]const u8 = null;
                     if (brace_depth > 0) {
-                        if (selector_start) |sel_start| {
-                            if (selector_end) |sel_end| {
+                        if (current_selector_start) |sel_start| {
+                            if (current_selector_end) |sel_end| {
                                 parent_selector = std.mem.trim(u8, input[sel_start..sel_end], " \t\n\r");
                             }
                         }
