@@ -172,16 +172,16 @@ pub const Parser = struct {
                     const char_at = flattened_input[error_pos];
                     const char_after = if (error_pos + 1 < flattened_input.len) flattened_input[error_pos + 1] else '?';
                     std.debug.print("DEBUG: Chars around error pos: '{c}' '{c}' '{c}' (0x{x} 0x{x} 0x{x})\n", .{ char_before, char_at, char_after, char_before, char_at, char_after });
-                    const error_context_start = if (error_pos > 50) error_pos - 50 else 0;
-                    const error_context_end = if (error_pos + 100 < flattened_input.len) error_pos + 100 else flattened_input.len;
+                    const error_context_start = if (error_pos > 200) error_pos - 200 else 0;
+                    const error_context_end = if (error_pos + 200 < flattened_input.len) error_pos + 200 else flattened_input.len;
                     std.debug.print("DEBUG: Exact error context (pos {d}-{d}): '{s}'\n", .{ error_context_start, error_context_end, flattened_input[error_context_start..error_context_end] });
-                    std.debug.print("DEBUG: Bytes at error pos {d}: ", .{error_pos});
-                    const byte_range_start = if (error_pos > 10) error_pos - 10 else 0;
-                    const byte_range_end = if (error_pos + 10 < flattened_input.len) error_pos + 10 else flattened_input.len;
-                    for (flattened_input[byte_range_start..byte_range_end]) |b| {
-                        std.debug.print("0x{x} ", .{b});
+                    if (std.mem.indexOf(u8, flattened_input[error_context_start..error_context_end], ".comp-0 .title")) |rel_pos| {
+                        const abs_pos = error_context_start + rel_pos;
+                        std.debug.print("DEBUG: Found '.comp-0 .title' at absolute pos {d} (relative {d} in context)\n", .{ abs_pos, rel_pos });
+                        const title_context_start = if (abs_pos > 50) abs_pos - 50 else 0;
+                        const title_context_end = if (abs_pos + 150 < flattened_input.len) abs_pos + 150 else flattened_input.len;
+                        std.debug.print("DEBUG: Context around '.comp-0 .title': '{s}'\n", .{ flattened_input[title_context_start..title_context_end] });
                     }
-                    std.debug.print("\n", .{});
                 } else {
                     std.debug.print("DEBUG: Error pos {d} is beyond input length {d}!\n", .{ error_pos, flattened_input.len });
                 }
