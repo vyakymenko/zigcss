@@ -135,6 +135,11 @@ pub const Parser = struct {
         }
         
         
+        std.debug.print("DEBUG: About to pass to CSS parser: len={d}, first_100='{s}'\n", .{ flattened_input.len, if (flattened_input.len > 100) flattened_input[0..100] else flattened_input });
+        if (std.mem.indexOf(u8, flattened_input, "@media")) |pos| {
+            std.debug.print("DEBUG: @media at pos={d} in CSS parser input, context='{s}'\n", .{ pos, if (pos + 30 <= flattened_input.len) flattened_input[pos..pos+30] else flattened_input[pos..] });
+        }
+        
         var css_p = css_parser.Parser.init(self.allocator, flattened_input);
         defer if (css_p.owns_pool) {
             css_p.string_pool.deinit();
@@ -790,16 +795,32 @@ pub const Parser = struct {
         
         var i: usize = 0;
         var brace_depth: usize = 0;
+        var selector_start: ?usize = null;
+        var selector_end: ?usize = null;
         
         while (i < input.len) {
             const ch = input[i];
             
             if (ch == '{') {
+                if (brace_depth == 0 and selector_start == null) {
+                    var j = i;
+                    while (j > 0 and std.ascii.isWhitespace(input[j - 1])) {
+                        j -= 1;
+                    }
+                    if (j > 0) {
+                        selector_start = 0;
+                        selector_end = j;
+                    }
+                }
                 brace_depth += 1;
                 try result.append(self.allocator, ch);
                 i += 1;
             } else if (ch == '}') {
                 brace_depth -= 1;
+                if (brace_depth == 0) {
+                    selector_start = null;
+                    selector_end = null;
+                }
                 try result.append(self.allocator, ch);
                 i += 1;
             } else if (brace_depth > 0 and ch == '@' and i + 5 < input.len and std.mem.eql(u8, input[i..i+6], "@media")) {
@@ -846,7 +867,74 @@ pub const Parser = struct {
                 }
                 
                 if (media_end) |end| {
-                    const media_block = try self.allocator.dupe(u8, input[media_start..end]);
+                    const media_block_raw = input[media_start..end];
+                    var media_content_start: ?usize = null;
+                    var media_content_end: ?usize = null;
+                    var content_brace_depth: usize = 0;
+                    var content_i = media_start + 6;
+                    skipWhitespaceInSlice(input, &content_i);
+                    while (content_i < end) {
+                        if (input[content_i] == '{') {
+                            if (content_brace_depth == 0) {
+                                media_content_start = content_i + 1;
+                            }
+                            content_brace_depth += 1;
+                        } else if (input[content_i] == '}') {
+                            content_brace_depth -= 1;
+                            if (content_brace_depth == 0) {
+                                if (media_content_start) |_| {
+                                    media_content_end = content_i;
+                                    break;
+                                }
+                            }
+                        }
+                        content_i += 1;
+                    }
+                    
+                    var parent_selector: ?[]const u8 = null;
+                    if (brace_depth > 0) {
+                        if (selector_start) |sel_start| {
+                            if (selector_end) |sel_end| {
+                                parent_selector = std.mem.trim(u8, input[sel_start..sel_end], " \t\n\r");
+                            }
+                        }
+                    }
+                    
+                    if (media_content_start) |content_start| {
+                        if (media_content_end) |content_end| {
+                            const media_content = std.mem.trim(u8, input[content_start..content_end], " \t\n\r");
+                            std.debug.print("DEBUG: hoistMediaQueriesFromRules: media_content='{s}', len={d}, first_char='{c}'\n", .{ media_content, media_content.len, if (media_content.len > 0) media_content[0] else '?' });
+                            const has_selector = std.mem.startsWith(u8, media_content, ".") or 
+                                std.mem.startsWith(u8, media_content, "#") or 
+                                media_content[0] == '@' or
+                                media_content[0] == '&' or
+                                std.mem.indexOf(u8, media_content, " {") != null;
+                            const needs_wrapper = media_content.len > 0 and !has_selector;
+                            std.debug.print("DEBUG: hoistMediaQueriesFromRules: has_selector={}, needs_wrapper={}, parent_selector={?s}\n", .{ has_selector, needs_wrapper, parent_selector });
+                            
+                            if (needs_wrapper) {
+                                if (parent_selector) |parent| {
+                                    std.debug.print("DEBUG: hoistMediaQueriesFromRules: wrapping @media content with parent selector '{s}'\n", .{parent});
+                                    const media_prelude = std.mem.trim(u8, input[media_start+6..content_start-1], " \t\n\r");
+                                    var wrapped_media = try std.ArrayList(u8).initCapacity(self.allocator, media_block_raw.len + parent.len + 20);
+                                    errdefer wrapped_media.deinit(self.allocator);
+                                    try wrapped_media.appendSlice(self.allocator, "@media ");
+                                    try wrapped_media.appendSlice(self.allocator, media_prelude);
+                                    try wrapped_media.appendSlice(self.allocator, " { ");
+                                    try wrapped_media.appendSlice(self.allocator, parent);
+                                    try wrapped_media.appendSlice(self.allocator, " { ");
+                                    try wrapped_media.appendSlice(self.allocator, media_content);
+                                    try wrapped_media.appendSlice(self.allocator, " } }");
+                                    const wrapped_block = try wrapped_media.toOwnedSlice(self.allocator);
+                                    try hoisted_media.append(self.allocator, wrapped_block);
+                                    i = end;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    
+                    const media_block = try self.allocator.dupe(u8, media_block_raw);
                     std.debug.print("DEBUG: hoistMediaQueriesFromRules: extracted media block, start={d}, end={d}, block='{s}'\n", .{ media_start, end, if (media_block.len > 100) media_block[0..100] else media_block });
                     try hoisted_media.append(self.allocator, media_block);
                     i = end;

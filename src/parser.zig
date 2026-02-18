@@ -185,6 +185,7 @@ pub const Parser = struct {
     }
 
     fn parseSelector(self: *Parser) !ast.Selector {
+        std.debug.print("DEBUG: parseSelector starting at pos={d}, char='{c}', context='{s}'\n", .{ self.pos, if (self.pos < self.input.len) self.input[self.pos] else '?', if (self.pos + 30 <= self.input.len) self.input[self.pos..self.pos+30] else if (self.pos < self.input.len) self.input[self.pos..] else "" });
         var selector = try ast.Selector.initWithCapacity(self.allocator, 4);
         errdefer selector.deinit();
 
@@ -230,9 +231,12 @@ pub const Parser = struct {
                 self.pos += 1;
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .combinator = .following_sibling });
             } else if (isAlnumOrDash(ch)) {
+                std.debug.print("DEBUG: parseSelector calling parseIdentifier for alnum/dash char='{c}' at pos={d}\n", .{ ch, self.pos });
                 const name = try self.parseIdentifier();
+                std.debug.print("DEBUG: parseSelector parseIdentifier returned name='{s}', new pos={d}, char='{c}'\n", .{ name, self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
                 try selector.parts.append(self.allocator, ast.SelectorPart{ .type = name });
             } else {
+                std.debug.print("DEBUG: parseSelector skipping char='{c}' (0x{x}) at pos={d}\n", .{ ch, ch, self.pos });
                 self.pos += 1;
             }
         }
@@ -288,12 +292,16 @@ pub const Parser = struct {
 
     fn parseAtRule(self: *Parser) !ast.AtRule {
         const input_len = self.input.len;
+        const at_pos = self.pos;
         if (self.peek() != '@') {
             return error.ExpectedAtSign;
         }
         self.advance();
 
         const name = try self.parseIdentifier();
+        if (std.mem.eql(u8, name, "media")) {
+            std.debug.print("DEBUG: CSS parser parseAtRule: @media detected at pos={d}, name='{s}', after name pos={d}, char='{c}'\n", .{ at_pos, name, self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
+        }
         self.skipWhitespace();
 
         const prelude_start = self.pos;
@@ -311,6 +319,9 @@ pub const Parser = struct {
 
         var prelude_raw = self.input[prelude_start..prelude_end];
         prelude_raw = std.mem.trim(u8, prelude_raw, " \t\n\r");
+        if (std.mem.eql(u8, name, "media")) {
+            std.debug.print("DEBUG: CSS parser parseAtRule: @media prelude='{s}', next_char='{c}'\n", .{ prelude_raw, if (self.pos < input_len) self.input[self.pos] else '?' });
+        }
         const prelude = try self.string_pool.intern(prelude_raw);
 
         var at_rule = ast.AtRule.init(self.allocator);
@@ -320,6 +331,9 @@ pub const Parser = struct {
         if (self.peek() == '{') {
             self.advance();
             self.skipWhitespace();
+            if (std.mem.eql(u8, name, "media")) {
+                std.debug.print("DEBUG: CSS parser parseAtRule: @media entering block, pos={d}, char='{c}', context='{s}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?', if (self.pos + 30 <= input_len) self.input[self.pos..self.pos+30] else if (self.pos < input_len) self.input[self.pos..] else "" });
+            }
 
             var rules = try std.ArrayList(ast.Rule).initCapacity(self.allocator, 0);
             errdefer rules.deinit(self.allocator);
@@ -329,6 +343,9 @@ pub const Parser = struct {
                     const nested_at_rule = try self.parseAtRule();
                     try rules.append(self.allocator, ast.Rule{ .at_rule = nested_at_rule });
                 } else {
+                    if (std.mem.eql(u8, name, "media")) {
+                        std.debug.print("DEBUG: CSS parser parseAtRule: @media parsing style rule, pos={d}, char='{c}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
+                    }
                     const style_rule = try self.parseStyleRule();
                     try rules.append(self.allocator, ast.Rule{ .style = style_rule });
                 }
@@ -359,6 +376,7 @@ pub const Parser = struct {
         if (first == '-') {
             self.pos += 1;
         } else if (!isAlpha(first) and first != '_') {
+            std.debug.print("DEBUG: parseIdentifier failed at pos={d}, char='{c}' (0x{x}), context='{s}'\n", .{ start, first, first, if (start + 20 <= input_len) self.input[start..start+20] else if (start < input_len) self.input[start..] else "" });
             return error.InvalidIdentifier;
         }
 
