@@ -79,7 +79,9 @@ pub const Parser = struct {
 
         self.skipWhitespace();
 
+        std.debug.print("DEBUG: CSS parser parse() starting, input_len={d}, first_50='{s}'\n", .{ input_len, if (input_len > 50) self.input[0..50] else self.input });
         while (self.pos < input_len) {
+            std.debug.print("DEBUG: CSS parser parse() loop, pos={d}, char='{c}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
             if (self.peek() == '@') {
                 const at_rule = try self.parseAtRule();
                 try stylesheet.rules.append(self.allocator, ast.Rule{ .at_rule = at_rule });
@@ -161,13 +163,19 @@ pub const Parser = struct {
         }
 
         self.skipWhitespace();
+        const char_at_pos = if (self.pos < input_len) self.input[self.pos] else '?';
+        std.debug.print("DEBUG: parseStyleRule after selector parsing, pos={d}, char='{c}', expecting '{{'\n", .{ self.pos, char_at_pos });
         if (self.pos >= input_len or self.input[self.pos] != '{') {
+            std.debug.print("DEBUG: parseStyleRule ERROR: Expected '{{' but got '{c}' at pos {d}\n", .{ char_at_pos, self.pos });
             return error.ExpectedOpeningBrace;
         }
         self.pos += 1;
         self.skipWhitespace();
+        const char_after_brace = if (self.pos < input_len) self.input[self.pos] else '?';
+        std.debug.print("DEBUG: parseStyleRule after '{{', pos={d}, char='{c}', starting declarations\n", .{ self.pos, char_after_brace });
 
         while (self.pos < input_len and self.input[self.pos] != '}') {
+            std.debug.print("DEBUG: parseStyleRule declaration loop, pos={d}, char='{c}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
             const decl = try self.parseDeclaration();
             try rule.declarations.append(self.allocator, decl);
             self.skipWhitespace();
@@ -175,10 +183,13 @@ pub const Parser = struct {
                 self.pos += 1;
                 self.skipWhitespace();
             }
+            std.debug.print("DEBUG: parseStyleRule after declaration, pos={d}, char='{c}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
         }
 
+        std.debug.print("DEBUG: parseStyleRule finished declarations, pos={d}, char='{c}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
         if (self.pos < input_len and self.input[self.pos] == '}') {
             self.pos += 1;
+            std.debug.print("DEBUG: parseStyleRule closing brace, new pos={d}, char='{c}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?' });
         }
 
         return rule;
@@ -246,6 +257,7 @@ pub const Parser = struct {
 
     fn parseDeclaration(self: *Parser) !ast.Declaration {
         const input_len = self.input.len;
+        std.debug.print("DEBUG: parseDeclaration starting at pos={d}, char='{c}', context='{s}'\n", .{ self.pos, if (self.pos < input_len) self.input[self.pos] else '?', if (self.pos + 30 <= input_len) self.input[self.pos..self.pos+30] else if (self.pos < input_len) self.input[self.pos..] else "" });
         const property = try self.parseIdentifier();
         self.skipWhitespace();
 
