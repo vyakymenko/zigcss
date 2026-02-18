@@ -2566,6 +2566,9 @@ pub const Parser = struct {
             if (found_brace) {
                 has_selector = true;
                 const selector_raw = std.mem.trim(u8, input[sel_start..brace_pos], " \t\n\r");
+                if (std.mem.indexOf(u8, selector_raw, ".comp-0") != null and std.mem.indexOf(u8, selector_raw, "font-size") != null) {
+                    std.debug.print("DEBUG: flattenNestedSelectors: selector_raw contains both .comp-0 and font-size: '{s}'\n", .{selector_raw});
+                }
                 
                 // #region agent log
                 const log_entry2 = try std.fmt.allocPrint(self.allocator, "{{\"location\":\"flattenNestedSelectors:found_brace\",\"message\":\"Found selector with brace\",\"data\":{{\"selector_raw\":\"{s}\",\"stack_len\":{d}}},\"timestamp\":{d},\"runId\":\"run1\",\"hypothesisId\":\"A\"}}\n", .{ selector_raw, selector_stack.items.len, std.time.timestamp() });
@@ -2613,10 +2616,17 @@ pub const Parser = struct {
                     const full_sel_copy = try self.allocator.dupe(u8, full_sel_str);
                     try selector_stack.append(self.allocator, full_sel_copy);
                     
+                    if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null) {
+                        std.debug.print("DEBUG: flattenNestedSelectors: About to append .comp-0 selector and brace, full_sel_str='{s}', result_len={d}\n", .{ full_sel_str, result.items.len });
+                    }
                     try result.appendSlice(self.allocator, full_sel_str);
                     try result.append(self.allocator, ' ');
                     try result.append(self.allocator, '{');
                     try result.append(self.allocator, '\n');
+                    if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null) {
+                        const last_50 = if (result.items.len > 50) result.items[result.items.len - 50..] else result.items[0..];
+                        std.debug.print("DEBUG: flattenNestedSelectors: After appending .comp-0 selector and brace, last_50='{s}'\n", .{last_50});
+                    }
                     
                     i = brace_pos + 1;
                     
@@ -2718,8 +2728,16 @@ pub const Parser = struct {
                             const declarations_before = std.mem.trim(u8, nested_content[0..declarations_end], " \t\n\r");
                             std.debug.print("DEBUG: flattenNestedSelectors: declarations_before='{s}', len={d}, declarations_end={d}\n", .{ declarations_before, declarations_before.len, declarations_end });
                             if (declarations_before.len > 0) {
+                                if (std.mem.indexOf(u8, declarations_before, "font-size") != null) {
+                                    const last_50 = if (result.items.len > 50) result.items[result.items.len - 50..] else result.items[0..];
+                                    std.debug.print("DEBUG: flattenNestedSelectors: About to append declarations_before with font-size, last_50='{s}', declarations_before='{s}'\n", .{last_50, declarations_before});
+                                }
                                 try result.appendSlice(self.allocator, declarations_before);
                                 try result.append(self.allocator, '\n');
+                                if (std.mem.indexOf(u8, declarations_before, "font-size") != null) {
+                                    const last_50 = if (result.items.len > 50) result.items[result.items.len - 50..] else result.items[0..];
+                                    std.debug.print("DEBUG: flattenNestedSelectors: After appending declarations_before with font-size, last_50='{s}'\n", .{last_50});
+                                }
                             }
                         }
                         
