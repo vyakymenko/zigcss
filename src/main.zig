@@ -70,7 +70,10 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
         }
     } else {
         const parser_trait = formats.getParser(format);
-        stylesheet = try parser_trait.parseFn(allocator, input);
+        stylesheet = parser_trait.parseFn(allocator, input) catch |err| {
+            std.debug.print("Error compiling {s}: {s}\n", .{ config.input_file, @errorName(err) });
+            return err;
+        };
         stylesheet_initialized = true;
     }
     
@@ -635,7 +638,8 @@ pub fn main() !void {
             .critical_css = critical_css_opts,
             .profile = profile_flag,
         };
-        compileFile(allocator, config) catch {
+        compileFile(allocator, config) catch |err| {
+            std.debug.print("Compilation failed: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };
     } else {
