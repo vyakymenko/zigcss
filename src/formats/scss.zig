@@ -2576,6 +2576,29 @@ pub const Parser = struct {
                 _ = log_file.writeAll(log_entry2) catch {};
                 // #endregion agent log
                 
+                const looks_like_selector = selector_raw.len > 0 and (selector_raw[0] == '.' or selector_raw[0] == '#' or selector_raw[0] == '&');
+                if (!looks_like_selector and selector_raw.len > 0 and selector_stack.items.len > 0) {
+                    try result.appendSlice(self.allocator, input[sel_start..brace_pos]);
+                    var skip_brace_count: usize = 1;
+                    var skip_i = brace_pos + 1;
+                    while (skip_i < input.len and skip_brace_count > 0) {
+                        const c = input[skip_i];
+                        if (c == '{') skip_brace_count += 1
+                        else if (c == '}') {
+                            skip_brace_count -= 1;
+                            if (skip_brace_count == 0) {
+                                skip_i += 1;
+                                break;
+                            }
+                        }
+                        skip_i += 1;
+                    }
+                    try result.appendSlice(self.allocator, input[brace_pos..skip_i]);
+                    try result.append(self.allocator, '\n');
+                    i = skip_i;
+                    continue;
+                }
+                
                 if (selector_raw.len > 0 and selector_raw[0] != '@') {
                     var full_sel = try std.ArrayList(u8).initCapacity(self.allocator, selector_raw.len * 3);
                     errdefer full_sel.deinit(self.allocator);
@@ -2693,6 +2716,10 @@ pub const Parser = struct {
                                     first_atrule_pos = check_i;
                                 }
                             } else if ((ch == '.' or ch == '#' or ch == '&') and paren_depth_check == 0) {
+                                if (ch == '.' and check_i > 0 and std.ascii.isDigit(nested_content[check_i - 1])) {
+                                    check_i += 1;
+                                    continue;
+                                }
                                 var sel_end = check_i + 1;
                                 if (ch == '&' and sel_end < nested_content.len and nested_content[sel_end] == ':') {
                                     sel_end += 1;
@@ -2741,11 +2768,12 @@ pub const Parser = struct {
                             }
                         }
                         
+                        var atrule_end: usize = sel_pos;
                         if (first_atrule_pos) |at_pos| {
                             std.debug.print("DEBUG: flattenNestedSelectors: processing at-rule at pos={d}, sel_pos={d}\n", .{ at_pos, sel_pos });
-                            var atrule_end = at_pos;
+                            atrule_end = at_pos;
                             var atrule_brace_count: usize = 0;
-                            while (atrule_end < sel_pos) {
+                            while (atrule_end < nested_content.len) {
                                 const ch = nested_content[atrule_end];
                                 if (ch == '{') {
                                     atrule_brace_count += 1;
@@ -2769,9 +2797,14 @@ pub const Parser = struct {
                         try result.append(self.allocator, '}');
                         try result.append(self.allocator, '\n');
                         
-                        const content_with_selectors = nested_content[sel_pos..];
+                        const recurse_start = @max(atrule_end, sel_pos);
+                        const content_with_selectors = nested_content[recurse_start..];
                         if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null or std.mem.indexOf(u8, content_with_selectors, "&:hover") != null or std.mem.indexOf(u8, content_with_selectors, "transform") != null) {
                             std.debug.print("DEBUG: flattenNestedSelectors: content_with_selectors='{s}', parent='{s}'\n", .{ content_with_selectors, full_sel_str });
+                        }
+                        if (std.mem.indexOf(u8, full_sel_str, ".comp-0") != null) {
+                            std.debug.print("DEBUG: flattenNestedSelectors: About to recurse with content_with_selectors='{s}' (len={d}), parent='{s}'\n", .{ content_with_selectors, content_with_selectors.len, full_sel_str });
+                            std.debug.print("DEBUG: flattenNestedSelectors: nested_content full='{s}' (len={d}), sel_pos={d}\n", .{ nested_content, nested_content.len, sel_pos });
                         }
                         const parent_copy = try self.allocator.dupe(u8, full_sel_str);
                         const flattened_nested = try self.flattenNestedSelectors(content_with_selectors, parent_copy);
