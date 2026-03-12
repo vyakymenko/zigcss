@@ -1,0 +1,30 @@
+services:
+  dev:
+    build:
+      context: .
+    ports:
+      - "5173:5173"
+    volumes:
+      # Persistent volumes OUTSIDE /app so bind mount doesn't clobber them.
+      # The entrypoint.sh creates symlinks from /app subdirs to these paths.
+      - zig-cache:/cache/zig-cache
+      - zig-out:/cache/zig-out
+      - dot-zig-cache:/cache/dot-zig-cache
+      - docs-node-modules:/deps/docs/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    labels:
+      playgrounds.github_url: https://github.com/vyakymenko/zigcss
+      playgrounds.expose: "external:5173"
+      playgrounds.dockerfile: Dockerfile
+      playgrounds.branch: dockerized
+      playgrounds.source_mount: "/app"
+      playgrounds.start_command: "node dev.js"
+      playgrounds.production: false
+      playgrounds.subdomain: zigcss
+
+volumes:
+  zig-cache:
+  zig-out:
+  dot-zig-cache:
+  docs-node-modules:

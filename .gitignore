@@ -1,6 +1,6 @@
-zig-out/
-zig-cache/
-.zig-cache/
+zig-out
+zig-cache
+.zig-cache
 *.o
 *.a
 *.so
