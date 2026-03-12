@@ -2,22 +2,18 @@ services:
   dev:
     build:
       context: .
-      dockerfile: Dockerfile.dev
     ports:
       - "5173:5173"
     volumes:
-      # Mount source so changes are picked up live
-      - ./src:/app/src
-      - ./docs/src:/app/docs/src
-      - ./docs/scripts:/app/docs/scripts
-      - ./docs/index.html:/app/docs/index.html
-      - ./docs/vite.config.ts:/app/docs/vite.config.ts
-      # Persist Zig build cache to speed up incremental rebuilds
+      # Persist Zig build cache (avoids polluting host with Linux artifacts)
       - zig-cache:/app/zig-cache
       - zig-out:/app/zig-out
+      # Preserve container's node_modules (installed during build)
+      - docs-node-modules:/app/docs/node_modules
     environment:
       - CHOKIDAR_USEPOLLING=true
 
 volumes:
   zig-cache:
   zig-out:
+  docs-node-modules:
