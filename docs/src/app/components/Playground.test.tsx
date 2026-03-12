@@ -23,7 +23,7 @@ describe('Playground', () => {
     expect(screen.getByRole('button', { name: /copy css/i })).toBeInTheDocument()
   })
 
-  it('initial ZigCSS input contains .card', () => {
+  it('initial CSS input contains .card', () => {
     render(<Playground />)
     const textareas = screen.getAllByRole('textbox')
     expect((textareas[0] as HTMLTextAreaElement).value).toContain('.card')
@@ -39,5 +39,10 @@ describe('Playground', () => {
     render(<Playground />)
     const textareas = screen.getAllByRole('textbox')
     expect(textareas[1]).toHaveAttribute('readonly')
+  })
+
+  it('shows Minify output checkbox', () => {
+    render(<Playground />)
+    expect(screen.getByRole('checkbox', { name: /minify output/i })).toBeInTheDocument()
   })
 })

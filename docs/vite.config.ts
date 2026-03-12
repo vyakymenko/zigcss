@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+import { zigcssCompilePlugin } from './scripts/compile-api-plugin.js'
 
 export default defineConfig({
   base: '/zigcss/',
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), zigcssCompilePlugin()],
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],

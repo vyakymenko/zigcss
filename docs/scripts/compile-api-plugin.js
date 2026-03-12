@@ -3,7 +3,14 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const ZIGCSS_BIN = process.env.ZIGCSS_BIN || "zigcss";
+function getZigcssBin() {
+  if (process.env.ZIGCSS_BIN) return process.env.ZIGCSS_BIN;
+  const localBin = path.join(process.cwd(), "node_modules", ".bin", "zigcss");
+  if (fs.existsSync(localBin)) return localBin;
+  const winBin = path.join(process.cwd(), "node_modules", ".bin", "zigcss.cmd");
+  if (process.platform === "win32" && fs.existsSync(winBin)) return winBin;
+  return "zigcss";
+}
 
 function getRawBody(req) {
   return new Promise((resolve, reject) => {
@@ -31,7 +38,7 @@ export function zigcssCompilePlugin() {
         }
         try {
           const raw = await getRawBody(req);
-          const { input } = JSON.parse(raw || "{}");
+          const { input, minify } = JSON.parse(raw || "{}");
           if (typeof input !== "string") {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
@@ -44,8 +51,11 @@ export function zigcssCompilePlugin() {
           const inputPath = path.join(tmpDir, `${id}.${ext}`);
           const outputPath = path.join(tmpDir, `${id}.out.css`);
           fs.writeFileSync(inputPath, input, "utf8");
+          const args = [inputPath, "-o", outputPath];
+          if (minify) args.push("--minify");
           const result = await new Promise((resolve) => {
-            const child = spawn(ZIGCSS_BIN, [inputPath, "-o", outputPath], {
+            const bin = getZigcssBin();
+            const child = spawn(bin, args, {
               stdio: ["ignore", "pipe", "pipe"],
             });
             let stderr = "";

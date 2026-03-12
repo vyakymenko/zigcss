@@ -13,11 +13,22 @@ Open the URL shown in the terminal (e.g. http://localhost:5173/zigcss/).
 
 ## Build
 
+From the docs folder:
+
 ```bash
 npm run build
 ```
 
-Output is in `dist/`. Deploy that folder at the `/zigcss/` path (e.g. GitHub Pages or any static host).
+From the repo root:
+
+```bash
+npm run build:website
+```
+
+Output is in `docs/dist/`. Deploy the **contents** of `dist/` to your host. The app is built with `base: '/zigcss/'`, so:
+
+- **GitHub Pages** (project site): set the publish directory to `docs/dist` and set the base URL in the repo to `/<repo-name>/` (e.g. `/zigcss/`), or use a custom domain and set base to `/`.
+- **Static host (Netlify, Vercel, etc.)**: upload `dist/` and set the site to be served at `https://yourdomain.com/zigcss/`, or set base to `/` in `vite.config.ts` and serve at the root.
 
 ## Test
 

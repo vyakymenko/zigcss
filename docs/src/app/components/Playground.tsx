@@ -1,48 +1,7 @@
 import { useState } from "react";
 import { Play, Copy, Check, RotateCcw } from "lucide-react";
 
-const DEFAULT_ZIGCSS = `// ZigCSS Syntax
-$primary: #6366f1;
-$secondary: #8b5cf6;
-$spacing: 16px;
-$border-radius: 8px;
-
-.card {
-  background: linear-gradient(135deg, $primary, $secondary);
-  padding: $spacing * 2;
-  border-radius: $border-radius;
-  color: white;
-  
-  &:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-  }
-  
-  .title {
-    font-size: 24px;
-    margin-bottom: $spacing;
-  }
-  
-  .content {
-    opacity: 0.9;
-    line-height: 1.6;
-  }
-}
-
-@mixin button-variant($color) {
-  background: $color;
-  border: 2px solid darken($color, 10%);
-  
-  &:hover {
-    background: darken($color, 5%);
-  }
-}
-
-.button-primary {
-  @include button-variant($primary);
-}`;
-
-const DEFAULT_CSS = `/* Compiled CSS Output */
+const DEFAULT_CSS_INPUT = `/* CSS Input */
 .card {
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   padding: 32px;
@@ -74,19 +33,73 @@ const DEFAULT_CSS = `/* Compiled CSS Output */
   background: #5558e3;
 }`;
 
-export function Playground() {
-  const [zigcss, setZigcss] = useState(DEFAULT_ZIGCSS);
-  const [css, setCss] = useState(DEFAULT_CSS);
-  const [copied, setCopied] = useState(false);
+const DEFAULT_CSS_OUTPUT = `/* CSS Output */
+.card {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  padding: 32px;
+  border-radius: 8px;
+  color: white;
+}
 
-  const handleCompile = () => {
-    // Simulate compilation
-    setCss(DEFAULT_CSS);
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+.card .title {
+  font-size: 24px;
+  margin-bottom: 16px;
+}
+
+.card .content {
+  opacity: 0.9;
+  line-height: 1.6;
+}
+
+.button-primary {
+  background: #6366f1;
+  border: 2px solid #4f46e5;
+}
+
+.button-primary:hover {
+  background: #5558e3;
+}`;
+
+const COMPILE_API = "/api/compile";
+
+export function Playground() {
+  const [input, setInput] = useState(DEFAULT_CSS_INPUT);
+  const [css, setCss] = useState(DEFAULT_CSS_OUTPUT);
+  const [copied, setCopied] = useState(false);
+  const [compiling, setCompiling] = useState(false);
+  const [compileError, setCompileError] = useState<string | null>(null);
+  const [minify, setMinify] = useState(false);
+
+  const handleCompile = async () => {
+    setCompileError(null);
+    setCompiling(true);
+    try {
+      const res = await fetch(COMPILE_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input, minify }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setCompileError(data.error);
+        return;
+      }
+      if (typeof data.css === "string") setCss(data.css);
+    } catch {
+      setCompileError("Compile API unavailable. Run with npm run dev and ensure zigcss is installed.");
+    } finally {
+      setCompiling(false);
+    }
   };
 
   const handleReset = () => {
-    setZigcss(DEFAULT_ZIGCSS);
-    setCss(DEFAULT_CSS);
+    setInput(DEFAULT_CSS_INPUT);
+    setCss(DEFAULT_CSS_OUTPUT);
   };
 
   const handleCopy = async () => {
@@ -101,18 +114,31 @@ export function Playground() {
         <div className="text-center mb-8">
           <h1 className="text-4xl mb-4">ZigCSS Playground</h1>
           <p className="text-xl text-slate-600">
-            Try ZigCSS in your browser. Write code on the left, see the compiled output on the right.
+            Try CSS in your browser. Write code on the left, see the output on the right.
+          </p>
+          <p className="mt-3 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 inline-block">
+            SCSS, SASS, LESS, Stylus — coming soon
           </p>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-wrap justify-center gap-4 mb-6">
+        {/* Options & Action Buttons */}
+        <div className="flex flex-wrap items-center justify-center gap-4 mb-6">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={minify}
+              onChange={(e) => setMinify(e.target.checked)}
+              className="size-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span className="text-slate-700">Minify output</span>
+          </label>
           <button
             onClick={handleCompile}
-            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:shadow-lg hover:scale-105 transition-all"
+            disabled={compiling}
+            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:shadow-lg hover:scale-105 transition-all disabled:opacity-70"
           >
             <Play className="size-5" />
-            Compile
+            {compiling ? "Compiling…" : "Compile"}
           </button>
           <button
             onClick={handleReset}
@@ -141,16 +167,16 @@ export function Playground() {
 
         {/* Editors Grid */}
         <div className="grid lg:grid-cols-2 gap-6">
-          {/* ZigCSS Input */}
+          {/* CSS Input */}
           <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-slate-200">
             <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 text-white flex items-center justify-between">
-              <span>ZigCSS Input</span>
-              <span className="text-sm opacity-80">.zcss</span>
+              <span>CSS Input</span>
+              <span className="text-sm opacity-80">.css</span>
             </div>
             <div className="p-4">
               <textarea
-                value={zigcss}
-                onChange={(e) => setZigcss(e.target.value)}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
                 className="w-full h-[600px] font-mono text-sm bg-slate-900 text-slate-100 p-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
                 spellCheck={false}
               />
@@ -174,14 +200,17 @@ export function Playground() {
           </div>
         </div>
 
-        {/* Tips */}
+        {compileError && (
+          <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+            {compileError}
+          </div>
+        )}
         <div className="mt-8 bg-indigo-50 border border-indigo-200 rounded-lg p-6">
           <h3 className="text-lg mb-3 text-indigo-900">💡 Playground Tips</h3>
           <ul className="space-y-2 text-slate-700">
-            <li>• Use <code className="px-2 py-1 bg-white rounded">$variable</code> syntax to define variables</li>
-            <li>• Nest selectors using <code className="px-2 py-1 bg-white rounded">&</code> for parent reference</li>
-            <li>• Create reusable styles with <code className="px-2 py-1 bg-white rounded">@mixin</code> and <code className="px-2 py-1 bg-white rounded">@include</code></li>
-            <li>• This is a demo playground - the actual compiler runs natively for maximum performance</li>
+            <li>• Plain CSS for now. Full SCSS, SASS, LESS &amp; Stylus support is in progress.</li>
+            <li>• Check <strong>Minify output</strong> to get compressed CSS.</li>
+            <li>• Compile uses the zigcss CLI. Run <code className="px-2 py-1 bg-white rounded">npm run dev</code> and click Compile.</li>
           </ul>
         </div>
       </div>
