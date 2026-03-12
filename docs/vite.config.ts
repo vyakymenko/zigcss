@@ -35,6 +35,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), zigcssCompilePlugin(), zigBinaryWatchPlugin()],
   server: {
     host: true,            // listen on 0.0.0.0 (required inside Docker)
+    allowedHosts: true,    // allow all hosts (Traefik proxies with real domain)
     watch: {
       usePolling: true,    // reliable file-watching inside Docker volumes
       interval: 500,
