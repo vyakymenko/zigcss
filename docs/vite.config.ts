@@ -31,7 +31,7 @@ function zigBinaryWatchPlugin() {
 }
 
 export default defineConfig({
-  base: '/zigcss/',
+  base: process.env.VITE_BASE ?? '/zigcss/',
   plugins: [react(), tailwindcss(), zigcssCompilePlugin(), zigBinaryWatchPlugin()],
   server: {
     host: true,            // listen on 0.0.0.0 (required inside Docker)

@@ -12,6 +12,7 @@ services:
       - docs-node-modules:/app/docs/node_modules
     environment:
       - CHOKIDAR_USEPOLLING=true
+      - VITE_BASE=/
 
 volumes:
   zig-cache:
