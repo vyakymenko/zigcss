@@ -72,6 +72,7 @@ function rebuildZig() {
     if (code === 0) {
       // Copy the built binary into bin/
       try {
+        fs.mkdirSync(path.dirname(BIN_PATH), { recursive: true });
         fs.copyFileSync(ZIG_OUT_BIN, BIN_PATH);
         fs.chmodSync(BIN_PATH, 0o755);
         log('zig', `\x1b[32m✓ Rebuilt in ${elapsed}ms\x1b[0m`);

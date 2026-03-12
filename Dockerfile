@@ -21,9 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# ── Copy root package files + binary (needed by docs' `zigcss: file:..`) ────
+# ── Copy root package files (needed by docs' `zigcss: file:..`) ─────────────
 COPY package.json package-lock.json install.js index.js ./
-COPY bin/ ./bin/
 
 # ── Install docs dependencies (cached layer) ────────────────────────────────
 COPY docs/package.json docs/package-lock.json ./docs/
