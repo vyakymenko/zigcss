@@ -18,3 +18,11 @@ npm run build
 ```
 
 Output is in `dist/`. Deploy that folder at the `/zigcss/` path (e.g. GitHub Pages or any static host).
+
+## Test
+
+```bash
+npm run test:run
+```
+
+Runs unit tests with Vitest. Use `npm run test` for watch mode.

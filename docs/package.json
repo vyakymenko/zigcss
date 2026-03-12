@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "lucide-react": "0.487.0",
@@ -19,9 +21,13 @@
   "devDependencies": {
     "@tailwindcss/typography": "0.5.15",
     "@tailwindcss/vite": "4.1.12",
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/react": "16.1.0",
     "@vitejs/plugin-react": "4.7.0",
+    "jsdom": "25.0.1",
     "tailwindcss": "4.1.12",
-    "vite": "6.3.5"
+    "vite": "6.3.5",
+    "vitest": "3.2.4"
   },
   "peerDependencies": {
     "react": ">=18.0.0",
