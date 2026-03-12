@@ -19,18 +19,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get purge -y curl xz-utils && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# ── Copy root package files (needed by docs' `zigcss: file:..`) ─────────────
+# ── Install docs dependencies OUTSIDE /app ───────────────────────────────────
+# These live at /deps so that the bind mount at /app doesn't clobber them.
+# The entrypoint creates symlinks from /app/docs/node_modules → /deps/docs/node_modules.
+WORKDIR /deps
 COPY package.json package-lock.json install.js index.js ./
-
-# ── Install docs dependencies (cached layer) ────────────────────────────────
 COPY docs/package.json docs/package-lock.json ./docs/
 RUN cd docs && npm ci
 
-# ── Copy everything else ────────────────────────────────────────────────────
+# ── Create cache directories for Zig volumes ────────────────────────────────
+RUN mkdir -p /cache/zig-cache /cache/zig-out /cache/dot-zig-cache
+
+WORKDIR /app
+
+# ── Copy everything (used when running without bind mount) ───────────────────
 COPY . .
+
+# ── Entrypoint creates symlinks after bind mount ─────────────────────────────
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 5173
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "dev.js"]
