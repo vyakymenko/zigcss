@@ -14,7 +14,8 @@
   ],
   "scripts": {
     "install": "node install.js",
-    "postinstall": "node install.js"
+    "postinstall": "node install.js",
+    "build:website": "cd docs && npm install && npm run build"
   },
   "repository": {
     "type": "git",

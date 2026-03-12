@@ -1049,17 +1049,23 @@ zigcss input.css -o output.css --profile
 
 ## 📚 Documentation
 
-Comprehensive documentation is available at **[https://vyakymenko.github.io/zigcss/](https://vyakymenko.github.io/zigcss/)**
+The documentation site lives in the **`docs/`** folder. Run it locally:
 
-The documentation site includes:
+```bash
+cd docs
+npm install
+npm run dev
+```
+
+Then open the URL shown in the terminal (e.g. http://localhost:5173/zigcss/).
+
+The docs include:
 - Getting started guide
 - Installation instructions
 - API reference
 - Examples and tutorials
-- Performance benchmarks
-- Plugin system documentation
-- Build integration guide
-- LSP support guide
+- Playground (try ZigCSS in the browser)
+- Plugin system, build integration, and LSP guide
 
 ## 📊 Roadmap
 
