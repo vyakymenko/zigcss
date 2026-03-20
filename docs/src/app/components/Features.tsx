@@ -247,6 +247,20 @@ export function Features() {
                   <td className="text-center py-4 px-4 text-slate-400">✗</td>
                   <td className="text-center py-4 px-4 text-slate-400">✗</td>
                 </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-4">Control Flow</td>
+                  <td className="text-center py-4 px-4 bg-indigo-50 text-green-600">✓</td>
+                  <td className="text-center py-4 px-4 text-green-600">✓</td>
+                  <td className="text-center py-4 px-4 text-slate-400">✗</td>
+                  <td className="text-center py-4 px-4 text-green-600">✓</td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-4">Built-in Functions</td>
+                  <td className="text-center py-4 px-4 bg-indigo-50 text-green-600">✓</td>
+                  <td className="text-center py-4 px-4 text-green-600">✓</td>
+                  <td className="text-center py-4 px-4 text-green-600">✓</td>
+                  <td className="text-center py-4 px-4 text-green-600">✓</td>
+                </tr>
               </tbody>
             </table>
           </div>
