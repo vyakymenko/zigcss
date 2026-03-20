@@ -1,0 +1,94 @@
+// Integration test for SCSS features
+// Tests: variables, nesting, &, @for, @each, @if, interpolation, //comments, !default, placeholders
+
+// Variables
+$primary: #3490dc;
+$secondary: #38c172;
+$spacing: 16px;
+$font-size: 14px !default;
+
+// Placeholder
+%reset-box {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+// Simple rule
+.container {
+  @extend %reset-box;
+  max-width: 1200px;
+  // This comment should be stripped
+  padding: $spacing;
+}
+
+// Nesting with & parent selector
+.btn {
+  display: inline-flex;
+  padding: $spacing;
+  color: $primary;
+
+  &:hover {
+    opacity: 0.8;
+  }
+
+  &--large {
+    padding: 24px;
+  }
+
+  &__icon {
+    margin-right: 8px;
+  }
+}
+
+// @for loop
+@for $i from 1 through 4 {
+  .col-#{$i} {
+    width: #{$i}0%;
+  }
+}
+
+// @each loop
+@each $name in primary, secondary, accent {
+  .text-#{$name} {
+    font-weight: bold;
+  }
+}
+
+// @if / @else
+$theme: dark;
+
+@if $theme == dark {
+  .app {
+    background: #1a1a2e;
+    color: #e0e0e0;
+  }
+} @else {
+  .app {
+    background: white;
+    color: black;
+  }
+}
+
+// Nested @media
+.card {
+  padding: $spacing;
+  background: white;
+
+  .card__title {
+    font-size: #{$font-size};
+    font-weight: bold;
+  }
+
+  .card__body {
+    padding: $spacing;
+  }
+}
+
+// Interpolation in selectors and values
+$prop: margin;
+$side: top;
+
+.spacer {
+  #{$prop}-#{$side}: $spacing;
+}
