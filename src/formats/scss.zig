@@ -1829,6 +1829,31 @@ pub const Parser = struct {
                         try result.appendSlice(self.allocator, result_value);
                         i = func_end + 1;
                         continue;
+                    } else if (isBuiltinFunction(func_name)) {
+                        // Built-in SCSS function
+                        func_end += 1;
+                        skipWhitespaceInSlice(input, &func_end);
+                        const arg_start = func_end;
+                        var paren_count: usize = 1;
+                        while (func_end < input.len and paren_count > 0) {
+                            if (input[func_end] == '(') {
+                                paren_count += 1;
+                            } else if (input[func_end] == ')') {
+                                paren_count -= 1;
+                            }
+                            if (paren_count > 0) {
+                                func_end += 1;
+                            }
+                        }
+                        const args_str = std.mem.trim(u8, input[arg_start..func_end], " \t");
+                        // First resolve variables in args
+                        const resolved_args = try self.processDirectivesWithDepth(args_str, depth + 1);
+                        defer self.allocator.free(resolved_args);
+                        const builtin_result = try self.evaluateBuiltinFunction(func_name, resolved_args);
+                        defer self.allocator.free(builtin_result);
+                        try result.appendSlice(self.allocator, builtin_result);
+                        i = func_end + 1;
+                        continue;
                     }
                 }
             }
@@ -2157,6 +2182,396 @@ pub const Parser = struct {
         }
     }
 
+
+    /// Evaluate a built-in SCSS function call.
+    fn evaluateBuiltinFunction(self: *Parser, func_name: []const u8, args_str: []const u8) std.mem.Allocator.Error![]const u8 {
+        // Split function arguments by comma, respecting parentheses (don't strip outer parens!)
+        var args = try std.ArrayList([]const u8).initCapacity(self.allocator, 4);
+        defer {
+            for (args.items) |a| self.allocator.free(a);
+            args.deinit(self.allocator);
+        }
+        {
+            var ai: usize = 0;
+            var arg_start: usize = 0;
+            var paren_d: usize = 0;
+            while (ai < args_str.len) {
+                if (args_str[ai] == '(') paren_d += 1
+                else if (args_str[ai] == ')') {
+                    if (paren_d > 0) paren_d -= 1;
+                } else if (args_str[ai] == ',' and paren_d == 0) {
+                    const arg = std.mem.trim(u8, args_str[arg_start..ai], " \t");
+                    if (arg.len > 0) {
+                        const dup = try self.allocator.dupe(u8, arg);
+                        try args.append(self.allocator, dup);
+                    }
+                    ai += 1;
+                    arg_start = ai;
+                    continue;
+                }
+                ai += 1;
+            }
+            const last = std.mem.trim(u8, args_str[arg_start..], " \t");
+            if (last.len > 0) {
+                const dup = try self.allocator.dupe(u8, last);
+                try args.append(self.allocator, dup);
+            }
+        }
+
+        // map-get($map, $key)
+        if (std.mem.eql(u8, func_name, "map-get")) {
+            if (args.items.len >= 2) {
+                const map_str = std.mem.trim(u8, args.items[0], " \t'\"");
+                const key = std.mem.trim(u8, args.items[1], " \t'\"");
+
+                // Check if map_str is a variable reference
+                const map_value = if (map_str.len > 0 and map_str[0] == '$')
+                    self.resolveValue(map_str)
+                else
+                    map_str;
+
+                // Parse the map value to find the key
+                if (self.findMapValue(map_value, key)) |val| {
+                    return try self.allocator.dupe(u8, val);
+                }
+            }
+            return try self.allocator.dupe(u8, "null");
+        }
+
+        // map-has-key($map, $key)
+        if (std.mem.eql(u8, func_name, "map-has-key")) {
+            if (args.items.len >= 2) {
+                const map_str = std.mem.trim(u8, args.items[0], " \t'\"");
+                const key = std.mem.trim(u8, args.items[1], " \t'\"");
+                const map_value = if (map_str.len > 0 and map_str[0] == '$')
+                    self.resolveValue(map_str)
+                else
+                    map_str;
+                if (self.findMapValue(map_value, key) != null) {
+                    return try self.allocator.dupe(u8, "true");
+                }
+            }
+            return try self.allocator.dupe(u8, "false");
+        }
+
+        // nth($list, $n)
+        if (std.mem.eql(u8, func_name, "nth")) {
+            if (args.items.len >= 2) {
+                const list_str = std.mem.trim(u8, args.items[0], " \t'\"");
+                const n_str = std.mem.trim(u8, args.items[1], " \t");
+                const n = self.parseNumericValue(n_str);
+                // Parse the list and get the nth item (1-indexed)
+                var list_items = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
+                defer {
+                    for (list_items.items) |item| self.allocator.free(item);
+                    list_items.deinit(self.allocator);
+                }
+                try self.parseListItems(list_str, &list_items);
+                if (n >= 1 and @as(usize, @intCast(n)) <= list_items.items.len) {
+                    return try self.allocator.dupe(u8, std.mem.trim(u8, list_items.items[@intCast(n - 1)], " \t'\""));
+                }
+            }
+            return try self.allocator.dupe(u8, "null");
+        }
+
+        // length($list)
+        if (std.mem.eql(u8, func_name, "length")) {
+            if (args.items.len >= 1) {
+                const list_str = std.mem.trim(u8, args.items[0], " \t'\"");
+                var list_items = try std.ArrayList([]const u8).initCapacity(self.allocator, 8);
+                defer {
+                    for (list_items.items) |item| self.allocator.free(item);
+                    list_items.deinit(self.allocator);
+                }
+                try self.parseListItems(list_str, &list_items);
+                return try std.fmt.allocPrint(self.allocator, "{}", .{list_items.items.len});
+            }
+            return try self.allocator.dupe(u8, "0");
+        }
+
+        // percentage($value) — converts to percentage
+        if (std.mem.eql(u8, func_name, "percentage")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                // Try to parse as fraction (e.g., 0.75 → 75%)
+                if (std.fmt.parseFloat(f64, val)) |f| {
+                    const pct = f * 100.0;
+                    if (pct == @round(pct)) {
+                        return try std.fmt.allocPrint(self.allocator, "{}%", .{@as(i64, @intFromFloat(pct))});
+                    }
+                    return try std.fmt.allocPrint(self.allocator, "{d:.2}%", .{pct});
+                } else |_| {}
+            }
+            // Passthrough
+            return try std.fmt.allocPrint(self.allocator, "percentage({s})", .{args_str});
+        }
+
+        // round($value)
+        if (std.mem.eql(u8, func_name, "round")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                const unit = extractUnit(val);
+                const num_part = val[0 .. val.len - unit.len];
+                if (std.fmt.parseFloat(f64, num_part)) |f| {
+                    return try std.fmt.allocPrint(self.allocator, "{}{s}", .{@as(i64, @intFromFloat(@round(f))), unit});
+                } else |_| {}
+            }
+            return try std.fmt.allocPrint(self.allocator, "round({s})", .{args_str});
+        }
+
+        // ceil($value)
+        if (std.mem.eql(u8, func_name, "ceil")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                const unit = extractUnit(val);
+                const num_part = val[0 .. val.len - unit.len];
+                if (std.fmt.parseFloat(f64, num_part)) |f| {
+                    return try std.fmt.allocPrint(self.allocator, "{}{s}", .{@as(i64, @intFromFloat(@ceil(f))), unit});
+                } else |_| {}
+            }
+            return try std.fmt.allocPrint(self.allocator, "ceil({s})", .{args_str});
+        }
+
+        // floor($value)
+        if (std.mem.eql(u8, func_name, "floor")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                const unit = extractUnit(val);
+                const num_part = val[0 .. val.len - unit.len];
+                if (std.fmt.parseFloat(f64, num_part)) |f| {
+                    return try std.fmt.allocPrint(self.allocator, "{}{s}", .{@as(i64, @intFromFloat(@floor(f))), unit});
+                } else |_| {}
+            }
+            return try std.fmt.allocPrint(self.allocator, "floor({s})", .{args_str});
+        }
+
+        // abs($value)
+        if (std.mem.eql(u8, func_name, "abs")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                const unit = extractUnit(val);
+                const num_part = val[0 .. val.len - unit.len];
+                if (std.fmt.parseFloat(f64, num_part)) |f| {
+                    const abs_val = @abs(f);
+                    if (abs_val == @round(abs_val)) {
+                        return try std.fmt.allocPrint(self.allocator, "{}{s}", .{@as(i64, @intFromFloat(abs_val)), unit});
+                    }
+                    return try std.fmt.allocPrint(self.allocator, "{d}{s}", .{abs_val, unit});
+                } else |_| {}
+            }
+            return try std.fmt.allocPrint(self.allocator, "abs({s})", .{args_str});
+        }
+
+        // min($values...)
+        if (std.mem.eql(u8, func_name, "min")) {
+            var min_val: f64 = std.math.inf(f64);
+            var found = false;
+            for (args.items) |arg| {
+                const trimmed = std.mem.trim(u8, arg, " \t");
+                if (std.fmt.parseFloat(f64, trimmed)) |f| {
+                    if (f < min_val) min_val = f;
+                    found = true;
+                } else |_| {}
+            }
+            if (found) {
+                if (min_val == @round(min_val)) {
+                    return try std.fmt.allocPrint(self.allocator, "{}", .{@as(i64, @intFromFloat(min_val))});
+                }
+                return try std.fmt.allocPrint(self.allocator, "{d}", .{min_val});
+            }
+            return try std.fmt.allocPrint(self.allocator, "min({s})", .{args_str});
+        }
+
+        // max($values...)
+        if (std.mem.eql(u8, func_name, "max")) {
+            var max_val: f64 = -std.math.inf(f64);
+            var found = false;
+            for (args.items) |arg| {
+                const trimmed = std.mem.trim(u8, arg, " \t");
+                if (std.fmt.parseFloat(f64, trimmed)) |f| {
+                    if (f > max_val) max_val = f;
+                    found = true;
+                } else |_| {}
+            }
+            if (found) {
+                if (max_val == @round(max_val)) {
+                    return try std.fmt.allocPrint(self.allocator, "{}", .{@as(i64, @intFromFloat(max_val))});
+                }
+                return try std.fmt.allocPrint(self.allocator, "{d}", .{max_val});
+            }
+            return try std.fmt.allocPrint(self.allocator, "max({s})", .{args_str});
+        }
+
+        // type-of($value)
+        if (std.mem.eql(u8, func_name, "type-of")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                if (val.len > 0 and val[0] == '#') return try self.allocator.dupe(u8, "color");
+                if (std.mem.startsWith(u8, val, "rgb") or std.mem.startsWith(u8, val, "hsl")) return try self.allocator.dupe(u8, "color");
+                if (std.mem.eql(u8, val, "true") or std.mem.eql(u8, val, "false")) return try self.allocator.dupe(u8, "bool");
+                if (std.mem.eql(u8, val, "null")) return try self.allocator.dupe(u8, "null");
+                if (val.len > 0 and (val[0] == '\'' or val[0] == '"')) return try self.allocator.dupe(u8, "string");
+                if (std.fmt.parseFloat(f64, val)) |_| {
+                    return try self.allocator.dupe(u8, "number");
+                } else |_| {}
+                return try self.allocator.dupe(u8, "string");
+            }
+            return try self.allocator.dupe(u8, "null");
+        }
+
+        // unquote($string)
+        if (std.mem.eql(u8, func_name, "unquote")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                if (val.len >= 2 and (val[0] == '\'' or val[0] == '"') and val[val.len - 1] == val[0]) {
+                    return try self.allocator.dupe(u8, val[1 .. val.len - 1]);
+                }
+                return try self.allocator.dupe(u8, val);
+            }
+            return try self.allocator.dupe(u8, "");
+        }
+
+        // quote($string)
+        if (std.mem.eql(u8, func_name, "quote")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                return try std.fmt.allocPrint(self.allocator, "\"{s}\"", .{val});
+            }
+            return try self.allocator.dupe(u8, "\"\"");
+        }
+
+        // to-upper-case($string)
+        if (std.mem.eql(u8, func_name, "to-upper-case")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t'\"");
+                const upper = try self.allocator.alloc(u8, val.len);
+                for (val, 0..) |c, idx| {
+                    upper[idx] = std.ascii.toUpper(c);
+                }
+                return upper;
+            }
+            return try self.allocator.dupe(u8, "");
+        }
+
+        // to-lower-case($string)
+        if (std.mem.eql(u8, func_name, "to-lower-case")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t'\"");
+                const lower = try self.allocator.alloc(u8, val.len);
+                for (val, 0..) |c, idx| {
+                    lower[idx] = std.ascii.toLower(c);
+                }
+                return lower;
+            }
+            return try self.allocator.dupe(u8, "");
+        }
+
+        // str-length($string)
+        if (std.mem.eql(u8, func_name, "str-length")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t'\"");
+                return try std.fmt.allocPrint(self.allocator, "{}", .{val.len});
+            }
+            return try self.allocator.dupe(u8, "0");
+        }
+
+        // if($condition, $if-true, $if-false)
+        if (std.mem.eql(u8, func_name, "if")) {
+            if (args.items.len >= 3) {
+                const cond = std.mem.trim(u8, args.items[0], " \t");
+                const if_true = std.mem.trim(u8, args.items[1], " \t");
+                const if_false = std.mem.trim(u8, args.items[2], " \t");
+                if (self.evaluateCondition(cond)) {
+                    return try self.allocator.dupe(u8, if_true);
+                } else {
+                    return try self.allocator.dupe(u8, if_false);
+                }
+            }
+            return try self.allocator.dupe(u8, "null");
+        }
+
+        // unique-id()
+        if (std.mem.eql(u8, func_name, "unique-id")) {
+            const ts: u128 = @bitCast(std.time.nanoTimestamp());
+            return try std.fmt.allocPrint(self.allocator, "u{x}", .{@as(u32, @truncate(ts))});
+        }
+
+        // Color functions: lighten, darken, saturate, desaturate, adjust-hue, mix, rgba, opacify, transparentize
+        // These are complex to evaluate fully (require color parsing). Pass them through as CSS.
+        if (std.mem.eql(u8, func_name, "lighten") or
+            std.mem.eql(u8, func_name, "darken") or
+            std.mem.eql(u8, func_name, "saturate") or
+            std.mem.eql(u8, func_name, "desaturate") or
+            std.mem.eql(u8, func_name, "adjust-hue") or
+            std.mem.eql(u8, func_name, "mix") or
+            std.mem.eql(u8, func_name, "opacify") or
+            std.mem.eql(u8, func_name, "transparentize") or
+            std.mem.eql(u8, func_name, "rgba") or
+            std.mem.eql(u8, func_name, "rgb") or
+            std.mem.eql(u8, func_name, "hsl") or
+            std.mem.eql(u8, func_name, "hsla"))
+        {
+            // Pass through as CSS function call
+            return try std.fmt.allocPrint(self.allocator, "{s}({s})", .{func_name, args_str});
+        }
+
+        // strip-unit — just return the numeric part
+        if (std.mem.eql(u8, func_name, "strip-unit")) {
+            if (args.items.len >= 1) {
+                const val = std.mem.trim(u8, args.items[0], " \t");
+                const unit = extractUnit(val);
+                return try self.allocator.dupe(u8, val[0 .. val.len - unit.len]);
+            }
+            return try self.allocator.dupe(u8, "0");
+        }
+
+        // Default: pass through as-is
+        return try std.fmt.allocPrint(self.allocator, "{s}({s})", .{func_name, args_str});
+    }
+
+    /// Find a value in a map-like string "key1: val1, key2: val2"
+    fn findMapValue(self: *Parser, map_str: []const u8, key: []const u8) ?[]const u8 {
+        _ = self;
+        const trimmed = std.mem.trim(u8, map_str, " \t\n\r()");
+        // Parse key-value pairs
+        var i: usize = 0;
+        while (i < trimmed.len) {
+            // Skip whitespace
+            while (i < trimmed.len and std.ascii.isWhitespace(trimmed[i])) i += 1;
+            if (i >= trimmed.len) break;
+
+            // Read key (until ':')
+            const key_start = i;
+            while (i < trimmed.len and trimmed[i] != ':') i += 1;
+            if (i >= trimmed.len) break;
+            const current_key = std.mem.trim(u8, trimmed[key_start..i], " \t'\"");
+            i += 1; // skip ':'
+
+            // Skip whitespace after colon
+            while (i < trimmed.len and std.ascii.isWhitespace(trimmed[i])) i += 1;
+
+            // Read value (until ',' or end, respecting parens)
+            const val_start = i;
+            var paren_d: usize = 0;
+            while (i < trimmed.len) {
+                if (trimmed[i] == '(') paren_d += 1
+                else if (trimmed[i] == ')') {
+                    if (paren_d > 0) paren_d -= 1 else break;
+                } else if (trimmed[i] == ',' and paren_d == 0) break;
+                i += 1;
+            }
+            const current_val = std.mem.trim(u8, trimmed[val_start..i], " \t");
+
+            if (std.mem.eql(u8, current_key, key)) {
+                return current_val;
+            }
+
+            // Skip comma
+            if (i < trimmed.len and trimmed[i] == ',') i += 1;
+        }
+        return null;
+    }
+
     pub fn deinit(self: *Parser) void {
         var it = self.variables.iterator();
         while (it.next()) |entry| {
@@ -2319,6 +2734,38 @@ fn replaceAllOccurrences(allocator: std.mem.Allocator, haystack: []const u8, nee
     }
 
     return try result.toOwnedSlice(allocator);
+}
+
+/// Check if a function name is a known SCSS built-in function.
+fn isBuiltinFunction(name: []const u8) bool {
+    const builtins = [_][]const u8{
+        "map-get", "map-has-key", "map-merge", "map-keys", "map-values",
+        "nth", "length", "join", "append", "index",
+        "percentage", "round", "ceil", "floor", "abs", "min", "max",
+        "type-of", "unit", "unitless", "comparable",
+        "unquote", "quote", "str-length", "str-insert", "str-index", "str-slice",
+        "to-upper-case", "to-lower-case",
+        "lighten", "darken", "saturate", "desaturate", "adjust-hue",
+        "mix", "rgba", "rgb", "hsl", "hsla", "opacify", "transparentize",
+        "if", "unique-id", "strip-unit",
+    };
+    for (&builtins) |builtin| {
+        if (std.mem.eql(u8, name, builtin)) return true;
+    }
+    return false;
+}
+
+/// Extract the CSS unit from a value string (e.g., "16px" → "px", "1.5rem" → "rem")
+fn extractUnit(val: []const u8) []const u8 {
+    var i = val.len;
+    while (i > 0 and std.ascii.isAlphabetic(val[i - 1])) {
+        i -= 1;
+    }
+    // Also handle % as a unit
+    if (i == val.len and val.len > 0 and val[val.len - 1] == '%') {
+        return "%";
+    }
+    return val[i..];
 }
 
 test "parse SCSS variables" {
@@ -2690,4 +3137,106 @@ test "SCSS @import is stripped" {
     defer stylesheet.deinit();
 
     try std.testing.expect(stylesheet.rules.items.len == 1);
+}
+
+test "SCSS map-get built-in function" {
+    const scss = "$sizes: (sm: 14px, md: 16px, lg: 20px);\n.text { font-size: map-get($sizes, md); }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(std.mem.eql(u8, rule.style.declarations.items[0].value, "16px"));
+}
+
+test "SCSS round built-in function" {
+    const scss = ".box { height: round(15.7px); }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(std.mem.eql(u8, rule.style.declarations.items[0].value, "16px"));
+}
+
+test "SCSS percentage built-in function" {
+    const scss = ".box { width: percentage(0.75); }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(std.mem.eql(u8, rule.style.declarations.items[0].value, "75%"));
+}
+
+test "SCSS to-upper-case built-in function" {
+    const scss = ".text { content: to-upper-case('hello'); }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(std.mem.eql(u8, rule.style.declarations.items[0].value, "HELLO"));
+}
+
+test "SCSS abs built-in function" {
+    const scss = ".box { margin: abs(-10px); }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(std.mem.eql(u8, rule.style.declarations.items[0].value, "10px"));
+}
+
+test "SCSS min and max built-in functions" {
+    const scss = ".box { opacity: min(0.8, 1); z-index: max(1, 5, 3); }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var p = Parser.init(allocator, scss);
+    defer p.deinit();
+    var stylesheet = try p.parse();
+    defer stylesheet.deinit();
+
+    try std.testing.expect(stylesheet.rules.items.len == 1);
+    const rule = stylesheet.rules.items[0];
+    try std.testing.expect(rule == .style);
+    try std.testing.expect(rule.style.declarations.items.len >= 2);
 }
