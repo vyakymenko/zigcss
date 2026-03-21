@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-20
+
+### Features
+- Add comprehensive SCSS support with full preprocessor pipeline
+- Add SCSS `//` single-line comment stripping
+- Add SCSS `#{}` interpolation in selectors and property values
+- Add SCSS `!default` flag for conditional variable assignment
+- Add SCSS nesting with `&` parent selector (BEM `&__item`, `&--mod`, pseudo `&:hover`)
+- Add SCSS descendant nesting (`.parent { .child {} }` → `.parent .child {}`)
+- Add SCSS `@for $i from X through/to Y {}` loop directive
+- Add SCSS `@each $var in list {}` with comma-separated lists and `$key, $value` map iteration
+- Add SCSS `@if` / `@else if` / `@else` conditional blocks with comparison operators
+- Add SCSS `@while` loop directive with max-iteration safety (1000)
+- Add SCSS `%placeholder` selector extraction and `@extend %name` directive
+- Add SCSS `@warn`, `@error`, `@debug` directive stripping
+- Add SCSS `@import`, `@use`, `@forward` directive stripping
+- Add SCSS built-in function support: `map-get`, `map-has-key` for map lookups
+- Add SCSS math functions: `round`, `ceil`, `floor`, `abs`, `min`, `max`, `percentage`
+- Add SCSS string functions: `to-upper-case`, `to-lower-case`, `str-length`, `unquote`, `quote`
+- Add SCSS utility functions: `type-of`, `if()`, `unique-id`, `strip-unit`, `nth`, `length`
+- Add SCSS color function passthrough: `lighten`, `darken`, `rgba`, `rgb`, `hsl`, `hsla`, `mix`, `saturate`, `desaturate`, `adjust-hue`, `opacify`, `transparentize`
+- Add full-file variable, mixin, and function collection scan
+- Add Control Flow and Built-in Functions to website comparison table
+
+### Tests
+- Add 19 new SCSS unit tests covering all implemented features (76 total Zig tests)
+- Add 7 new website component tests for Features page (11 total)
+- Add comprehensive SCSS integration test file (`parsing/integration_test.scss`)
+
 ## [0.2.0] - 2026-02-16
 
 ### Features

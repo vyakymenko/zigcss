@@ -1,0 +1,1728 @@
+// =============================================================================
+// SCSS COMPREHENSIVE MOCK FILE
+// Covers: variables, nesting, mixins, functions, extends, control flow,
+//         maps, lists, modules, interpolation, selectors, media queries,
+//         at-rules, operators, built-in functions, and more.
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// 1. VARIABLES
+// -----------------------------------------------------------------------------
+
+$primary-color:        #3498db;
+$secondary-color:      #2ecc71;
+$accent-color:         #e74c3c;
+$warning-color:        #f39c12;
+$dark-color:           #2c3e50;
+$light-color:          #ecf0f1;
+$white:                #ffffff;
+$black:                #000000;
+
+$font-stack-sans:      'Helvetica Neue', Helvetica, Arial, sans-serif;
+$font-stack-serif:     Georgia, 'Times New Roman', serif;
+$font-stack-mono:      'Fira Code', 'Courier New', monospace;
+
+$base-font-size:       16px;
+$line-height-base:     1.6;
+$font-weight-light:    300;
+$font-weight-normal:   400;
+$font-weight-bold:     700;
+
+$spacing-xs:           4px;
+$spacing-sm:           8px;
+$spacing-md:           16px;
+$spacing-lg:           24px;
+$spacing-xl:           32px;
+$spacing-xxl:          64px;
+
+$border-radius-sm:     2px;
+$border-radius-md:     4px;
+$border-radius-lg:     8px;
+$border-radius-xl:     16px;
+$border-radius-full:   9999px;
+
+$border-width:         1px;
+$border-style:         solid;
+$border-color:         rgba(0, 0, 0, 0.12);
+
+$shadow-sm:            0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+$shadow-md:            0 3px 6px rgba(0,0,0,0.15), 0 2px 4px rgba(0,0,0,0.12);
+$shadow-lg:            0 10px 20px rgba(0,0,0,0.15), 0 3px 6px rgba(0,0,0,0.10);
+$shadow-xl:            0 15px 25px rgba(0,0,0,0.15), 0 5px 10px rgba(0,0,0,0.05);
+
+$transition-fast:      0.15s ease-in-out;
+$transition-base:      0.3s ease-in-out;
+$transition-slow:      0.5s ease-in-out;
+
+$z-index-dropdown:     1000;
+$z-index-sticky:       1020;
+$z-index-fixed:        1030;
+$z-index-modal-bg:     1040;
+$z-index-modal:        1050;
+$z-index-popover:      1060;
+$z-index-tooltip:      1070;
+
+$grid-columns:         12;
+$grid-gutter:          $spacing-md;
+$container-max-width:  1200px;
+
+// Default value with !default
+$theme-prefix:         'app' !default;
+$enable-shadows:       true !default;
+$enable-transitions:   true !default;
+$enable-rounded:       true !default;
+
+
+// -----------------------------------------------------------------------------
+// 2. MAPS
+// -----------------------------------------------------------------------------
+
+$breakpoints: (
+  'xs':   0,
+  'sm':   576px,
+  'md':   768px,
+  'lg':   992px,
+  'xl':   1200px,
+  'xxl':  1400px
+);
+
+$colors: (
+  'primary':    $primary-color,
+  'secondary':  $secondary-color,
+  'accent':     $accent-color,
+  'warning':    $warning-color,
+  'dark':       $dark-color,
+  'light':      $light-color,
+  'white':      $white,
+  'black':      $black
+);
+
+$font-sizes: (
+  'xs':   0.75rem,
+  'sm':   0.875rem,
+  'base': 1rem,
+  'lg':   1.125rem,
+  'xl':   1.25rem,
+  '2xl':  1.5rem,
+  '3xl':  1.875rem,
+  '4xl':  2.25rem,
+  '5xl':  3rem
+);
+
+$spacers: (
+  0: 0,
+  1: $spacing-xs,
+  2: $spacing-sm,
+  3: $spacing-md,
+  4: $spacing-lg,
+  5: $spacing-xl,
+  6: $spacing-xxl
+);
+
+$z-indexes: (
+  'dropdown':   $z-index-dropdown,
+  'sticky':     $z-index-sticky,
+  'fixed':      $z-index-fixed,
+  'modal-bg':   $z-index-modal-bg,
+  'modal':      $z-index-modal,
+  'popover':    $z-index-popover,
+  'tooltip':    $z-index-tooltip
+);
+
+$theme-variants: (
+  'light': (
+    'bg':       #ffffff,
+    'text':     #212529,
+    'border':   #dee2e6,
+    'muted':    #6c757d
+  ),
+  'dark': (
+    'bg':       #1a1a2e,
+    'text':     #e9ecef,
+    'border':   #495057,
+    'muted':    #adb5bd
+  )
+);
+
+
+// -----------------------------------------------------------------------------
+// 3. LISTS
+// -----------------------------------------------------------------------------
+
+$named-colors-list:    red, green, blue, yellow, purple, orange;
+$easing-functions:     ease, ease-in, ease-out, ease-in-out, linear;
+$border-styles-list:   solid, dashed, dotted, double, groove, ridge;
+$display-values:       none, inline, inline-block, block, flex, grid;
+$overflow-values:      visible, hidden, scroll, auto;
+
+// Nested list
+$gradient-stops: (
+  (#3498db 0%),
+  (#2ecc71 50%),
+  (#e74c3c 100%)
+);
+
+
+// -----------------------------------------------------------------------------
+// 4. FUNCTIONS
+// -----------------------------------------------------------------------------
+
+@function rem($px, $base: $base-font-size) {
+  @return ($px / $base) * 1rem;
+}
+
+@function em($px, $context: $base-font-size) {
+  @return ($px / $context) * 1em;
+}
+
+@function strip-unit($value) {
+  @return $value / ($value * 0 + 1);
+}
+
+@function clamp-value($value, $min, $max) {
+  @return min(max($value, $min), $max);
+}
+
+@function z($layer) {
+  @if map-has-key($z-indexes, $layer) {
+    @return map-get($z-indexes, $layer);
+  }
+  @warn "Unknown z-index layer: #{$layer}";
+  @return null;
+}
+
+@function color($name) {
+  @if map-has-key($colors, $name) {
+    @return map-get($colors, $name);
+  }
+  @warn "Unknown color: #{$name}";
+  @return null;
+}
+
+@function spacing($key) {
+  @if map-has-key($spacers, $key) {
+    @return map-get($spacers, $key);
+  }
+  @warn "Unknown spacing key: #{$key}";
+  @return 0;
+}
+
+@function contrast-color($bg-color) {
+  $luminance: (red($bg-color) * 0.299 + green($bg-color) * 0.587 + blue($bg-color) * 0.114) / 255;
+  @if $luminance > 0.5 {
+    @return $black;
+  } @else {
+    @return $white;
+  }
+}
+
+@function tint($color, $percentage) {
+  @return mix($white, $color, $percentage);
+}
+
+@function shade($color, $percentage) {
+  @return mix($black, $color, $percentage);
+}
+
+@function tone($color, $percentage) {
+  @return mix(#808080, $color, $percentage);
+}
+
+@function breakpoint($name) {
+  @if map-has-key($breakpoints, $name) {
+    @return map-get($breakpoints, $name);
+  }
+  @warn "Unknown breakpoint: #{$name}";
+  @return null;
+}
+
+@function pow($base, $exponent) {
+  $result: 1;
+  @for $i from 1 through $exponent {
+    $result: $result * $base;
+  }
+  @return $result;
+}
+
+@function is-color($value) {
+  @return type-of($value) == 'color';
+}
+
+@function deep-map-get($map, $keys...) {
+  $result: $map;
+  @each $key in $keys {
+    $result: map-get($result, $key);
+    @if $result == null {
+      @return null;
+    }
+  }
+  @return $result;
+}
+
+
+// -----------------------------------------------------------------------------
+// 5. MIXINS — BASICS
+// -----------------------------------------------------------------------------
+
+@mixin clearfix {
+  &::after {
+    content: '';
+    display: table;
+    clear: both;
+  }
+}
+
+@mixin visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@mixin truncate($width: 100%) {
+  width: $width;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@mixin line-clamp($lines: 2) {
+  display: -webkit-box;
+  -webkit-line-clamp: $lines;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@mixin reset-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+@mixin reset-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  outline: none;
+}
+
+@mixin focus-ring($color: $primary-color, $offset: 2px) {
+  outline: 2px solid $color;
+  outline-offset: $offset;
+}
+
+@mixin placeholder {
+  &::placeholder { @content; }
+  &::-webkit-input-placeholder { @content; }
+  &::-moz-placeholder { @content; }
+  &:-ms-input-placeholder { @content; }
+}
+
+@mixin selection($bg: $primary-color, $color: $white) {
+  ::selection {
+    background-color: $bg;
+    color: $color;
+  }
+}
+
+@mixin aspect-ratio($width, $height) {
+  position: relative;
+  &::before {
+    content: '';
+    display: block;
+    padding-top: percentage($height / $width);
+  }
+  > * {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 6. MIXINS — LAYOUT & FLEXBOX
+// -----------------------------------------------------------------------------
+
+@mixin flex($direction: row, $wrap: nowrap, $justify: flex-start, $align: stretch) {
+  display: flex;
+  flex-direction: $direction;
+  flex-wrap: $wrap;
+  justify-content: $justify;
+  align-items: $align;
+}
+
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@mixin flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@mixin flex-column {
+  display: flex;
+  flex-direction: column;
+}
+
+@mixin grid($cols: 12, $gap: $grid-gutter) {
+  display: grid;
+  grid-template-columns: repeat($cols, 1fr);
+  gap: $gap;
+}
+
+@mixin grid-area($row-start, $col-start, $row-end: auto, $col-end: auto) {
+  grid-row: $row-start / $row-end;
+  grid-column: $col-start / $col-end;
+}
+
+@mixin absolute-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+@mixin fixed-fill {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+@mixin absolute-fill {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+
+@mixin container($max-width: $container-max-width, $padding: $spacing-md) {
+  width: 100%;
+  max-width: $max-width;
+  margin-right: auto;
+  margin-left: auto;
+  padding-right: $padding;
+  padding-left: $padding;
+}
+
+
+// -----------------------------------------------------------------------------
+// 7. MIXINS — RESPONSIVE
+// -----------------------------------------------------------------------------
+
+@mixin respond-to($breakpoint) {
+  $value: breakpoint($breakpoint);
+  @if $value != null {
+    @media (min-width: $value) {
+      @content;
+    }
+  }
+}
+
+@mixin respond-below($breakpoint) {
+  $value: breakpoint($breakpoint);
+  @if $value != null {
+    @media (max-width: ($value - 1px)) {
+      @content;
+    }
+  }
+}
+
+@mixin respond-between($lower, $upper) {
+  $lower-val: breakpoint($lower);
+  $upper-val: breakpoint($upper);
+  @if $lower-val != null and $upper-val != null {
+    @media (min-width: $lower-val) and (max-width: ($upper-val - 1px)) {
+      @content;
+    }
+  }
+}
+
+@mixin dark-mode {
+  @media (prefers-color-scheme: dark) {
+    @content;
+  }
+}
+
+@mixin reduced-motion {
+  @media (prefers-reduced-motion: reduce) {
+    @content;
+  }
+}
+
+@mixin high-contrast {
+  @media (forced-colors: active) {
+    @content;
+  }
+}
+
+@mixin retina {
+  @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    @content;
+  }
+}
+
+@mixin print {
+  @media print {
+    @content;
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 8. MIXINS — TYPOGRAPHY
+// -----------------------------------------------------------------------------
+
+@mixin font($size: $base-font-size, $weight: $font-weight-normal, $lh: $line-height-base) {
+  font-size: $size;
+  font-weight: $weight;
+  line-height: $lh;
+}
+
+@mixin heading($size, $weight: $font-weight-bold, $lh: 1.2) {
+  @include font($size, $weight, $lh);
+  font-family: $font-stack-sans;
+  letter-spacing: -0.02em;
+}
+
+@mixin text-xs   { font-size: map-get($font-sizes, 'xs');   }
+@mixin text-sm   { font-size: map-get($font-sizes, 'sm');   }
+@mixin text-base { font-size: map-get($font-sizes, 'base'); }
+@mixin text-lg   { font-size: map-get($font-sizes, 'lg');   }
+@mixin text-xl   { font-size: map-get($font-sizes, 'xl');   }
+@mixin text-2xl  { font-size: map-get($font-sizes, '2xl');  }
+@mixin text-3xl  { font-size: map-get($font-sizes, '3xl');  }
+@mixin text-4xl  { font-size: map-get($font-sizes, '4xl');  }
+@mixin text-5xl  { font-size: map-get($font-sizes, '5xl');  }
+
+@mixin fluid-type($min-vw, $max-vw, $min-font-size, $max-font-size) {
+  font-size: $min-font-size;
+  @media (min-width: $min-vw) {
+    font-size: calc(#{$min-font-size} + #{strip-unit($max-font-size - $min-font-size)} * (100vw - #{$min-vw}) / #{strip-unit($max-vw - $min-vw)});
+  }
+  @media (min-width: $max-vw) {
+    font-size: $max-font-size;
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 9. MIXINS — COLORS & BACKGROUNDS
+// -----------------------------------------------------------------------------
+
+@mixin bg-gradient($dir: to right, $from: $primary-color, $to: $secondary-color) {
+  background: linear-gradient($dir, $from, $to);
+}
+
+@mixin bg-radial($shape: circle, $from: $primary-color, $to: transparent) {
+  background: radial-gradient($shape, $from, $to);
+}
+
+@mixin bg-image($url, $size: cover, $position: center, $repeat: no-repeat) {
+  background-image: url($url);
+  background-size: $size;
+  background-position: $position;
+  background-repeat: $repeat;
+}
+
+@mixin color-variants($base-color, $steps: 5) {
+  @for $i from 1 through $steps {
+    &--light-#{$i} { background-color: tint($base-color, $i * 10%); }
+    &--dark-#{$i}  { background-color: shade($base-color, $i * 10%); }
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 10. MIXINS — BORDERS & SHADOWS
+// -----------------------------------------------------------------------------
+
+@mixin border($width: $border-width, $style: $border-style, $color: $border-color) {
+  border: $width $style $color;
+}
+
+@mixin border-top($width: $border-width, $style: $border-style, $color: $border-color) {
+  border-top: $width $style $color;
+}
+
+@mixin border-bottom($width: $border-width, $style: $border-style, $color: $border-color) {
+  border-bottom: $width $style $color;
+}
+
+@mixin rounded($radius: $border-radius-md) {
+  @if $enable-rounded {
+    border-radius: $radius;
+  }
+}
+
+@mixin shadow($level: 'md') {
+  @if $enable-shadows {
+    @if $level == 'sm'  { box-shadow: $shadow-sm; }
+    @else if $level == 'md' { box-shadow: $shadow-md; }
+    @else if $level == 'lg' { box-shadow: $shadow-lg; }
+    @else if $level == 'xl' { box-shadow: $shadow-xl; }
+    @else if $level == 'none' { box-shadow: none; }
+  }
+}
+
+@mixin inner-shadow($x: 0, $y: 2px, $blur: 4px, $color: rgba(0,0,0,0.2)) {
+  box-shadow: inset $x $y $blur $color;
+}
+
+
+// -----------------------------------------------------------------------------
+// 11. MIXINS — TRANSITIONS & ANIMATIONS
+// -----------------------------------------------------------------------------
+
+@mixin transition($props...) {
+  @if $enable-transitions {
+    @if length($props) == 0 {
+      transition: all $transition-base;
+    } @else {
+      transition: $props;
+    }
+  }
+}
+
+@mixin hover-lift($amount: -2px, $shadow: $shadow-lg) {
+  @include transition(transform $transition-fast, box-shadow $transition-fast);
+  &:hover {
+    transform: translateY($amount);
+    box-shadow: $shadow;
+  }
+}
+
+@mixin hover-scale($scale: 1.05) {
+  @include transition(transform $transition-fast);
+  &:hover {
+    transform: scale($scale);
+  }
+}
+
+@mixin fade-in($duration: $transition-base, $delay: 0s) {
+  animation: fadeIn $duration $delay both;
+}
+
+@mixin slide-in($direction: 'up', $distance: 20px, $duration: $transition-base) {
+  $transform: translateY($distance);
+  @if $direction == 'down'  { $transform: translateY(-$distance); }
+  @else if $direction == 'left'  { $transform: translateX($distance); }
+  @else if $direction == 'right' { $transform: translateX(-$distance); }
+  animation: slideIn #{$duration} both;
+  @keyframes slideIn {
+    from { opacity: 0; transform: $transform; }
+    to   { opacity: 1; transform: translate(0); }
+  }
+}
+
+@mixin spin($duration: 1s, $timing: linear) {
+  animation: spin $duration $timing infinite;
+}
+
+
+// -----------------------------------------------------------------------------
+// 12. EXTENDS / PLACEHOLDERS
+// -----------------------------------------------------------------------------
+
+%clearfix          { @include clearfix; }
+%visually-hidden   { @include visually-hidden; }
+%reset-list        { @include reset-list; }
+%reset-button      { @include reset-button; }
+%flex-center       { @include flex-center; }
+%flex-between      { @include flex-between; }
+%absolute-center   { @include absolute-center; }
+%absolute-fill     { @include absolute-fill; }
+%truncate          { @include truncate; }
+%transition-base   { @include transition; }
+
+%card-base {
+  @include rounded($border-radius-lg);
+  @include shadow('md');
+  background-color: $white;
+  overflow: hidden;
+}
+
+%overlay {
+  @include absolute-fill;
+  background-color: rgba($black, 0.5);
+}
+
+%gradient-text {
+  background: linear-gradient(135deg, $primary-color, $secondary-color);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+%text-link {
+  color: $primary-color;
+  text-decoration: none;
+  &:hover { text-decoration: underline; }
+}
+
+
+// -----------------------------------------------------------------------------
+// 13. KEYFRAME ANIMATIONS
+// -----------------------------------------------------------------------------
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); animation-timing-function: cubic-bezier(0.8, 0, 1, 1); }
+  50%       { transform: translateY(-25%); animation-timing-function: cubic-bezier(0, 0, 0.2, 1); }
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(-3deg); }
+  50%       { transform: rotate(3deg); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+@keyframes ripple {
+  0%   { transform: scale(0);   opacity: 1; }
+  100% { transform: scale(4);   opacity: 0; }
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-10px); }
+}
+
+
+// -----------------------------------------------------------------------------
+// 14. CONTROL FLOW — @if / @else / @for / @each / @while
+// -----------------------------------------------------------------------------
+
+// @for — generate spacing utilities
+@for $i from 0 through 6 {
+  .mt-#{$i} { margin-top:    spacing($i); }
+  .mb-#{$i} { margin-bottom: spacing($i); }
+  .ml-#{$i} { margin-left:   spacing($i); }
+  .mr-#{$i} { margin-right:  spacing($i); }
+  .mx-#{$i} { margin-left: spacing($i); margin-right: spacing($i); }
+  .my-#{$i} { margin-top:  spacing($i); margin-bottom: spacing($i); }
+  .m-#{$i}  { margin:        spacing($i); }
+
+  .pt-#{$i} { padding-top:    spacing($i); }
+  .pb-#{$i} { padding-bottom: spacing($i); }
+  .pl-#{$i} { padding-left:   spacing($i); }
+  .pr-#{$i} { padding-right:  spacing($i); }
+  .px-#{$i} { padding-left: spacing($i); padding-right: spacing($i); }
+  .py-#{$i} { padding-top:  spacing($i); padding-bottom: spacing($i); }
+  .p-#{$i}  { padding:        spacing($i); }
+}
+
+// @each — generate color utilities from map
+@each $name, $value in $colors {
+  .text-#{$name}       { color: $value; }
+  .bg-#{$name}         { background-color: $value; }
+  .border-#{$name}     { border-color: $value; }
+  .fill-#{$name}       { fill: $value; }
+  .stroke-#{$name}     { stroke: $value; }
+}
+
+// @each — generate display utilities from list
+@each $val in $display-values {
+  .d-#{$val} { display: $val; }
+}
+
+// @each — generate overflow utilities
+@each $val in $overflow-values {
+  .overflow-#{$val}   { overflow: $val; }
+  .overflow-x-#{$val} { overflow-x: $val; }
+  .overflow-y-#{$val} { overflow-y: $val; }
+}
+
+// @each over nested list
+@each $stop in $gradient-stops {
+  $color: nth($stop, 1);
+  $pos:   nth($stop, 2);
+  // just to exercise nested list iteration
+  .gradient-stop { --stop: #{$pos}; --color: #{$color}; }
+}
+
+// @while — generate grid column spans
+$col: 1;
+@while $col <= $grid-columns {
+  .col-#{$col} {
+    grid-column: span $col;
+  }
+  $col: $col + 1;
+}
+
+// @if / @else if / @else inside a mixin
+@mixin button-size($size: 'md') {
+  @if $size == 'xs' {
+    padding: $spacing-xs $spacing-sm;
+    font-size: map-get($font-sizes, 'xs');
+  } @else if $size == 'sm' {
+    padding: $spacing-sm $spacing-md;
+    font-size: map-get($font-sizes, 'sm');
+  } @else if $size == 'md' {
+    padding: $spacing-sm $spacing-lg;
+    font-size: map-get($font-sizes, 'base');
+  } @else if $size == 'lg' {
+    padding: $spacing-md $spacing-xl;
+    font-size: map-get($font-sizes, 'lg');
+  } @else {
+    @warn "Unknown button size: #{$size}";
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 15. NESTING — DEEP SELECTORS, & PARENT REF, PSEUDO
+// -----------------------------------------------------------------------------
+
+.nav {
+  @extend %reset-list;
+  @include flex(row, nowrap, flex-start, center);
+
+  &__item {
+    position: relative;
+
+    &:first-child { margin-left: 0; }
+    &:last-child  { margin-right: 0; }
+    &:not(:last-child) { margin-right: $spacing-sm; }
+
+    &--active > .nav__link {
+      color: $primary-color;
+      font-weight: $font-weight-bold;
+    }
+
+    &--disabled > .nav__link {
+      opacity: 0.5;
+      pointer-events: none;
+      cursor: not-allowed;
+    }
+  }
+
+  &__link {
+    @extend %text-link;
+    @include transition(color $transition-fast);
+    display: inline-flex;
+    align-items: center;
+    padding: $spacing-sm $spacing-md;
+    @include rounded;
+
+    &:hover,
+    &:focus {
+      color: darken($primary-color, 10%);
+      background-color: rgba($primary-color, 0.08);
+    }
+
+    &:active {
+      transform: scale(0.97);
+    }
+
+    &[aria-current='page'] {
+      color: $primary-color;
+      background-color: rgba($primary-color, 0.1);
+    }
+
+    &--icon-left .icon { margin-right: $spacing-xs; }
+    &--icon-right .icon { margin-left: $spacing-xs; }
+  }
+
+  &__dropdown {
+    @extend %card-base;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 200px;
+    padding: $spacing-xs 0;
+    z-index: z('dropdown');
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(8px);
+    @include transition(opacity $transition-fast, visibility $transition-fast, transform $transition-fast);
+
+    .nav__item:hover & {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 16. COMPONENT — BUTTON
+// -----------------------------------------------------------------------------
+
+.btn {
+  @extend %reset-button;
+  @include flex-center;
+  @include rounded;
+  @include transition;
+  @include button-size('md');
+  display: inline-flex;
+  font-family: $font-stack-sans;
+  font-weight: $font-weight-bold;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+  vertical-align: middle;
+
+  &:focus-visible { @include focus-ring; }
+
+  &:disabled,
+  &[disabled],
+  &--disabled {
+    opacity: 0.6;
+    pointer-events: none;
+    cursor: not-allowed;
+  }
+
+  // Sizes
+  &--xs  { @include button-size('xs'); }
+  &--sm  { @include button-size('sm'); }
+  &--lg  { @include button-size('lg'); }
+  &--block { width: 100%; justify-content: center; }
+
+  // Variants generated via @each
+  @each $name, $bg in $colors {
+    $fg: contrast-color($bg);
+    &--#{$name} {
+      background-color: $bg;
+      color: $fg;
+      border: 2px solid $bg;
+      &:hover:not(:disabled) {
+        background-color: shade($bg, 10%);
+        border-color: shade($bg, 10%);
+      }
+      &:active:not(:disabled) {
+        background-color: shade($bg, 20%);
+      }
+      &--outline {
+        background-color: transparent;
+        color: $bg;
+        border: 2px solid $bg;
+        &:hover:not(:disabled) {
+          background-color: $bg;
+          color: $fg;
+        }
+      }
+      &--ghost {
+        background-color: transparent;
+        color: $bg;
+        border: 2px solid transparent;
+        &:hover:not(:disabled) {
+          background-color: rgba($bg, 0.1);
+        }
+      }
+    }
+  }
+
+  // Loading state
+  &--loading {
+    position: relative;
+    color: transparent;
+    pointer-events: none;
+    &::after {
+      content: '';
+      @include absolute-center;
+      width: 1em;
+      height: 1em;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      @include spin;
+    }
+  }
+
+  // Icon-only
+  &--icon {
+    padding: $spacing-sm;
+    aspect-ratio: 1;
+    .icon { margin: 0; }
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 17. COMPONENT — CARD
+// -----------------------------------------------------------------------------
+
+.card {
+  @extend %card-base;
+  @include transition(box-shadow $transition-fast);
+
+  &:hover { @include shadow('lg'); }
+
+  &__header {
+    @include flex-between;
+    padding: $spacing-md $spacing-lg;
+    @include border-bottom;
+  }
+
+  &__body {
+    padding: $spacing-lg;
+  }
+
+  &__footer {
+    @include flex-between;
+    padding: $spacing-md $spacing-lg;
+    @include border-top;
+    background-color: rgba($light-color, 0.5);
+  }
+
+  &__image {
+    width: 100%;
+    height: 200px;
+    object-fit: cover;
+  }
+
+  &__title {
+    @include heading(map-get($font-sizes, 'xl'));
+    margin: 0 0 $spacing-sm;
+  }
+
+  &__subtitle {
+    color: darken($light-color, 30%);
+    margin: 0;
+  }
+
+  &--horizontal {
+    @include flex(row);
+    .card__image {
+      width: 200px;
+      height: auto;
+      flex-shrink: 0;
+    }
+  }
+
+  &--compact .card__body { padding: $spacing-sm $spacing-md; }
+  &--flat { box-shadow: none; @include border; }
+  &--elevated { @include shadow('xl'); @include hover-lift; }
+}
+
+
+// -----------------------------------------------------------------------------
+// 18. COMPONENT — FORM ELEMENTS
+// -----------------------------------------------------------------------------
+
+.form {
+  &__group { margin-bottom: $spacing-md; }
+
+  &__label {
+    display: block;
+    margin-bottom: $spacing-xs;
+    font-weight: $font-weight-bold;
+    font-size: map-get($font-sizes, 'sm');
+  }
+
+  &__input,
+  &__select,
+  &__textarea {
+    display: block;
+    width: 100%;
+    padding: $spacing-sm $spacing-md;
+    font-size: map-get($font-sizes, 'base');
+    font-family: $font-stack-sans;
+    line-height: $line-height-base;
+    color: $dark-color;
+    background-color: $white;
+    @include border;
+    @include rounded;
+    @include transition(border-color $transition-fast, box-shadow $transition-fast);
+    appearance: none;
+
+    @include placeholder {
+      color: lighten($dark-color, 40%);
+      opacity: 1;
+    }
+
+    &:focus {
+      outline: none;
+      border-color: $primary-color;
+      box-shadow: 0 0 0 3px rgba($primary-color, 0.2);
+    }
+
+    &:disabled {
+      background-color: $light-color;
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+
+    &--error {
+      border-color: $accent-color;
+      &:focus { box-shadow: 0 0 0 3px rgba($accent-color, 0.2); }
+    }
+
+    &--success {
+      border-color: $secondary-color;
+      &:focus { box-shadow: 0 0 0 3px rgba($secondary-color, 0.2); }
+    }
+  }
+
+  &__textarea { min-height: 120px; resize: vertical; }
+
+  &__help {
+    font-size: map-get($font-sizes, 'xs');
+    color: lighten($dark-color, 30%);
+    margin-top: $spacing-xs;
+  }
+
+  &__error {
+    font-size: map-get($font-sizes, 'xs');
+    color: $accent-color;
+    margin-top: $spacing-xs;
+  }
+}
+
+.checkbox,
+.radio {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  gap: $spacing-sm;
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 1em;
+    height: 1em;
+    accent-color: $primary-color;
+    cursor: pointer;
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 19. COMPONENT — BADGE & CHIP
+// -----------------------------------------------------------------------------
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px $spacing-sm;
+  font-size: map-get($font-sizes, 'xs');
+  font-weight: $font-weight-bold;
+  line-height: 1;
+  @include rounded($border-radius-full);
+  white-space: nowrap;
+
+  @each $name, $bg in $colors {
+    &--#{$name} {
+      background-color: tint($bg, 80%);
+      color: shade($bg, 20%);
+    }
+  }
+
+  &--dot {
+    width: 8px;
+    height: 8px;
+    padding: 0;
+    border-radius: 50%;
+  }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-xs;
+  padding: $spacing-xs $spacing-md;
+  @include rounded($border-radius-full);
+  @include border;
+  font-size: map-get($font-sizes, 'sm');
+  @include transition;
+
+  &__remove {
+    @extend %reset-button;
+    display: flex;
+    opacity: 0.6;
+    &:hover { opacity: 1; }
+  }
+
+  &--active {
+    background-color: $primary-color;
+    border-color: $primary-color;
+    color: $white;
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 20. COMPONENT — MODAL
+// -----------------------------------------------------------------------------
+
+.modal {
+  @include fixed-fill;
+  z-index: z('modal');
+  @include flex-center;
+  padding: $spacing-lg;
+
+  &__backdrop {
+    @extend %overlay;
+    z-index: z('modal-bg');
+    animation: fadeIn $transition-fast both;
+  }
+
+  &__dialog {
+    @extend %card-base;
+    position: relative;
+    z-index: z('modal');
+    width: 100%;
+    max-width: 560px;
+    max-height: 90vh;
+    overflow: auto;
+    @include fade-in;
+
+    @include respond-below('sm') {
+      max-width: 100%;
+      margin: 0;
+      border-radius: $border-radius-lg $border-radius-lg 0 0;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+    }
+  }
+
+  &__header {
+    @include flex-between;
+    padding: $spacing-lg;
+    @include border-bottom;
+  }
+
+  &__title {
+    @include heading(map-get($font-sizes, 'xl'));
+    margin: 0;
+  }
+
+  &__close {
+    @extend %reset-button;
+    @include flex-center;
+    width: 32px;
+    height: 32px;
+    @include rounded($border-radius-full);
+    @include transition;
+    color: lighten($dark-color, 20%);
+    &:hover {
+      background-color: $light-color;
+      color: $dark-color;
+    }
+  }
+
+  &__body    { padding: $spacing-lg; }
+  &__footer  { padding: $spacing-md $spacing-lg; @include border-top; @include flex(row, nowrap, flex-end, center); gap: $spacing-sm; }
+
+  // Sizes
+  &--sm .modal__dialog { max-width: 360px; }
+  &--lg .modal__dialog { max-width: 800px; }
+  &--xl .modal__dialog { max-width: 1140px; }
+  &--full .modal__dialog { max-width: 100%; height: 100%; border-radius: 0; }
+}
+
+
+// -----------------------------------------------------------------------------
+// 21. COMPONENT — TOOLTIP
+// -----------------------------------------------------------------------------
+
+[data-tooltip] {
+  position: relative;
+  &::before,
+  &::after {
+    position: absolute;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    @include transition(opacity $transition-fast, visibility $transition-fast, transform $transition-fast);
+  }
+  &::before {
+    content: attr(data-tooltip);
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    background-color: rgba($dark-color, 0.9);
+    color: $white;
+    font-size: map-get($font-sizes, 'xs');
+    white-space: nowrap;
+    padding: $spacing-xs $spacing-sm;
+    @include rounded;
+    z-index: z('tooltip');
+  }
+  &::after {
+    content: '';
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    border: 4px solid transparent;
+    border-top-color: rgba($dark-color, 0.9);
+    z-index: z('tooltip');
+  }
+  &:hover::before,
+  &:hover::after,
+  &:focus::before,
+  &:focus::after {
+    opacity: 1;
+    visibility: visible;
+    &::before { transform: translateX(-50%) translateY(0); }
+    &::after  { transform: translateX(-50%) translateY(0); }
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 22. UTILITIES — GENERATED VIA LOOPS
+// -----------------------------------------------------------------------------
+
+// Text alignment
+@each $align in (left, center, right, justify) {
+  .text-#{$align} { text-align: $align; }
+}
+
+// Font weights
+@each $name, $val in ('light': 300, 'normal': 400, 'medium': 500, 'semibold': 600, 'bold': 700, 'extrabold': 800) {
+  .font-#{$name} { font-weight: $val; }
+}
+
+// Border radius utilities
+$radius-map: (
+  'none': 0,
+  'sm':   $border-radius-sm,
+  'md':   $border-radius-md,
+  'lg':   $border-radius-lg,
+  'xl':   $border-radius-xl,
+  'full': $border-radius-full
+);
+@each $name, $val in $radius-map {
+  .rounded-#{$name} { border-radius: $val; }
+}
+
+// Opacity utilities
+@for $i from 0 through 10 {
+  .opacity-#{$i * 10} { opacity: $i * 0.1; }
+}
+
+// Width / Height utilities
+@each $val in (25, 50, 75, 100) {
+  .w-#{$val} { width: #{$val + '%'}; }
+  .h-#{$val} { height: #{$val + '%'}; }
+}
+.w-screen { width: 100vw; }
+.h-screen { height: 100vh; }
+.w-auto    { width: auto; }
+.h-auto    { height: auto; }
+
+// Position
+@each $pos in (static, relative, absolute, fixed, sticky) {
+  .position-#{$pos} { position: $pos; }
+}
+
+// Visibility
+.visible   { visibility: visible; }
+.invisible { visibility: hidden; }
+
+// Cursor utilities
+@each $cur in (pointer, default, not-allowed, grab, grabbing, zoom-in, zoom-out, text, crosshair, wait) {
+  .cursor-#{$cur} { cursor: $cur; }
+}
+
+// Flex grow / shrink
+@for $i from 0 through 3 {
+  .flex-grow-#{$i}   { flex-grow: $i; }
+  .flex-shrink-#{$i} { flex-shrink: $i; }
+}
+
+
+// -----------------------------------------------------------------------------
+// 23. MEDIA QUERY USAGE — RESPONSIVE COMPONENTS
+// -----------------------------------------------------------------------------
+
+.container {
+  @include container;
+
+  @include respond-to('sm') { padding-right: $spacing-lg; padding-left: $spacing-lg; }
+  @include respond-to('lg') { padding-right: $spacing-xl; padding-left: $spacing-xl; }
+}
+
+.grid-layout {
+  @include grid(1);
+
+  @include respond-to('sm')  { @include grid(2); }
+  @include respond-to('md')  { @include grid(3); }
+  @include respond-to('lg')  { @include grid(4); }
+  @include respond-to('xxl') { @include grid(6); }
+}
+
+// Dark-mode overrides
+@include dark-mode {
+  :root {
+    --bg:     #{deep-map-get($theme-variants, 'dark', 'bg')};
+    --text:   #{deep-map-get($theme-variants, 'dark', 'text')};
+    --border: #{deep-map-get($theme-variants, 'dark', 'border')};
+  }
+  .card  { background-color: #16213e; color: #e9ecef; }
+  .modal__dialog { background-color: #16213e; color: #e9ecef; }
+}
+
+@include reduced-motion {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@include print {
+  .no-print { display: none !important; }
+  a::after  { content: ' (' attr(href) ')'; }
+}
+
+
+// -----------------------------------------------------------------------------
+// 24. CSS CUSTOM PROPERTIES (variables interop)
+// -----------------------------------------------------------------------------
+
+:root {
+  --primary:       #{$primary-color};
+  --secondary:     #{$secondary-color};
+  --accent:        #{$accent-color};
+  --dark:          #{$dark-color};
+  --light:         #{$light-color};
+  --font-sans:     #{$font-stack-sans};
+  --font-mono:     #{$font-stack-mono};
+  --spacing-sm:    #{$spacing-sm};
+  --spacing-md:    #{$spacing-md};
+  --spacing-lg:    #{$spacing-lg};
+  --radius-md:     #{$border-radius-md};
+  --shadow-md:     #{$shadow-md};
+  --transition:    #{$transition-base};
+}
+
+// Use CSS custom property inside SCSS
+.theme-aware {
+  color: var(--text, #{$dark-color});
+  background-color: var(--bg, #{$white});
+  border-color: var(--border, #{$border-color});
+}
+
+
+// -----------------------------------------------------------------------------
+// 25. INTERPOLATION
+// -----------------------------------------------------------------------------
+
+$prop: margin;
+$side: top;
+$vendor-prefixes: webkit, moz, ms, o;
+
+.interpolated-property {
+  #{$prop}-#{$side}: $spacing-md;
+  line-height: #{$line-height-base};
+  font-family: '#{$theme-prefix}-font', sans-serif;
+}
+
+@each $prefix in $vendor-prefixes {
+  .cross-browser { -#{$prefix}-user-select: none; }
+}
+
+// Dynamic selector generation
+@each $name, $val in $colors {
+  .has-#{$name}-bg { background-color: $val; }
+}
+
+
+// -----------------------------------------------------------------------------
+// 26. @USE / @FORWARD SIMULATION (namespace-style)
+// -----------------------------------------------------------------------------
+
+// Simulated: if this were split across files you'd have:
+//   @use 'variables' as v;
+//   @use 'mixins' as m;
+//   @forward 'components';
+// Using inline comments to demonstrate the intent:
+
+// @use 'sass:math';
+// @use 'sass:color';
+// @use 'sass:string';
+// @use 'sass:list';
+// @use 'sass:map';
+// @use 'sass:selector';
+// @use 'sass:meta';
+
+// Built-in module function examples (no actual @use here — single-file mock)
+.built-ins-demo {
+  // math
+  width: percentage(3 / 4);           // 75%
+  height: round(15.7px);              // 16px
+  margin: abs(-10px);                 // 10px
+  padding: ceil(14.2px);              // 15px
+  font-size: floor(15.9px);           // 15px
+  opacity: min(0.8, 1);
+  z-index: max(1, 5, 3);
+
+  // color
+  background: lighten($primary-color, 20%);
+  border-color: darken($primary-color, 20%);
+  color: saturate($primary-color, 30%);
+  outline-color: desaturate($primary-color, 30%);
+  fill: adjust-hue($primary-color, 90deg);
+  stroke: complement($primary-color);
+  box-shadow: 0 0 0 2px transparentize($primary-color, 0.5);
+  text-shadow: 1px 1px 0 opacify(rgba($dark-color, 0.5), 0.3);
+
+  // string
+  content: to-upper-case('hello');    // 'HELLO'
+  $len: str-length('hello');          // 5 — used in calc below
+  letter-spacing: #{$len * 0.01}em;
+
+  // list
+  $first: nth($named-colors-list, 1);
+  $joined: append($named-colors-list, pink);
+  $len2: length($joined);
+  line-height: $len2 * 0.1 + 1;
+
+  // selector
+  $sel: selector-append('.a', '.b');
+}
+
+
+// -----------------------------------------------------------------------------
+// 27. @ERROR / @WARN / @DEBUG
+// -----------------------------------------------------------------------------
+
+@mixin validate-color($color) {
+  @if not is-color($color) {
+    @error "Expected a color, got: #{$color}";
+  }
+  @warn "validate-color called with #{$color}";
+  @debug "Color channels — R:#{red($color)} G:#{green($color)} B:#{blue($color)}";
+}
+
+
+// -----------------------------------------------------------------------------
+// 28. OPERATORS
+// -----------------------------------------------------------------------------
+
+$base: 8px;
+
+.operators-demo {
+  // arithmetic
+  margin: $base + 4px;           // 12px
+  padding: $base * 2;            // 16px
+  width: 100% / $grid-columns;   // 8.333...%
+  height: $spacing-xxl - $base;  // 56px
+
+  // comparison (in @if)
+  @if $base > 4px     { color: green; }
+  @if $base < 16px    { border: 0; }
+  @if $base >= 8px    { outline: 0; }
+  @if $base <= 8px    { opacity: 1; }
+  @if $base == 8px    { display: block; }
+  @if $base != 10px   { visibility: visible; }
+
+  // logical
+  @if $enable-shadows and $enable-transitions { box-shadow: $shadow-sm; }
+  @if not ($base > 100px) { overflow: visible; }
+  @if ($base < 4px) or ($base > 6px) { z-index: 1; }
+
+  // string concatenation
+  $class-name: 'btn' + '-' + 'primary';
+  &::before { content: $class-name; }
+}
+
+
+// -----------------------------------------------------------------------------
+// 29. COMPLEX SELECTORS
+// -----------------------------------------------------------------------------
+
+// Combinators
+.parent > .direct-child { color: red; }
+.sibling + .adjacent    { color: blue; }
+.sibling ~ .general     { color: green; }
+
+// Attribute selectors
+a[href^='https'] { color: $secondary-color; }
+a[href$='.pdf']  { color: $accent-color; }
+a[href*='docs']  { text-decoration: underline; }
+input[type='text'],
+input[type='email'],
+input[type='password'] { @include border; }
+
+// :is() / :where() / :has() / :not()
+:is(h1, h2, h3, h4, h5, h6) { @include font($weight: $font-weight-bold, $lh: 1.2); }
+:where(.card, .modal, .panel) > p:first-child { margin-top: 0; }
+.form:has(.form__input--error) .form__label { color: $accent-color; }
+li:not(:last-child) { margin-bottom: $spacing-xs; }
+a:not([class]) { @extend %text-link; }
+
+// nth selectors
+li:nth-child(odd)        { background-color: rgba($light-color, 0.5); }
+li:nth-child(even)       { background-color: transparent; }
+li:nth-child(3n+1)       { font-weight: $font-weight-bold; }
+tr:nth-of-type(2n)       { background-color: rgba($primary-color, 0.04); }
+
+// Pseudo-elements
+.decorated {
+  &::before { content: ''; display: block; }
+  &::after  { content: ''; display: block; }
+  &::first-line { font-variant: small-caps; }
+  &::first-letter { font-size: 2em; float: left; }
+  &::selection { background-color: $primary-color; color: $white; }
+  &::placeholder { color: lighten($dark-color, 50%); }
+  &::marker { color: $primary-color; }
+  &::backdrop { background-color: rgba($black, 0.7); }
+}
+
+
+// -----------------------------------------------------------------------------
+// 30. @SUPPORTS
+// -----------------------------------------------------------------------------
+
+@supports (display: grid) {
+  .layout { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+}
+
+@supports (backdrop-filter: blur(10px)) {
+  .glass {
+    background-color: rgba($white, 0.2);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+}
+
+@supports not (aspect-ratio: 1) {
+  .aspect-fallback::before {
+    content: '';
+    display: block;
+    padding-top: 100%;
+  }
+}
+
+@supports selector(:has(*)) {
+  .parent:has(.child--active) { border-color: $primary-color; }
+}
+
+
+// -----------------------------------------------------------------------------
+// 31. CSS GRID & SUBGRID
+// -----------------------------------------------------------------------------
+
+.grid-advanced {
+  display: grid;
+  grid-template-areas:
+    'header header header'
+    'sidebar main    aside'
+    'footer footer footer';
+  grid-template-columns: 240px 1fr 200px;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+  gap: $spacing-md;
+
+  &__header  { grid-area: header;  }
+  &__sidebar { grid-area: sidebar; }
+  &__main    { grid-area: main;    }
+  &__aside   { grid-area: aside;   }
+  &__footer  { grid-area: footer;  }
+
+  @include respond-below('md') {
+    grid-template-areas:
+      'header'
+      'main'
+      'sidebar'
+      'aside'
+      'footer';
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+}
+
+.subgrid-example {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: $spacing-md;
+
+  & > .item {
+    display: grid;
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// 32. CUSTOM PROPERTIES ADVANCED (fallback chains, env())
+// -----------------------------------------------------------------------------
+
+.advanced-props {
+  padding: env(safe-area-inset-top, $spacing-md)
+           env(safe-area-inset-right, $spacing-md)
+           env(safe-area-inset-bottom, $spacing-md)
+           env(safe-area-inset-left, $spacing-md);
+
+  color: var(--user-color, var(--primary, #{$primary-color}));
+  font-size: var(--user-font-size, clamp(0.875rem, 2vw, 1.125rem));
+}
+
+
+// =============================================================================
+// END OF MOCK
+// =============================================================================
