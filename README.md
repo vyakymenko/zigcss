@@ -2,6 +2,8 @@
 
 > **The world's fastest CSS compiler** — Built with Zig for uncompromising performance
 
+🌐 **Live Docs**: [https://web-16fa9ab0.kobold-counterspell-topaz.fibe.work](https://web-16fa9ab0.kobold-counterspell-topaz.fibe.work)
+
 **zigcss** is a zero-dependency CSS compiler written in Zig, designed from the ground up to be the fastest CSS processing tool available. Leveraging Zig's compile-time optimizations, memory safety, and zero-cost abstractions, zigcss delivers unmatched performance for CSS parsing, transformation, and compilation.
 
 ## Table of Contents
@@ -1049,7 +1051,9 @@ zigcss input.css -o output.css --profile
 
 ## 📚 Documentation
 
-The documentation site lives in the **`docs/`** folder. Run it locally:
+The documentation site is live at **[https://web-16fa9ab0.kobold-counterspell-topaz.fibe.work](https://web-16fa9ab0.kobold-counterspell-topaz.fibe.work)**.
+
+The source lives in the **`docs/`** folder. To run it locally:
 
 ```bash
 cd docs
@@ -1057,7 +1061,7 @@ npm install
 npm run dev
 ```
 
-Then open the URL shown in the terminal (e.g. http://localhost:5173/zigcss/).
+Then open the URL shown in the terminal (e.g. http://localhost:5173/).
 
 The docs include:
 - Getting started guide
