@@ -61,16 +61,25 @@ function serveStatic(res, urlPath) {
   fs.createReadStream(fp).pipe(res)
 }
 
+function detectExt(input, format) {
+  // Explicit format from the client takes priority
+  if (format === 'scss') return 'scss'
+  if (format === 'css')  return 'css'
+  // Heuristic fallback: $ variables or @mixin → SCSS
+  if (input.trimStart().startsWith('$') || input.includes('@mixin')) return 'scss'
+  return 'css'
+}
+
 async function handleCompile(req, res) {
   try {
-    const { input, minify } = JSON.parse(await rawBody(req) || '{}')
+    const { input, minify, format } = JSON.parse(await rawBody(req) || '{}')
     if (typeof input !== 'string') {
       res.writeHead(400, { 'Content-Type': 'application/json' })
       return res.end(JSON.stringify({ error: 'Missing or invalid input' }))
     }
 
     const id  = `zigcss-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    const ext = (input.trimStart().startsWith('$') || input.includes('@mixin')) ? 'scss' : 'css'
+    const ext = detectExt(input, format)
     const inp = path.join(os.tmpdir(), `${id}.${ext}`)
     const out = path.join(os.tmpdir(), `${id}.out.css`)
     fs.writeFileSync(inp, input, 'utf8')
