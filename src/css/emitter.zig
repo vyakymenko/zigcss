@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const rule_parser = @import("rule_parser.zig");
 const source = @import("../source.zig");
+const sourcemap = @import("../sourcemap.zig");
 const syntax = @import("../syntax.zig");
 const tokenizer = @import("../tokenizer.zig");
 
@@ -20,10 +21,27 @@ pub const Options = struct {
 
 pub const Error = std.mem.Allocator.Error || error{
     InvalidAst,
+    InvalidMappings,
+    InvalidPosition,
     InvalidSpan,
     SourceMismatch,
     UnterminatedSyntax,
     UnrepresentableRecovery,
+    ValueOverflow,
+    GeneratedPositionOverflow,
+};
+
+pub const MappedOutput = struct {
+    allocator: std.mem.Allocator,
+    css: []u8,
+    source_map: []u8,
+
+    pub fn deinit(self: *MappedOutput) void {
+        const allocator = self.allocator;
+        if (self.css.len > 0) allocator.free(self.css);
+        if (self.source_map.len > 0) allocator.free(self.source_map);
+        self.* = .{ .allocator = allocator, .css = &.{}, .source_map = &.{} };
+    }
 };
 
 pub fn emit(
@@ -31,6 +49,31 @@ pub fn emit(
     file: *const source.SourceFile,
     rules: *const ast.RuleList,
     options: Options,
+) Error![]u8 {
+    return emitInternal(allocator, file, rules, options, null);
+}
+
+pub fn emitWithSourceMap(
+    allocator: std.mem.Allocator,
+    file: *const source.SourceFile,
+    rules: *const ast.RuleList,
+    options: Options,
+    source_map_options: sourcemap.Options,
+) Error!MappedOutput {
+    var builder = try sourcemap.Builder.init(allocator, file, source_map_options);
+    defer builder.deinit();
+    const css = try emitInternal(allocator, file, rules, options, &builder);
+    errdefer if (css.len > 0) allocator.free(css);
+    const source_map = try builder.toJson(allocator);
+    return .{ .allocator = allocator, .css = css, .source_map = source_map };
+}
+
+fn emitInternal(
+    allocator: std.mem.Allocator,
+    file: *const source.SourceFile,
+    rules: *const ast.RuleList,
+    options: Options,
+    source_map_builder: ?*sourcemap.Builder,
 ) Error![]u8 {
     _ = ast.RuleList.init(rules.span, rules.rules) catch return error.InvalidAst;
     if (!rules.span.source.eql(file.id)) return error.SourceMismatch;
@@ -40,6 +83,7 @@ pub fn emit(
         .file = file,
         .options = options,
         .output = try std.ArrayList(u8).initCapacity(allocator, 0),
+        .source_map_builder = source_map_builder,
     };
     errdefer emitter.output.deinit(allocator);
     try emitter.writeRuleList(rules, 0, true);
@@ -68,6 +112,10 @@ const Emitter = struct {
     file: *const source.SourceFile,
     options: Options,
     output: std.ArrayList(u8),
+    source_map_builder: ?*sourcemap.Builder,
+    generated_line: usize = 0,
+    generated_column: usize = 0,
+    generated_last_was_cr: bool = false,
 
     fn writeRuleList(self: *Emitter, rules: *const ast.RuleList, depth: usize, top_level: bool) Error!void {
         try self.validateRuleCoverage(rules, top_level);
@@ -79,6 +127,7 @@ const Emitter = struct {
     }
 
     fn writeRule(self: *Emitter, rule: ast.Rule, depth: usize) Error!void {
+        try self.mark(rule.span());
         switch (rule) {
             .style_rule => |style_rule| try self.writeStyleRule(style_rule, depth),
             .at_rule => |at_rule| try self.writeAtRule(at_rule, depth),
@@ -138,6 +187,7 @@ const Emitter = struct {
     }
 
     fn writeSimpleSelector(self: *Emitter, simple: ast.SimpleSelector) Error!void {
+        try self.mark(simple.span());
         switch (simple) {
             .type_selector => |selector| {
                 try self.writeNamespace(selector.namespace);
@@ -191,7 +241,7 @@ const Emitter = struct {
             const value = selector.value orelse return error.InvalidAst;
             switch (value) {
                 .identifier => |identifier| try self.writeIdentifier(identifier.value),
-                .string => |string| try appendString(&self.output, self.allocator, string.value),
+                .string => |string| try self.writeString(string.value),
             }
         } else if (selector.value != null) return error.InvalidAst;
         if (selector.modifier) |modifier| {
@@ -315,6 +365,7 @@ const Emitter = struct {
 
     fn writeDeclaration(self: *Emitter, declaration: ast.Declaration, terminate: bool) Error!void {
         _ = ast.Declaration.init(declaration) catch return error.InvalidAst;
+        try self.mark(declaration.span);
         try self.writeIdentifier(declaration.name.value);
         try self.appendSlice(if (self.pretty()) ": " else ":");
         const value = declaration.valueWithoutImportance();
@@ -352,6 +403,7 @@ const Emitter = struct {
         if (frame.selectors.len == 0) return error.UnrepresentableRecovery;
         for (frame.selectors, 0..) |selector, index| {
             if (index > 0) try self.appendSlice(if (self.pretty()) ", " else ",");
+            try self.mark(selector.span());
             switch (selector) {
                 .from => try self.appendSlice("from"),
                 .to => try self.appendSlice("to"),
@@ -365,6 +417,7 @@ const Emitter = struct {
     fn writePageSelectors(self: *Emitter, selectors: []const ast.PageSelector) Error!void {
         for (selectors, 0..) |selector, index| {
             if (index > 0) try self.appendSlice(if (self.pretty()) ", " else ",");
+            try self.mark(selector.span);
             if (selector.name) |name| try self.writeIdentifier(name.value);
             for (selector.pseudos) |pseudo| {
                 try self.appendByte(':');
@@ -413,6 +466,7 @@ const Emitter = struct {
     }
 
     fn writePageMargin(self: *Emitter, margin: ast.PageMarginRule, depth: usize) Error!void {
+        try self.mark(margin.span);
         try self.appendByte('@');
         try self.writeIdentifier(margin.name.value);
         try self.writePrettySpace();
@@ -444,6 +498,7 @@ const Emitter = struct {
                 continue;
             }
             if (pending_space) try self.appendByte(' ');
+            try self.mark(value.span());
             if (self.pretty()) {
                 try self.appendSlice(try self.raw(value.span()));
             } else {
@@ -593,7 +648,15 @@ const Emitter = struct {
     }
 
     fn writeIdentifier(self: *Emitter, value: []const u8) Error!void {
+        const start = self.output.items.len;
         try appendIdentifier(&self.output, self.allocator, value);
+        try self.advanceGenerated(self.output.items[start..]);
+    }
+
+    fn writeString(self: *Emitter, value: []const u8) Error!void {
+        const start = self.output.items.len;
+        try appendString(&self.output, self.allocator, value);
+        try self.advanceGenerated(self.output.items[start..]);
     }
 
     fn pretty(self: *const Emitter) bool {
@@ -620,10 +683,57 @@ const Emitter = struct {
 
     fn appendSlice(self: *Emitter, bytes: []const u8) Error!void {
         try self.output.appendSlice(self.allocator, bytes);
+        try self.advanceGenerated(bytes);
     }
 
     fn appendByte(self: *Emitter, byte: u8) Error!void {
         try self.output.append(self.allocator, byte);
+        try self.advanceGenerated(&.{byte});
+    }
+
+    fn mark(self: *Emitter, span: source.Span) Error!void {
+        const builder = self.source_map_builder orelse return;
+        if (!span.source.eql(self.file.id)) return error.SourceMismatch;
+        if (self.generated_line > std.math.maxInt(u32) or self.generated_column > std.math.maxInt(u32)) {
+            return error.GeneratedPositionOverflow;
+        }
+        try builder.addMapping(
+            @intCast(self.generated_line),
+            @intCast(self.generated_column),
+            span.start,
+        );
+    }
+
+    fn advanceGenerated(self: *Emitter, bytes: []const u8) Error!void {
+        var index: usize = 0;
+        while (index < bytes.len) {
+            if (bytes[index] == '\n' and self.generated_last_was_cr) {
+                self.generated_last_was_cr = false;
+                index += 1;
+                continue;
+            }
+            self.generated_last_was_cr = false;
+            if (bytes[index] == '\r') {
+                self.generated_line = std.math.add(usize, self.generated_line, 1) catch return error.GeneratedPositionOverflow;
+                self.generated_column = 0;
+                self.generated_last_was_cr = true;
+                index += 1;
+                continue;
+            }
+            if (bytes[index] == '\n' or bytes[index] == '\x0c') {
+                self.generated_line = std.math.add(usize, self.generated_line, 1) catch return error.GeneratedPositionOverflow;
+                self.generated_column = 0;
+                index += 1;
+                continue;
+            }
+            const scalar = decodeScalar(bytes, index);
+            index += scalar.len;
+            self.generated_column = std.math.add(
+                usize,
+                self.generated_column,
+                if (scalar.value > 0xffff) 2 else 1,
+            ) catch return error.GeneratedPositionOverflow;
+        }
     }
 };
 
@@ -1188,6 +1298,108 @@ test "emission is bound to the AST source file" {
     );
 }
 
+test "mapped pretty and minified emission use CSS UTF-16 generated and original columns" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const input = ".🔥{color:red}@media all{.b{x:1}}";
+    const parsed = try parseSource(&context, "unicode/input.css", input);
+    const file = try context.sources.get(parsed[0]);
+
+    var pretty_output = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        parsed[1],
+        .{},
+        .{ .generated_file = "output.css" },
+    );
+    defer pretty_output.deinit();
+    const plain_pretty = try emit(std.testing.allocator, file, parsed[1], .{});
+    defer std.testing.allocator.free(plain_pretty);
+    try std.testing.expectEqualStrings(plain_pretty, pretty_output.css);
+    try std.testing.expect(std.mem.indexOf(u8, pretty_output.css, "sourceMappingURL") == null);
+
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, pretty_output.source_map, .{});
+    defer json.deinit();
+    try std.testing.expectEqual(@as(i64, 3), json.value.object.get("version").?.integer);
+    try std.testing.expectEqualStrings("output.css", json.value.object.get("file").?.string);
+    try std.testing.expectEqualStrings("unicode/input.css", json.value.object.get("sources").?.array.items[0].string);
+    try std.testing.expectEqualStrings(input, json.value.object.get("sourcesContent").?.array.items[0].string);
+    const pretty_mappings_text = json.value.object.get("mappings").?.string;
+    const pretty_mappings = try sourcemap.decodeMappings(std.testing.allocator, pretty_mappings_text);
+    defer std.testing.allocator.free(pretty_mappings);
+    try std.testing.expect(hasMapping(pretty_mappings, .{
+        .generated_line = 1,
+        .generated_column = 2,
+        .original_line = 0,
+        .original_column = 4,
+    }));
+    try std.testing.expect(hasMapping(pretty_mappings, .{
+        .generated_line = 3,
+        .generated_column = 0,
+        .original_line = 0,
+        .original_column = 14,
+    }));
+
+    var minified_output = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        parsed[1],
+        .{ .mode = .minified },
+        .{},
+    );
+    defer minified_output.deinit();
+    var minified_json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, minified_output.source_map, .{});
+    defer minified_json.deinit();
+    const minified_mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        minified_json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(minified_mappings);
+    try std.testing.expect(hasMapping(minified_mappings, .{
+        .generated_line = 0,
+        .generated_column = 4,
+        .original_line = 0,
+        .original_column = 4,
+    }));
+    try std.testing.expect(hasMapping(minified_mappings, .{
+        .generated_line = 0,
+        .generated_column = 14,
+        .original_line = 0,
+        .original_column = 14,
+    }));
+
+    var repeated = try emitWithSourceMap(std.testing.allocator, file, parsed[1], .{}, .{ .generated_file = "output.css" });
+    defer repeated.deinit();
+    try std.testing.expectEqualStrings(pretty_output.css, repeated.css);
+    try std.testing.expectEqualStrings(pretty_output.source_map, repeated.source_map);
+}
+
+fn hasMapping(mappings: []const sourcemap.Mapping, expected: sourcemap.Mapping) bool {
+    for (mappings) |mapping| {
+        if (std.meta.eql(mapping, expected)) return true;
+    }
+    return false;
+}
+
+test "empty mapped output owns valid metadata and supports idempotent cleanup" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(&context, "empty-mapped.css", "");
+    var output = try emitWithSourceMap(
+        std.testing.allocator,
+        try context.sources.get(parsed[0]),
+        parsed[1],
+        .{ .mode = .minified },
+        .{ .include_sources_content = false },
+    );
+    try std.testing.expectEqual(@as(usize, 0), output.css.len);
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, output.source_map, .{});
+    defer json.deinit();
+    try std.testing.expectEqualStrings("", json.value.object.get("mappings").?.string);
+    output.deinit();
+    output.deinit();
+}
+
 test "emission refuses recovery gaps and missing closing syntax" {
     const cases = [_]struct { []const u8, Error }{
         .{ ".a{broken;color:red}", error.UnrepresentableRecovery },
@@ -1231,10 +1443,41 @@ fn exerciseEmitterAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expect(minified_output.len < pretty_output.len);
 }
 
+fn exerciseMappedEmitterAllocationFailures(allocator: std.mem.Allocator) !void {
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "oom-mapped-emitter.css",
+        ".🔥,.b>.c{color:red;color:blue!important;--x:fn(a/**/b)}@media all{.d{x:1}}",
+    );
+    var output = try emitWithSourceMap(
+        allocator,
+        try context.sources.get(parsed[0]),
+        parsed[1],
+        .{ .mode = .minified },
+        .{ .generated_file = "mapped.css" },
+    );
+    defer output.deinit();
+    var json = try std.json.parseFromSlice(std.json.Value, allocator, output.source_map, .{});
+    defer json.deinit();
+    const decoded = try sourcemap.decodeMappings(allocator, json.value.object.get("mappings").?.string);
+    defer allocator.free(decoded);
+    try std.testing.expect(decoded.len > 0);
+}
+
 test "pretty emission handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseEmitterAllocationFailures,
+        .{},
+    );
+}
+
+test "mapped emission handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMappedEmitterAllocationFailures,
         .{},
     );
 }
