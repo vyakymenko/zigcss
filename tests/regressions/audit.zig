@@ -65,7 +65,7 @@ fn expectUnsafeTransformsDisabled(result: Child.RunResult) !void {
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unsafe optimizer and transform passes are disabled") != null);
 }
 
-test "legacy quarantine: compound selectors collapse into descendants (AST-001, PAR-001)" {
+test "stable CLI preserves compound selectors separately from descendants" {
     var compound = try runCompiler(@embedFile("fixtures/compound.css"), &.{"--minify"});
     defer deinitRun(&compound);
     var descendant = try runCompiler(@embedFile("fixtures/descendant.css"), &.{"--minify"});
@@ -73,44 +73,131 @@ test "legacy quarantine: compound selectors collapse into descendants (AST-001, 
 
     try expectSuccess(compound);
     try expectSuccess(descendant);
-    try std.testing.expectEqualStrings(".a .b{color:red}", compound.stdout);
-    try std.testing.expectEqualStrings(compound.stdout, descendant.stdout);
+    try std.testing.expectEqualStrings(".a.b{color:red}", compound.stdout);
+    try std.testing.expectEqualStrings(".a .b{color:red}", descendant.stdout);
+    try std.testing.expect(!std.mem.eql(u8, compound.stdout, descendant.stdout));
 }
 
-test "legacy quarantine: functional and attribute selectors are rejected (AST-001, PAR-001)" {
+test "stable CLI emits functional and attribute selectors" {
     var result = try runCompiler(@embedFile("fixtures/functional-attribute.css"), &.{"--minify"});
     defer deinitRun(&result);
 
-    try expectFailureContaining(result, "expected opening brace");
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".a:not(.b, .c)>[data-x=\"a;b}\" i]{color:red}",
+        result.stdout,
+    );
 }
 
-test "legacy quarantine: delimiters inside strings and functions corrupt parsing (TOK-002, SYN-001, PAR-002)" {
+test "stable CLI keeps delimiters inside strings and functions nested" {
     var result = try runCompiler(@embedFile("fixtures/nested-delimiters.css"), &.{"--minify"});
     defer deinitRun(&result);
 
-    try expectFailureContaining(result, "invalid identifier");
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".a{content:\";}\";background:url(\"a;}\");color:red}",
+        result.stdout,
+    );
 }
 
-test "legacy quarantine: declaration-bearing at-rules are rejected (AST-003, PAR-003)" {
+test "stable CLI emits declaration-bearing at-rules" {
     var result = try runCompiler(@embedFile("fixtures/font-face.css"), &.{"--minify"});
     defer deinitRun(&result);
 
-    try expectFailureContaining(result, "invalid identifier");
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        "@font-face{font-family:Demo;src:url(\"demo.woff2\")}",
+        result.stdout,
+    );
 }
 
-test "legacy quarantine: percentage keyframes are rejected (AST-003, PAR-004)" {
+test "stable CLI emits percentage keyframes" {
     var result = try runCompiler(@embedFile("fixtures/keyframes.css"), &.{"--minify"});
     defer deinitRun(&result);
 
-    try expectFailureContaining(result, "invalid identifier");
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings("@keyframes fade{50%{opacity:.5}}", result.stdout);
 }
 
-test "legacy quarantine: minified at-rules omit mandatory whitespace (EMIT-002)" {
+test "stable CLI retains mandatory at-rule whitespace" {
     var result = try runCompiler(@embedFile("fixtures/media.css"), &.{"--minify"});
     defer deinitRun(&result);
 
     try expectSuccess(result);
-    try std.testing.expectEqualStrings("@mediascreen{.a{color:red}}", result.stdout);
+    try std.testing.expectEqualStrings("@media screen{.a{color:red}}", result.stdout);
+}
+
+test "stable CLI preserves fallback and importance order" {
+    var result = try runCompiler(@embedFile("fixtures/important.css"), &.{"--minify"});
+    defer deinitRun(&result);
+
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".a{color:red!important;color:blue;color:green!important}",
+        result.stdout,
+    );
+}
+
+test "stable CLI parses and emits native CSS nesting" {
+    const input = ".card{color:red;.title{font-weight:bold}@media all{display:grid;> .icon{opacity:1}}background:blue}";
+    const expected = ".card{color:red;.title{font-weight:bold}@media all{display:grid;>.icon{opacity:1}}background:blue}";
+    var result = try runCompiler(input, &.{"--minify"});
+    defer deinitRun(&result);
+
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(expected, result.stdout);
+}
+
+test "stable CLI uses deterministic pretty emission by default" {
+    var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{});
+    defer deinitRun(&result);
+
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".simple {\n" ++
+            "  color: red;\n" ++
+            "}\n",
+        result.stdout,
+    );
+}
+
+test "stable CLI reports structured parser diagnostics without partial CSS" {
+    var result = try runCompilerNamed("broken.css", ".a{broken;color:red}", &.{"--minify"});
+    defer deinitRun(&result);
+
+    try expectFailureContaining(result, "broken.css:1:4: error CSS0007");
+    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+}
+
+test "stable batch CLI compiles each input through the safe pipeline" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "one.css", .data = ".a.b { color: red; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "two.css", .data = ".card { > .icon { opacity: 1; } }" });
+
+    var result = try runInDir(tmp.dir, &.{ "one.css", "two.css", "-o", "out", "--output-dir", "--minify" });
+    defer deinitRun(&result);
+    try expectSuccess(result);
+
+    const first = try tmp.dir.readFileAlloc(allocator, "out/one.css", 1024);
+    defer allocator.free(first);
+    const second = try tmp.dir.readFileAlloc(allocator, "out/two.css", 1024);
+    defer allocator.free(second);
+    try std.testing.expectEqualStrings(".a.b{color:red}", first);
+    try std.testing.expectEqualStrings(".card{>.icon{opacity:1}}", second);
+}
+
+test "stable batch CLI writes no outputs when one input has parser errors" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "valid.css", .data = ".valid { color: green; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "broken.css", .data = ".broken { missing; color: red; }" });
+
+    var result = try runInDir(tmp.dir, &.{ "valid.css", "broken.css", "-o", "out", "--output-dir", "--minify" });
+    defer deinitRun(&result);
+    try expectFailureContaining(result, "broken.css:1:11: error CSS0007");
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("out/valid.css", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("out/broken.css", .{}));
 }
 
 test "optimizer containment: importance and fallback input cannot reach unsafe passes (OPT-001)" {

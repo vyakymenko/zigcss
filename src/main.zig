@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const formats = @import("formats.zig");
 const ast = @import("ast.zig");
 const codegen = @import("codegen.zig");
+const css_pipeline = @import("css/pipeline.zig");
 const error_module = @import("error.zig");
 const parser = @import("parser.zig");
 const autoprefixer = @import("autoprefixer.zig");
@@ -32,9 +33,25 @@ const CompileTask = struct {
     autoprefix: ?autoprefixer.AutoprefixOptions,
     critical_css: ?optimizer.CriticalCssOptions,
     profile: bool,
-    result: ?[]const u8 = null,
+    result: ?css_pipeline.CompileResult = null,
     err: ?[]const u8 = null,
+    err_owned: bool = false,
 };
+
+fn setTaskError(
+    task: *CompileTask,
+    allocator: std.mem.Allocator,
+    comptime format: []const u8,
+    args: anytype,
+    fallback: []const u8,
+) void {
+    task.err = std.fmt.allocPrint(allocator, format, args) catch {
+        task.err = fallback;
+        task.err_owned = false;
+        return;
+    };
+    task.err_owned = true;
+}
 
 fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     var perf_profiler = try profiler.Profiler.init(allocator, config.profile);
@@ -47,74 +64,49 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     defer allocator.free(input);
 
     const format = formats.detectFormat(config.input_file);
-    
-    var stylesheet: ast.Stylesheet = undefined;
-    var stylesheet_initialized = false;
-    
-    if (format == .css) {
-        var css_parser = parser.Parser.init(allocator, input);
-        defer if (css_parser.owns_pool) {
-            css_parser.string_pool.deinit();
-            allocator.destroy(css_parser.string_pool);
-        };
-        
-        const result = css_parser.parseWithErrorInfo();
-        switch (result) {
-            .success => |s| {
-                stylesheet = s;
-                stylesheet_initialized = true;
-            },
-            .parse_error => |parse_error| {
-                const error_msg = try error_module.formatErrorWithContext(allocator, input, config.input_file, parse_error);
-                defer allocator.free(error_msg);
-                std.debug.print("{s}\n", .{error_msg});
-                return error.ParseError;
-            },
-        }
-    } else {
-        const parser_trait = formats.getParser(format);
-        stylesheet = try parser_trait.parseFn(allocator, input);
-        stylesheet_initialized = true;
-    }
-    
-    defer if (stylesheet_initialized) stylesheet.deinit();
-    
+    if (format != .css) return error.ExperimentalFormatUnavailable;
+    var parsed = try css_pipeline.parse(allocator, config.input_file, input);
+    defer parsed.deinit();
     try parse_timing.end();
+
+    if (parsed.hasErrors()) {
+        const formatted = try parsed.formatDiagnostics(allocator);
+        defer allocator.free(formatted);
+        std.debug.print("{s}", .{formatted});
+        return error.ParseError;
+    }
 
     var optimize_timing = try perf_profiler.startTiming("optimize");
     defer optimize_timing.end() catch {};
-    
-    const options = codegen.CodegenOptions{
-        .minify = config.minify,
-        .optimize = config.optimize,
-        .autoprefix = config.autoprefix,
-        .critical_css = config.critical_css,
-    };
-    
+    _ = config.optimize;
+    _ = config.autoprefix;
+    _ = config.critical_css;
     try optimize_timing.end();
-    
+
     var codegen_timing = try perf_profiler.startTiming("codegen");
     defer codegen_timing.end() catch {};
 
-    const result = codegen.generate(allocator, &stylesheet, options) catch |err| {
-        if (err == error.UnsafeTransformsDisabled) {
-            std.debug.print("Error: {s}\n", .{codegen.unsafe_transforms_message});
-        }
+    var result = parsed.emitResult(allocator, .{
+        .mode = if (config.minify) .minified else .pretty,
+        .source_map = if (config.source_map) .{
+            .generated_file = config.output_file,
+        } else null,
+    }) catch |err| {
+        std.debug.print("Error: CSS emission failed: {s}\n", .{@errorName(err)});
         return err;
     };
-    defer allocator.free(result);
-    
+    defer result.deinit();
     try codegen_timing.end();
 
     if (config.output_file) |out| {
-        try std.fs.cwd().writeFile(.{ .sub_path = out, .data = result });
+        try std.fs.cwd().writeFile(.{ .sub_path = out, .data = result.css });
         std.debug.print("Compiled: {s} -> {s}\n", .{ config.input_file, out });
     } else {
         const stdout_file = std.fs.File.stdout();
         var stdout_buffer: [1024]u8 = undefined;
         var stdout_writer = stdout_file.writer(&stdout_buffer);
         const stdout = &stdout_writer.interface;
-        try stdout.writeAll(result);
+        try stdout.writeAll(result.css);
         try stdout.flush();
     }
     
@@ -180,65 +172,42 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
 
 fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
     const input = std.fs.cwd().readFileAlloc(allocator, task.input_file, 10 * 1024 * 1024) catch |err| {
-        task.err = std.fmt.allocPrint(allocator, "Failed to read {s}: {s}", .{ task.input_file, @errorName(err) }) catch "Read error";
+        setTaskError(task, allocator, "Failed to read {s}: {s}", .{ task.input_file, @errorName(err) }, "Read error");
         return;
     };
     defer allocator.free(input);
 
     const format = formats.detectFormat(task.input_file);
-    
-    var stylesheet: ast.Stylesheet = undefined;
-    var stylesheet_initialized = false;
-    
-    if (format == .css) {
-        var css_parser = parser.Parser.init(allocator, input);
-        defer if (css_parser.owns_pool) {
-            css_parser.string_pool.deinit();
-            allocator.destroy(css_parser.string_pool);
-        };
-        
-        const result = css_parser.parseWithErrorInfo();
-        switch (result) {
-            .success => |s| {
-                stylesheet = s;
-                stylesheet_initialized = true;
-            },
-            .parse_error => |parse_error| {
-                const error_msg = error_module.formatErrorWithContext(allocator, input, task.input_file, parse_error) catch |err| {
-                    task.err = std.fmt.allocPrint(allocator, "Parse error: {s}", .{@errorName(err)}) catch "Parse error";
-                    return;
-                };
-                task.err = error_msg;
-                return;
-            },
-        }
-    } else {
-        const parser_trait = formats.getParser(format);
-        stylesheet = parser_trait.parseFn(allocator, input) catch |err| {
-            task.err = std.fmt.allocPrint(allocator, "Parse error: {s}", .{@errorName(err)}) catch "Parse error";
-            return;
-        };
-        stylesheet_initialized = true;
+    if (format != .css) {
+        setTaskError(task, allocator, "Unsupported format: {s}", .{formats.displayName(format)}, "Unsupported format");
+        return;
     }
-    
-    defer if (stylesheet_initialized) stylesheet.deinit();
-
-    const options = codegen.CodegenOptions{
-        .minify = task.minify,
-        .optimize = task.optimize,
-        .autoprefix = task.autoprefix,
-        .critical_css = task.critical_css,
-    };
-
-    const result = codegen.generate(allocator, &stylesheet, options) catch |err| {
-        task.err = if (err == error.UnsafeTransformsDisabled)
-            allocator.dupe(u8, codegen.unsafe_transforms_message) catch "Unsafe transforms disabled"
-        else
-            std.fmt.allocPrint(allocator, "Codegen error: {s}", .{@errorName(err)}) catch "Codegen error";
+    var parsed = css_pipeline.parse(allocator, task.input_file, input) catch |err| {
+        setTaskError(task, allocator, "Parse error: {s}", .{@errorName(err)}, "Parse error");
         return;
     };
-    
-    task.result = result;
+    defer parsed.deinit();
+    if (parsed.hasErrors()) {
+        task.err = parsed.formatDiagnostics(allocator) catch {
+            task.err = "Parse error";
+            return;
+        };
+        task.err_owned = true;
+        return;
+    }
+
+    _ = task.optimize;
+    _ = task.autoprefix;
+    _ = task.critical_css;
+    var result = parsed.emitResult(allocator, .{
+        .mode = if (task.minify) .minified else .pretty,
+        .source_map = if (task.source_map) .{ .generated_file = task.output_file } else null,
+    }) catch |err| {
+        setTaskError(task, allocator, "Emission error: {s}", .{@errorName(err)}, "Emission error");
+        return;
+    };
+    task.result = result.take();
+    result.deinit();
 }
 
 fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !void {
@@ -251,7 +220,7 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
             return error.CompileError;
         }
         if (tasks[0].result) |result| {
-            try std.fs.cwd().writeFile(.{ .sub_path = tasks[0].output_file, .data = result });
+            try std.fs.cwd().writeFile(.{ .sub_path = tasks[0].output_file, .data = result.css });
             std.debug.print("Compiled: {s} -> {s}\n", .{ tasks[0].input_file, tasks[0].output_file });
         }
         return;
@@ -306,9 +275,8 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
 
     for (tasks) |*task| {
         if (task.result) |result| {
-            try std.fs.cwd().writeFile(.{ .sub_path = task.output_file, .data = result });
+            try std.fs.cwd().writeFile(.{ .sub_path = task.output_file, .data = result.css });
             std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
-            allocator.free(result);
         }
     }
 }
@@ -634,7 +602,7 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, args[i], "--minify")) {
             minify_flag = true;
         } else if (std.mem.eql(u8, args[i], "--source-map")) {
-            exitWithCliError("--source-map is unavailable until Source Map v3 mappings are implemented", .{});
+            exitWithCliError("--source-map is unavailable until the CLI output policy is defined", .{});
         } else if (std.mem.eql(u8, args[i], "--watch")) {
             watch_flag = true;
         } else if (std.mem.eql(u8, args[i], "--autoprefix")) {
@@ -745,7 +713,8 @@ pub fn main() !void {
         defer {
             for (tasks.items) |*task| {
                 allocator.free(task.output_file);
-                if (task.err) |err| allocator.free(err);
+                if (task.err_owned) allocator.free(task.err.?);
+                if (task.result) |*result| result.deinit();
             }
             tasks.deinit(allocator);
         }
