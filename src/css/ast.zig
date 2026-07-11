@@ -304,8 +304,18 @@ pub const SelectorList = struct {
     span: source.Span,
 
     pub fn init(span: source.Span, selectors: []const ComplexSelector) SelectorError!SelectorList {
-        try validateSpan(span);
         if (selectors.len == 0) return error.EmptySelectorList;
+        return initAllowEmpty(span, selectors);
+    }
+
+    /// The Selectors specification permits an empty result after invalid items
+    /// are removed from `:is()` / `:where()` forgiving selector lists.
+    pub fn initForgiving(span: source.Span, selectors: []const ComplexSelector) SelectorError!SelectorList {
+        return initAllowEmpty(span, selectors);
+    }
+
+    fn initAllowEmpty(span: source.Span, selectors: []const ComplexSelector) SelectorError!SelectorList {
+        try validateSpan(span);
         var previous_end = span.start;
         for (selectors) |selector| {
             try validateChild(span, selector.span);

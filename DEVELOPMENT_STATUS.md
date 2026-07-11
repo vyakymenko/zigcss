@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 2 — Standards-correct CSS parser and emitter
-- Work package: `PAR-001`
+- Work package: `PAR-002`
 - State: `IN_PROGRESS`
-- Next eligible package: `PAR-001` and `PAR-002`
+- Next eligible package: `PAR-002`
 
 ## Milestone 0 package ledger
 
@@ -103,7 +103,7 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 
 ## Milestone 1 exit validation
 
-Milestone 1 is `PASS`. The gate adds a representative modern-CSS round-trip corpus, exercises every truncation boundary of nested escaped input (including cuts inside multibyte UTF-8), and passes every single byte through the full lossless syntax boundary.
+Milestone 1 is `PASS` at gate checkpoint `31a00c1`. The gate adds a representative modern-CSS round-trip corpus, exercises every truncation boundary of nested escaped input (including cuts inside multibyte UTF-8), and passes every single byte through the full lossless syntax boundary.
 
 | Gate | Result |
 |---|---|
@@ -123,7 +123,7 @@ Milestone 1 is `PASS`. The gate adds a representative modern-CSS round-trip corp
 
 | Package | State | Evidence / decision | Commit |
 |---|---|---|---|
-| `PAR-001` | `IN_PROGRESS` | Selector-list, compound, combinator, attribute, and functional-pseudo lowering now has a verified lossless syntax and typed AST foundation. | — |
+| `PAR-001` | `VERIFIED` | Added arena-owned selector lowering from lossless component values into selector lists, compounds, standard descendant/child/sibling combinators, namespaces, universal/type/class/ID selectors, attributes with every matcher and `i`/`s` flag, legacy/modern pseudo-elements, raw functional pseudos, and typed selector arguments for `:is`, `:where`, `:not`, and `:has`. Comments and whitespace retain distinct semantics; `:is`/`:where` use silent forgiving lists (including empty results), while strict/relative pseudo lists, nested `:has`, pseudo-element contexts, unsupported column combinators, and pre-`NEST-001` `&` are rejected. Names decode into the compilation arena while full spans preserve spelling. Debug and ReleaseSafe pass 185/185, including official Selectors Level 4 grammar examples, negative recovery, recursion limits, and exhaustive allocation-failure injection. | Checkpoint pending |
 | `PAR-002` | `NOT_STARTED` | Declaration and nested-value parsing depends on the Milestone 1 syntax/AST foundation. | — |
 | `PAR-003` | `NOT_STARTED` | Qualified-rule parsing and at-rule block classification depend on `PAR-001` and `PAR-002`. | — |
 | `PAR-004` | `NOT_STARTED` | Structured keyframes/media/supports/container/layer/property/page/font-face parsing depends on `PAR-003`. | — |
@@ -155,6 +155,7 @@ Milestone 1 is `PASS`. The gate adds a representative modern-CSS round-trip corp
 - `AST-001`: the new standards-oriented selector AST represents adjacency inside a compound separately from explicit combinators between compounds; typed pseudo arguments never replace their lossless component-value backing.
 - `AST-002`: declaration values retain the complete raw component stream (including `!important` and trivia); `ImportantAnnotation.value_end` identifies the semantic prefix without deleting spelling or collapsing duplicate declarations.
 - `AST-003`: at-rule block interpretation is a tagged choice rather than a universal rule/declaration assumption; every category retains the original prelude and exact brace/EOF envelope.
+- `PAR-001`: selector lowering follows the current CSSWG Selectors Level 4 Editor's Draft grammar; style-rule lists are strict, only `:is()`/`:where()` are forgiving, and their discarded items do not create compilation errors.
 
 ## Active blockers
 
@@ -202,7 +203,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - The new `src/css/ast.zig` model coexists with the inherited `src/ast.zig` prototype until Milestone 2 parsing/emission migration; stable recovery paths do not consume the legacy selector representation.
 - Declaration lists are ordered slices rather than property maps, preserving fallback declarations and leaving cascade/importance decisions to later explicit passes.
 - Rule lists remain ordered and recursive through pointers, preventing non-adjacent at-rules/rules from being merged by the data model itself.
+- Column combinators remain representable in the AST but are not accepted by the stable parser because the current Selectors Level 4 grammar lists only descendant, child, next-sibling, and subsequent-sibling combinators. CSS nesting selectors remain rejected until `NEST-001`.
 
 ## Last full validation
 
-Milestones 0 and 1 are `PASS`. The Milestone 1 exit gate passes Debug and ReleaseSafe at 173/173 tests (80 legacy unit, 68 new library/core, 25 CLI integration), Debug/ReleaseSafe builds, 69/69 docs tests and production build, focused formatting, editor type-check, and package dry-run. The same 19 inherited formatting failures and recorded dependency-audit debt remain scheduled work. `PAR-001` is active.
+Milestones 0 and 1 are `PASS`. Latest package validation (`PAR-001`): Debug and ReleaseSafe each pass 185/185 tests (80 legacy unit, 80 new library/core, 25 CLI integration); `src/css/ast.zig`, `src/css/selector_parser.zig`, and `src/css.zig` pass formatting. The same 19 inherited formatting failures and recorded dependency-audit debt remain scheduled work. `PAR-002` is active.
