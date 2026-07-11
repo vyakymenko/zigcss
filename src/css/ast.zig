@@ -598,6 +598,7 @@ pub const RulesBlock = struct {
 
 pub const KeyframeRule = struct {
     prelude: ComponentValueList,
+    selectors: []const KeyframeSelector = &.{},
     block: DeclarationBlock,
     span: source.Span,
 
@@ -614,6 +615,25 @@ pub const KeyframeRule = struct {
         }
         _ = try DeclarationBlock.init(candidate.block.envelope, candidate.block.declarations);
         return candidate;
+    }
+};
+
+pub const KeyframePercentage = struct {
+    value: f64,
+    span: source.Span,
+};
+
+pub const KeyframeSelector = union(enum) {
+    from: source.Span,
+    to: source.Span,
+    percentage: KeyframePercentage,
+
+    pub fn span(self: KeyframeSelector) source.Span {
+        return switch (self) {
+            .from => |value| value,
+            .to => |value| value,
+            .percentage => |value| value.span,
+        };
     }
 };
 
@@ -682,12 +702,102 @@ pub const AtRuleBlock = union(enum) {
     }
 };
 
+pub const MediaQueryList = struct {
+    queries: []const ComponentValueList,
+    span: source.Span,
+};
+
+pub const MediaRule = struct {
+    query_list: MediaQueryList,
+    block: *const RulesBlock,
+};
+
+pub const SupportsOperator = enum {
+    none,
+    @"and",
+    @"or",
+};
+
+pub const SupportsRule = struct {
+    negated: bool,
+    operator: SupportsOperator,
+    terms: []const ComponentValueList,
+    span: source.Span,
+    block: *const RulesBlock,
+};
+
+pub const ContainerRule = struct {
+    name: ?Identifier,
+    query: ComponentValueList,
+    span: source.Span,
+    block: *const RulesBlock,
+};
+
+pub const LayerName = struct {
+    parts: []const Identifier,
+    span: source.Span,
+};
+
+pub const LayerRule = struct {
+    names: []const LayerName,
+    statement: bool,
+    span: source.Span,
+};
+
+pub const PropertyRule = struct {
+    name: Identifier,
+    declarations: *const DeclarationList,
+    span: source.Span,
+};
+
+pub const FontFaceRule = struct {
+    declarations: *const DeclarationList,
+    span: source.Span,
+};
+
+pub const KeyframesRule = struct {
+    name: Identifier,
+    block: *const KeyframesBlock,
+    span: source.Span,
+};
+
+pub const PageSelector = struct {
+    name: ?Identifier,
+    pseudos: []const Identifier,
+    span: source.Span,
+};
+
+pub const PageMarginRule = struct {
+    name: Identifier,
+    declarations: *const DeclarationList,
+    span: source.Span,
+};
+
+pub const PageRule = struct {
+    selectors: []const PageSelector,
+    declarations: *const DeclarationList,
+    margins: []const PageMarginRule,
+    span: source.Span,
+};
+
+pub const AtRuleDetails = union(enum) {
+    media: *const MediaRule,
+    supports: *const SupportsRule,
+    container: *const ContainerRule,
+    layer: *const LayerRule,
+    property: *const PropertyRule,
+    page: *const PageRule,
+    font_face: *const FontFaceRule,
+    keyframes: *const KeyframesRule,
+};
+
 pub const AtRule = struct {
     at_sign: source.Span,
     name: Identifier,
     /// Includes trivia between the name and block/terminator.
     prelude: ComponentValueList,
     block: AtRuleBlock,
+    details: ?AtRuleDetails = null,
     span: source.Span,
 
     pub fn init(candidate: AtRule) AstError!AtRule {

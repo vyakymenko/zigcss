@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const at_rule_parser = @import("at_rule_parser.zig");
 const compilation = @import("../compilation.zig");
 const declaration_parser = @import("declaration_parser.zig");
 const diagnostics = @import("../diagnostics.zig");
@@ -142,6 +143,7 @@ const Parser = struct {
                 try self.report(.internal, at_token.span, "no-block at-rule invariant failed");
                 return error.InternalInvariant;
             };
+            try at_rule_parser.specialize(self.context, self.file, at_rule);
             return .{ .rule = .{ .at_rule = at_rule }, .next = if (index < values.len) index + 1 else index };
         }
 
@@ -198,6 +200,7 @@ const Parser = struct {
             try self.report(.internal, at_token.span, "block at-rule invariant failed");
             return error.InternalInvariant;
         };
+        try at_rule_parser.specialize(self.context, self.file, at_rule);
         return .{ .rule = .{ .at_rule = at_rule }, .next = index + 1 };
     }
 
@@ -464,7 +467,7 @@ test "top-level CDO CDC and escaped at-rule names follow stylesheet context" {
     const parsed = try parseSource(
         &context,
         "stylesheet-context.css",
-        "<!-- .a{} --> @\\6d edia{.b{color:red}}",
+        "<!-- .a{} --> @\\6d edia all{.b{color:red}}",
     );
     const file = try context.sources.get(parsed[0]);
     const rules = parsed[1].rules;
@@ -546,6 +549,181 @@ test "rule recovery handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseRuleRecoveryAllocationFailures,
+        .{},
+    );
+}
+
+test "media supports container and layer preludes receive typed structure" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "conditional-at-rules.css",
+        "@media screen,(width>10px){.a{x:1}}@supports (display:grid) and selector(.a){.b{x:2}}@container card (width>1px){.c{x:3}}@layer base.components,theme;@layer utilities{.d{x:4}}",
+    );
+    const rules = parsed[1].rules;
+
+    try std.testing.expectEqual(@as(usize, 5), rules.len);
+    const media = rules[0].at_rule.details.?.media;
+    try std.testing.expectEqual(@as(usize, 2), media.query_list.queries.len);
+    const supports = rules[1].at_rule.details.?.supports;
+    try std.testing.expectEqual(ast.SupportsOperator.@"and", supports.operator);
+    try std.testing.expectEqual(@as(usize, 2), supports.terms.len);
+    const container = rules[2].at_rule.details.?.container;
+    try std.testing.expectEqualStrings("card", container.name.?.value);
+    try std.testing.expect(container.query.values.len > 0);
+    const layer_statement = rules[3].at_rule.details.?.layer;
+    try std.testing.expect(layer_statement.statement);
+    try std.testing.expectEqual(@as(usize, 2), layer_statement.names.len);
+    try std.testing.expectEqual(@as(usize, 2), layer_statement.names[0].parts.len);
+    const layer_block = rules[4].at_rule.details.?.layer;
+    try std.testing.expect(!layer_block.statement);
+    try std.testing.expectEqualStrings("utilities", layer_block.names[0].parts[0].value);
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+}
+
+test "property and font-face rules expose declaration-backed details" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "descriptor-at-rules.css",
+        "@property --theme{syntax:\"<color>\";inherits:false;initial-value:red}@font-face{font-family:x;src:url(x)}",
+    );
+    const property = parsed[1].rules[0].at_rule.details.?.property;
+    const font_face = parsed[1].rules[1].at_rule.details.?.font_face;
+
+    try std.testing.expectEqualStrings("--theme", property.name.value);
+    try std.testing.expectEqual(@as(usize, 3), property.declarations.declarations.len);
+    try std.testing.expectEqual(@as(usize, 2), font_face.declarations.declarations.len);
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+}
+
+test "keyframes parse names frame selectors percentages and declarations" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "typed-keyframes.css",
+        "@keyframes fade{from,50%{opacity:0}100%{opacity:1}bad{opacity:2}}",
+    );
+    const keyframes = parsed[1].rules[0].at_rule.details.?.keyframes;
+
+    try std.testing.expectEqualStrings("fade", keyframes.name.value);
+    try std.testing.expectEqual(@as(usize, 2), keyframes.block.frames.len);
+    try std.testing.expectEqual(@as(usize, 2), keyframes.block.frames[0].selectors.len);
+    try std.testing.expect(keyframes.block.frames[0].selectors[0] == .from);
+    try std.testing.expectEqual(@as(f64, 50), keyframes.block.frames[0].selectors[1].percentage.value);
+    try std.testing.expectEqual(@as(f64, 100), keyframes.block.frames[1].selectors[0].percentage.value);
+    try std.testing.expectEqual(@as(usize, 1), keyframes.block.frames[0].block.declarations.declarations.len);
+    try std.testing.expect(context.diagnostics.items().len > 0);
+}
+
+test "page rules retain page selectors declarations and margin boxes" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "page.css",
+        "@page invoice:first,:left{margin:1cm;@top-left{content:\"Invoice\"}size:A4;@bottom-center{content:counter(page)}}",
+    );
+    const page = parsed[1].rules[0].at_rule.details.?.page;
+
+    try std.testing.expectEqual(@as(usize, 2), page.selectors.len);
+    try std.testing.expectEqualStrings("invoice", page.selectors[0].name.?.value);
+    try std.testing.expectEqualStrings("first", page.selectors[0].pseudos[0].value);
+    try std.testing.expect(page.selectors[1].name == null);
+    try std.testing.expectEqualStrings("left", page.selectors[1].pseudos[0].value);
+    try std.testing.expectEqual(@as(usize, 2), page.declarations.declarations.len);
+    try std.testing.expectEqualStrings("margin", page.declarations.declarations[0].name.value);
+    try std.testing.expectEqualStrings("size", page.declarations.declarations[1].name.value);
+    try std.testing.expectEqual(@as(usize, 2), page.margins.len);
+    try std.testing.expectEqualStrings("top-left", page.margins[0].name.value);
+    try std.testing.expectEqualStrings("bottom-center", page.margins[1].name.value);
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+}
+
+test "invalid structured at-rules keep their raw AST and append diagnostics" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "invalid-structured-at-rules.css",
+        "@media{}@supports{}@container{}@layer foo,bar{}@property color{}@font-face x{}@keyframes none{}",
+    );
+
+    for (parsed[1].rules) |rule| try std.testing.expect(rule.at_rule.details == null);
+    try std.testing.expect(context.diagnostics.items().len >= parsed[1].rules.len);
+}
+
+test "structured at-rules reject mixed conditions empty media terms and invalid frames" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "structured-recovery.css",
+        "@media screen,{}@supports (a:b) and (c:d) or (e:f){}@keyframes f{-1%{x:1}101%{x:2}50%{x:3}}",
+    );
+
+    try std.testing.expect(parsed[1].rules[0].at_rule.details == null);
+    try std.testing.expect(parsed[1].rules[0].at_rule.block == .rules);
+    try std.testing.expect(parsed[1].rules[1].at_rule.details == null);
+    const keyframes = parsed[1].rules[2].at_rule.details.?.keyframes;
+    try std.testing.expectEqual(@as(usize, 1), keyframes.block.frames.len);
+    try std.testing.expectEqual(@as(f64, 50), keyframes.block.frames[0].selectors[0].percentage.value);
+    try std.testing.expect(keyframes.block.raw_values != null);
+    try std.testing.expect(context.diagnostics.items().len >= 4);
+}
+
+test "page margin scanning does not consume at-keywords in declaration values" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "page-at-keywords.css",
+        "@page{--marker:@foo;margin:1cm;@top-left{content:@bar}}",
+    );
+    const page = parsed[1].rules[0].at_rule.details.?.page;
+
+    try std.testing.expectEqual(@as(usize, 2), page.declarations.declarations.len);
+    try std.testing.expectEqualStrings("--marker", page.declarations.declarations[0].name.value);
+    try std.testing.expectEqual(@as(usize, 1), page.margins.len);
+    try std.testing.expectEqual(@as(usize, 1), page.margins[0].declarations.declarations.len);
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+}
+
+test "anonymous layer blocks and empty page selectors receive typed details" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(&context, "anonymous-structures.css", "@layer{.a{x:1}}@page{size:A4}");
+
+    const layer = parsed[1].rules[0].at_rule.details.?.layer;
+    try std.testing.expect(!layer.statement);
+    try std.testing.expectEqual(@as(usize, 0), layer.names.len);
+    const page = parsed[1].rules[1].at_rule.details.?.page;
+    try std.testing.expectEqual(@as(usize, 0), page.selectors.len);
+    try std.testing.expectEqual(@as(usize, 1), page.declarations.declarations.len);
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+}
+
+fn exerciseStructuredAtRuleAllocationFailures(allocator: std.mem.Allocator) !void {
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "oom-structured-at-rules.css",
+        "@media screen,(width>1px){.a{x:1}}@keyframes f{from{opacity:0}to{opacity:1}}@page:left{margin:1cm;@top-left{content:\"x\"}}",
+    );
+    try std.testing.expectEqual(@as(usize, 3), parsed[1].rules.len);
+    try std.testing.expect(parsed[1].rules[0].at_rule.details != null);
+    try std.testing.expect(parsed[1].rules[1].at_rule.details != null);
+    try std.testing.expect(parsed[1].rules[2].at_rule.details != null);
+}
+
+test "structured at-rule lowering handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseStructuredAtRuleAllocationFailures,
         .{},
     );
 }
