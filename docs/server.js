@@ -45,20 +45,83 @@ function rawBody(req) {
   })
 }
 
-function serveStatic(res, urlPath) {
-  let fp = path.join(DIST_DIR, decodeURIComponent(urlPath))
+class StaticRequestError extends Error {
+  constructor(status, message) {
+    super(message)
+    this.status = status
+  }
+}
 
-  // directory → index.html
-  if (fs.existsSync(fp) && fs.statSync(fp).isDirectory())
-    fp = path.join(fp, 'index.html')
+function isWithinRoot(root, candidate) {
+  const relative = path.relative(root, candidate)
+  return relative === '' || (
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  )
+}
 
-  // SPA fallback
-  if (!fs.existsSync(fp))
-    fp = path.join(DIST_DIR, 'index.html')
+export function resolveStaticFile(distDir, urlPath) {
+  let decodedPath
+  try {
+    decodedPath = decodeURIComponent(urlPath)
+  } catch {
+    throw new StaticRequestError(400, 'Malformed URL encoding')
+  }
+
+  if (decodedPath.includes('\0'))
+    throw new StaticRequestError(400, 'Malformed URL path')
+
+  const root = fs.realpathSync(distDir)
+  const portablePath = decodedPath.replace(/\\/g, '/').replace(/^\/+/, '')
+  let candidate = path.resolve(root, portablePath)
+
+  if (!isWithinRoot(root, candidate))
+    throw new StaticRequestError(403, 'Forbidden')
+
+  if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory())
+    candidate = path.join(candidate, 'index.html')
+
+  // Preserve the existing SPA fallback, but only for paths contained by root.
+  if (!fs.existsSync(candidate))
+    candidate = path.join(root, 'index.html')
+
+  if (!fs.existsSync(candidate))
+    throw new StaticRequestError(404, 'Not found')
+
+  const realCandidate = fs.realpathSync(candidate)
+  if (!isWithinRoot(root, realCandidate))
+    throw new StaticRequestError(403, 'Forbidden')
+
+  if (!fs.statSync(realCandidate).isFile())
+    throw new StaticRequestError(404, 'Not found')
+
+  return realCandidate
+}
+
+function serveStatic(res, urlPath, distDir) {
+  let fp
+  try {
+    fp = resolveStaticFile(distDir, urlPath)
+  } catch (error) {
+    const status = error instanceof StaticRequestError ? error.status : 500
+    const message = error instanceof StaticRequestError ? error.message : 'Static file error'
+    res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' })
+    return res.end(message)
+  }
 
   const mime = MIME[path.extname(fp)] ?? 'application/octet-stream'
+  const stream = fs.createReadStream(fp)
+  stream.on('error', () => {
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('Static file error')
+    } else {
+      res.destroy()
+    }
+  })
   res.writeHead(200, { 'Content-Type': mime })
-  fs.createReadStream(fp).pipe(res)
+  stream.pipe(res)
 }
 
 function detectExt(input, format) {
@@ -70,7 +133,7 @@ function detectExt(input, format) {
   return 'css'
 }
 
-async function handleCompile(req, res) {
+async function handleCompile(req, res, zigcssBin) {
   try {
     const { input, minify, format } = JSON.parse(await rawBody(req) || '{}')
     if (typeof input !== 'string') {
@@ -88,7 +151,7 @@ async function handleCompile(req, res) {
     if (minify) args.push('--minify')
 
     const result = await new Promise(resolve => {
-      const child = spawn(ZIGCSS_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+      const child = spawn(zigcssBin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
       let stderr = ''
       child.stderr?.on('data', d => { stderr += d.toString() })
       child.on('close', code => {
@@ -114,18 +177,25 @@ async function handleCompile(req, res) {
   }
 }
 
-createServer(async (req, res) => {
-  const url = req.url?.split('?')[0] ?? '/'
+export function createDocsServer({ distDir = DIST_DIR, zigcssBin = ZIGCSS_BIN } = {}) {
+  return createServer(async (req, res) => {
+    const url = req.url?.split('?')[0] ?? '/'
 
-  if (url === '/api/compile' || url === '/zigcss/api/compile') {
-    if (req.method !== 'POST') {
-      res.writeHead(405, { 'Content-Type': 'application/json' })
-      return res.end(JSON.stringify({ error: 'Method not allowed' }))
+    if (url === '/api/compile' || url === '/zigcss/api/compile') {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' })
+        return res.end(JSON.stringify({ error: 'Method not allowed' }))
+      }
+      return handleCompile(req, res, zigcssBin)
     }
-    return handleCompile(req, res)
-  }
 
-  serveStatic(res, url)
-}).listen(PORT, '0.0.0.0', () =>
-  console.log(`zigcss docs listening on :${PORT}`)
-)
+    serveStatic(res, url, distDir)
+  })
+}
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (isMain) {
+  createDocsServer().listen(PORT, '0.0.0.0', () =>
+    console.log(`zigcss docs listening on :${PORT}`)
+  )
+}

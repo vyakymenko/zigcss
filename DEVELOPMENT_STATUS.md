@@ -15,15 +15,15 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 0 — Containment and regression baseline
-- Work package: `SEC-001`
+- Work package: compile API containment pending `SEC-002`
 - State: `IN_PROGRESS`
-- Next eligible package: `SEC-001`
+- Next eligible package: disable the public compile API, then `TEST-001`
 
 ## Milestone 0 package ledger
 
 | Package | State | Evidence / decision | Commit |
 |---|---|---|---|
-| `SEC-001` | `NOT_STARTED` | Static path containment and malformed-URL handling pending. | — |
+| `SEC-001` | `VERIFIED` | HTTP regressions reject encoded slash/backslash traversal and escaping symlinks, malformed encoding returns 400 without terminating the server, safe assets and SPA fallback remain available; full docs tests and build pass. | Checkpoint pending |
 | `SEC-002` | `NOT_STARTED` | Compile API limits pending; endpoint will be disabled immediately after `SEC-001` until bounded isolation is verified. | — |
 | `SEC-003` | `NOT_STARTED` | Non-root/minimal docs container pending. | — |
 | `SAFE-001` | `NOT_STARTED` | Experimental-status and claims audit pending. | — |
@@ -53,7 +53,7 @@ Baseline captured on base commit `2d2c0d9` with Zig 0.15.2, Node 24.16.0, and np
 
 ## Completed work packages
 
-None yet.
+- `SEC-001`: static serving is contained within the configured real root and malformed URL encoding is handled without a process crash. Focused result: 7/7 security tests; integration result: 44/44 docs tests plus successful Vite build.
 
 ## Active blockers
 
@@ -91,4 +91,4 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 ## Last full validation
 
-Not run yet.
+Milestone 0 is not yet eligible for full validation. Latest package validation: `npm run test:run` (44/44) and `npm run build` passed after `SEC-001`.
