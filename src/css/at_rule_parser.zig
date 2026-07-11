@@ -468,6 +468,7 @@ const Parser = struct {
                 const margin_declarations = try declaration_parser.parse(self.context, self.file.id, content);
                 try margins.append(self.allocator, .{
                     .name = margin_name,
+                    .envelope = envelope,
                     .declarations = margin_declarations,
                     .span = .{
                         .source = self.file.id,

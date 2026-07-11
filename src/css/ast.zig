@@ -769,6 +769,7 @@ pub const PageSelector = struct {
 
 pub const PageMarginRule = struct {
     name: Identifier,
+    envelope: BlockSpan,
     declarations: *const DeclarationList,
     span: source.Span,
 };
