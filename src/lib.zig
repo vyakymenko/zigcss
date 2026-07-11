@@ -13,6 +13,7 @@ pub const DiagnosticCode = diagnostics.Code;
 pub const DiagnosticList = diagnostics.DiagnosticList;
 pub const DiagnosticSeverity = diagnostics.Severity;
 pub const Compilation = compilation.Compilation;
+pub const CompileResult = compilation.CompileResult;
 pub const Token = tokenizer.Token;
 pub const TokenKind = tokenizer.TokenKind;
 pub const Tokenizer = tokenizer.Tokenizer;

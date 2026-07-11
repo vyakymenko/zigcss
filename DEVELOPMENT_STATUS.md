@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 1 — Tokenizer, source model, and AST foundation
-- Work package: `MEM-001`
+- Work package: `SYN-001`
 - State: `IN_PROGRESS`
-- Next eligible package: `MEM-001` and `SYN-001`
+- Next eligible package: `SYN-001`
 
 ## Milestone 0 package ledger
 
@@ -93,12 +93,12 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 | `ARCH-001` | `VERIFIED` | Public `zigcss` module now roots at `src/lib.zig`. `SourceManager` owns copied names/bytes/line indexes; spans are source-bound half-open byte ranges; locations handle CR/LF/CRLF/form-feed and Unicode scalar columns; diagnostics own structured messages; `Compilation` owns per-input sources/diagnostics and validates spans. Debug and ReleaseSafe pass 113/113. | `4f290c1` |
 | `TOK-001` | `VERIFIED` | Defined every CSS Syntax token category plus comment trivia/EOF and an on-demand progress-safe dispatcher for punctuation, CDO/CDC, whitespace, basic ASCII ident-like tokens, strings, UTF-8 delimiters, and EOF. All 256 byte values make progress; Debug and ReleaseSafe pass 120/120. | `a9d8a2c` |
 | `TOK-002` | `VERIFIED` | Added CSS input preprocessing over original-byte spans; escape decoding; Unicode identifiers; number, percentage, dimension, URL/bad-URL, and opt-in unicode-range consumers; numeric representation metadata; raw/decoded token access; and bounded EOF/malformed-input recovery. Tests cover distinct string/name EOF escapes, quoted URL dispatch, escaped bad-URL recovery, incomplete exponents, invalid UTF-8 progress, all escape scalar limits, and every decoded-value allocation failure. Debug and ReleaseSafe pass 135/135. | `ece86be` |
-| `TOK-003` | `VERIFIED` | Retains terminated and unterminated comments as explicit trivia with content/raw spans, identifies whitespace/comment trivia uniformly, and derives token start/end locations through the source line index. Tests prove bounded comment EOF recovery, contiguous lossless spans, and original-byte locations across CRLF, form feed, and multibyte UTF-8. Debug and ReleaseSafe pass 139/139. | Checkpoint pending |
+| `TOK-003` | `VERIFIED` | Retains terminated and unterminated comments as explicit trivia with content/raw spans, identifies whitespace/comment trivia uniformly, and derives token start/end locations through the source line index. Tests prove bounded comment EOF recovery, contiguous lossless spans, and original-byte locations across CRLF, form feed, and multibyte UTF-8. Debug and ReleaseSafe pass 139/139. | `ccfa315` |
 | `SYN-001` | `NOT_STARTED` | Lossless nested component values depend on `TOK-002` and `TOK-003`. | — |
 | `AST-001` | `NOT_STARTED` | Selector structures depend on `SYN-001`. | — |
 | `AST-002` | `NOT_STARTED` | Declaration/component-value structures depend on `SYN-001`. | — |
 | `AST-003` | `NOT_STARTED` | At-rule block variants depend on `SYN-001`. | — |
-| `MEM-001` | `NOT_STARTED` | Compilation-scoped arena and explicit returned-result ownership depend on `ARCH-001`. | — |
+| `MEM-001` | `VERIFIED` | `Compilation` now owns a heap-stable, caller-backed arena used by sources, diagnostics, and temporary syntax storage. Foundational `CompileResult` storage deeply owns CSS, optional source-map bytes, and cloned diagnostic messages independently of compilation lifetime; `take` makes moves explicit and leaves one safe cleanup path. Tests cover compilation moves, unfreed arena temporaries, post-compilation result access, empty/double cleanup, diagnostic-bearing results, and every constructor allocation failure. Debug and ReleaseSafe pass 143/143. | Checkpoint pending |
 | `DIAG-001` | `NOT_STARTED` | Recoverable tokenizer/syntax diagnostics depend on `TOK-003` and `SYN-001`. | — |
 
 ## Completed work packages
@@ -116,6 +116,7 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 - `SAFE-001`: the recovery CLI emits an experimental warning and rejects legacy format adapters; active public documentation is limited to the tested status, source-build, and CLI contracts, while prior performance comparisons are explicitly invalidated.
 - `TOK-002`: semantic token values decode CSS escapes on demand while raw original spelling remains source-addressable; URL and malformed-token recovery always terminates, and unicode-range recognition is enabled only for its descriptor-specific entry point.
 - `TOK-003`: lossless consumers receive comment and whitespace tokens instead of implicit gaps; normalized consumers can discard both through `Token.isTrivia()`, while unterminated-comment metadata remains available for later structured diagnostics.
+- `MEM-001`: compilation-lifetime objects allocate from one arena, while result-lifetime CSS, maps, and diagnostic messages are deep-copied into a recorded result allocator and released only through `CompileResult.deinit`.
 
 ## Active blockers
 
@@ -157,7 +158,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - The persistent Codex goal remains the scheduler. `scripts/autodevelop/orient.sh` is deliberately read-only and cannot launch a model, wake a task, or mutate repository/external state; `docs/operations/codex-loop-protocol.md` is the canonical resume procedure.
 - Foundational implementation must conform to accepted `ADR-001`, `ADR-002`, `ADR-003`, and `ADR-010`; changing stable scope, source/syntax boundaries, ownership, or autonomous runtime requires a superseding approved ADR.
 - CSS strings use their distinct trailing-backslash-at-EOF rule when producing decoded values; identifiers, dimensions, hashes, at-keywords, and URLs retain the general escaped-code-point replacement behavior.
+- The arena control block is separately allocated from its caller-provided backing allocator so allocators retained by movable child containers never point into a relocated `Compilation` value.
 
 ## Last full validation
 
-Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`TOK-003`): Debug and ReleaseSafe each pass 139/139 tests (80 legacy unit, 34 library/tokenizer, 25 CLI integration); `src/tokenizer.zig` passes formatting. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
+Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`MEM-001`): Debug and ReleaseSafe each pass 143/143 tests (80 legacy unit, 38 new library/core, 25 CLI integration); `src/compilation.zig` and `src/lib.zig` pass formatting. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
