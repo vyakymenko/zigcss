@@ -262,6 +262,9 @@ pub const ComplexSelectorTail = struct {
 pub const ComplexSelector = struct {
     /// Present for relative selectors such as `> .item`.
     leading_combinator: ?Combinator,
+    /// True when a nested selector has an implied parent reference because no
+    /// `&` delimiter occurs anywhere in its source selector.
+    implicit_nesting: bool = false,
     head: CompoundSelector,
     tails: []const ComplexSelectorTail,
     span: source.Span,
@@ -292,6 +295,7 @@ pub const ComplexSelector = struct {
         }
         return .{
             .leading_combinator = leading_combinator,
+            .implicit_nesting = false,
             .head = head,
             .tails = tails,
             .span = span,
@@ -534,9 +538,37 @@ pub const DeclarationBlock = struct {
     }
 };
 
+/// A style rule's block keeps its leading declarations separate from ordered
+/// child rules. Declaration runs after the first child are represented as
+/// `NestedDeclarationsRule` entries in `rules`.
+pub const StyleBlock = struct {
+    envelope: BlockSpan,
+    declarations: DeclarationList,
+    rules: RuleList,
+
+    pub fn init(
+        envelope: BlockSpan,
+        declarations: DeclarationList,
+        rules: RuleList,
+    ) AstError!StyleBlock {
+        _ = try BlockSpan.init(envelope);
+        _ = try DeclarationList.init(declarations.span, declarations.declarations);
+        _ = try RuleList.init(rules.span, rules.rules);
+        if (!envelope.content.source.eql(declarations.span.source) or
+            !envelope.content.source.eql(rules.span.source) or
+            declarations.span.start != envelope.content.start or
+            declarations.span.end != rules.span.start or
+            rules.span.end != envelope.content.end)
+        {
+            return error.InvalidRuleBlock;
+        }
+        return .{ .envelope = envelope, .declarations = declarations, .rules = rules };
+    }
+};
+
 pub const StyleRule = struct {
     selectors: SelectorList,
-    block: DeclarationBlock,
+    block: StyleBlock,
     span: source.Span,
 
     pub fn init(candidate: StyleRule) AstError!StyleRule {
@@ -549,7 +581,23 @@ pub const StyleRule = struct {
         {
             return error.InvalidRule;
         }
-        _ = try DeclarationBlock.init(candidate.block.envelope, candidate.block.declarations);
+        _ = try StyleBlock.init(candidate.block.envelope, candidate.block.declarations, candidate.block.rules);
+        return candidate;
+    }
+};
+
+pub const NestedDeclarationsRule = struct {
+    declarations: DeclarationList,
+    span: source.Span,
+
+    pub fn init(candidate: NestedDeclarationsRule) AstError!NestedDeclarationsRule {
+        try validateSpan(candidate.span);
+        if (!spansEqual(candidate.span, candidate.declarations.span) or
+            candidate.declarations.declarations.len == 0)
+        {
+            return error.InvalidRule;
+        }
+        _ = try DeclarationList.init(candidate.declarations.span, candidate.declarations.declarations);
         return candidate;
     }
 };
@@ -557,11 +605,13 @@ pub const StyleRule = struct {
 pub const Rule = union(enum) {
     style_rule: *const StyleRule,
     at_rule: *const AtRule,
+    nested_declarations: *const NestedDeclarationsRule,
 
     pub fn span(self: Rule) source.Span {
         return switch (self) {
             .style_rule => |rule| rule.span,
             .at_rule => |rule| rule.span,
+            .nested_declarations => |rule| rule.span,
         };
     }
 };
@@ -577,6 +627,7 @@ pub const RuleList = struct {
         for (rules) |rule| {
             const rule_span = rule.span();
             try validateChild(span, rule_span);
+            if (rule == .nested_declarations) _ = try NestedDeclarationsRule.init(rule.nested_declarations.*);
             if (rule_span.start < previous_end) return error.InvalidRule;
             previous_end = rule_span.end;
         }
@@ -587,12 +638,26 @@ pub const RuleList = struct {
 pub const RulesBlock = struct {
     envelope: BlockSpan,
     rules: RuleList,
+    /// Nested group rules parse block contents, so direct declaration runs are
+    /// represented among their child rules.
+    nested: bool = false,
 
     pub fn init(envelope: BlockSpan, rules: RuleList) AstError!RulesBlock {
+        return initMode(envelope, rules, false);
+    }
+
+    pub fn initNested(envelope: BlockSpan, rules: RuleList) AstError!RulesBlock {
+        return initMode(envelope, rules, true);
+    }
+
+    fn initMode(envelope: BlockSpan, rules: RuleList, nested: bool) AstError!RulesBlock {
         _ = try BlockSpan.init(envelope);
         if (!spansEqual(envelope.content, rules.span)) return error.InvalidRuleBlock;
         _ = try RuleList.init(rules.span, rules.rules);
-        return .{ .envelope = envelope, .rules = rules };
+        if (!nested) for (rules.rules) |rule| {
+            if (rule == .nested_declarations) return error.InvalidRuleBlock;
+        };
+        return .{ .envelope = envelope, .rules = rules, .nested = nested };
     }
 };
 
@@ -833,7 +898,7 @@ pub const AtRule = struct {
                 try validateAtRuleBlock(candidate, block.envelope);
             },
             .rules => |block| {
-                _ = try RulesBlock.init(block.envelope, block.rules);
+                _ = try RulesBlock.initMode(block.envelope, block.rules, block.nested);
                 try validateAtRuleBlock(candidate, block.envelope);
             },
             .keyframes => |block| {
@@ -1187,6 +1252,40 @@ test "declaration lists preserve fallback order and custom-property identity" {
         .value = "--theme",
         .span = testSpan(id, 0, 7),
     }).isCustomProperty());
+}
+
+test "style and nested group blocks distinguish leading and nested declarations" {
+    const id = source.SourceId{ .value = 19 };
+    const envelope = try BlockSpan.init(.{
+        .opening = testSpan(id, 0, 1),
+        .content = testSpan(id, 1, 6),
+        .closing = testSpan(id, 6, 7),
+        .span = testSpan(id, 0, 7),
+    });
+    const value = try ComponentValueList.init(testSpan(id, 3, 3), &.{});
+    const declaration = try Declaration.init(.{
+        .name = .{ .value = "x", .span = testSpan(id, 1, 2) },
+        .colon = testSpan(id, 2, 3),
+        .value = value,
+        .terminator = testSpan(id, 3, 4),
+        .span = testSpan(id, 1, 4),
+    });
+    const declarations = [_]Declaration{declaration};
+    const nested_list = try DeclarationList.init(testSpan(id, 1, 4), &declarations);
+    const nested = try NestedDeclarationsRule.init(.{
+        .declarations = nested_list,
+        .span = nested_list.span,
+    });
+    const children = [_]Rule{.{ .nested_declarations = &nested }};
+    const child_rules = try RuleList.init(testSpan(id, 1, 6), &children);
+    const leading = try DeclarationList.init(testSpan(id, 1, 1), &.{});
+
+    const style = try StyleBlock.init(envelope, leading, child_rules);
+    try std.testing.expectEqual(@as(usize, 0), style.declarations.declarations.len);
+    try std.testing.expect(style.rules.rules[0] == .nested_declarations);
+    try std.testing.expectError(error.InvalidRuleBlock, RulesBlock.init(envelope, child_rules));
+    const nested_group = try RulesBlock.initNested(envelope, child_rules);
+    try std.testing.expect(nested_group.nested);
 }
 
 fn emptyBlockSpan(id: source.SourceId, opening_start: usize) !BlockSpan {

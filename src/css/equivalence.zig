@@ -56,12 +56,20 @@ const Comparator = struct {
                 .at_rule => |right_rule| try self.atRules(left_rule, right_rule),
                 else => false,
             },
+            .nested_declarations => |left_rule| switch (right) {
+                .nested_declarations => |right_rule| try self.declarationLists(
+                    &left_rule.declarations,
+                    &right_rule.declarations,
+                ),
+                else => false,
+            },
         };
     }
 
     fn styleRules(self: *Comparator, left: *const ast.StyleRule, right: *const ast.StyleRule) Error!bool {
         return try self.selectorLists(&left.selectors, &right.selectors) and
-            try self.declarationLists(&left.block.declarations, &right.block.declarations);
+            try self.declarationLists(&left.block.declarations, &right.block.declarations) and
+            try self.ruleLists(&left.block.rules, &right.block.rules);
     }
 
     fn selectorLists(self: *Comparator, left: *const ast.SelectorList, right: *const ast.SelectorList) Error!bool {
@@ -73,7 +81,8 @@ const Comparator = struct {
     }
 
     fn complexSelectors(self: *Comparator, left: ast.ComplexSelector, right: ast.ComplexSelector) Error!bool {
-        if (!optionalCombinatorsEqual(left.leading_combinator, right.leading_combinator)) return false;
+        if (left.implicit_nesting != right.implicit_nesting or
+            !optionalCombinatorsEqual(left.leading_combinator, right.leading_combinator)) return false;
         if (!try self.compoundSelectors(left.head, right.head)) return false;
         if (left.tails.len != right.tails.len) return false;
         for (left.tails, right.tails) |left_tail, right_tail| {
@@ -229,7 +238,8 @@ const Comparator = struct {
                 else => false,
             },
             .rules => |left_block| switch (right.block) {
-                .rules => |right_block| try self.ruleLists(&left_block.rules, &right_block.rules),
+                .rules => |right_block| left_block.nested == right_block.nested and
+                    try self.ruleLists(&left_block.rules, &right_block.rules),
                 else => false,
             },
             .keyframes => |left_block| switch (right.block) {
@@ -566,6 +576,7 @@ test "pretty and minified parse emit parse pipelines are structurally equivalent
         "@layer base.components,theme;@property --theme{syntax:\"<color>\";inherits:false;initial-value:red}@font-face{font-family:'A';src:url(x)}@keyframes fade{from,50%{opacity:0}100%{opacity:1}}@page invoice:first,:left{margin:1cm;@top-left{content:\"Invoice\"}size:A4}",
         "@unknown(foo){a(1;[x])}",
         ":is(.a, ., .b) .child{--value:calc(1 + 2);content:\"x\"}",
+        ".card{color:red;.title{font-weight:bold}@media (width>40rem){display:grid;> .icon{opacity:1}gap:1rem}background:blue;&.active{color:green}}",
     };
     const modes = [_]emitter.Mode{ .pretty, .minified };
     for (corpus) |css| {
@@ -619,6 +630,7 @@ test "semantic equivalence detects selector cascade and at-rule changes" {
         .{ "@unknown(foo){ a( b ) }", "@unknown (foo){ a( b ) }" },
         .{ "@unknown(foo){ a( b ) }", "@unknown(foo){a(b)}" },
         .{ "@page{a:1;@top-left{x:1}b:2}", "@page{a:1;b:2;@top-left{x:1}}" },
+        .{ ".a{x:1;.b{z:0}y:2}", ".a{x:1;y:2;.b{z:0}}" },
     };
     for (cases) |case| {
         var left_context = try compilation.Compilation.init(std.testing.allocator);
@@ -687,7 +699,7 @@ fn exerciseRoundTripAllocationFailures(allocator: std.mem.Allocator) !void {
     const original = try parseSource(
         &original_context,
         "oom-round-original.css",
-        ".a,.b>.c{color:red;color:blue!important;--x:fn(a/**/b)}@media all{.d{x:1}}@keyframes f{from{opacity:0}to{opacity:1}}",
+        ".a,.b>.c{color:red;.nested{color:blue!important}@media all{display:grid;> .d{x:1}}--x:fn(a/**/b)}@keyframes f{from{opacity:0}to{opacity:1}}",
     );
     const output = try emitter.emit(
         allocator,

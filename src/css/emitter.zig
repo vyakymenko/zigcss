@@ -86,7 +86,7 @@ fn emitInternal(
         .source_map_builder = source_map_builder,
     };
     errdefer emitter.output.deinit(allocator);
-    try emitter.writeRuleList(rules, 0, true);
+    try emitter.writeRuleList(rules, 0, true, false);
     if ((options.final_newline orelse (options.mode == .pretty)) and emitter.output.items.len > 0) {
         try emitter.appendByte('\n');
     }
@@ -117,20 +117,31 @@ const Emitter = struct {
     generated_column: usize = 0,
     generated_last_was_cr: bool = false,
 
-    fn writeRuleList(self: *Emitter, rules: *const ast.RuleList, depth: usize, top_level: bool) Error!void {
-        try self.validateRuleCoverage(rules, top_level);
+    fn writeRuleList(
+        self: *Emitter,
+        rules: *const ast.RuleList,
+        depth: usize,
+        top_level: bool,
+        allow_nested_declarations: bool,
+    ) Error!void {
+        try self.validateRuleCoverage(rules, top_level, allow_nested_declarations);
         for (rules.rules, 0..) |rule, index| {
             if (index > 0 and self.pretty()) try self.appendByte('\n');
-            if (self.pretty()) try self.writeIndent(depth);
-            try self.writeRule(rule, depth);
+            if (self.pretty() and rule != .nested_declarations) try self.writeIndent(depth);
+            try self.writeRule(rule, depth, index + 1 < rules.rules.len);
         }
     }
 
-    fn writeRule(self: *Emitter, rule: ast.Rule, depth: usize) Error!void {
+    fn writeRule(self: *Emitter, rule: ast.Rule, depth: usize, terminate_nested: bool) Error!void {
         try self.mark(rule.span());
         switch (rule) {
             .style_rule => |style_rule| try self.writeStyleRule(style_rule, depth),
             .at_rule => |at_rule| try self.writeAtRule(at_rule, depth),
+            .nested_declarations => |declarations| try self.writeNestedDeclarations(
+                declarations,
+                depth,
+                terminate_nested,
+            ),
         }
     }
 
@@ -138,7 +149,7 @@ const Emitter = struct {
         _ = ast.StyleRule.init(rule.*) catch return error.InvalidAst;
         try self.writeSelectorList(&rule.selectors);
         try self.writePrettySpace();
-        try self.writeDeclarationBlock(&rule.block, depth);
+        try self.writeStyleBlock(&rule.block, depth);
     }
 
     fn writeSelectorList(self: *Emitter, list: *const ast.SelectorList) Error!void {
@@ -313,20 +324,83 @@ const Emitter = struct {
     }
 
     fn writeRulesBlock(self: *Emitter, block: *const ast.RulesBlock, depth: usize) Error!void {
+        _ = (if (block.nested)
+            ast.RulesBlock.initNested(block.envelope, block.rules)
+        else
+            ast.RulesBlock.init(block.envelope, block.rules)) catch return error.InvalidAst;
         if (!block.envelope.terminated()) return error.UnterminatedSyntax;
         try self.appendByte('{');
         if (block.rules.rules.len == 0) {
-            try self.validateRuleCoverage(&block.rules, false);
+            try self.validateRuleCoverage(&block.rules, false, block.nested);
             try self.appendByte('}');
             return;
         }
         if (self.pretty()) try self.appendByte('\n');
-        try self.writeRuleList(&block.rules, depth + 1, false);
+        try self.writeRuleList(&block.rules, depth + 1, false, block.nested);
         if (self.pretty()) {
             try self.appendByte('\n');
             try self.writeIndent(depth);
         }
         try self.appendByte('}');
+    }
+
+    fn writeStyleBlock(self: *Emitter, block: *const ast.StyleBlock, depth: usize) Error!void {
+        _ = ast.StyleBlock.init(block.envelope, block.declarations, block.rules) catch return error.InvalidAst;
+        if (!block.envelope.terminated()) return error.UnterminatedSyntax;
+        try self.validateDeclarationCoverage(&block.declarations);
+        try self.validateRuleCoverage(&block.rules, false, true);
+
+        try self.appendByte('{');
+        const has_declarations = block.declarations.declarations.len > 0;
+        const has_rules = block.rules.rules.len > 0;
+        if (!has_declarations and !has_rules) {
+            try self.appendByte('}');
+            return;
+        }
+        if (self.pretty()) try self.appendByte('\n');
+        if (has_declarations) {
+            try self.writeDeclarationSequence(
+                &block.declarations,
+                depth + 1,
+                has_rules,
+            );
+        }
+        if (has_rules) {
+            if (has_declarations and self.pretty()) try self.appendByte('\n');
+            try self.writeRuleList(&block.rules, depth + 1, false, true);
+        }
+        if (self.pretty()) {
+            try self.appendByte('\n');
+            try self.writeIndent(depth);
+        }
+        try self.appendByte('}');
+    }
+
+    fn writeNestedDeclarations(
+        self: *Emitter,
+        nested: *const ast.NestedDeclarationsRule,
+        depth: usize,
+        terminate_last: bool,
+    ) Error!void {
+        _ = ast.NestedDeclarationsRule.init(nested.*) catch return error.InvalidAst;
+        try self.validateDeclarationCoverage(&nested.declarations);
+        try self.writeDeclarationSequence(&nested.declarations, depth, terminate_last);
+    }
+
+    fn writeDeclarationSequence(
+        self: *Emitter,
+        declarations: *const ast.DeclarationList,
+        depth: usize,
+        terminate_last: bool,
+    ) Error!void {
+        for (declarations.declarations, 0..) |declaration, index| {
+            if (index > 0 and self.pretty()) try self.appendByte('\n');
+            if (self.pretty()) try self.writeIndent(depth);
+            try self.writeDeclaration(
+                declaration,
+                self.pretty() or index + 1 < declarations.declarations.len or terminate_last,
+            );
+        }
     }
 
     fn writeDeclarationBlock(self: *Emitter, block: *const ast.DeclarationBlock, depth: usize) Error!void {
@@ -348,14 +422,7 @@ const Emitter = struct {
             return;
         }
         if (self.pretty()) try self.appendByte('\n');
-        for (declarations.declarations, 0..) |declaration, index| {
-            if (index > 0 and self.pretty()) try self.appendByte('\n');
-            if (self.pretty()) try self.writeIndent(depth + 1);
-            try self.writeDeclaration(
-                declaration,
-                self.pretty() or index + 1 < declarations.declarations.len,
-            );
-        }
+        try self.writeDeclarationSequence(declarations, depth + 1, false);
         if (self.pretty()) {
             try self.appendByte('\n');
             try self.writeIndent(depth);
@@ -545,17 +612,27 @@ const Emitter = struct {
         }
     }
 
-    fn validateRuleCoverage(self: *Emitter, rules: *const ast.RuleList, top_level: bool) Error!void {
+    fn validateRuleCoverage(
+        self: *Emitter,
+        rules: *const ast.RuleList,
+        top_level: bool,
+        allow_nested_declarations: bool,
+    ) Error!void {
         _ = try self.raw(rules.span);
         var cursor = rules.span.start;
         for (rules.rules) |rule| {
+            if (rule == .nested_declarations and !allow_nested_declarations) return error.InvalidAst;
             const span = rule.span();
             try validateChildSpan(rules.span, span);
             if (span.start < cursor) return error.InvalidAst;
-            if (!try self.gapAllowed(cursor, span.start, false, top_level)) return error.UnrepresentableRecovery;
+            if (!try self.gapAllowed(cursor, span.start, allow_nested_declarations, top_level)) {
+                return error.UnrepresentableRecovery;
+            }
             cursor = span.end;
         }
-        if (!try self.gapAllowed(cursor, rules.span.end, false, top_level)) return error.UnrepresentableRecovery;
+        if (!try self.gapAllowed(cursor, rules.span.end, allow_nested_declarations, top_level)) {
+            return error.UnrepresentableRecovery;
+        }
     }
 
     fn validateDeclarationCoverage(self: *Emitter, declarations: *const ast.DeclarationList) Error!void {
@@ -1268,6 +1345,76 @@ test "minified structured and raw at-rules retain source order" {
     try std.testing.expectEqual(@as(usize, 0), reparsed_context.diagnostics.items().len);
 }
 
+test "native nesting emits ordered declarations rules and group contents in both modes" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "emit-nesting.css",
+        ".card{color:red;.title{font-weight:bold};;@media (width>40rem){display:grid;> .icon{opacity:1}gap:1rem}background:blue;&.active{color:green}}",
+    );
+    const file = try context.sources.get(parsed[0]);
+
+    const pretty_output = try emit(std.testing.allocator, file, parsed[1], .{});
+    defer std.testing.allocator.free(pretty_output);
+    try std.testing.expectEqualStrings(
+        ".card {\n" ++
+            "  color: red;\n" ++
+            "  .title {\n" ++
+            "    font-weight: bold;\n" ++
+            "  }\n" ++
+            "  @media (width>40rem) {\n" ++
+            "    display: grid;\n" ++
+            "    > .icon {\n" ++
+            "      opacity: 1;\n" ++
+            "    }\n" ++
+            "    gap: 1rem;\n" ++
+            "  }\n" ++
+            "  background: blue;\n" ++
+            "  &.active {\n" ++
+            "    color: green;\n" ++
+            "  }\n" ++
+            "}\n",
+        pretty_output,
+    );
+
+    const minified_output = try emit(std.testing.allocator, file, parsed[1], .{ .mode = .minified });
+    defer std.testing.allocator.free(minified_output);
+    try std.testing.expectEqualStrings(
+        ".card{color:red;.title{font-weight:bold}@media (width>40rem){display:grid;>.icon{opacity:1}gap:1rem}background:blue;&.active{color:green}}",
+        minified_output,
+    );
+
+    var reparsed_context = try compilation.Compilation.init(std.testing.allocator);
+    defer reparsed_context.deinit();
+    const reparsed = try parseSource(&reparsed_context, "emitted-nesting.css", minified_output);
+    try std.testing.expectEqual(@as(usize, 0), reparsed_context.diagnostics.items().len);
+    try std.testing.expectEqual(@as(usize, 4), reparsed[1].rules[0].style_rule.block.rules.rules.len);
+
+    var mapped = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        parsed[1],
+        .{ .mode = .minified },
+        .{},
+    );
+    defer mapped.deinit();
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, mapped.source_map, .{});
+    defer json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const background = parsed[1].rules[0].style_rule.block.rules.rules[2].nested_declarations.declarations.declarations[0];
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(std.mem.indexOf(u8, mapped.css, "background").?),
+        .original_line = 0,
+        .original_column = @intCast(background.span.start),
+    }));
+}
+
 test "minified unknown syntax preserves edge whitespace presence" {
     var context = try compilation.Compilation.init(std.testing.allocator);
     defer context.deinit();
@@ -1406,6 +1553,7 @@ test "emission refuses recovery gaps and missing closing syntax" {
         .{ ":not(.a,){x:1}.b{x:2}", error.UnrepresentableRecovery },
         .{ "@media{.a{x:1}}", error.UnrepresentableRecovery },
         .{ "@keyframes f{bad{x:1}50%{x:2}}", error.UnrepresentableRecovery },
+        .{ ".a{color:red;&div{x:1}background:blue}", error.UnrepresentableRecovery },
         .{ ".a{color:red", error.UnterminatedSyntax },
     };
     for (cases) |case| {
@@ -1428,7 +1576,7 @@ fn exerciseEmitterAllocationFailures(allocator: std.mem.Allocator) !void {
     const parsed = try parseSource(
         &context,
         "oom-emitter.css",
-        ".a,.b > c{color:red;color:blue!important;--x:fn(a/**/b)}@media all{.c{display:grid}}@keyframes f{from{opacity:0}to{opacity:1}}",
+        ".a,.b > c{color:red;.nested{color:blue!important}@media all{display:grid;> .c{width:1px}}--x:fn(a/**/b)}@keyframes f{from{opacity:0}to{opacity:1}}",
     );
     const pretty_output = try emit(allocator, try context.sources.get(parsed[0]), parsed[1], .{});
     defer allocator.free(pretty_output);

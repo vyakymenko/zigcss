@@ -57,6 +57,16 @@ const ParsedRule = struct {
     next: usize,
 };
 
+const BlockOwner = enum {
+    style,
+    nested_group,
+};
+
+const ParsedBlockContents = struct {
+    declarations: *const ast.DeclarationList,
+    rules: *const ast.RuleList,
+};
+
 const AtRuleClass = enum {
     declarations,
     rules,
@@ -89,21 +99,15 @@ const Parser = struct {
             index = skipIgnorable(input.values, index, top_level);
             if (index == input.values.len) break;
             const parsed = if (isAtKeyword(input.values[index]))
-                try self.parseAtRule(input.values, index, depth)
+                try self.parseAtRule(input.values, index, depth, false)
             else
-                try self.parseQualifiedRule(input.values, index, depth);
+                try self.parseQualifiedRule(input.values, index, depth, false);
             if (parsed.next <= index) {
                 try self.report(.internal, input.values[index].span(), "rule parser made no progress");
                 return error.InternalInvariant;
             }
             index = parsed.next;
-            if (parsed.rule) |rule| {
-                if (rules.items.len >= self.options.max_rules) {
-                    try self.report(.resource_limit, rule.span(), "rule count limit exceeded");
-                    return error.RuleLimit;
-                }
-                try rules.append(self.allocator, rule);
-            }
+            if (parsed.rule) |rule| try self.appendRule(&rules, rule);
         }
 
         const owned = try rules.toOwnedSlice(self.allocator);
@@ -120,11 +124,16 @@ const Parser = struct {
         values: []const syntax.ComponentValue,
         start: usize,
         depth: usize,
+        nested: bool,
     ) Error!ParsedRule {
         const at_token = tokenAt(values[start]).?;
         const name = try self.identifier(at_token);
         const boundary = recovery.scanRuleBoundary(values, start + 1);
         const index = boundary.index;
+        if (nested and invalidInNestedContext(name.value)) {
+            try self.report(.unexpected_token, at_token.span, "at-rule is not allowed in a nested style context");
+            return .{ .rule = null, .next = boundary.next };
+        }
 
         const prelude = try componentList(values, start + 1, index, at_token.span.end);
         const at_sign = makeSpan(self.source_id, at_token.span.start, name.span.start);
@@ -162,9 +171,15 @@ const Parser = struct {
                 break :blk .{ .declarations = declaration_block };
             },
             .rules => blk: {
-                const nested_rules = try self.parseList(content, depth + 1, false);
+                const nested_rules = if (nested)
+                    (try self.parseBlockContents(content, depth + 1, .nested_group)).rules
+                else
+                    try self.parseList(content, depth + 1, false);
                 const rules_block = self.allocator.create(ast.RulesBlock) catch return error.OutOfMemory;
-                rules_block.* = ast.RulesBlock.init(envelope, nested_rules.*) catch {
+                rules_block.* = (if (nested)
+                    ast.RulesBlock.initNested(envelope, nested_rules.*)
+                else
+                    ast.RulesBlock.init(envelope, nested_rules.*)) catch {
                     try self.report(.internal, envelope.span, "rule at-rule block invariant failed");
                     return error.InternalInvariant;
                 };
@@ -208,8 +223,8 @@ const Parser = struct {
         values: []const syntax.ComponentValue,
         start: usize,
         depth: usize,
+        nested: bool,
     ) Error!ParsedRule {
-        _ = depth;
         const boundary = recovery.scanRuleBoundary(values, start);
         const index = boundary.index;
         if (boundary.kind != .curly_block) {
@@ -223,7 +238,10 @@ const Parser = struct {
         }
 
         const prelude = try componentList(values, start, index, values[start].span().start);
-        const selectors = selector_parser.parse(self.context, self.source_id, prelude) catch |err| switch (err) {
+        const selectors = (if (nested)
+            selector_parser.parseNested(self.context, self.source_id, prelude)
+        else
+            selector_parser.parse(self.context, self.source_id, prelude)) catch |err| switch (err) {
             error.InvalidSelector => return .{ .rule = null, .next = index + 1 },
             error.OutOfMemory => return error.OutOfMemory,
             error.UnknownSource => return error.UnknownSource,
@@ -234,21 +252,196 @@ const Parser = struct {
         const content = ast.ComponentValueList.init(envelope.content, syntax_block.values) catch {
             return error.InternalInvariant;
         };
-        const declarations = try declaration_parser.parse(self.context, self.source_id, content);
-        const declaration_block = ast.DeclarationBlock.init(envelope, declarations.*) catch {
-            try self.report(.internal, envelope.span, "style declaration block invariant failed");
-            return error.InternalInvariant;
-        };
+        const style_block = try self.parseStyleBlock(content, envelope, depth + 1);
         const style_rule = self.allocator.create(ast.StyleRule) catch return error.OutOfMemory;
         style_rule.* = ast.StyleRule.init(.{
             .selectors = selectors.*,
-            .block = declaration_block,
+            .block = style_block,
             .span = makeSpan(self.source_id, prelude.span.start, envelope.span.end),
         }) catch {
             try self.report(.internal, envelope.span, "style-rule span invariant failed");
             return error.InternalInvariant;
         };
         return .{ .rule = .{ .style_rule = style_rule }, .next = boundary.next };
+    }
+
+    fn parseStyleBlock(
+        self: *Parser,
+        content: ast.ComponentValueList,
+        envelope: ast.BlockSpan,
+        depth: usize,
+    ) Error!ast.StyleBlock {
+        const parsed = try self.parseBlockContents(content, depth, .style);
+        return ast.StyleBlock.init(envelope, parsed.declarations.*, parsed.rules.*) catch {
+            try self.report(.internal, envelope.span, "style block invariant failed");
+            return error.InternalInvariant;
+        };
+    }
+
+    fn parseBlockContents(
+        self: *Parser,
+        input: ast.ComponentValueList,
+        depth: usize,
+        owner: BlockOwner,
+    ) Error!ParsedBlockContents {
+        if (depth >= self.options.max_nesting) {
+            try self.report(.resource_limit, input.span, "rule nesting limit exceeded");
+            return error.RuleNestingLimit;
+        }
+
+        var rules = try std.ArrayList(ast.Rule).initCapacity(self.allocator, 0);
+        errdefer rules.deinit(self.allocator);
+        var declarations: ?*const ast.DeclarationList = null;
+        var rules_start: ?usize = if (owner == .nested_group) 0 else null;
+        var run_start: usize = 0;
+        var index: usize = 0;
+
+        while (index < input.values.len) {
+            index = skipBlockSeparators(input.values, index);
+            if (index == input.values.len) break;
+
+            if (isAtKeyword(input.values[index])) {
+                if (rules_start == null) rules_start = index;
+                try self.flushDeclarationRun(input, run_start, index, owner, &declarations, &rules);
+                const parsed = try self.parseAtRule(input.values, index, depth, true);
+                if (parsed.next <= index) return error.InternalInvariant;
+                if (parsed.rule) |rule| try self.appendRule(&rules, rule);
+                run_start = parsed.next;
+                index = parsed.next;
+                continue;
+            }
+
+            const boundary = recovery.scanRuleBoundary(input.values, index);
+            if (try self.declarationNext(input.values, index, boundary)) |next| {
+                if (next <= index) return error.InternalInvariant;
+                index = next;
+                continue;
+            }
+            if (boundary.kind != .curly_block) {
+                if (boundary.next <= index) return error.InternalInvariant;
+                index = boundary.next;
+                continue;
+            }
+
+            if (rules_start == null) rules_start = index;
+            try self.flushDeclarationRun(input, run_start, index, owner, &declarations, &rules);
+            const parsed = try self.parseQualifiedRule(input.values, index, depth, true);
+            if (parsed.next <= index) return error.InternalInvariant;
+            if (parsed.rule) |rule| try self.appendRule(&rules, rule);
+            run_start = parsed.next;
+            index = parsed.next;
+        }
+
+        if (owner == .style and declarations == null) {
+            declarations = try self.parseDeclarationRange(input, 0, input.values.len);
+            rules_start = input.values.len;
+        } else {
+            try self.flushDeclarationRun(
+                input,
+                run_start,
+                input.values.len,
+                owner,
+                &declarations,
+                &rules,
+            );
+        }
+        if (declarations == null) declarations = try self.parseDeclarationRange(input, 0, 0);
+
+        const owned = try rules.toOwnedSlice(self.allocator);
+        const rule_span = makeSpan(
+            self.source_id,
+            offsetAt(input, rules_start orelse 0),
+            input.span.end,
+        );
+        const rule_list = self.allocator.create(ast.RuleList) catch return error.OutOfMemory;
+        rule_list.* = ast.RuleList.init(rule_span, owned) catch {
+            try self.report(.internal, rule_span, "nested rule-list span invariant failed");
+            return error.InternalInvariant;
+        };
+        return .{ .declarations = declarations.?, .rules = rule_list };
+    }
+
+    fn flushDeclarationRun(
+        self: *Parser,
+        input: ast.ComponentValueList,
+        start: usize,
+        end: usize,
+        owner: BlockOwner,
+        leading: *?*const ast.DeclarationList,
+        rules: *std.ArrayList(ast.Rule),
+    ) Error!void {
+        const declarations = try self.parseDeclarationRange(input, start, end);
+        if (owner == .style and leading.* == null) {
+            leading.* = declarations;
+            return;
+        }
+        if (declarations.declarations.len == 0) return;
+        const nested = self.allocator.create(ast.NestedDeclarationsRule) catch return error.OutOfMemory;
+        nested.* = ast.NestedDeclarationsRule.init(.{
+            .declarations = declarations.*,
+            .span = declarations.span,
+        }) catch {
+            try self.report(.internal, declarations.span, "nested declarations invariant failed");
+            return error.InternalInvariant;
+        };
+        try self.appendRule(rules, .{ .nested_declarations = nested });
+    }
+
+    fn parseDeclarationRange(
+        self: *Parser,
+        input: ast.ComponentValueList,
+        start: usize,
+        end: usize,
+    ) Error!*const ast.DeclarationList {
+        const span = makeSpan(self.source_id, offsetAt(input, start), offsetAt(input, end));
+        const values = ast.ComponentValueList.init(span, input.values[start..end]) catch {
+            try self.report(.internal, span, "declaration run is not contiguous");
+            return error.InternalInvariant;
+        };
+        return declaration_parser.parse(self.context, self.source_id, values);
+    }
+
+    fn declarationNext(
+        self: *Parser,
+        values: []const syntax.ComponentValue,
+        start: usize,
+        boundary: recovery.Boundary,
+    ) Error!?usize {
+        const name_token = tokenAt(values[start]) orelse return null;
+        if (name_token.kind != .ident) return null;
+        const colon_index = skipTrivia(values, start + 1, boundary.index);
+        if (colon_index == boundary.index or !isTokenKind(values[colon_index], .colon)) return null;
+
+        const declaration_end = declarationEnd(values, start);
+        if ((try self.identifier(name_token)).isCustomProperty()) return declaration_end;
+        if (boundary.kind != .curly_block) return declaration_end;
+
+        if (skipTrivia(values, colon_index + 1, boundary.index) != boundary.index) return null;
+        const terminator_index = if (declaration_end > start and isTokenKind(values[declaration_end - 1], .semicolon))
+            declaration_end - 1
+        else
+            declaration_end;
+        var cursor = skipTrivia(values, boundary.next, terminator_index);
+        if (cursor < terminator_index and isDelimiter(values[cursor], '!')) {
+            cursor = skipTrivia(values, cursor + 1, terminator_index);
+            if (cursor >= terminator_index) return null;
+            const important = tokenAt(values[cursor]) orelse return null;
+            if (important.kind != .ident or
+                !std.ascii.eqlIgnoreCase((try self.identifier(important)).value, "important"))
+            {
+                return null;
+            }
+            cursor = skipTrivia(values, cursor + 1, terminator_index);
+        }
+        return if (cursor == terminator_index) declaration_end else null;
+    }
+
+    fn appendRule(self: *Parser, rules: *std.ArrayList(ast.Rule), rule: ast.Rule) Error!void {
+        if (rules.items.len >= self.options.max_rules) {
+            try self.report(.resource_limit, rule.span(), "rule count limit exceeded");
+            return error.RuleLimit;
+        }
+        try rules.append(self.allocator, rule);
     }
 
     fn identifier(self: *Parser, token: tokenizer.Token) Error!ast.Identifier {
@@ -293,6 +486,19 @@ fn classifyAtRule(name: []const u8) AtRuleClass {
     if (std.ascii.eqlIgnoreCase(name, "keyframes") or
         std.ascii.eqlIgnoreCase(name, "-webkit-keyframes")) return .keyframes;
     return .raw;
+}
+
+fn invalidInNestedContext(name: []const u8) bool {
+    const class = classifyAtRule(name);
+    if (class == .declarations or class == .keyframes) return true;
+    return equalsAny(name, &.{
+        "charset",
+        "import",
+        "namespace",
+        "page",
+        "font-feature-values",
+        "position-try",
+    });
 }
 
 fn equalsAny(name: []const u8, candidates: []const []const u8) bool {
@@ -340,6 +546,47 @@ fn tokenAt(value: syntax.ComponentValue) ?tokenizer.Token {
 fn isAtKeyword(value: syntax.ComponentValue) bool {
     const token = tokenAt(value) orelse return false;
     return token.kind == .at_keyword;
+}
+
+fn isTokenKind(value: syntax.ComponentValue, kind: tokenizer.TokenKind) bool {
+    const token = tokenAt(value) orelse return false;
+    return token.kind == kind;
+}
+
+fn isDelimiter(value: syntax.ComponentValue, expected: u21) bool {
+    const token = tokenAt(value) orelse return false;
+    return token.kind == .delim and token.data.delim == expected;
+}
+
+fn isTrivia(value: syntax.ComponentValue) bool {
+    const token = tokenAt(value) orelse return false;
+    return token.isTrivia();
+}
+
+fn skipTrivia(values: []const syntax.ComponentValue, start: usize, end: usize) usize {
+    var index = start;
+    while (index < end and isTrivia(values[index])) index += 1;
+    return index;
+}
+
+fn skipBlockSeparators(values: []const syntax.ComponentValue, start: usize) usize {
+    var index = start;
+    while (index < values.len and (isTrivia(values[index]) or isTokenKind(values[index], .semicolon))) {
+        index += 1;
+    }
+    return index;
+}
+
+fn declarationEnd(values: []const syntax.ComponentValue, start: usize) usize {
+    var index = start;
+    while (index < values.len) : (index += 1) {
+        if (isTokenKind(values[index], .semicolon)) return index + 1;
+    }
+    return values.len;
+}
+
+fn offsetAt(input: ast.ComponentValueList, index: usize) usize {
+    return if (index < input.values.len) input.values[index].span().start else input.span.end;
 }
 
 fn isIgnorable(value: syntax.ComponentValue, top_level: bool) bool {
@@ -394,6 +641,154 @@ test "stylesheets preserve ordered style rules and nested rule at-rules" {
     try std.testing.expectEqual(@as(usize, 2), media.block.rules.rules.rules.len);
     try std.testing.expect(media.block.rules.rules.rules[0] == .style_rule);
     try std.testing.expect(media.block.rules.rules.rules[1].at_rule.block == .rules);
+}
+
+test "native nesting preserves declaration runs style rules and nested group contents" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "native-nesting.css",
+        ".card{color:red;.title{font-weight:bold}@media (width>40rem){display:grid;> .icon{opacity:1}gap:1rem}background:blue;&.active{color:green}}",
+    );
+    const card = parsed[1].rules[0].style_rule;
+
+    try std.testing.expectEqual(@as(usize, 1), card.block.declarations.declarations.len);
+    try std.testing.expectEqual(@as(usize, 4), card.block.rules.rules.len);
+    try std.testing.expect(card.block.rules.rules[0] == .style_rule);
+    try std.testing.expect(card.block.rules.rules[0].style_rule.selectors.selectors[0].implicit_nesting);
+
+    const media = card.block.rules.rules[1].at_rule;
+    try std.testing.expect(media.block == .rules);
+    try std.testing.expect(media.block.rules.nested);
+    try std.testing.expectEqual(@as(usize, 3), media.block.rules.rules.rules.len);
+    try std.testing.expect(media.block.rules.rules.rules[0] == .nested_declarations);
+    try std.testing.expectEqualStrings(
+        "display",
+        media.block.rules.rules.rules[0].nested_declarations.declarations.declarations[0].name.value,
+    );
+    try std.testing.expect(media.block.rules.rules.rules[1].style_rule.selectors.selectors[0].implicit_nesting);
+    try std.testing.expect(media.block.rules.rules.rules[1].style_rule.selectors.selectors[0].leading_combinator != null);
+    try std.testing.expect(media.block.rules.rules.rules[2] == .nested_declarations);
+
+    try std.testing.expect(card.block.rules.rules[2] == .nested_declarations);
+    try std.testing.expectEqualStrings(
+        "background",
+        card.block.rules.rules[2].nested_declarations.declarations.declarations[0].name.value,
+    );
+    try std.testing.expect(card.block.rules.rules[3] == .style_rule);
+    try std.testing.expect(!card.block.rules.rules[3].style_rule.selectors.selectors[0].implicit_nesting);
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+}
+
+test "nested declaration disambiguation protects custom blocks and recovers invalid rules" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "nesting-disambiguation.css",
+        ".a{--theme:{x:y};future:{};a:hover{x:1}&div{x:bad}color:red;.b{x:2}}",
+    );
+    const rule = parsed[1].rules[0].style_rule;
+
+    try std.testing.expectEqual(@as(usize, 2), rule.block.declarations.declarations.len);
+    try std.testing.expectEqualStrings("--theme", rule.block.declarations.declarations[0].name.value);
+    try std.testing.expectEqualStrings("future", rule.block.declarations.declarations[1].name.value);
+    try std.testing.expectEqual(@as(usize, 3), rule.block.rules.rules.len);
+    try std.testing.expect(rule.block.rules.rules[0] == .style_rule);
+    try std.testing.expect(rule.block.rules.rules[1] == .nested_declarations);
+    try std.testing.expectEqualStrings(
+        "color",
+        rule.block.rules.rules[1].nested_declarations.declarations.declarations[0].name.value,
+    );
+    try std.testing.expect(rule.block.rules.rules[2] == .style_rule);
+    try std.testing.expectEqual(@as(usize, 1), context.diagnostics.items().len);
+}
+
+test "CSS Nesting grammar examples parse at arbitrary depth without selector expansion" {
+    const cases = [_][]const u8{
+        "main{div{}.bar{}#baz{}:has(p){}::backdrop{}[lang|=\"zh\"]{}*{}}",
+        "main{+ article{}> p{}~ main{}}",
+        "ul{.component &{padding-left:0}}",
+        "a{&:hover{color:lightblue}}",
+        ".foo,.bar{+ .baz,&.qux{color:red}}",
+        ".foo{& .bar & .baz & .qux{color:red}}",
+        ".foo{:not(&){color:blue}&&{padding:2ch}}",
+        "figure{margin:0;> figcaption{background:black;> p{font-size:.9rem}}}",
+        "html{@layer base{block-size:100%;@layer support{& body{min-block-size:100%}}}}",
+        ".card{@scope (&) to (> header > *){:scope > header{border:1px solid}}}",
+    };
+    for (cases) |css| {
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const parsed = try parseSource(&context, "nesting-grammar.css", css);
+        try std.testing.expectEqual(@as(usize, 1), parsed[1].rules.len);
+        try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+    }
+}
+
+test "invalid declaration attempts do not split runs until a nested rule is consumed" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "nested-run-recovery.css",
+        ".a{color:red;broken;width:1px;.b{x:1}height:2px}",
+    );
+    const block = parsed[1].rules[0].style_rule.block;
+
+    try std.testing.expectEqual(@as(usize, 2), block.declarations.declarations.len);
+    try std.testing.expectEqualStrings("color", block.declarations.declarations[0].name.value);
+    try std.testing.expectEqualStrings("width", block.declarations.declarations[1].name.value);
+    try std.testing.expectEqual(@as(usize, 2), block.rules.rules.len);
+    try std.testing.expect(block.rules.rules[0] == .style_rule);
+    try std.testing.expect(block.rules.rules[1] == .nested_declarations);
+    try std.testing.expectEqualStrings(
+        "height",
+        block.rules.rules[1].nested_declarations.declarations.declarations[0].name.value,
+    );
+    try std.testing.expectEqual(@as(usize, 1), context.diagnostics.items().len);
+}
+
+test "WPT nesting recovery preserves declarations after declaration-like child rules" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "implicit-nesting-ident-recovery.css",
+        ".a{display:block;display:new-block;color:green}.b{display:block;display:hover {};color:green}",
+    );
+    const first = parsed[1].rules[0].style_rule.block;
+    const second = parsed[1].rules[1].style_rule.block;
+
+    try std.testing.expectEqual(@as(usize, 3), first.declarations.declarations.len);
+    try std.testing.expectEqual(@as(usize, 1), second.declarations.declarations.len);
+    try std.testing.expectEqual(@as(usize, 2), second.rules.rules.len);
+    try std.testing.expect(second.rules.rules[0] == .style_rule);
+    try std.testing.expect(second.rules.rules[1] == .nested_declarations);
+    try std.testing.expectEqualStrings(
+        "color",
+        second.rules.rules[1].nested_declarations.declarations.declarations[0].name.value,
+    );
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+}
+
+test "non-group at-rules are invalid in style and nested group contexts" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "invalid-inner-rules.css",
+        "div{@font-face{&.a{font-size:10px}}@media screen{&.a{color:red}@font-face{&.a{font-size:10px}}}}",
+    );
+    const outer = parsed[1].rules[0].style_rule.block.rules.rules;
+
+    try std.testing.expectEqual(@as(usize, 1), outer.len);
+    try std.testing.expect(outer[0] == .at_rule);
+    const media_rules = outer[0].at_rule.block.rules.rules.rules;
+    try std.testing.expectEqual(@as(usize, 1), media_rules.len);
+    try std.testing.expect(media_rules[0] == .style_rule);
+    try std.testing.expectEqual(@as(usize, 2), context.diagnostics.items().len);
 }
 
 test "at-rule block classifiers retain declarations keyframes raw blocks and no blocks" {
@@ -498,6 +893,16 @@ test "rule count and recursion limits are operational failures" {
         error.RuleNestingLimit,
         parseWithOptions(&depth_context, depth_id, depth_values, .{ .max_nesting = 2 }),
     );
+
+    var nesting_context = try compilation.Compilation.init(std.testing.allocator);
+    defer nesting_context.deinit();
+    const nesting_id = try nesting_context.addSource("native-rule-depth.css", ".a{.b{.c{}}}");
+    const nesting_document = try syntax.parse(&nesting_context, nesting_id);
+    const nesting_values = try ast.ComponentValueList.init(nesting_document.span, nesting_document.values);
+    try std.testing.expectError(
+        error.RuleNestingLimit,
+        parseWithOptions(&nesting_context, nesting_id, nesting_values, .{ .max_nesting = 2 }),
+    );
 }
 
 fn exerciseRuleAllocationFailures(allocator: std.mem.Allocator) !void {
@@ -506,7 +911,7 @@ fn exerciseRuleAllocationFailures(allocator: std.mem.Allocator) !void {
     const parsed = try parseSource(
         &context,
         "oom-rules.css",
-        "@media screen{.a,.b:hover{color:red;color:blue!important}@supports(display:grid){.c{display:grid}}}@unknown{x(y;z)}",
+        ".root{color:red;.a,.b:hover{color:blue!important}@media screen{display:grid;> .c{width:1px}}background:black}@unknown{x(y;z)}",
     );
     try std.testing.expectEqual(@as(usize, 2), parsed[1].rules.len);
 }
@@ -780,7 +1185,7 @@ test "syntax-diagnosed stray closers do not consume the following valid rule" {
 }
 
 test "every typed parser truncation boundary remains recoverable with valid diagnostic spans" {
-    const css = "@media all{.café:not(.x,.y){color:fn(1;[x]);broken}@supports (display:grid){.b{x:1}}}@keyframes f{from{opacity:0}50%{opacity:1}}@page:left{size:A4;@top-left{content:\"x\"}}";
+    const css = "@media all{.café:not(.x,.y){color:fn(1;[x]);broken;.child{width:1px}@media all{display:grid;> .icon{x:1}}background:blue}@supports (display:grid){.b{x:1}}}@keyframes f{from{opacity:0}50%{opacity:1}}@page:left{size:A4;@top-left{content:\"x\"}}";
     var cut: usize = 0;
     while (cut <= css.len) : (cut += 1) {
         var context = try compilation.Compilation.init(std.testing.allocator);

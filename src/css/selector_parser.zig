@@ -31,6 +31,36 @@ pub fn parseWithOptions(
     input: ast.ComponentValueList,
     options: Options,
 ) Error!*const ast.SelectorList {
+    return parseInternal(context, source_id, input, options, .{});
+}
+
+pub fn parseNested(
+    context: *compilation.Compilation,
+    source_id: source.SourceId,
+    input: ast.ComponentValueList,
+) Error!*const ast.SelectorList {
+    return parseNestedWithOptions(context, source_id, input, .{});
+}
+
+pub fn parseNestedWithOptions(
+    context: *compilation.Compilation,
+    source_id: source.SourceId,
+    input: ast.ComponentValueList,
+    options: Options,
+) Error!*const ast.SelectorList {
+    return parseInternal(context, source_id, input, options, .{
+        .allow_relative = true,
+        .nested_rule = true,
+    });
+}
+
+fn parseInternal(
+    context: *compilation.Compilation,
+    source_id: source.SourceId,
+    input: ast.ComponentValueList,
+    options: Options,
+    selector_context: SelectorContext,
+) Error!*const ast.SelectorList {
     const file = try context.sources.get(source_id);
     if (!input.span.source.eql(source_id)) return error.InvalidSelector;
     _ = ast.ComponentValueList.init(input.span, input.values) catch return error.InvalidSelector;
@@ -41,7 +71,7 @@ pub fn parseWithOptions(
         .options = options,
         .suppressed_diagnostics = 0,
     };
-    return parser.parseList(input.values, input.span, 0, .{});
+    return parser.parseList(input.values, input.span, 0, selector_context);
 }
 
 const ParsedSimple = struct {
@@ -66,6 +96,7 @@ const TriviaScan = struct {
 
 const SelectorContext = struct {
     allow_relative: bool = false,
+    nested_rule: bool = false,
     forgiving: bool = false,
     disallow_pseudo_elements: bool = false,
     inside_has: bool = false,
@@ -251,7 +282,7 @@ const Parser = struct {
 
         const selector_start = if (leading) |combinator| combinator.span.start else head.compound.span.start;
         const owned_tails = try tails.toOwnedSlice(self.allocator);
-        return ast.ComplexSelector.init(
+        var selector = ast.ComplexSelector.init(
             makeSpan(spanSource(values, start), selector_start, last_compound.span.end),
             leading,
             head.compound,
@@ -260,6 +291,9 @@ const Parser = struct {
             try self.report(.internal, makeSpan(spanSource(values, start), selector_start, last_compound.span.end), "complex-selector span invariant failed");
             return error.InvalidSelector;
         };
+        selector.implicit_nesting = selector_context.nested_rule and
+            !containsNestingDelimiter(values[start..end]);
+        return selector;
     }
 
     fn parseCompound(
@@ -425,7 +459,7 @@ const Parser = struct {
                 return try self.parsePseudo(values, start, end, depth, selector_context);
             }
             if (isDelimiter(values[start], '&')) {
-                return error.InvalidSelector;
+                return .{ .simple = .{ .nesting = token.span }, .next = start + 1 };
             }
         }
         return switch (values[start]) {
@@ -450,11 +484,14 @@ const Parser = struct {
             const bar_index = skipComments(values, index + 1, values.len);
             if (bar_index < values.len and isDelimiter(values[bar_index], '|')) {
                 const name_index = skipComments(values, bar_index + 1, values.len);
-                if (name_index >= values.len) return error.InvalidSelector;
-                name_token = tokenAt(values[name_index]) orelse return error.InvalidSelector;
-                if (name_token.kind != .ident) return error.InvalidSelector;
-                namespace = .{ .named = try self.identifier(first_token) };
-                index = name_index + 1;
+                if (name_index < values.len and isTokenKind(values[name_index], .ident)) {
+                    name_token = tokenAt(values[name_index]).?;
+                    namespace = .{ .named = try self.identifier(first_token) };
+                    index = name_index + 1;
+                } else {
+                    name_token = first_token;
+                    index += 1;
+                }
             } else {
                 name_token = first_token;
                 index += 1;
@@ -724,9 +761,23 @@ fn isDelimiter(value: syntax.ComponentValue, expected: u21) bool {
     };
 }
 
+fn containsNestingDelimiter(values: []const syntax.ComponentValue) bool {
+    for (values) |value| switch (value) {
+        .token => if (isDelimiter(value, '&')) return true,
+        .simple_block => |block| if (containsNestingDelimiter(block.values)) return true,
+        .function => |function| if (containsNestingDelimiter(function.values)) return true,
+    };
+    return false;
+}
+
 fn isTypeName(value: syntax.ComponentValue) bool {
     const token = tokenAt(value) orelse return false;
     return token.kind == .ident or isDelimiter(value, '*');
+}
+
+fn isTokenKind(value: syntax.ComponentValue, kind: tokenizer.TokenKind) bool {
+    const token = tokenAt(value) orelse return false;
+    return token.kind == kind;
 }
 
 fn isComma(value: syntax.ComponentValue) bool {
@@ -840,11 +891,11 @@ test "type and attribute selectors preserve namespaces values operators and flag
     const parsed = try parseSource(
         &context,
         "attributes.css",
-        "svg|a[*|href^=\"https\" i][|lang|=en s]",
+        "svg|a[*|href^=\"https\" i][|lang|=en s][lang|=\"zh\"]",
     );
     const simple = parsed[1].selectors[0].head.simple_selectors;
 
-    try std.testing.expectEqual(@as(usize, 3), simple.len);
+    try std.testing.expectEqual(@as(usize, 4), simple.len);
     try std.testing.expect(simple[0] == .type_selector);
     try std.testing.expect(simple[0].type_selector.namespace == .named);
     try std.testing.expectEqualStrings("svg", simple[0].type_selector.namespace.named.value);
@@ -862,6 +913,11 @@ test "type and attribute selectors preserve namespaces values operators and flag
     try std.testing.expectEqual(ast.AttributeMatcherKind.dash, lang.matcher.?.kind);
     try std.testing.expectEqualStrings("en", lang.value.?.identifier.value);
     try std.testing.expect(lang.modifier.? == .sensitive);
+
+    const unprefixed_lang = simple[3].attribute;
+    try std.testing.expect(unprefixed_lang.namespace == .implicit);
+    try std.testing.expectEqual(ast.AttributeMatcherKind.dash, unprefixed_lang.matcher.?.kind);
+    try std.testing.expectEqualStrings("zh", unprefixed_lang.value.?.string.value);
 }
 
 test "universal and empty namespace type forms remain distinct" {
@@ -1004,6 +1060,100 @@ test "Selectors Level 4 grammar examples parse as typed selector lists" {
     }
 }
 
+test "CSS Nesting selectors distinguish implied and explicit parent references" {
+    const cases = [_]struct {
+        css: []const u8,
+        implicit_nesting: bool,
+    }{
+        .{ .css = ".child", .implicit_nesting = true },
+        .{ .css = "> .child", .implicit_nesting = true },
+        .{ .css = "&.active", .implicit_nesting = false },
+        .{ .css = ".ancestor &", .implicit_nesting = false },
+        .{ .css = ":future(&)", .implicit_nesting = false },
+        .{ .css = "div&", .implicit_nesting = false },
+        .{ .css = "&&", .implicit_nesting = false },
+    };
+    for (cases) |case| {
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const id = try context.addSource("nested-selector.css", case.css);
+        const document = try syntax.parse(&context, id);
+        const values = try ast.ComponentValueList.init(document.span, document.values);
+        const parsed = try parseNested(&context, id, values);
+
+        try std.testing.expectEqual(@as(usize, 1), parsed.selectors.len);
+        try std.testing.expectEqual(case.implicit_nesting, parsed.selectors[0].implicit_nesting);
+        try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+    }
+
+    var scope_context = try compilation.Compilation.init(std.testing.allocator);
+    defer scope_context.deinit();
+    const scope_id = try scope_context.addSource("scope-selector.css", "&");
+    const scope_document = try syntax.parse(&scope_context, scope_id);
+    const scope_values = try ast.ComponentValueList.init(scope_document.span, scope_document.values);
+    const scope = try parse(&scope_context, scope_id, scope_values);
+    try std.testing.expect(!scope.selectors[0].implicit_nesting);
+    try std.testing.expect(scope.selectors[0].head.simple_selectors[0] == .nesting);
+}
+
+test "CSS Nesting keeps type selectors first in a compound" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const id = try context.addSource("invalid-nested-type.css", "&div");
+    const document = try syntax.parse(&context, id);
+    const values = try ast.ComponentValueList.init(document.span, document.values);
+
+    try std.testing.expectError(error.InvalidSelector, parseNested(&context, id, values));
+    try std.testing.expectEqual(@as(usize, 1), context.diagnostics.items().len);
+}
+
+test "WPT CSS Nesting selector parsing matrix remains accepted" {
+    const selectors = [_][]const u8{
+        "&",
+        "&.bar",
+        "& .bar",
+        "& > .bar",
+        "> .bar",
+        "> & .bar",
+        "+ .bar &",
+        "+ .bar, .foo, > .baz",
+        ".foo",
+        ".test > & .bar",
+        ".foo, .foo &",
+        ".foo, .bar",
+        ":is(.bar, .baz)",
+        "&:is(.bar, .baz)",
+        ":is(.bar, &.baz)",
+        "&:is(.bar, &.baz)",
+        "div&",
+        ".class&",
+        "&.class",
+        "[attr]&",
+        "&[attr]",
+        "#id&",
+        "&#id",
+        ":hover&",
+        "&:hover",
+        ":is(div)&",
+        "&:is(div)",
+        "& .bar & .baz & .qux",
+        "&&",
+        "& > section, & > article",
+        "& + .baz, &.qux",
+    };
+    for (selectors) |selector| {
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const id = try context.addSource("wpt-nesting-selector.css", selector);
+        const document = try syntax.parse(&context, id);
+        const values = try ast.ComponentValueList.init(document.span, document.values);
+        const parsed = try parseNested(&context, id, values);
+
+        try std.testing.expect(parsed.selectors.len > 0);
+        try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+    }
+}
+
 test "invalid selector boundaries report diagnostics without partial success" {
     const cases = [_][]const u8{
         ".",
@@ -1018,7 +1168,6 @@ test "invalid selector boundaries report diagnostics without partial success" {
         ":not(::before)",
         "a::before > b",
         "a::before:nth-child(2)",
-        "& .x",
         ":is",
     };
     for (cases) |css| {
