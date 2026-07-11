@@ -5,6 +5,7 @@ pub const rule_parser = @import("css/rule_parser.zig");
 pub const at_rule_parser = @import("css/at_rule_parser.zig");
 pub const recovery = @import("css/recovery.zig");
 pub const emitter = @import("css/emitter.zig");
+pub const equivalence = @import("css/equivalence.zig");
 
 test {
     _ = ast;
@@ -14,4 +15,5 @@ test {
     _ = at_rule_parser;
     _ = recovery;
     _ = emitter;
+    _ = equivalence;
 }

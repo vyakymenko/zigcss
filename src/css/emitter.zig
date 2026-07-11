@@ -215,7 +215,7 @@ const Emitter = struct {
         try self.writeIdentifier(name.value);
         if (arguments) |value| {
             try self.appendByte('(');
-            try self.writeComponentValues(value.values);
+            try self.writeComponentValuesWithEdges(value.values, false);
             try self.appendByte(')');
         }
     }
@@ -233,26 +233,26 @@ const Emitter = struct {
                 try self.writePageSelectors(details.selectors);
             }
         } else if (hasNonWhitespace(rule.prelude.values)) {
-            try self.appendByte(' ');
+            if (rule.details != null or beginsWithWhitespace(rule.prelude.values)) try self.appendByte(' ');
             try self.writeComponentValues(rule.prelude.values);
         }
 
         switch (rule.block) {
             .none => try self.appendByte(';'),
             .declarations => |block| {
-                try self.writePrettySpace();
+                try self.writeAtRuleBlockSeparator(rule);
                 try self.writeDeclarationBlock(block, depth);
             },
             .rules => |block| {
-                try self.writePrettySpace();
+                try self.writeAtRuleBlockSeparator(rule);
                 try self.writeRulesBlock(block, depth);
             },
             .keyframes => |block| {
-                try self.writePrettySpace();
+                try self.writeAtRuleBlockSeparator(rule);
                 try self.writeKeyframesBlock(block, depth);
             },
             .raw => |block| {
-                try self.writePrettySpace();
+                try self.writeAtRuleBlockSeparator(rule);
                 if (page) |details| {
                     try self.writePageBlock(details, block, depth);
                 } else {
@@ -422,17 +422,25 @@ const Emitter = struct {
     fn writeRawBlock(self: *Emitter, block: *const ast.RawBlock) Error!void {
         if (!block.envelope.terminated()) return error.UnterminatedSyntax;
         try self.appendByte('{');
-        try self.writeComponentValues(block.values.values);
+        try self.writeComponentValuesWithEdges(block.values.values, false);
         try self.appendByte('}');
     }
 
     fn writeComponentValues(self: *Emitter, values: []const syntax.ComponentValue) Error!void {
-        var wrote_value = false;
+        try self.writeComponentValuesWithEdges(values, true);
+    }
+
+    fn writeComponentValuesWithEdges(
+        self: *Emitter,
+        values: []const syntax.ComponentValue,
+        trim_edges: bool,
+    ) Error!void {
+        var wrote_significant = false;
         var pending_space = false;
         for (values) |value| {
             try self.validateComponent(value);
             if (isWhitespace(value)) {
-                pending_space = wrote_value;
+                if (wrote_significant or !trim_edges) pending_space = true;
                 continue;
             }
             if (pending_space) try self.appendByte(' ');
@@ -441,9 +449,10 @@ const Emitter = struct {
             } else {
                 try self.writeMinifiedComponent(value);
             }
-            wrote_value = true;
+            wrote_significant = true;
             pending_space = false;
         }
+        if (pending_space and !trim_edges) try self.appendByte(' ');
     }
 
     fn writeMinifiedComponent(self: *Emitter, value: syntax.ComponentValue) Error!void {
@@ -451,12 +460,12 @@ const Emitter = struct {
             .token => |token| try self.appendSlice(try self.raw(token.span)),
             .simple_block => |block| {
                 try self.appendSlice(try self.raw(block.opening.span));
-                try self.writeComponentValues(block.values);
+                try self.writeComponentValuesWithEdges(block.values, false);
                 try self.appendSlice(try self.raw(block.closing.?.span));
             },
             .function => |function| {
                 try self.appendSlice(try self.raw(function.opening.span));
-                try self.writeComponentValues(function.values);
+                try self.writeComponentValuesWithEdges(function.values, false);
                 try self.appendSlice(try self.raw(function.closing.?.span));
             },
         }
@@ -593,6 +602,12 @@ const Emitter = struct {
 
     fn writePrettySpace(self: *Emitter) Error!void {
         if (self.pretty()) try self.appendByte(' ');
+    }
+
+    fn writeAtRuleBlockSeparator(self: *Emitter, rule: *const ast.AtRule) Error!void {
+        if (self.pretty() and (rule.details != null or endsWithWhitespace(rule.prelude.values))) {
+            try self.appendByte(' ');
+        }
     }
 
     fn writeIndent(self: *Emitter, depth: usize) Error!void {
@@ -770,6 +785,14 @@ fn hasNonWhitespace(values: []const syntax.ComponentValue) bool {
     return false;
 }
 
+fn beginsWithWhitespace(values: []const syntax.ComponentValue) bool {
+    return values.len > 0 and isWhitespace(values[0]);
+}
+
+fn endsWithWhitespace(values: []const syntax.ComponentValue) bool {
+    return values.len > 0 and isWhitespace(values[values.len - 1]);
+}
+
 fn isWhitespace(value: syntax.ComponentValue) bool {
     return switch (value) {
         .token => |token| token.kind == .whitespace,
@@ -837,7 +860,7 @@ test "pretty emission deterministically formats typed rules without reordering" 
         "  font-family: 'A';\n" ++
         "  src: url(x);\n" ++
         "}\n" ++
-        "@unknown foo {a(b;c)}\n";
+        "@unknown foo{a(b;c)}\n";
     try std.testing.expectEqualStrings(expected, first);
     try std.testing.expectEqualStrings(first, second);
 
@@ -1023,7 +1046,7 @@ test "statements empty blocks and formatting options remain deterministic" {
     );
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings(
-        "@import url(x);\n@layer base;\n.empty {}\n.filled {\n    x: 1;\n}\n@media all {}\n@unknown x {}",
+        "@import url(x);\n@layer base;\n.empty {}\n.filled {\n    x: 1;\n}\n@media all {}\n@unknown x{}",
         output,
     );
 
@@ -1058,7 +1081,7 @@ test "minified emission removes only grammar-safe structural whitespace" {
     defer std.testing.allocator.free(output);
 
     try std.testing.expectEqualStrings(
-        ".a .b,#\\31 id[data-x=\"a b\"]{color:red;color:blue!important;--x:a/**/b;width:calc(1 + 2)}" ++
+        ".a .b,#\\31 id[data-x=\"a b\"]{color:red;color:blue!important;--x:a/**/b;width:calc( 1 + 2 )}" ++
             "@media screen and (width > 1px){.c>.d{margin:0 auto}}",
         output,
     );
@@ -1091,7 +1114,7 @@ test "minified raw values retain token and grammar separators" {
     );
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings(
-        ".x{--ident:foo bar;--number:1 2;--dimension:1px solid;--operator:1 + 2;--comment:a/**/b;--nested:var(--x, a b)}",
+        ".x{--ident:foo bar;--number:1 2;--dimension:1px solid;--operator:1 + 2;--comment:a/**/b;--nested:var( --x, a b )}",
         output,
     );
 
@@ -1124,7 +1147,7 @@ test "minified structured and raw at-rules retain source order" {
         "@keyframes fade{from,50%{opacity:0}100%{opacity:1}}" ++
             "@page invoice:first,:left{margin:1cm;@top-left{content:\"Invoice\"}size:A4}" ++
             "@font-face{font-family:'A';src:url(x)}" ++
-            "@unknown foo{a(1 ; 2)}",
+            "@unknown foo{a( 1 ; 2 )}",
         output,
     );
 
@@ -1133,6 +1156,24 @@ test "minified structured and raw at-rules retain source order" {
     const reparsed = try parseSource(&reparsed_context, "minified-structures-output.css", output);
     try std.testing.expectEqual(@as(usize, 4), reparsed[1].rules.len);
     try std.testing.expectEqual(@as(usize, 0), reparsed_context.diagnostics.items().len);
+}
+
+test "minified unknown syntax preserves edge whitespace presence" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "unknown-whitespace.css",
+        "@unknown(foo){  a(  b  )  }@unknown(bar);",
+    );
+    const output = try emit(
+        std.testing.allocator,
+        try context.sources.get(parsed[0]),
+        parsed[1],
+        .{ .mode = .minified },
+    );
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("@unknown(foo){ a( b ) }@unknown(bar);", output);
 }
 
 test "emission is bound to the AST source file" {
