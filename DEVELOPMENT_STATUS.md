@@ -14,10 +14,10 @@ Last updated: 2026-07-11
 
 ## Current work
 
-- Milestone: Milestone 1 — Tokenizer, source model, and AST foundation
-- Work package: Milestone 1 exit validation
+- Milestone: Milestone 2 — Standards-correct CSS parser and emitter
+- Work package: `PAR-001`
 - State: `IN_PROGRESS`
-- Next eligible package: Milestone 1 exit gate
+- Next eligible package: `PAR-001` and `PAR-002`
 
 ## Milestone 0 package ledger
 
@@ -97,9 +97,42 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 | `SYN-001` | `VERIFIED` | Added arena-owned lossless component values with preserved tokens, recursive simple blocks, functions, optional closing tokens, and original-byte node spans. Tests prove exact top-level round trips, independent `()[]{}` nesting, quoted/unquoted URL behavior, retained trivia, mismatched-closer preservation, bounded truncated-input recovery, unknown-source errors, exhaustive allocation-failure cleanup, and a configurable default nesting cap. Debug and ReleaseSafe pass 152/152. | `396b6b9` |
 | `AST-001` | `VERIFIED` | Introduced the new `src/css/ast.zig` selector model: selector lists, complex selectors with optional leading and explicit inter-compound combinators, ordered compounds/simple selectors, namespace states, type/universal/id/class/nesting selectors, fully representable attribute operators/quoted values/case flags, and pseudo class/element arguments retaining both raw component values and optional typed selector lists. Constructors validate source/span containment and impossible shapes. Tests prove `.a.b` differs structurally from `.a .b`, every combinator/namespace is representable, functional pseudo syntax stays lossless, and attribute metadata survives. Debug and ReleaseSafe pass 161/161. | `ef810d5` |
 | `AST-002` | `VERIFIED` | Added contiguous lossless component-value lists, ordered declaration lists, explicit name/colon/value/terminator spans, custom-property identity, and validated top-level `!important` metadata that retains its raw marker/trivia while exposing the semantic value prefix. Tests prove nested semicolons/colons stay inside component nodes, comments/case in `!important` are preserved, invalid markers are rejected, and duplicate fallback declarations retain order. Debug and ReleaseSafe pass 164/164. | `2869b7c` |
-| `AST-003` | `VERIFIED` | Added exact terminated/unterminated block envelopes; ordered style/at-rule lists; declaration, nested-rule, keyframe, raw, and no-block at-rule variants; raw preludes; keyframe rules; and source-contained constructors. Tests cover every category, nested unknown syntax, percentage keyframe preludes, rule order, invalid block gaps, and semicolon-free EOF forms. Debug and ReleaseSafe pass 170/170. | Checkpoint pending |
+| `AST-003` | `VERIFIED` | Added exact terminated/unterminated block envelopes; ordered style/at-rule lists; declaration, nested-rule, keyframe, raw, and no-block at-rule variants; raw preludes; keyframe rules; and source-contained constructors. Tests cover every category, nested unknown syntax, percentage keyframe preludes, rule order, invalid block gaps, and semicolon-free EOF forms. Debug and ReleaseSafe pass 170/170. | `78bc6d1` |
 | `MEM-001` | `VERIFIED` | `Compilation` now owns a heap-stable, caller-backed arena used by sources, diagnostics, and temporary syntax storage. Foundational `CompileResult` storage deeply owns CSS, optional source-map bytes, and cloned diagnostic messages independently of compilation lifetime; `take` makes moves explicit and leaves one safe cleanup path. Tests cover compilation moves, unfreed arena temporaries, post-compilation result access, empty/double cleanup, diagnostic-bearing results, and every constructor allocation failure. Debug and ReleaseSafe pass 143/143. | `3330a57` |
 | `DIAG-001` | `VERIFIED` | Token recovery metadata and syntax parsing now append compilation-owned diagnostics for invalid UTF-8 and escapes, bad/unterminated strings and URLs, unterminated comments/blocks/functions, mismatched or top-level closers, and nesting limits while preserving a usable lossless document whenever recovery is possible. Diagnostic spans remain source-valid (including zero-width EOF spans), allocation failures propagate separately, and result cloning already deep-copies messages. Debug and ReleaseSafe pass 155/155, including exhaustive diagnostic-allocation failure injection. | `182aa5c` |
+
+## Milestone 1 exit validation
+
+Milestone 1 is `PASS`. The gate adds a representative modern-CSS round-trip corpus, exercises every truncation boundary of nested escaped input (including cuts inside multibyte UTF-8), and passes every single byte through the full lossless syntax boundary.
+
+| Gate | Result |
+|---|---|
+| Package closure | `PASS`; `ARCH-001`, `TOK-001` through `TOK-003`, `SYN-001`, `AST-001` through `AST-003`, `MEM-001`, and `DIAG-001` are verified and checkpointed. |
+| Debug / ReleaseSafe tests | `PASS`; each completed 173/173 tests (80 legacy unit, 68 new library/core, 25 CLI integration). |
+| Lossless corpus and truncation recovery | `PASS`; representative custom-property, selector, keyframe, nesting, Unicode/escape, URL, and unknown-syntax inputs round-trip exactly; every tested prefix and byte does likewise without a leak or panic. |
+| Diagnostics and positions | `PASS`; malformed/truncated input remains usable and carries source-valid structured spans; LF/CRLF/form-feed, multibyte columns, EOF spans, invalid UTF-8, comments, strings, URLs, escapes, mismatched closers, and nesting limits are covered. |
+| AST invariants | `PASS`; adjacency/combinators, attributes, functional pseudos, nested declaration values, importance/fallback ordering, at-rule categories, keyframe preludes, block EOF state, and rule order have independent tests. |
+| Ownership / allocation failure | `PASS`; compilation arena, result cloning, decoded tokens, syntax construction, and diagnostics pass exhaustive allocation-failure injection. |
+| Debug / ReleaseSafe builds | `PASS`; each completed 3/3 build steps. |
+| Documentation | `PASS`; 69/69 tests and the Vite production build completed. |
+| Editor and package surfaces | `PASS`; VS Code TypeScript completed with `--noEmit`; npm dry-run contains the expected five files (12.2 kB unpacked). |
+| Focused formatting | `PASS`; all Milestone 1 files pass `zig fmt --check`. Repository-wide checking reports only the same 19 inherited files recorded at baseline. |
+| Compatibility boundary | `PASS`; the new public source/token/syntax/CSS-AST modules coexist separately from the inherited parser; stable CLI transformation paths remain contained until Milestone 2 replaces them. |
+
+## Milestone 2 package ledger
+
+| Package | State | Evidence / decision | Commit |
+|---|---|---|---|
+| `PAR-001` | `IN_PROGRESS` | Selector-list, compound, combinator, attribute, and functional-pseudo lowering now has a verified lossless syntax and typed AST foundation. | — |
+| `PAR-002` | `NOT_STARTED` | Declaration and nested-value parsing depends on the Milestone 1 syntax/AST foundation. | — |
+| `PAR-003` | `NOT_STARTED` | Qualified-rule parsing and at-rule block classification depend on `PAR-001` and `PAR-002`. | — |
+| `PAR-004` | `NOT_STARTED` | Structured keyframes/media/supports/container/layer/property/page/font-face parsing depends on `PAR-003`. | — |
+| `ERR-001` | `NOT_STARTED` | Parser recovery synchronization depends on `PAR-003`. | — |
+| `EMIT-001` | `NOT_STARTED` | Deterministic pretty emission and escaping depend on `PAR-001` through `PAR-004`. | — |
+| `EMIT-002` | `NOT_STARTED` | Grammar-aware whitespace minification depends on `EMIT-001`. | — |
+| `ROUND-001` | `NOT_STARTED` | Parse/emit/parse equivalence depends on `EMIT-001`. | — |
+| `MAP-001` | `NOT_STARTED` | Source Map v3 mappings depend on `EMIT-001`. | — |
+| `NEST-001` | `NOT_STARTED` | Native CSS nesting remains gated on `PAR-003` plus its dedicated grammar suite. | — |
 
 ## Completed work packages
 
@@ -172,4 +205,4 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 ## Last full validation
 
-Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`AST-003`): Debug and ReleaseSafe each pass 170/170 tests (80 legacy unit, 65 new library/core, 25 CLI integration); `src/css/ast.zig` passes formatting. Milestone 1 exit validation is now active. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
+Milestones 0 and 1 are `PASS`. The Milestone 1 exit gate passes Debug and ReleaseSafe at 173/173 tests (80 legacy unit, 68 new library/core, 25 CLI integration), Debug/ReleaseSafe builds, 69/69 docs tests and production build, focused formatting, editor type-check, and package dry-run. The same 19 inherited formatting failures and recorded dependency-audit debt remain scheduled work. `PAR-001` is active.

@@ -600,3 +600,78 @@ test "diagnostic recovery handles every allocation failure" {
         .{},
     );
 }
+
+test "milestone corpus round trips representative modern CSS losslessly" {
+    const cases = [_]struct {
+        name: []const u8,
+        css: []const u8,
+    }{
+        .{
+            .name = "custom-properties.css",
+            .css = "@charset \"UTF-8\";\n:root { --theme: color(display-p3 1 0 0); }\n",
+        },
+        .{
+            .name = "selectors.css",
+            .css = "@media (width >= 40rem) { .a:is(.b, [data-x=\"}\"]) > .c { color: rgb(1 2 3 / 50%); } }",
+        },
+        .{
+            .name = "keyframes.css",
+            .css = "@keyframes fade { from { opacity: 0 } 50% { opacity: .5 } to { opacity: 1 } }",
+        },
+        .{
+            .name = "nesting.css",
+            .css = "@supports selector(:has(> img)) { @layer components { .x { container-type: inline-size; } } }",
+        },
+        .{
+            .name = "escapes.css",
+            .css = "/* α */ .\\31 23, café { background: url(data:image/svg+xml,%3Csvg%3E); content: \"a\\\r\nb\"; }",
+        },
+        .{
+            .name = "unknown.css",
+            .css = "@vendor token(foo; [bar:baz]) { custom???: calc(1 + var(--x, 2)); }",
+        },
+    };
+
+    for (cases) |case| {
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const id = try context.addSource(case.name, case.css);
+        const file = try context.sources.get(id);
+        const document = try parse(&context, id);
+        try expectRoundTrip(document, file);
+        try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
+    }
+}
+
+test "every truncation boundary round trips and keeps diagnostic spans valid" {
+    const input = "/* α */ @media (width > 1px) { .a\\31  { content: \"x\\\r\ny\"; background: url(foo\\ bar); } }";
+    var end: usize = 0;
+    while (end <= input.len) : (end += 1) {
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const id = try context.addSource("prefix.css", input[0..end]);
+        const file = try context.sources.get(id);
+        const document = try parse(&context, id);
+        try expectRoundTrip(document, file);
+        for (context.diagnostics.items()) |diagnostic| {
+            try std.testing.expect(diagnostic.span.source.eql(id));
+            _ = try file.slice(diagnostic.span);
+        }
+    }
+}
+
+test "every single byte survives the lossless syntax boundary" {
+    var byte_value: u16 = 0;
+    while (byte_value <= 255) : (byte_value += 1) {
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const input = [_]u8{@intCast(byte_value)};
+        const id = try context.addSource("byte.css", &input);
+        const file = try context.sources.get(id);
+        const document = try parse(&context, id);
+        try expectRoundTrip(document, file);
+        for (context.diagnostics.items()) |diagnostic| {
+            _ = try file.slice(diagnostic.span);
+        }
+    }
+}
