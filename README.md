@@ -6,6 +6,16 @@ The repository contains useful Zig scaffolding for a CSS CLI, parser, emitter, t
 
 The authoritative roadmap is [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Execution evidence and package state are tracked in [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md).
 
+## Autonomous development operations
+
+The repository keeps its persistent Codex procedure in [docs/operations/codex-loop-protocol.md](docs/operations/codex-loop-protocol.md). A read-only orientation helper reconstructs branch, dirty state, ledger work, blockers, validation evidence, checkpoints, and toolchain visibility:
+
+```bash
+bash scripts/autodevelop/orient.sh
+```
+
+The helper does not launch a model or mutate the repository; the active Codex task owns scheduling and goal continuation.
+
 ## Current contract
 
 | Surface | Status | Behavior |

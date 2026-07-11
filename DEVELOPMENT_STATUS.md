@@ -14,10 +14,10 @@ Last updated: 2026-07-11
 
 ## Current work
 
-- Milestone: Post-Milestone-0 operator tooling
-- Work package: `OPS-001` — autonomous-loop protocol and read-only orientation script
+- Milestone: Milestone 1 — Tokenizer, source model, and AST foundation
+- Work package: foundational ADRs, then `ARCH-001` and `TOK-001`
 - State: `IN_PROGRESS`
-- Next eligible package: `OPS-001`, then foundational ADRs and `ARCH-001` / `TOK-001`
+- Next eligible package: `ADR-001`, `ADR-002`, `ADR-003`, `ADR-010`, `ARCH-001`, then `TOK-001`
 
 ## Milestone 0 package ledger
 
@@ -71,6 +71,12 @@ Completed on recovery commit `6a2b594`.
 
 Milestone 0 exit criteria pass: static serving is contained; the public compiler endpoint is disabled; destructive CLI output paths and accepted no-op flags are rejected; unsafe transforms are unreachable from stable paths; every audit crash/corruption has an executable regression or explicit containment; public documentation describes the current experimental boundary.
 
+## Operator-requested tooling ledger
+
+| Package | State | Evidence / decision | Commit |
+|---|---|---|---|
+| `OPS-001` | `VERIFIED` | Added a canonical single-agent Codex loop protocol and executable read-only `scripts/autodevelop/orient.sh`. Tests prove it preserves Git status while reporting branch, ledger work, blockers, validation, checkpoints, recovery delta, durable-file hashes, and local tool versions from a nested directory. Bash syntax, 61/61 docs tests, claims checks, and Vite build pass. | Checkpoint pending |
+
 ## Completed work packages
 
 - `SEC-001`: static serving is contained within the configured real root and malformed URL encoding is handled without a process crash. Focused result: 7/7 security tests; integration result: 44/44 docs tests plus successful Vite build.
@@ -122,7 +128,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - Legacy optimizer functions remain reachable only to explicitly labeled internal tests. They are not part of the stable CLI/code-generation path and must not be re-enabled without pass-specific acceptance evidence.
 - Operator-requested post-Milestone-0 tooling: add a ZigCSS autonomous-loop protocol plus a read-only `orient.sh`, modeled on Alvo's protocol/orient split and adapted to this repository's no-push/no-deploy authority boundary.
 - Alternate-format parsers remain available only as experimental internals for characterization; `.scss`, `.sass`, `.less`, `.styl`, `.postcss`, `.module.css`, and CSS-in-JS extensions are rejected by the recovery CLI before any output is written.
+- The persistent Codex goal remains the scheduler. `scripts/autodevelop/orient.sh` is deliberately read-only and cannot launch a model, wake a task, or mutate repository/external state; `docs/operations/codex-loop-protocol.md` is the canonical resume procedure.
 
 ## Last full validation
 
-Milestone 0 `PASS` on commit `6a2b594`: Debug and ReleaseSafe each pass 105/105 Zig tests; docs pass 59/59 and build; editor type-check, npm package/wrapper smoke, five target inspections, and the non-root container smoke pass. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
+Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`OPS-001`): Bash syntax and read-only behavior pass; documentation passes 61/61 tests and Vite build. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
