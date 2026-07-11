@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 2 — Standards-correct CSS parser and emitter
-- Work package: `PAR-002`
+- Work package: `PAR-003`
 - State: `IN_PROGRESS`
-- Next eligible package: `PAR-002`
+- Next eligible package: `PAR-003`
 
 ## Milestone 0 package ledger
 
@@ -123,8 +123,8 @@ Milestone 1 is `PASS` at gate checkpoint `31a00c1`. The gate adds a representati
 
 | Package | State | Evidence / decision | Commit |
 |---|---|---|---|
-| `PAR-001` | `VERIFIED` | Added arena-owned selector lowering from lossless component values into selector lists, compounds, standard descendant/child/sibling combinators, namespaces, universal/type/class/ID selectors, attributes with every matcher and `i`/`s` flag, legacy/modern pseudo-elements, raw functional pseudos, and typed selector arguments for `:is`, `:where`, `:not`, and `:has`. Comments and whitespace retain distinct semantics; `:is`/`:where` use silent forgiving lists (including empty results), while strict/relative pseudo lists, nested `:has`, pseudo-element contexts, unsupported column combinators, and pre-`NEST-001` `&` are rejected. Names decode into the compilation arena while full spans preserve spelling. Debug and ReleaseSafe pass 185/185, including official Selectors Level 4 grammar examples, negative recovery, recursion limits, and exhaustive allocation-failure injection. | Checkpoint pending |
-| `PAR-002` | `NOT_STARTED` | Declaration and nested-value parsing depends on the Milestone 1 syntax/AST foundation. | — |
+| `PAR-001` | `VERIFIED` | Added arena-owned selector lowering from lossless component values into selector lists, compounds, standard descendant/child/sibling combinators, namespaces, universal/type/class/ID selectors, attributes with every matcher and `i`/`s` flag, legacy/modern pseudo-elements, raw functional pseudos, and typed selector arguments for `:is`, `:where`, `:not`, and `:has`. Comments and whitespace retain distinct semantics; `:is`/`:where` use silent forgiving lists (including empty results), while strict/relative pseudo lists, nested `:has`, pseudo-element contexts, unsupported column combinators, and pre-`NEST-001` `&` are rejected. Names decode into the compilation arena while full spans preserve spelling. Debug and ReleaseSafe pass 185/185, including official Selectors Level 4 grammar examples, negative recovery, recursion limits, and exhaustive allocation-failure injection. | `8c6a9cf` |
+| `PAR-002` | `VERIFIED` | Added arena-owned declaration-list lowering and top-level semicolon recovery. Property names decode with raw spans; values remain exact contiguous component lists; functions, blocks, strings, and custom-property syntax cannot be split by nested delimiters; final trivia-separated `!important` markers are case/escape aware while raw marker spelling remains retained; empty values, duplicate fallbacks, and missing final semicolons are preserved. Invalid candidates append diagnostics and resume at the next top-level semicolon. Debug and ReleaseSafe pass 194/194, including count limits and exhaustive valid/recovery allocation-failure injection. | Checkpoint pending |
 | `PAR-003` | `NOT_STARTED` | Qualified-rule parsing and at-rule block classification depend on `PAR-001` and `PAR-002`. | — |
 | `PAR-004` | `NOT_STARTED` | Structured keyframes/media/supports/container/layer/property/page/font-face parsing depends on `PAR-003`. | — |
 | `ERR-001` | `NOT_STARTED` | Parser recovery synchronization depends on `PAR-003`. | — |
@@ -156,6 +156,7 @@ Milestone 1 is `PASS` at gate checkpoint `31a00c1`. The gate adds a representati
 - `AST-002`: declaration values retain the complete raw component stream (including `!important` and trivia); `ImportantAnnotation.value_end` identifies the semantic prefix without deleting spelling or collapsing duplicate declarations.
 - `AST-003`: at-rule block interpretation is a tagged choice rather than a universal rule/declaration assumption; every category retains the original prelude and exact brace/EOF envelope.
 - `PAR-001`: selector lowering follows the current CSSWG Selectors Level 4 Editor's Draft grammar; style-rule lists are strict, only `:is()`/`:where()` are forgiving, and their discarded items do not create compilation errors.
+- `PAR-002`: declaration parsing never searches raw delimiters inside nested syntax; only top-level semicolon component values synchronize candidates, and malformed candidates remain source-preserved gaps in the ordered declaration-list span.
 
 ## Active blockers
 
@@ -204,7 +205,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - Declaration lists are ordered slices rather than property maps, preserving fallback declarations and leaving cascade/importance decisions to later explicit passes.
 - Rule lists remain ordered and recursive through pointers, preventing non-adjacent at-rules/rules from being merged by the data model itself.
 - Column combinators remain representable in the AST but are not accepted by the stable parser because the current Selectors Level 4 grammar lists only descendant, child, next-sibling, and subsequent-sibling combinators. CSS nesting selectors remain rejected until `NEST-001`.
+- Parsed declarations retain the complete raw value (including importance trivia/marker) while `valueWithoutImportance()` exposes the semantic prefix; no property map or early value interpretation may remove fallback order.
 
 ## Last full validation
 
-Milestones 0 and 1 are `PASS`. Latest package validation (`PAR-001`): Debug and ReleaseSafe each pass 185/185 tests (80 legacy unit, 80 new library/core, 25 CLI integration); `src/css/ast.zig`, `src/css/selector_parser.zig`, and `src/css.zig` pass formatting. The same 19 inherited formatting failures and recorded dependency-audit debt remain scheduled work. `PAR-002` is active.
+Milestones 0 and 1 are `PASS`. Latest package validation (`PAR-002`): Debug and ReleaseSafe each pass 194/194 tests (80 legacy unit, 89 new library/core, 25 CLI integration); `src/css/ast.zig`, `src/css/declaration_parser.zig`, and `src/css.zig` pass formatting. The same 19 inherited formatting failures and recorded dependency-audit debt remain scheduled work. `PAR-003` is active.
