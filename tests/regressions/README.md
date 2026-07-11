@@ -25,7 +25,7 @@ Cases labeled `optimizer containment:` are active safety assertions: every trans
 | Profiling lifecycle crash | Verified by `PROF-001` | `PROF-010` owns real allocator-backed metrics. |
 | Source-map no-op behavior | Quarantined | `CLI-002`, `MAP-001` |
 | Browser-target prefix behavior | Contained by `OPT-001` | `PREFIX-001`, `PREFIX-002` |
-| Input overwrite and batch output collision | Quarantined | `CLI-001` |
+| Input overwrite and batch output collision | Verified by `CLI-001` | `CLI-012` later adds atomic writes and final naming policy. |
 | Unknown flags and missing flag values | Quarantined | `CLI-002` |
 
 Static traversal, malformed URL handling, and compile-service containment are active passing assertions in `docs/src/server.test.ts` because `SEC-001` is verified and the public compile service is disabled pending `SEC-002`.

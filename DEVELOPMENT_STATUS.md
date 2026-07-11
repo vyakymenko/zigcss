@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 0 — Containment and regression baseline
-- Work package: `CLI-001`
+- Work package: `CLI-002`
 - State: `IN_PROGRESS`
-- Next eligible package: `CLI-001`
+- Next eligible package: `CLI-002`
 
 ## Milestone 0 package ledger
 
@@ -29,8 +29,8 @@ Last updated: 2026-07-11
 | `SAFE-001` | `NOT_STARTED` | Experimental-status and claims audit pending. | — |
 | `TEST-001` | `VERIFIED` | Added 18 isolated compiler/CLI characterization regressions covering every non-server Milestone 0 audit case; fixed server regressions remain active assertions. Debug and ReleaseSafe each pass 94/94 tests. | `0334d05` |
 | `OPT-001` | `VERIFIED` | Stable code generation rejects optimize, autoprefix, dead-code, and critical-CSS requests before AST mutation or emission. All optimizer corruption/crash inputs now assert explicit containment; Debug and ReleaseSafe pass 95/95. | `1f8323a` |
-| `PROF-001` | `VERIFIED` | Timing handles end idempotently and transfer/free their name exactly once. CLI profiling exits 0, emits CSS, and reports each stage once; Debug and ReleaseSafe pass 97/97. | Checkpoint pending |
-| `CLI-001` | `NOT_STARTED` | Input/output and batch collision protection pending. | — |
+| `PROF-001` | `VERIFIED` | Timing handles end idempotently and transfer/free their name exactly once. CLI profiling exits 0, emits CSS, and reports each stage once; Debug and ReleaseSafe pass 97/97. | `0c7e56d` |
+| `CLI-001` | `VERIFIED` | Canonical/real-path and inode-aware planning rejects input aliases, symlink/hard-link aliases, duplicate batch destinations, and unsafe default batch naming before writes. Debug and ReleaseSafe pass 99/99. | Checkpoint pending |
 | `CLI-002` | `NOT_STARTED` | Strict flag/value/feature rejection pending. | — |
 | `CI-001` | `NOT_STARTED` | Docs artifact and PR test enforcement pending. | — |
 | `CI-002` | `NOT_STARTED` | Target triple and architecture inspection pending. | — |
@@ -58,6 +58,7 @@ Baseline captured on base commit `2d2c0d9` with Zig 0.15.2, Node 24.16.0, and np
 - `TEST-001`: the audit corpus runs the actual CLI as a child process, safely captures crash signatures, and maps every quarantine to the package that must replace it with a target-contract assertion.
 - `OPT-001`: code generation no longer invokes the legacy optimizer. Transform-bearing requests fail with `UnsafeTransformsDisabled` and a CLI diagnostic; minification remains emission-only.
 - `PROF-001`: explicit and deferred `end()` calls are safe; profiler cleanup no longer double-frees timing names.
+- `CLI-001`: every planned output is checked against every input and prior output before directory creation or compilation; rejected plans preserve all sources.
 
 ## Active blockers
 
@@ -98,4 +99,4 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 ## Last full validation
 
-Milestone 0 is not yet eligible for full validation. Latest package validation: `zig build test --summary all` and its ReleaseSafe variant both passed 97/97 tests (79 unit plus 18 audit regressions); a manual profiled compile exited 0 after one report.
+Milestone 0 is not yet eligible for full validation. Latest package validation: `zig build test --summary all` and its ReleaseSafe variant both passed 99/99 tests (79 unit plus 20 audit regressions).

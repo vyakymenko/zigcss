@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const audit_options = @import("audit_options");
 
 const Child = std.process.Child;
@@ -181,23 +182,45 @@ test "optimizer containment: unverified prefix transforms are unavailable (OPT-0
     try expectUnsafeTransformsDisabled(legacy);
 }
 
-test "legacy quarantine: input and output identity overwrites the source (CLI-001)" {
+test "CLI path safety: input and output identity is rejected without changing the source (CLI-001)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const original = @embedFile("fixtures/simple.css");
     try tmp.dir.writeFile(.{ .sub_path = "identity.css", .data = original });
 
-    var result = try runInDir(tmp.dir, &.{ "identity.css", "-o", "identity.css", "--minify" });
+    var result = try runInDir(tmp.dir, &.{ "identity.css", "-o", "./identity.css", "--minify" });
     defer deinitRun(&result);
-    try expectSuccess(result);
+    try expectFailureContaining(result, "output path resolves to an input");
 
-    const overwritten = try tmp.dir.readFileAlloc(allocator, "identity.css", 1024);
-    defer allocator.free(overwritten);
-    try std.testing.expect(!std.mem.eql(u8, original, overwritten));
-    try std.testing.expectEqualStrings(".simple{color:red}", overwritten);
+    const preserved = try tmp.dir.readFileAlloc(allocator, "identity.css", 1024);
+    defer allocator.free(preserved);
+    try std.testing.expectEqualStrings(original, preserved);
 }
 
-test "legacy quarantine: batch basename collisions silently overwrite (CLI-001)" {
+test "CLI path safety: symlink and hard-link output aliases are rejected (CLI-001)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const original = @embedFile("fixtures/simple.css");
+    try tmp.dir.writeFile(.{ .sub_path = "source.css", .data = original });
+    try tmp.dir.symLink("source.css", "symlink.css", .{});
+    try std.posix.linkat(tmp.dir.fd, "source.css", tmp.dir.fd, "hard-link.css", 0);
+
+    var symlink_result = try runInDir(tmp.dir, &.{ "source.css", "-o", "symlink.css", "--minify" });
+    defer deinitRun(&symlink_result);
+    try expectFailureContaining(symlink_result, "output path resolves to an input");
+
+    var hard_link_result = try runInDir(tmp.dir, &.{ "source.css", "-o", "hard-link.css", "--minify" });
+    defer deinitRun(&hard_link_result);
+    try expectFailureContaining(hard_link_result, "output path resolves to an input");
+
+    const preserved = try tmp.dir.readFileAlloc(allocator, "source.css", 1024);
+    defer allocator.free(preserved);
+    try std.testing.expectEqualStrings(original, preserved);
+}
+
+test "CLI path safety: batch basename collisions are rejected before writing (CLI-001)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makePath("one");
@@ -208,11 +231,29 @@ test "legacy quarantine: batch basename collisions silently overwrite (CLI-001)"
 
     var result = try runInDir(tmp.dir, &.{ "one/shared.css", "two/shared.css", "-o", "out", "--output-dir", "--minify" });
     defer deinitRun(&result);
-    try expectSuccess(result);
+    try expectFailureContaining(result, "multiple inputs resolve to the same output");
 
-    const output = try tmp.dir.readFileAlloc(allocator, "out/shared.css", 1024);
-    defer allocator.free(output);
-    try std.testing.expectEqualStrings(".two{color:blue}", output);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("out/shared.css", .{}));
+}
+
+test "CLI path safety: default batch naming cannot overwrite CSS inputs (CLI-001)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const first = ".first { color: red; }";
+    const second = ".second { color: blue; }";
+    try tmp.dir.writeFile(.{ .sub_path = "first.css", .data = first });
+    try tmp.dir.writeFile(.{ .sub_path = "second.css", .data = second });
+
+    var result = try runInDir(tmp.dir, &.{ "first.css", "second.css", "--minify" });
+    defer deinitRun(&result);
+    try expectFailureContaining(result, "output path resolves to an input");
+
+    const preserved_first = try tmp.dir.readFileAlloc(allocator, "first.css", 1024);
+    defer allocator.free(preserved_first);
+    const preserved_second = try tmp.dir.readFileAlloc(allocator, "second.css", 1024);
+    defer allocator.free(preserved_second);
+    try std.testing.expectEqualStrings(first, preserved_first);
+    try std.testing.expectEqualStrings(second, preserved_second);
 }
 
 test "legacy quarantine: unknown flags and missing values are silently accepted (CLI-002)" {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const formats = @import("formats.zig");
 const ast = @import("ast.zig");
 const codegen = @import("codegen.zig");
@@ -416,6 +417,117 @@ fn matchPattern(pattern: []const u8, name: []const u8) bool {
     return pattern_idx >= pattern.len and name_idx >= name.len;
 }
 
+const PathIdentity = struct {
+    normalized: []u8,
+    inode: ?std.fs.File.INode,
+
+    fn deinit(self: *PathIdentity, allocator: std.mem.Allocator) void {
+        allocator.free(self.normalized);
+    }
+};
+
+const OutputCollision = struct {
+    kind: enum {
+        output_is_input,
+        duplicate_output,
+    },
+    path: []const u8,
+};
+
+fn canonicalizeAbsolutePath(allocator: std.mem.Allocator, absolute_path: []const u8) ![]u8 {
+    return std.fs.cwd().realpathAlloc(allocator, absolute_path) catch |err| {
+        if (err != error.FileNotFound and err != error.NotDir) return err;
+
+        const parent = std.fs.path.dirname(absolute_path) orelse return allocator.dupe(u8, absolute_path);
+        if (std.mem.eql(u8, parent, absolute_path)) return allocator.dupe(u8, absolute_path);
+
+        const canonical_parent = try canonicalizeAbsolutePath(allocator, parent);
+        defer allocator.free(canonical_parent);
+        return std.fs.path.join(allocator, &.{ canonical_parent, std.fs.path.basename(absolute_path) });
+    };
+}
+
+fn identifyPath(allocator: std.mem.Allocator, raw_path: []const u8) !PathIdentity {
+    const absolute_path = try std.fs.path.resolve(allocator, &.{raw_path});
+    defer allocator.free(absolute_path);
+
+    const inode: ?std.fs.File.INode = blk: {
+        const stat = std.fs.cwd().statFile(raw_path) catch |err| switch (err) {
+            error.FileNotFound, error.NotDir => break :blk null,
+            else => return err,
+        };
+        break :blk stat.inode;
+    };
+
+    return .{
+        .normalized = try canonicalizeAbsolutePath(allocator, absolute_path),
+        .inode = inode,
+    };
+}
+
+fn pathsEquivalent(a: *const PathIdentity, b: *const PathIdentity) bool {
+    const normalized_equal = switch (builtin.os.tag) {
+        .windows, .macos, .ios, .tvos, .watchos => std.ascii.eqlIgnoreCase(a.normalized, b.normalized),
+        else => std.mem.eql(u8, a.normalized, b.normalized),
+    };
+    if (normalized_equal) return true;
+
+    if (a.inode) |a_inode| {
+        if (b.inode) |b_inode| {
+            return a_inode != 0 and a_inode == b_inode;
+        }
+    }
+    return false;
+}
+
+fn findOutputCollision(allocator: std.mem.Allocator, input_paths: []const []const u8, output_paths: []const []const u8) !?OutputCollision {
+    const input_identities = try allocator.alloc(PathIdentity, input_paths.len);
+    defer allocator.free(input_identities);
+    var initialized_inputs: usize = 0;
+    defer for (input_identities[0..initialized_inputs]) |*identity| identity.deinit(allocator);
+
+    for (input_paths, 0..) |input_path, i| {
+        input_identities[i] = try identifyPath(allocator, input_path);
+        initialized_inputs += 1;
+    }
+
+    var output_identities = try std.ArrayList(PathIdentity).initCapacity(allocator, output_paths.len);
+    defer {
+        for (output_identities.items) |*identity| identity.deinit(allocator);
+        output_identities.deinit(allocator);
+    }
+
+    for (output_paths) |output_path| {
+        var output_identity = try identifyPath(allocator, output_path);
+        errdefer output_identity.deinit(allocator);
+
+        for (input_identities) |*input_identity| {
+            if (pathsEquivalent(input_identity, &output_identity)) {
+                output_identity.deinit(allocator);
+                return .{ .kind = .output_is_input, .path = output_path };
+            }
+        }
+        for (output_identities.items) |*prior_output| {
+            if (pathsEquivalent(prior_output, &output_identity)) {
+                output_identity.deinit(allocator);
+                return .{ .kind = .duplicate_output, .path = output_path };
+            }
+        }
+
+        try output_identities.append(allocator, output_identity);
+    }
+
+    return null;
+}
+
+fn rejectOutputCollision(collision: OutputCollision) noreturn {
+    switch (collision.kind) {
+        .output_is_input => std.debug.print("Error: output path resolves to an input: {s}\n", .{collision.path}),
+        .duplicate_output => std.debug.print("Error: multiple inputs resolve to the same output: {s}\n", .{collision.path}),
+    }
+    std.process.exit(2);
+}
+
 fn determineOutputFile(allocator: std.mem.Allocator, input_file: []const u8, output_dir: ?[]const u8, output_file: ?[]const u8) ![]const u8 {
     if (output_file) |out| {
         return try allocator.dupe(u8, out);
@@ -598,6 +710,15 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
+    if (input_files.items.len == 1) {
+        if (output_file) |out| {
+            const planned_outputs = [_][]const u8{out};
+            if (try findOutputCollision(allocator, input_files.items, &planned_outputs)) |collision| {
+                rejectOutputCollision(collision);
+            }
+        }
+    }
+
     const autoprefix_opts: ?autoprefixer.AutoprefixOptions = if (autoprefix_flag) blk: {
         const browsers_slice = try browsers.toOwnedSlice(allocator);
         break :blk autoprefixer.AutoprefixOptions{
@@ -648,11 +769,7 @@ pub fn main() !void {
         };
     } else {
         const output_dir: ?[]const u8 = if (output_dir_flag or output_file != null) output_file else null;
-        
-        if (output_dir) |dir| {
-            try std.fs.cwd().makePath(dir);
-        }
-        
+
         var tasks = try std.ArrayList(CompileTask).initCapacity(allocator, input_files.items.len);
         defer {
             for (tasks.items) |*task| {
@@ -674,6 +791,19 @@ pub fn main() !void {
                 .critical_css = critical_css_opts,
                 .profile = profile_flag,
             });
+        }
+
+        const planned_outputs = try allocator.alloc([]const u8, tasks.items.len);
+        defer allocator.free(planned_outputs);
+        for (tasks.items, 0..) |task, task_index| {
+            planned_outputs[task_index] = task.output_file;
+        }
+        if (try findOutputCollision(allocator, input_files.items, planned_outputs)) |collision| {
+            rejectOutputCollision(collision);
+        }
+
+        if (output_dir) |dir| {
+            try std.fs.cwd().makePath(dir);
         }
         
         compileFilesParallel(allocator, tasks.items) catch {
