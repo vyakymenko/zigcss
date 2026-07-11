@@ -1,0 +1,12 @@
+:root { --theme: red; }
+.scope { --theme: blue; color: var(--theme); }
+.box {
+  margin-inline-start: 1px;
+  writing-mode: vertical-rl;
+  direction: rtl;
+  background-color: red;
+  background-image: url("x.png");
+  font-style: italic;
+  font-size: 16px;
+  font-family: serif;
+}

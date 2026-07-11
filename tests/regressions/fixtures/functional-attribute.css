@@ -1,0 +1,1 @@
+.a:not(.b, .c) > [data-x="a;b}" i] { color: red; }

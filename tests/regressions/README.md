@@ -1,0 +1,28 @@
+# Audit regression quarantine
+
+These integration tests preserve the exact failure signatures reproduced during the Milestone 0 baseline. They intentionally execute the legacy compiler as a child process so crashes cannot terminate the test runner.
+
+While a case is quarantined, its test name begins with `legacy quarantine:` and asserts both the unsafe signature and the intended owner package. This is characterization, not acceptance of the behavior. When an owner package makes the case safe, that package must replace the quarantine assertion with the target contract in the same commit.
+
+| Regression | Current status | Owning package |
+|---|---|---|
+| Compound versus descendant selectors | Quarantined | `AST-001`, `PAR-001` |
+| Functional pseudo-classes and attribute selectors | Quarantined | `AST-001`, `PAR-001` |
+| Delimiters inside strings and functions | Quarantined | `TOK-002`, `SYN-001`, `PAR-002` |
+| Declaration-bearing at-rules | Quarantined | `AST-003`, `PAR-003`, `PAR-004` |
+| Percentage keyframes | Quarantined | `AST-003`, `PAR-004` |
+| Mandatory at-rule whitespace | Quarantined | `EMIT-002` |
+| Importance and fallback declaration order | Quarantined | `AST-002`, `OPT-011` |
+| Empty-rule removal order | Quarantined | `OPT-001`, then `OPT-010` |
+| Non-adjacent selector and at-rule merging | Quarantined | `OPT-001`, then `OPT-014`, `OPT-015` |
+| Custom-property cascade | Quarantined | `OPT-001`, then `CUSTOM-001` |
+| Logical properties in RTL/vertical modes | Quarantined | `OPT-001`, then `LOGICAL-001` |
+| Background and font shorthand resets | Quarantined | `OPT-001`, then `OPT-013` |
+| Typed math precedence and units | Quarantined | `OPT-001`, then `VAL-001`, `MATH-001` |
+| Selector simplification crash | Quarantined | `OPT-001` |
+| Profiling lifecycle crash | Quarantined | `PROF-001` |
+| Source-map and browser-target no-op behavior | Quarantined | `CLI-002`, `MAP-001`, `PREFIX-001` |
+| Input overwrite and batch output collision | Quarantined | `CLI-001` |
+| Unknown flags and missing flag values | Quarantined | `CLI-002` |
+
+Static traversal, malformed URL handling, and compile-service containment are active passing assertions in `docs/src/server.test.ts` because `SEC-001` is verified and the public compile service is disabled pending `SEC-002`.

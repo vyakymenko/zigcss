@@ -38,8 +38,24 @@ pub fn build(b: *std.Build) void {
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
+    const audit_test_module = b.addModule("zigcss-audit-regressions", .{
+        .root_source_file = b.path("tests/regressions/audit.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const audit_options = b.addOptions();
+    audit_options.addOption([]const u8, "compiler_path", b.getInstallPath(.bin, "zigcss"));
+    audit_test_module.addOptions("audit_options", audit_options);
+
+    const audit_tests = b.addTest(.{
+        .root_module = audit_test_module,
+    });
+    const run_audit_tests = b.addRunArtifact(audit_tests);
+    run_audit_tests.step.dependOn(b.getInstallStep());
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_audit_tests.step);
 
     const bench_module = b.addModule("zigcss-bench", .{
         .root_source_file = b.path("src/benchmarks.zig"),

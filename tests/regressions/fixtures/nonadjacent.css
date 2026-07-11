@@ -1,0 +1,6 @@
+.keep { color: red; }
+.keep-between { color: green; }
+.keep { background: blue; }
+@media screen { .a { color: red; } }
+.media-between { color: green; }
+@media screen { .b { color: blue; } }
