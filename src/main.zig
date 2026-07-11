@@ -714,6 +714,18 @@ test "stable codegen rejects unsafe transforms without mutating the AST" {
     try std.testing.expectEqualStrings("red", stylesheet.rules.items[0].style.declarations.items[0].value);
 }
 
+test "profiler timing handles can be ended more than once safely" {
+    var perf_profiler = try profiler.Profiler.init(std.testing.allocator, true);
+    defer perf_profiler.deinit();
+
+    var timing = try perf_profiler.startTiming("parse");
+    try timing.end();
+    try timing.end();
+
+    const metrics = perf_profiler.getMetrics();
+    try std.testing.expect(metrics.parse_time_ns <= metrics.total_time_ns);
+}
+
 test "basic compilation" {
     const css = ".container { color: red; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

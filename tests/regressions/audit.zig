@@ -150,12 +150,16 @@ test "optimizer containment: selector crash input is rejected before optimizatio
     try expectUnsafeTransformsDisabled(result);
 }
 
-test "legacy quarantine: profiling double-end crashes after reporting (PROF-001)" {
+test "profiling lifecycle: each timing ends once and compilation succeeds (PROF-001)" {
     var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{ "--profile", "--minify" });
     defer deinitRun(&result);
 
-    try std.testing.expect(!succeeded(result.term));
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(".simple{color:red}", result.stdout);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Performance Profile") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "parse"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "optimize"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "codegen"));
 }
 
 test "legacy quarantine: source-map flag succeeds without a map (CLI-002, MAP-001)" {

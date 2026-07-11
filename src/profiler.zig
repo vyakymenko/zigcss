@@ -47,6 +47,7 @@ pub const Profiler = struct {
                 .name = name,
                 .start_time = 0,
                 .memory_before = 0,
+                .ended = false,
             };
         }
         
@@ -59,6 +60,7 @@ pub const Profiler = struct {
             .name = name_copy,
             .start_time = start_time,
             .memory_before = memory_before,
+            .ended = false,
         };
     }
     
@@ -156,9 +158,13 @@ pub const TimingHandle = struct {
     name: []const u8,
     start_time: i128,
     memory_before: usize,
+    ended: bool,
     
     pub fn end(self: *TimingHandle) !void {
+        if (self.ended) return;
+
         if (!self.profiler.enabled) {
+            self.ended = true;
             return;
         }
         
@@ -170,14 +176,41 @@ pub const TimingHandle = struct {
             self.profiler.memory_stats.peak_memory = memory_after;
         }
         
-        try self.profiler.timings.append(self.profiler.allocator, .{
+        self.profiler.timings.append(self.profiler.allocator, .{
             .name = self.name,
             .duration_ns = duration_ns,
             .memory_before = self.memory_before,
             .memory_after = memory_after,
-        });
+        }) catch |err| {
+            self.profiler.allocator.free(self.name);
+            self.name = &.{};
+            self.ended = true;
+            return err;
+        };
+        self.name = &.{};
+        self.ended = true;
     }
 };
+
+test "timing handles end at most once" {
+    var enabled = try Profiler.init(std.testing.allocator, true);
+    defer enabled.deinit();
+
+    var timing = try enabled.startTiming("parse");
+    try timing.end();
+    try timing.end();
+
+    try std.testing.expect(timing.ended);
+    try std.testing.expectEqual(@as(usize, 1), enabled.timings.items.len);
+    try std.testing.expectEqualStrings("parse", enabled.timings.items[0].name);
+
+    var disabled = try Profiler.init(std.testing.allocator, false);
+    defer disabled.deinit();
+    var disabled_timing = try disabled.startTiming("parse");
+    try disabled_timing.end();
+    try disabled_timing.end();
+    try std.testing.expectEqual(@as(usize, 0), disabled.timings.items.len);
+}
 
 pub fn benchmarkCompilation(
     allocator: std.mem.Allocator,

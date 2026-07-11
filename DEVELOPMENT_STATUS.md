@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 0 — Containment and regression baseline
-- Work package: `PROF-001`
+- Work package: `CLI-001`
 - State: `IN_PROGRESS`
-- Next eligible package: `PROF-001`
+- Next eligible package: `CLI-001`
 
 ## Milestone 0 package ledger
 
@@ -28,8 +28,8 @@ Last updated: 2026-07-11
 | `SEC-003` | `NOT_STARTED` | Non-root/minimal docs container pending. | — |
 | `SAFE-001` | `NOT_STARTED` | Experimental-status and claims audit pending. | — |
 | `TEST-001` | `VERIFIED` | Added 18 isolated compiler/CLI characterization regressions covering every non-server Milestone 0 audit case; fixed server regressions remain active assertions. Debug and ReleaseSafe each pass 94/94 tests. | `0334d05` |
-| `OPT-001` | `VERIFIED` | Stable code generation rejects optimize, autoprefix, dead-code, and critical-CSS requests before AST mutation or emission. All optimizer corruption/crash inputs now assert explicit containment; Debug and ReleaseSafe pass 95/95. | Checkpoint pending |
-| `PROF-001` | `NOT_STARTED` | Profiling lifecycle fix pending regression harness. | — |
+| `OPT-001` | `VERIFIED` | Stable code generation rejects optimize, autoprefix, dead-code, and critical-CSS requests before AST mutation or emission. All optimizer corruption/crash inputs now assert explicit containment; Debug and ReleaseSafe pass 95/95. | `1f8323a` |
+| `PROF-001` | `VERIFIED` | Timing handles end idempotently and transfer/free their name exactly once. CLI profiling exits 0, emits CSS, and reports each stage once; Debug and ReleaseSafe pass 97/97. | Checkpoint pending |
 | `CLI-001` | `NOT_STARTED` | Input/output and batch collision protection pending. | — |
 | `CLI-002` | `NOT_STARTED` | Strict flag/value/feature rejection pending. | — |
 | `CI-001` | `NOT_STARTED` | Docs artifact and PR test enforcement pending. | — |
@@ -57,6 +57,7 @@ Baseline captured on base commit `2d2c0d9` with Zig 0.15.2, Node 24.16.0, and np
 - `SEC-002` containment decision: the public compile service is disabled rather than exposed without its required resource and isolation limits. Re-enablement requires the full package gates.
 - `TEST-001`: the audit corpus runs the actual CLI as a child process, safely captures crash signatures, and maps every quarantine to the package that must replace it with a target-contract assertion.
 - `OPT-001`: code generation no longer invokes the legacy optimizer. Transform-bearing requests fail with `UnsafeTransformsDisabled` and a CLI diagnostic; minification remains emission-only.
+- `PROF-001`: explicit and deferred `end()` calls are safe; profiler cleanup no longer double-frees timing names.
 
 ## Active blockers
 
@@ -93,7 +94,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - The compile API will be disabled after `SEC-001` unless `SEC-002` isolation is implemented and verified immediately.
 - Legacy compiler failures are executable characterization quarantines, not accepted contracts. Each owning fix must replace its quarantine with the correct behavior assertion in the same commit.
 - Legacy optimizer functions remain reachable only to explicitly labeled internal tests. They are not part of the stable CLI/code-generation path and must not be re-enabled without pass-specific acceptance evidence.
+- Operator-requested post-Milestone-0 tooling: add a ZigCSS autonomous-loop protocol plus a read-only `orient.sh`, modeled on Alvo's protocol/orient split and adapted to this repository's no-push/no-deploy authority boundary.
 
 ## Last full validation
 
-Milestone 0 is not yet eligible for full validation. Latest package validation: `zig build test --summary all` and its ReleaseSafe variant both passed 95/95 tests (77 unit plus 18 audit regressions); the former selector panic now exits 1 with the containment diagnostic.
+Milestone 0 is not yet eligible for full validation. Latest package validation: `zig build test --summary all` and its ReleaseSafe variant both passed 97/97 tests (79 unit plus 18 audit regressions); a manual profiled compile exited 0 after one report.

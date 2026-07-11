@@ -22,7 +22,7 @@ Cases labeled `optimizer containment:` are active safety assertions: every trans
 | Background and font shorthand resets | Contained by `OPT-001` | `OPT-013` |
 | Typed math precedence and units | Contained by `OPT-001` | `VAL-001`, `MATH-001` |
 | Selector simplification crash | Contained by `OPT-001` | A future selector pass requires a new package and acceptance suite. |
-| Profiling lifecycle crash | Quarantined | `PROF-001` |
+| Profiling lifecycle crash | Verified by `PROF-001` | `PROF-010` owns real allocator-backed metrics. |
 | Source-map no-op behavior | Quarantined | `CLI-002`, `MAP-001` |
 | Browser-target prefix behavior | Contained by `OPT-001` | `PREFIX-001`, `PREFIX-002` |
 | Input overwrite and batch output collision | Quarantined | `CLI-001` |
