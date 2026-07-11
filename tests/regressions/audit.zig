@@ -163,12 +163,12 @@ test "profiling lifecycle: each timing ends once and compilation succeeds (PROF-
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "codegen"));
 }
 
-test "legacy quarantine: source-map flag succeeds without a map (CLI-002, MAP-001)" {
+test "CLI strictness: unavailable source maps are rejected explicitly (CLI-002)" {
     var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{ "--source-map", "--minify" });
     defer deinitRun(&result);
 
-    try expectSuccess(result);
-    try std.testing.expectEqualStrings(".simple{color:red}", result.stdout);
+    try expectFailureContaining(result, "--source-map is unavailable");
+    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
 }
 
 test "optimizer containment: unverified prefix transforms are unavailable (OPT-001)" {
@@ -246,7 +246,7 @@ test "CLI path safety: default batch naming cannot overwrite CSS inputs (CLI-001
 
     var result = try runInDir(tmp.dir, &.{ "first.css", "second.css", "--minify" });
     defer deinitRun(&result);
-    try expectFailureContaining(result, "output path resolves to an input");
+    try expectFailureContaining(result, "multiple inputs require --output-dir");
 
     const preserved_first = try tmp.dir.readFileAlloc(allocator, "first.css", 1024);
     defer allocator.free(preserved_first);
@@ -256,14 +256,44 @@ test "CLI path safety: default batch naming cannot overwrite CSS inputs (CLI-001
     try std.testing.expectEqualStrings(second, preserved_second);
 }
 
-test "legacy quarantine: unknown flags and missing values are silently accepted (CLI-002)" {
+test "CLI strictness: unknown flags and missing values are rejected (CLI-002)" {
     const input = @embedFile("fixtures/simple.css");
     var unknown = try runCompiler(input, &.{"--definitely-unknown"});
     defer deinitRun(&unknown);
     var missing = try runCompiler(input, &.{"-o"});
     defer deinitRun(&missing);
 
-    try expectSuccess(unknown);
-    try expectSuccess(missing);
-    try std.testing.expectEqualStrings(unknown.stdout, missing.stdout);
+    try expectFailureContaining(unknown, "unknown option: --definitely-unknown");
+    try expectFailureContaining(missing, "-o requires a value");
+    try std.testing.expectEqual(@as(usize, 0), unknown.stdout.len);
+    try std.testing.expectEqual(@as(usize, 0), missing.stdout.len);
+}
+
+test "CLI strictness: valued options diagnose missing values before availability (CLI-002)" {
+    const input = @embedFile("fixtures/simple.css");
+    var browsers = try runCompiler(input, &.{"--browsers"});
+    defer deinitRun(&browsers);
+    var critical = try runCompiler(input, &.{"--critical-classes"});
+    defer deinitRun(&critical);
+
+    try expectFailureContaining(browsers, "--browsers requires a value");
+    try expectFailureContaining(critical, "--critical-classes requires a value");
+}
+
+test "CLI strictness: unavailable target and extraction features are rejected (CLI-002)" {
+    const input = @embedFile("fixtures/simple.css");
+    var browsers = try runCompiler(input, &.{ "--browsers", "ie11" });
+    defer deinitRun(&browsers);
+    var critical = try runCompiler(input, &.{ "--critical-classes", "critical" });
+    defer deinitRun(&critical);
+
+    try expectFailureContaining(browsers, "--browsers is unavailable");
+    try expectFailureContaining(critical, "--critical-classes is unavailable");
+}
+
+test "CLI strictness: output-dir is rejected outside explicit batch mode (CLI-002)" {
+    var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{ "-o", "out", "--output-dir" });
+    defer deinitRun(&result);
+
+    try expectFailureContaining(result, "--output-dir requires multiple inputs");
 }

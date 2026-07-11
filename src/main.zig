@@ -528,6 +528,34 @@ fn rejectOutputCollision(collision: OutputCollision) noreturn {
     std.process.exit(2);
 }
 
+fn exitWithCliError(comptime format: []const u8, values: anytype) noreturn {
+    std.debug.print("Error: " ++ format ++ "\n", values);
+    std.process.exit(2);
+}
+
+fn requireOptionValue(args: []const []const u8, index: usize, option: []const u8) []const u8 {
+    if (index + 1 >= args.len or args[index + 1].len == 0 or args[index + 1][0] == '-') {
+        exitWithCliError("{s} requires a value", .{option});
+    }
+    return args[index + 1];
+}
+
+fn printUsage() void {
+    std.debug.print("Usage: zigcss <input.css> [-o output.css] [options]\n", .{});
+    std.debug.print("       zigcss <input1.css> <input2.css> ... -o <output-dir> --output-dir [options]\n", .{});
+    std.debug.print("       zigcss --lsp          Start experimental Language Server Protocol server\n", .{});
+    std.debug.print("\nAvailable options:\n", .{});
+    std.debug.print("  -o, --output <path>      Output file, or directory with --output-dir\n", .{});
+    std.debug.print("  --output-dir             Require batch output under the -o directory\n", .{});
+    std.debug.print("  --minify                 Minify emission without transforming the AST\n", .{});
+    std.debug.print("  --watch                  Watch one input file\n", .{});
+    std.debug.print("  --profile                Enable performance profiling\n", .{});
+    std.debug.print("  --lsp                    Start the experimental LSP server\n", .{});
+    std.debug.print("  -h, --help               Show this help\n", .{});
+    std.debug.print("\nUnavailable and rejected during recovery:\n", .{});
+    std.debug.print("  --optimize, --source-map, --autoprefix, --browsers, --critical-*\n", .{});
+}
+
 fn determineOutputFile(allocator: std.mem.Allocator, input_file: []const u8, output_dir: ?[]const u8, output_file: ?[]const u8) ![]const u8 {
     if (output_file) |out| {
         return try allocator.dupe(u8, out);
@@ -564,29 +592,13 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len >= 2 and (std.mem.eql(u8, args[1], "--lsp") or std.mem.eql(u8, args[1], "-lsp"))) {
+        if (args.len != 2) exitWithCliError("--lsp does not accept additional arguments", .{});
         try runLspServer(allocator);
         return;
     }
 
     if (args.len < 2) {
-        std.debug.print("Usage: zigcss <input.css> [-o output.css] [options]\n", .{});
-        std.debug.print("       zigcss <input1.css> <input2.css> ... [-o output-dir/] [--output-dir] [options]\n", .{});
-        std.debug.print("       zigcss --lsp          Start Language Server Protocol server\n", .{});
-        std.debug.print("\nOptions:\n", .{});
-        std.debug.print("  -o, --output <file>      Output file or directory\n", .{});
-        std.debug.print("  --output-dir             Treat output as directory (for multiple files)\n", .{});
-        std.debug.print("  --optimize               Enable optimizations\n", .{});
-        std.debug.print("  --minify                 Minify output\n", .{});
-        std.debug.print("  --source-map             Generate source map\n", .{});
-        std.debug.print("  --autoprefix             Add vendor prefixes\n", .{});
-        std.debug.print("  --browsers <list>        Browser support (comma-separated)\n", .{});
-        std.debug.print("  --critical-classes <list> Critical CSS classes (comma-separated)\n", .{});
-        std.debug.print("  --critical-ids <list>    Critical CSS IDs (comma-separated)\n", .{});
-        std.debug.print("  --critical-elements <list> Critical CSS elements (comma-separated)\n", .{});
-        std.debug.print("  --watch                  Watch mode\n", .{});
-        std.debug.print("  --profile                Enable performance profiling\n", .{});
-        std.debug.print("  --lsp                    Start Language Server Protocol server\n", .{});
-        std.debug.print("  -h, --help               Show this help\n", .{});
+        printUsage();
         return;
     }
 
@@ -600,96 +612,45 @@ pub fn main() !void {
     
     var output_file: ?[]const u8 = null;
     var output_dir_flag = false;
-    var optimize_flag = false;
     var minify_flag = false;
-    var source_map_flag = false;
     var watch_flag = false;
-    var autoprefix_flag = false;
     var profile_flag = false;
-    var browsers = try std.ArrayList([]const u8).initCapacity(allocator, 0);
-    defer browsers.deinit(allocator);
-    var critical_classes = try std.ArrayList([]const u8).initCapacity(allocator, 0);
-    defer critical_classes.deinit(allocator);
-    var critical_ids = try std.ArrayList([]const u8).initCapacity(allocator, 0);
-    defer critical_ids.deinit(allocator);
-    var critical_elements = try std.ArrayList([]const u8).initCapacity(allocator, 0);
-    defer critical_elements.deinit(allocator);
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "-o") or std.mem.eql(u8, args[i], "--output")) {
-            if (i + 1 < args.len) {
-                output_file = args[i + 1];
-                i += 1;
-            }
+            if (output_file != null) exitWithCliError("{s} may only be specified once", .{args[i]});
+            output_file = requireOptionValue(args, i, args[i]);
+            i += 1;
         } else if (std.mem.eql(u8, args[i], "--output-dir")) {
+            if (output_dir_flag) exitWithCliError("--output-dir may only be specified once", .{});
             output_dir_flag = true;
         } else if (std.mem.eql(u8, args[i], "--optimize")) {
-            optimize_flag = true;
+            exitWithCliError("--optimize is unavailable: {s}", .{codegen.unsafe_transforms_message});
         } else if (std.mem.eql(u8, args[i], "--minify")) {
             minify_flag = true;
         } else if (std.mem.eql(u8, args[i], "--source-map")) {
-            source_map_flag = true;
+            exitWithCliError("--source-map is unavailable until Source Map v3 mappings are implemented", .{});
         } else if (std.mem.eql(u8, args[i], "--watch")) {
             watch_flag = true;
         } else if (std.mem.eql(u8, args[i], "--autoprefix")) {
-            autoprefix_flag = true;
+            exitWithCliError("--autoprefix is unavailable: {s}", .{codegen.unsafe_transforms_message});
         } else if (std.mem.eql(u8, args[i], "--profile")) {
             profile_flag = true;
         } else if (std.mem.eql(u8, args[i], "--browsers")) {
-            if (i + 1 < args.len) {
-                const browsers_str = args[i + 1];
-                var iter = std.mem.splitSequence(u8, browsers_str, ",");
-                while (iter.next()) |browser| {
-                    const trimmed = std.mem.trim(u8, browser, " \t");
-                    if (trimmed.len > 0) {
-                        try browsers.append(allocator, trimmed);
-                    }
-                }
-                i += 1;
-            }
-        } else if (std.mem.eql(u8, args[i], "--critical-classes")) {
-            if (i + 1 < args.len) {
-                const classes_str = args[i + 1];
-                var iter = std.mem.splitSequence(u8, classes_str, ",");
-                while (iter.next()) |class| {
-                    const trimmed = std.mem.trim(u8, class, " \t");
-                    if (trimmed.len > 0) {
-                        const class_copy = try allocator.dupe(u8, trimmed);
-                        try critical_classes.append(allocator, class_copy);
-                    }
-                }
-                i += 1;
-            }
-        } else if (std.mem.eql(u8, args[i], "--critical-ids")) {
-            if (i + 1 < args.len) {
-                const ids_str = args[i + 1];
-                var iter = std.mem.splitSequence(u8, ids_str, ",");
-                while (iter.next()) |id| {
-                    const trimmed = std.mem.trim(u8, id, " \t");
-                    if (trimmed.len > 0) {
-                        const id_copy = try allocator.dupe(u8, trimmed);
-                        try critical_ids.append(allocator, id_copy);
-                    }
-                }
-                i += 1;
-            }
-        } else if (std.mem.eql(u8, args[i], "--critical-elements")) {
-            if (i + 1 < args.len) {
-                const elements_str = args[i + 1];
-                var iter = std.mem.splitSequence(u8, elements_str, ",");
-                while (iter.next()) |element| {
-                    const trimmed = std.mem.trim(u8, element, " \t");
-                    if (trimmed.len > 0) {
-                        const element_copy = try allocator.dupe(u8, trimmed);
-                        try critical_elements.append(allocator, element_copy);
-                    }
-                }
-                i += 1;
-            }
+            _ = requireOptionValue(args, i, args[i]);
+            exitWithCliError("--browsers is unavailable until target queries and prefix rules are validated", .{});
+        } else if (std.mem.eql(u8, args[i], "--critical-classes") or
+            std.mem.eql(u8, args[i], "--critical-ids") or
+            std.mem.eql(u8, args[i], "--critical-elements"))
+        {
+            _ = requireOptionValue(args, i, args[i]);
+            exitWithCliError("{s} is unavailable until conservative critical-CSS extraction is validated", .{args[i]});
         } else if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
-            std.debug.print("Usage: zigcss <input.css> [-o output.css] [options]\n", .{});
+            printUsage();
             return;
+        } else if (args[i].len == 0) {
+            exitWithCliError("empty arguments are not valid input paths", .{});
         } else if (args[i][0] != '-') {
             var expanded = try expandGlob(allocator, args[i]);
             defer {
@@ -702,12 +663,24 @@ pub fn main() !void {
                 const path_copy = try allocator.dupe(u8, path);
                 try input_files.append(allocator, path_copy);
             }
+        } else {
+            exitWithCliError("unknown option: {s}", .{args[i]});
         }
     }
 
     if (input_files.items.len == 0) {
         std.debug.print("Error: No input files specified\n", .{});
         std.process.exit(1);
+    }
+
+    if (output_dir_flag and input_files.items.len < 2) {
+        exitWithCliError("--output-dir requires multiple inputs", .{});
+    }
+    if (input_files.items.len > 1 and !output_dir_flag) {
+        exitWithCliError("multiple inputs require --output-dir", .{});
+    }
+    if (output_dir_flag and output_file == null) {
+        exitWithCliError("--output-dir requires -o or --output", .{});
     }
 
     if (input_files.items.len == 1) {
@@ -719,24 +692,6 @@ pub fn main() !void {
         }
     }
 
-    const autoprefix_opts: ?autoprefixer.AutoprefixOptions = if (autoprefix_flag) blk: {
-        const browsers_slice = try browsers.toOwnedSlice(allocator);
-        break :blk autoprefixer.AutoprefixOptions{
-            .browsers = browsers_slice,
-        };
-    } else null;
-
-    const critical_css_opts: ?optimizer.CriticalCssOptions = if (critical_classes.items.len > 0 or critical_ids.items.len > 0 or critical_elements.items.len > 0) blk: {
-        const classes_slice = if (critical_classes.items.len > 0) try critical_classes.toOwnedSlice(allocator) else null;
-        const ids_slice = if (critical_ids.items.len > 0) try critical_ids.toOwnedSlice(allocator) else null;
-        const elements_slice = if (critical_elements.items.len > 0) try critical_elements.toOwnedSlice(allocator) else null;
-        break :blk optimizer.CriticalCssOptions{
-            .critical_classes = classes_slice,
-            .critical_ids = ids_slice,
-            .critical_elements = elements_slice,
-        };
-    } else null;
-
     if (watch_flag) {
         if (input_files.items.len > 1) {
             std.debug.print("Error: Watch mode only supports single file\n", .{});
@@ -745,11 +700,11 @@ pub fn main() !void {
         const config = CompileConfig{
             .input_file = input_files.items[0],
             .output_file = output_file,
-            .optimize = optimize_flag,
+            .optimize = false,
             .minify = minify_flag,
-            .source_map = source_map_flag,
-            .autoprefix = autoprefix_opts,
-            .critical_css = critical_css_opts,
+            .source_map = false,
+            .autoprefix = null,
+            .critical_css = null,
             .profile = profile_flag,
         };
         try watchFile(allocator, config);
@@ -757,11 +712,11 @@ pub fn main() !void {
         const config = CompileConfig{
             .input_file = input_files.items[0],
             .output_file = output_file,
-            .optimize = optimize_flag,
+            .optimize = false,
             .minify = minify_flag,
-            .source_map = source_map_flag,
-            .autoprefix = autoprefix_opts,
-            .critical_css = critical_css_opts,
+            .source_map = false,
+            .autoprefix = null,
+            .critical_css = null,
             .profile = profile_flag,
         };
         compileFile(allocator, config) catch {
@@ -784,11 +739,11 @@ pub fn main() !void {
             try tasks.append(allocator, CompileTask{
                 .input_file = input,
                 .output_file = out_file,
-                .optimize = optimize_flag,
+                .optimize = false,
                 .minify = minify_flag,
-                .source_map = source_map_flag,
-                .autoprefix = autoprefix_opts,
-                .critical_css = critical_css_opts,
+                .source_map = false,
+                .autoprefix = null,
+                .critical_css = null,
                 .profile = profile_flag,
             });
         }

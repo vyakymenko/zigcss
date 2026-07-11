@@ -23,9 +23,9 @@ Cases labeled `optimizer containment:` are active safety assertions: every trans
 | Typed math precedence and units | Contained by `OPT-001` | `VAL-001`, `MATH-001` |
 | Selector simplification crash | Contained by `OPT-001` | A future selector pass requires a new package and acceptance suite. |
 | Profiling lifecycle crash | Verified by `PROF-001` | `PROF-010` owns real allocator-backed metrics. |
-| Source-map no-op behavior | Quarantined | `CLI-002`, `MAP-001` |
-| Browser-target prefix behavior | Contained by `OPT-001` | `PREFIX-001`, `PREFIX-002` |
+| Source-map no-op behavior | Explicitly unavailable via `CLI-002` | `MAP-001` |
+| Browser-target prefix behavior | Explicitly unavailable via `OPT-001` and `CLI-002` | `PREFIX-001`, `PREFIX-002` |
 | Input overwrite and batch output collision | Verified by `CLI-001` | `CLI-012` later adds atomic writes and final naming policy. |
-| Unknown flags and missing flag values | Quarantined | `CLI-002` |
+| Unknown flags and missing flag values | Verified by `CLI-002` | `CLI-011` later owns the final public option contract. |
 
 Static traversal, malformed URL handling, and compile-service containment are active passing assertions in `docs/src/server.test.ts` because `SEC-001` is verified and the public compile service is disabled pending `SEC-002`.
