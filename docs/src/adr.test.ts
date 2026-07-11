@@ -16,6 +16,7 @@ describe('foundational architecture decisions', () => {
     'ADR-001-core-product-scope.md',
     'ADR-002-tokenizer-and-syntax-tree.md',
     'ADR-003-memory-and-result-ownership.md',
+    'ADR-004-transform-safety-classes.md',
     'ADR-010-autonomous-model-requirement.md',
   ]
 
@@ -55,6 +56,16 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('caller-owned allocator')
     expect(adr).toContain('CompileResult.deinit')
     expect(adr).toContain('allocator-failure')
+  })
+
+  test('makes transform authority explicit and deny-by-default', () => {
+    const adr = read('ADR-004-transform-safety-classes.md')
+
+    expect(adr).toContain('Immutable pass handoff')
+    expect(adr).toContain('lossless_cleanup')
+    expect(adr).toContain('Safety classes are not an ordered permission ladder')
+    expect(adr).toContain('defaults to verified analysis only')
+    expect(adr).toContain('does not enable `--optimize`')
   })
 
   test('makes the approved model and single-agent rule a hard autonomous gate', () => {

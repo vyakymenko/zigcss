@@ -78,6 +78,14 @@ pub const DiagnosticList = struct {
     pub fn items(self: *const DiagnosticList) []const Diagnostic {
         return self.entries.items;
     }
+
+    pub fn truncate(self: *DiagnosticList, new_len: usize) void {
+        std.debug.assert(new_len <= self.entries.items.len);
+        for (self.entries.items[new_len..]) |diagnostic| {
+            self.allocator.free(diagnostic.message);
+        }
+        self.entries.shrinkRetainingCapacity(new_len);
+    }
 };
 
 test "diagnostic list owns messages and preserves structured fields" {
@@ -97,4 +105,8 @@ test "diagnostic list owns messages and preserves structured fields" {
     try std.testing.expectEqualStrings("CSS0003", diagnostic.code.label());
     try std.testing.expectEqualStrings("bad", diagnostic.message);
     try std.testing.expectEqual(span, diagnostic.span);
+
+    try diagnostics.append(.warning, .unexpected_token, span, "temporary");
+    diagnostics.truncate(1);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.items().len);
 }

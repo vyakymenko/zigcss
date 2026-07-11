@@ -7,6 +7,7 @@ const rule_parser = @import("rule_parser.zig");
 const source = @import("../source.zig");
 const sourcemap = @import("../sourcemap.zig");
 const syntax = @import("../syntax.zig");
+const pass_manager = @import("../transform/pass_manager.zig");
 
 pub const CompileResult = compilation.CompileResult;
 
@@ -112,6 +113,24 @@ pub const ParsedStylesheet = struct {
         }
         return output.toOwnedSlice(allocator);
     }
+
+    /// Installs a transformed root only after the complete pass plan and every
+    /// validator succeed. Failed arena candidates remain unreachable and are
+    /// reclaimed with the compilation.
+    pub fn applyPassPlan(
+        self: *ParsedStylesheet,
+        scratch_allocator: std.mem.Allocator,
+        plan: *const pass_manager.Plan,
+        options: pass_manager.RunOptions,
+    ) pass_manager.Error!void {
+        var context = try pass_manager.Context.init(
+            &self.compilation,
+            self.source_id,
+            scratch_allocator,
+        );
+        const candidate = try plan.run(&context, self.rules, options);
+        self.rules = candidate;
+    }
 };
 
 pub fn parse(
@@ -182,6 +201,13 @@ test "safe CSS pipeline returns structured diagnostics without partial CSS" {
     defer result.deinit();
     try std.testing.expectEqual(@as(usize, 0), result.css.len);
     try std.testing.expect(result.diagnostics.len > 0);
+
+    var empty_plan = try pass_manager.buildPlan(std.testing.allocator, &.{}, &.{}, .{});
+    defer empty_plan.deinit();
+    try std.testing.expectError(
+        error.InputHasErrors,
+        parsed.applyPassPlan(std.testing.allocator, &empty_plan, .{}),
+    );
 }
 
 test "safe CSS pipeline optionally returns deterministic source maps" {
@@ -221,6 +247,112 @@ test "safe CSS pipeline handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exercisePipelineAllocationFailures,
+        .{},
+    );
+}
+
+const PipelineTestPassState = struct {
+    reject: bool,
+};
+
+fn pipelineTestPassRun(
+    user_data: ?*anyopaque,
+    context: *pass_manager.Context,
+    input: *const ast.RuleList,
+) pass_manager.Error!*const ast.RuleList {
+    _ = user_data;
+    const cloned = context.arenaAllocator().create(ast.RuleList) catch return error.OutOfMemory;
+    cloned.* = input.*;
+    return cloned;
+}
+
+fn pipelineTestPassValidate(
+    user_data: ?*anyopaque,
+    phase: pass_manager.ValidationPhase,
+    context: *pass_manager.Context,
+    before: *const ast.RuleList,
+    after: *const ast.RuleList,
+) pass_manager.Error!void {
+    _ = context;
+    _ = before;
+    _ = after;
+    const state: *PipelineTestPassState = @ptrCast(@alignCast(user_data.?));
+    if (state.reject and phase == .postcondition) return error.ValidationFailed;
+}
+
+fn pipelineTestPass(state: *PipelineTestPassState) pass_manager.Pass {
+    return .{
+        .metadata = .{
+            .id = "pipeline-test",
+            .revision = 1,
+            .phase = .cleanup,
+            .safety = .lossless_cleanup,
+            .maturity = .verified,
+            .precondition = "the parsed stylesheet is valid",
+            .postcondition = "the candidate is validated before installation",
+            .no_op_conditions = "test pass always clones its root",
+            .supports_nested_rules = true,
+            .acceptance = .{
+                .postcondition = true,
+                .idempotence = true,
+                .allocation_failures = true,
+                .nested_rules = true,
+                .semantic_validation = true,
+                .differential_validation = true,
+                .order_validation = true,
+            },
+        },
+        .run = pipelineTestPassRun,
+        .validate = pipelineTestPassValidate,
+        .user_data = state,
+    };
+}
+
+test "safe CSS pipeline installs only fully validated pass plans" {
+    var parsed = try parse(std.testing.allocator, "passes.css", ".a{x:1;.b{y:2}}");
+    defer parsed.deinit();
+    const original = parsed.rules;
+
+    var state = PipelineTestPassState{ .reject = true };
+    const registry = [_]pass_manager.Pass{pipelineTestPass(&state)};
+    var plan = try pass_manager.buildPlan(
+        std.testing.allocator,
+        &registry,
+        &.{"pipeline-test"},
+        .{ .allow_lossless_cleanup = true },
+    );
+    defer plan.deinit();
+
+    try std.testing.expectError(
+        error.ValidationFailed,
+        parsed.applyPassPlan(std.testing.allocator, &plan, .{}),
+    );
+    try std.testing.expect(parsed.rules == original);
+
+    state.reject = false;
+    try parsed.applyPassPlan(std.testing.allocator, &plan, .{});
+    try std.testing.expect(parsed.rules != original);
+}
+
+fn exercisePassPlanAllocationFailures(allocator: std.mem.Allocator) !void {
+    var parsed = try parse(allocator, "pass-oom.css", ".a{x:1;.b{y:2}}");
+    defer parsed.deinit();
+    var state = PipelineTestPassState{ .reject = false };
+    const registry = [_]pass_manager.Pass{pipelineTestPass(&state)};
+    var plan = try pass_manager.buildPlan(
+        allocator,
+        &registry,
+        &.{"pipeline-test"},
+        .{ .allow_lossless_cleanup = true },
+    );
+    defer plan.deinit();
+    try parsed.applyPassPlan(allocator, &plan, .{ .verify_idempotence = true });
+}
+
+test "safe CSS pass-plan installation handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exercisePassPlanAllocationFailures,
         .{},
     );
 }

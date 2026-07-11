@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 3 — Semantics-preserving transform pipeline
-- Work package: `PASS-001` — pass manager, metadata, ordering, safety classes, and validation hooks
+- Work package: `OPT-010` — stable empty-rule/comment cleanup with order preservation
 - State: `IN_PROGRESS`
-- Next eligible package: `PASS-001`
+- Next eligible package: `OPT-010`
 
 ## Milestone 0 package ledger
 
@@ -84,6 +84,7 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 | `ADR-001` | `VERIFIED` | Stable scope is standards-oriented CSS library/CLI parsing, diagnostics, spans, deterministic emission, and only evidence-backed transforms; ecosystem adapters remain explicit experiments. | `cd5c45f` |
 | `ADR-002` | `VERIFIED` | CSS Syntax algorithms define token behavior; original byte spans, retained trivia, lossless nested component values, recoverable diagnostics, and transform-free syntax boundaries are mandatory. | `cd5c45f` |
 | `ADR-003` | `VERIFIED` | A per-compilation arena owns sources through AST; returned CSS/maps/diagnostics have independent result ownership and one cleanup path with allocation-failure coverage. | `cd5c45f` |
+| `ADR-004` | `VERIFIED` | Transform passes use immutable root handoff, exact deny-by-default safety classes, deterministic dependency plans, compilation-arena outputs, scratch validation storage, explicit acceptance evidence, and transactional root/diagnostic installation. | Checkpoint pending |
 | `ADR-010` | `VERIFIED` | The configured `gpt-5.6-sol` ultra runtime and one implementation agent are hard gates; fallback models and delegated implementation are prohibited. | `cd5c45f` |
 
 ## Milestone 1 package ledger
@@ -138,7 +139,7 @@ Milestone 1 is `PASS` at gate checkpoint `31a00c1`. The gate adds a representati
 
 ## Milestone 2 exit validation
 
-Milestone 2 is `PASS` at gate checkpoint pending.
+Milestone 2 is `PASS` at gate checkpoint `d4a16d3`.
 
 | Gate | Result |
 |---|---|
@@ -151,6 +152,12 @@ Milestone 2 is `PASS` at gate checkpoint pending.
 | Debug / ReleaseSafe | `PASS`; each completes 11/11 test steps and 268/268 tests (80 legacy unit, 157 library/core, 31 CLI integration), plus 3/3 build steps. |
 | Documentation / packaging / CI | `PASS`; docs pass 75/75 and build, workflow YAML and validator/JSON parse, root locked install audits clean, and package dry run remains five files/12.7 kB. |
 | Formatting | `KNOWN DEBT`; every M2-owned file passes focused checks. Repository-wide checking reports the same 19 inherited files recorded at baseline, with no new formatting debt. |
+
+## Milestone 3 package ledger
+
+| Package | State | Evidence / decision | Commit |
+|---|---|---|---|
+| `PASS-001` | `VERIFIED` | Added the public rebuilt transform pass manager and accepted `ADR-004`. Passes declare stable ID/revision, matched phase/safety class, maturity, dependency graph, pre/post/no-op contracts, nesting/order/size behavior, and acceptance evidence. Verified output-changing passes require semantic+differential evidence; size and reorder claims have separate gates. Planning bounds registries, closes dependencies, rejects invalid/duplicate/missing/cyclic/later-phase graphs and requests, authorizes every dependency through exact class booleans, and orders ready passes by phase/priority/ID independent of registration/request order. Execution accepts const roots, rejects recovered input, uses compilation-arena candidates plus scratch validation allocation, invokes pre/post and optional second-run idempotence hooks, prevents analysis root replacement, rejects error diagnostics, rolls failed diagnostics back, and publishes a pipeline root only after the complete plan succeeds. Tests cover source mismatch, no-op/clone paths, transitive ordering, all policy denials, failed-validator rollback, diagnostic rollback, semantic equivalence hooks, and every planning/application allocation failure. `--optimize` remains rejected and no inherited optimizer is registered. Debug and ReleaseSafe pass 278/278 (80 legacy unit, 167 library/core, 31 CLI integration); both builds, focused formatting, 77/77 docs tests/build, and independent CSS validation pass. | Checkpoint pending |
 
 ## Completed work packages
 
@@ -185,6 +192,7 @@ Milestone 2 is `PASS` at gate checkpoint pending.
 - `NEST-001`: style-rule block contents follow declaration-first disambiguation without flattening cascade order. The initial declaration run remains on the style rule; every later run is an ordered nested-declarations child. Nested group rules use the same block-content algorithm, and emitter modes preserve that sequence while omitting only block-final declaration semicolons.
 - `M2-CLI`: stable CSS compilation enters through `css/pipeline.zig`; it never constructs the inherited AST, calls the inherited parser, or invokes inherited code generation. Stable CLI source-map flags remain rejected until a file/comment output contract is specified even though the library pipeline can return a separately owned map.
 - `M2-COMPAT`: the public Markdown matrix and machine-readable fixture manifest are cross-checked, while the independent parser consumes actual stable-CLI output rather than fixture input. Validator recovery is forbidden so acceptance cannot come from silently discarding malformed output.
+- `PASS-001`: plans borrow pass definitions but own deterministic ordered pointer slices. Output-changing passes reconstruct const AST paths in the compilation arena; `ParsedStylesheet.applyPassPlan` installs a root only after the full plan succeeds, while failed candidates and diagnostic side effects remain unobservable.
 
 ## Active blockers
 
@@ -224,7 +232,7 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - Operator-requested post-Milestone-0 tooling: add a ZigCSS autonomous-loop protocol plus a read-only `orient.sh`, modeled on Alvo's protocol/orient split and adapted to this repository's no-push/no-deploy authority boundary.
 - Alternate-format parsers remain available only as experimental internals for characterization; `.scss`, `.sass`, `.less`, `.styl`, `.postcss`, `.module.css`, and CSS-in-JS extensions are rejected by the recovery CLI before any output is written.
 - The persistent Codex goal remains the scheduler. `scripts/autodevelop/orient.sh` is deliberately read-only and cannot launch a model, wake a task, or mutate repository/external state; `docs/operations/codex-loop-protocol.md` is the canonical resume procedure.
-- Foundational implementation must conform to accepted `ADR-001`, `ADR-002`, `ADR-003`, and `ADR-010`; changing stable scope, source/syntax boundaries, ownership, or autonomous runtime requires a superseding approved ADR.
+- Foundational implementation must conform to accepted `ADR-001`, `ADR-002`, `ADR-003`, `ADR-004`, and `ADR-010`; changing stable scope, source/syntax boundaries, ownership, transform authority, or autonomous runtime requires a superseding approved ADR.
 - CSS strings use their distinct trailing-backslash-at-EOF rule when producing decoded values; identifiers, dimensions, hashes, at-keywords, and URLs retain the general escaped-code-point replacement behavior.
 - The arena control block is separately allocated from its caller-provided backing allocator so allocators retained by movable child containers never point into a relocated `Compilation` value.
 - Component-value recursion defaults to a 256-container nesting budget and returns `NestingLimitExceeded` before exceeding it; resource-limit diagnostics are added by `DIAG-001` rather than conflated with allocation failures.
@@ -245,7 +253,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - Known declaration/keyframe/page/top-level-only at-rules are invalid in a nesting context and recover at their complete at-rule boundary. Raw unknown at-rules remain represented for forward compatibility; newly standardized forms require an explicit classifier/context decision.
 - Stable parse diagnostics are emitted only after the complete typed parse and successful compilation produces no partial CSS. Parallel batch compilation likewise writes no destination until every task has compiled successfully.
 - Independent grammar validation is pinned to exact Lightning CSS package bytes through `package-lock.json`. An upgrade changes the evidence baseline and must update the declared version and rerun both output modes for every fixture.
+- Transform safety classes are independent permissions, not an ordinal hierarchy. Policy defaults to verified analysis only; transitive dependencies need the same explicit authority as requested passes, and the stable CLI remains transform-free until a concrete pass completes its acceptance suite.
 
 ## Last full validation
 
-Milestones 0, 1, and 2 are `PASS`. The Milestone 2 gate reran from clean checkpoint `56d662b`: Debug and ReleaseSafe each pass 268/268 tests and both builds; the compatibility gate verifies 20 documented features through 14 independently parsed outputs and four deterministic no-output rejections; documentation passes 75/75 and builds; workflow YAML, validator JavaScript, JSON/lockfiles, package dry run, source-path isolation, and diff checks pass. The same 19 inherited formatting failures and recorded dependency-audit debt remain scheduled work. `PASS-001` is active as the first Milestone 3 package.
+Milestones 0, 1, and 2 are `PASS`. Latest package validation (`PASS-001`): Debug and ReleaseSafe each pass 278/278 tests (80 legacy unit, 167 library/core, 31 CLI integration); both builds pass; documentation passes 77/77 and builds; the pinned independent CSS gate remains 20 features/14 parsed outputs/four deterministic rejections; and all new transform, pipeline, diagnostics, library, and ADR files pass focused formatting/diff checks. Repository-wide formatting still reports exactly the same 19 inherited files and the recorded docs dependency debt remains. `OPT-010` is active; no transform is enabled in the stable CLI yet.
