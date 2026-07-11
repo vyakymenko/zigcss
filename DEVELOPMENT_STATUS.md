@@ -15,16 +15,16 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 0 — Containment and regression baseline
-- Work package: compile API containment pending `SEC-002`
+- Work package: `TEST-001`
 - State: `IN_PROGRESS`
-- Next eligible package: disable the public compile API, then `TEST-001`
+- Next eligible package: `TEST-001`
 
 ## Milestone 0 package ledger
 
 | Package | State | Evidence / decision | Commit |
 |---|---|---|---|
-| `SEC-001` | `VERIFIED` | HTTP regressions reject encoded slash/backslash traversal and escaping symlinks, malformed encoding returns 400 without terminating the server, safe assets and SPA fallback remain available; full docs tests and build pass. | Checkpoint pending |
-| `SEC-002` | `NOT_STARTED` | Compile API limits pending; endpoint will be disabled immediately after `SEC-001` until bounded isolation is verified. | — |
+| `SEC-001` | `VERIFIED` | HTTP regressions reject encoded slash/backslash traversal and escaping symlinks, malformed encoding returns 400 without terminating the server, safe assets and SPA fallback remain available; full docs tests and build pass. | `14e8878` |
+| `SEC-002` | `DEFERRED` | Public compile routes return 503 and contain no process-spawn path. Bounded execution remains deferred until body/time/output/process/concurrency/cleanup isolation is implemented. Focused 9/9 and full docs 46/46 tests pass. | Checkpoint pending |
 | `SEC-003` | `NOT_STARTED` | Non-root/minimal docs container pending. | — |
 | `SAFE-001` | `NOT_STARTED` | Experimental-status and claims audit pending. | — |
 | `TEST-001` | `NOT_STARTED` | Audit regression suite pending. | — |
@@ -54,6 +54,7 @@ Baseline captured on base commit `2d2c0d9` with Zig 0.15.2, Node 24.16.0, and np
 ## Completed work packages
 
 - `SEC-001`: static serving is contained within the configured real root and malformed URL encoding is handled without a process crash. Focused result: 7/7 security tests; integration result: 44/44 docs tests plus successful Vite build.
+- `SEC-002` containment decision: the public compile service is disabled rather than exposed without its required resource and isolation limits. Re-enablement requires the full package gates.
 
 ## Active blockers
 
@@ -91,4 +92,4 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 ## Last full validation
 
-Milestone 0 is not yet eligible for full validation. Latest package validation: `npm run test:run` (44/44) and `npm run build` passed after `SEC-001`.
+Milestone 0 is not yet eligible for full validation. Latest package validation: `npm run test:run` (46/46), `npm run build`, and `node --check docs/server.js` passed with the compile API disabled.

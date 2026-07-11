@@ -14,6 +14,11 @@ type Response = {
   status: number
 }
 
+type RequestOptions = {
+  body?: string
+  method?: string
+}
+
 describe('docs static server containment', () => {
   let fixtureRoot: string
   let distDir: string
@@ -43,12 +48,13 @@ describe('docs static server containment', () => {
     fs.rmSync(fixtureRoot, { force: true, recursive: true })
   })
 
-  function request(urlPath: string): Promise<Response> {
+  function request(urlPath: string, options: RequestOptions = {}): Promise<Response> {
     const address = server.address() as AddressInfo
     return new Promise((resolve, reject) => {
       const req = http.request({
+        headers: options.body ? { 'Content-Length': Buffer.byteLength(options.body) } : undefined,
         host: '127.0.0.1',
-        method: 'GET',
+        method: options.method ?? 'GET',
         path: urlPath,
         port: address.port,
       }, res => {
@@ -60,6 +66,8 @@ describe('docs static server containment', () => {
         }))
       })
       req.on('error', reject)
+      if (options.body)
+        req.write(options.body)
       req.end()
     })
   }
@@ -104,4 +112,19 @@ describe('docs static server containment', () => {
       status: 200,
     })
   })
+
+  test.each(['/api/compile', '/zigcss/api/compile'])(
+    'keeps the public compile endpoint disabled at %s',
+    async urlPath => {
+      const response = await request(urlPath, {
+        body: JSON.stringify({ input: '.a { color: red; }' }),
+        method: 'POST',
+      })
+
+      expect(response.status).toBe(503)
+      expect(JSON.parse(response.body)).toEqual({
+        error: 'Compile API disabled pending security hardening',
+      })
+    },
+  )
 })
