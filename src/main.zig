@@ -93,7 +93,12 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     var codegen_timing = try perf_profiler.startTiming("codegen");
     defer codegen_timing.end() catch {};
 
-    const result = try codegen.generate(allocator, &stylesheet, options);
+    const result = codegen.generate(allocator, &stylesheet, options) catch |err| {
+        if (err == error.UnsafeTransformsDisabled) {
+            std.debug.print("Error: {s}\n", .{codegen.unsafe_transforms_message});
+        }
+        return err;
+    };
     defer allocator.free(result);
     
     try codegen_timing.end();
@@ -223,7 +228,10 @@ fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
     };
 
     const result = codegen.generate(allocator, &stylesheet, options) catch |err| {
-        task.err = std.fmt.allocPrint(allocator, "Codegen error: {s}", .{@errorName(err)}) catch "Codegen error";
+        task.err = if (err == error.UnsafeTransformsDisabled)
+            allocator.dupe(u8, codegen.unsafe_transforms_message) catch "Unsafe transforms disabled"
+        else
+            std.fmt.allocPrint(allocator, "Codegen error: {s}", .{@errorName(err)}) catch "Codegen error";
         return;
     };
     
@@ -674,6 +682,38 @@ pub fn main() !void {
     }
 }
 
+test "stable codegen rejects unsafe transforms without mutating the AST" {
+    const css = ".stable { color: red; }";
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const parser_trait = formats.getParser(.css);
+    var stylesheet = try parser_trait.parseFn(allocator, css);
+    defer stylesheet.deinit();
+
+    try std.testing.expectError(
+        error.UnsafeTransformsDisabled,
+        codegen.generate(allocator, &stylesheet, .{ .optimize = true }),
+    );
+    try std.testing.expectError(
+        error.UnsafeTransformsDisabled,
+        codegen.generate(allocator, &stylesheet, .{ .autoprefix = .{} }),
+    );
+    try std.testing.expectError(
+        error.UnsafeTransformsDisabled,
+        codegen.generate(allocator, &stylesheet, .{ .dead_code = .{} }),
+    );
+    try std.testing.expectError(
+        error.UnsafeTransformsDisabled,
+        codegen.generate(allocator, &stylesheet, .{ .critical_css = .{} }),
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), stylesheet.rules.items.len);
+    try std.testing.expectEqualStrings("color", stylesheet.rules.items[0].style.declarations.items[0].property);
+    try std.testing.expectEqualStrings("red", stylesheet.rules.items[0].style.declarations.items[0].value);
+}
+
 test "basic compilation" {
     const css = ".container { color: red; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -791,7 +831,7 @@ test "cascade layer parsing" {
     try std.testing.expect(std.mem.eql(u8, rule.at_rule.prelude, "utilities"));
 }
 
-test "cascade layer merging" {
+test "legacy optimizer internal: cascade layer merging" {
     const css = "@layer theme { .button { color: red; } } @layer theme { .link { color: blue; } }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -804,7 +844,7 @@ test "cascade layer merging" {
     var opt = optimizer.Optimizer.init(allocator);
     try opt.optimize(&stylesheet);
 
-    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     var layer_count: usize = 0;
@@ -822,7 +862,7 @@ test "cascade layer merging" {
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".link"));
 }
 
-test "cascade layer anonymous merging" {
+test "legacy optimizer internal: cascade layer anonymous merging" {
     const css = "@layer { .a { color: red; } } @layer { .b { color: blue; } }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -835,7 +875,7 @@ test "cascade layer anonymous merging" {
     var opt = optimizer.Optimizer.init(allocator);
     try opt.optimize(&stylesheet);
 
-    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     var layer_count: usize = 0;
@@ -853,7 +893,7 @@ test "cascade layer anonymous merging" {
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".b"));
 }
 
-test "flexbox shorthand optimization" {
+test "legacy optimizer internal: flexbox shorthand optimization" {
     const css = ".flex { flex-grow: 1; flex-shrink: 1; flex-basis: 0%; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -866,7 +906,7 @@ test "flexbox shorthand optimization" {
     var opt = optimizer.Optimizer.init(allocator);
     try opt.optimize(&stylesheet);
 
-    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "flex:"));
@@ -875,7 +915,7 @@ test "flexbox shorthand optimization" {
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "flex-basis"));
 }
 
-test "grid template shorthand optimization" {
+test "legacy optimizer internal: grid template shorthand optimization" {
     const css = ".grid { grid-template-rows: 1fr 1fr; grid-template-columns: repeat(2, 1fr); }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -888,7 +928,7 @@ test "grid template shorthand optimization" {
     var opt = optimizer.Optimizer.init(allocator);
     try opt.optimize(&stylesheet);
 
-    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "grid-template:"));
@@ -896,7 +936,7 @@ test "grid template shorthand optimization" {
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "grid-template-columns"));
 }
 
-test "gap shorthand optimization" {
+test "legacy optimizer internal: gap shorthand optimization" {
     const css = ".container { row-gap: 20px; column-gap: 20px; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -909,7 +949,7 @@ test "gap shorthand optimization" {
     var opt = optimizer.Optimizer.init(allocator);
     try opt.optimize(&stylesheet);
 
-    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "gap:"));
@@ -917,7 +957,7 @@ test "gap shorthand optimization" {
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "column-gap"));
 }
 
-test "gap shorthand optimization different values" {
+test "legacy optimizer internal: gap shorthand optimization different values" {
     const css = ".container { row-gap: 10px; column-gap: 20px; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -930,7 +970,7 @@ test "gap shorthand optimization different values" {
     var opt = optimizer.Optimizer.init(allocator);
     try opt.optimize(&stylesheet);
 
-    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "gap:"));
@@ -938,7 +978,7 @@ test "gap shorthand optimization different values" {
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "20px"));
 }
 
-test "logical properties optimization" {
+test "legacy optimizer internal: logical properties optimization" {
     const css = ".box { margin-inline-start: 10px; margin-inline-end: 20px; padding-block-start: 5px; padding-block-end: 15px; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -951,7 +991,7 @@ test "logical properties optimization" {
     var opt = optimizer.Optimizer.init(allocator);
     try opt.optimize(&stylesheet);
 
-    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "margin-left"));
@@ -964,7 +1004,7 @@ test "logical properties optimization" {
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "padding-block-end"));
 }
 
-test "logical border properties optimization" {
+test "legacy optimizer internal: logical border properties optimization" {
     const css = ".border { border-inline-start-width: 2px; border-inline-end-color: red; border-block-start-style: solid; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -977,7 +1017,7 @@ test "logical border properties optimization" {
     var opt = optimizer.Optimizer.init(allocator);
     try opt.optimize(&stylesheet);
 
-    const result = try codegen.generate(allocator, &stylesheet, .{ .optimize = true });
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, "border-left-width"));
@@ -988,7 +1028,7 @@ test "logical border properties optimization" {
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "border-block-start-style"));
 }
 
-test "dead code elimination" {
+test "legacy optimizer internal: dead code elimination" {
     const css = ".used-class { color: red; } .unused-class { color: blue; } #used-id { color: green; } #unused-id { color: yellow; } div { color: black; } span { color: white; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -1008,10 +1048,10 @@ test "dead code elimination" {
         .used_elements = &used_elements,
     };
 
-    const result = try codegen.generate(allocator, &stylesheet, .{
-        .optimize = true,
-        .dead_code = dead_code_opts,
-    });
+    var opt = optimizer.Optimizer.initWithDeadCode(allocator, dead_code_opts);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".used-class"));
@@ -1022,7 +1062,7 @@ test "dead code elimination" {
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "span"));
 }
 
-test "dead code elimination with media queries" {
+test "legacy optimizer internal: dead code elimination with media queries" {
     const css = "@media (min-width: 768px) { .used-class { color: red; } .unused-class { color: blue; } }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -1038,17 +1078,17 @@ test "dead code elimination with media queries" {
         .used_classes = &used_classes,
     };
 
-    const result = try codegen.generate(allocator, &stylesheet, .{
-        .optimize = true,
-        .dead_code = dead_code_opts,
-    });
+    var opt = optimizer.Optimizer.initWithDeadCode(allocator, dead_code_opts);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".used-class"));
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, ".unused-class"));
 }
 
-test "critical CSS extraction" {
+test "legacy optimizer internal: critical CSS extraction" {
     const css = ".critical-class { color: red; } .non-critical-class { color: blue; } #critical-id { color: green; } #non-critical-id { color: yellow; } div { color: black; } span { color: white; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -1068,10 +1108,10 @@ test "critical CSS extraction" {
         .critical_elements = &critical_elements,
     };
 
-    const result = try codegen.generate(allocator, &stylesheet, .{
-        .optimize = true,
-        .critical_css = critical_css_opts,
-    });
+    var opt = optimizer.Optimizer.initWithCriticalCss(allocator, critical_css_opts);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".critical-class"));
@@ -1082,7 +1122,7 @@ test "critical CSS extraction" {
     try std.testing.expect(!std.mem.containsAtLeast(u8, result, 1, "span"));
 }
 
-test "critical CSS extraction with media queries" {
+test "legacy optimizer internal: critical CSS extraction with media queries" {
     const css = "@media (min-width: 768px) { .critical-class { color: red; } .non-critical-class { color: blue; } }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -1098,10 +1138,10 @@ test "critical CSS extraction with media queries" {
         .critical_classes = &critical_classes,
     };
 
-    const result = try codegen.generate(allocator, &stylesheet, .{
-        .optimize = true,
-        .critical_css = critical_css_opts,
-    });
+    var opt = optimizer.Optimizer.initWithCriticalCss(allocator, critical_css_opts);
+    try opt.optimize(&stylesheet);
+
+    const result = try codegen.generate(allocator, &stylesheet, .{});
     defer allocator.free(result);
 
     try std.testing.expect(std.mem.containsAtLeast(u8, result, 1, ".critical-class"));

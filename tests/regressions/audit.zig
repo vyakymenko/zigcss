@@ -54,6 +54,12 @@ fn expectFailureContaining(result: Child.RunResult, expected: []const u8) !void 
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, expected) != null);
 }
 
+fn expectUnsafeTransformsDisabled(result: Child.RunResult) !void {
+    try std.testing.expect(!succeeded(result.term));
+    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unsafe optimizer and transform passes are disabled") != null);
+}
+
 test "legacy quarantine: compound selectors collapse into descendants (AST-001, PAR-001)" {
     var compound = try runCompiler(@embedFile("fixtures/compound.css"), &.{"--minify"});
     defer deinitRun(&compound);
@@ -102,56 +108,46 @@ test "legacy quarantine: minified at-rules omit mandatory whitespace (EMIT-002)"
     try std.testing.expectEqualStrings("@mediascreen{.a{color:red}}", result.stdout);
 }
 
-test "legacy quarantine: importance and fallback declarations collapse (AST-002, OPT-011)" {
+test "optimizer containment: importance and fallback input cannot reach unsafe passes (OPT-001)" {
     var result = try runCompiler(@embedFile("fixtures/important.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectSuccess(result);
-    try std.testing.expectEqualStrings(".a{color:green!important}", result.stdout);
+    try expectUnsafeTransformsDisabled(result);
 }
 
-test "legacy quarantine: leading empty-rule removal reorders rules (OPT-001, OPT-010)" {
+test "optimizer containment: empty-rule input cannot reach unsafe passes (OPT-001)" {
     var result = try runCompiler(@embedFile("fixtures/empty-leading.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectSuccess(result);
-    try std.testing.expectEqualStrings(".second{color:#00f}.first{color:#f00}", result.stdout);
+    try expectUnsafeTransformsDisabled(result);
 }
 
-test "legacy quarantine: non-adjacent selectors and at-rules merge across intervening rules (OPT-001)" {
+test "optimizer containment: non-adjacent merge input cannot reach unsafe passes (OPT-001)" {
     var result = try runCompiler(@embedFile("fixtures/nonadjacent.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectSuccess(result);
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stdout, ".keep{"));
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stdout, "@mediascreen"));
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, ".keep{color:#f00;background:#00f}") != null);
+    try expectUnsafeTransformsDisabled(result);
 }
 
-test "legacy quarantine: custom cascade, logical direction, and reset shorthands change semantics (OPT-001)" {
+test "optimizer containment: cascade-sensitive input cannot reach unsafe passes (OPT-001)" {
     var result = try runCompiler(@embedFile("fixtures/custom-logical-reset.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectSuccess(result);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "color:#00f") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "margin-left:1px") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "background:red url(\"x.png\")") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "font:italic 16px serif") != null);
+    try expectUnsafeTransformsDisabled(result);
 }
 
-test "legacy quarantine: typed math ignores multiplication precedence (VAL-001, MATH-001)" {
+test "optimizer containment: typed math input cannot reach unsafe folding (OPT-001)" {
     var result = try runCompiler(@embedFile("fixtures/math.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectSuccess(result);
-    try std.testing.expectEqualStrings(".a{width:9px;height:calc(1px + 2em)}", result.stdout);
+    try expectUnsafeTransformsDisabled(result);
 }
 
-test "legacy quarantine: selector simplification can panic (OPT-001)" {
+test "optimizer containment: selector crash input is rejected before optimization (OPT-001)" {
     var result = try runCompiler(@embedFile("fixtures/selector-crash.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try std.testing.expect(!succeeded(result.term));
+    try expectUnsafeTransformsDisabled(result);
 }
 
 test "legacy quarantine: profiling double-end crashes after reporting (PROF-001)" {
@@ -170,16 +166,15 @@ test "legacy quarantine: source-map flag succeeds without a map (CLI-002, MAP-00
     try std.testing.expectEqualStrings(".simple{color:red}", result.stdout);
 }
 
-test "legacy quarantine: browser targets do not change prefix output (PREFIX-001)" {
+test "optimizer containment: unverified prefix transforms are unavailable (OPT-001)" {
     const input = @embedFile("fixtures/prefix.css");
     var modern = try runCompiler(input, &.{ "--autoprefix", "--browsers", "chrome120", "--minify" });
     defer deinitRun(&modern);
     var legacy = try runCompiler(input, &.{ "--autoprefix", "--browsers", "ie11", "--minify" });
     defer deinitRun(&legacy);
 
-    try expectSuccess(modern);
-    try expectSuccess(legacy);
-    try std.testing.expectEqualStrings(modern.stdout, legacy.stdout);
+    try expectUnsafeTransformsDisabled(modern);
+    try expectUnsafeTransformsDisabled(legacy);
 }
 
 test "legacy quarantine: input and output identity overwrites the source (CLI-001)" {

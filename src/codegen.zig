@@ -4,6 +4,8 @@ const optimizer = @import("optimizer.zig");
 const autoprefixer = @import("autoprefixer.zig");
 const plugin = @import("plugin.zig");
 
+// Transform-bearing fields are retained for source compatibility during the
+// recovery, but generate() rejects them until verified passes exist.
 pub const CodegenOptions = struct {
     minify: bool = false,
     optimize: bool = false,
@@ -12,6 +14,8 @@ pub const CodegenOptions = struct {
     critical_css: ?optimizer.CriticalCssOptions = null,
     plugins: []const plugin.Plugin = &.{},
 };
+
+pub const unsafe_transforms_message = "unsafe optimizer and transform passes are disabled pending safety validation";
 
 fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
     if (stylesheet.rules.items.len == 0) return 0;
@@ -97,34 +101,15 @@ fn estimateStyleRuleSize(style_rule: ast.StyleRule) usize {
 }
 
 pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, options: CodegenOptions) ![]const u8 {
+    if (options.optimize or options.autoprefix != null or options.dead_code != null or options.critical_css != null) {
+        return error.UnsafeTransformsDisabled;
+    }
+
     if (options.plugins.len > 0) {
         var registry = try plugin.PluginRegistry.init(allocator);
         defer registry.deinit();
         try registry.addSlice(options.plugins);
         try registry.run(stylesheet);
-    }
-
-    if (options.optimize or options.autoprefix != null or options.dead_code != null or options.critical_css != null) {
-        var opt = if (options.critical_css) |critical_css_opts|
-            optimizer.Optimizer.initWithCriticalCss(allocator, critical_css_opts)
-        else if (options.dead_code) |dead_code_opts|
-            optimizer.Optimizer.initWithDeadCode(allocator, dead_code_opts)
-        else if (options.autoprefix) |autoprefix_opts|
-            optimizer.Optimizer.initWithAutoprefix(allocator, autoprefix_opts)
-        else
-            optimizer.Optimizer.init(allocator);
-        
-        if (options.autoprefix) |autoprefix_opts| {
-            opt.autoprefix_options = autoprefix_opts;
-        }
-        if (options.dead_code) |dead_code_opts| {
-            opt.dead_code_options = dead_code_opts;
-        }
-        if (options.critical_css) |critical_css_opts| {
-            opt.critical_css_options = critical_css_opts;
-        }
-        
-        try opt.optimize(stylesheet);
     }
 
     const estimated_size = estimateOutputSize(stylesheet.*);

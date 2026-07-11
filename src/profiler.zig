@@ -216,7 +216,7 @@ pub fn benchmarkCompilation(
                 
                 const codegen_start = std.time.nanoTimestamp();
                 const codegen = @import("codegen.zig");
-                const result = try codegen.generate(allocator, stylesheet, .{ .optimize = true, .minify = true });
+                const result = try codegen.generate(allocator, stylesheet, .{ .minify = true });
                 defer allocator.free(result);
                 const codegen_end = std.time.nanoTimestamp();
                 total_codegen_ns += @as(u64, @intCast(@abs(codegen_end - codegen_start)));

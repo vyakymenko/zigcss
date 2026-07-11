@@ -308,7 +308,7 @@ fn runDetailedBenchmark(allocator: std.mem.Allocator) !void {
                     total_optimize += @as(u64, @intCast(@abs(optimize_end - optimize_start)));
                     
                     const codegen_start = std.time.nanoTimestamp();
-                    const result = try codegen.generate(allocator, stylesheet, .{ .optimize = true, .minify = true });
+                    const result = try codegen.generate(allocator, stylesheet, .{ .minify = true });
                     defer allocator.free(result);
                     const codegen_end = std.time.nanoTimestamp();
                     total_codegen += @as(u64, @intCast(@abs(codegen_end - codegen_start)));

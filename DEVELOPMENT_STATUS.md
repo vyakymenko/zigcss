@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 0 — Containment and regression baseline
-- Work package: `OPT-001`
+- Work package: `PROF-001`
 - State: `IN_PROGRESS`
-- Next eligible package: `OPT-001`
+- Next eligible package: `PROF-001`
 
 ## Milestone 0 package ledger
 
@@ -27,8 +27,8 @@ Last updated: 2026-07-11
 | `SEC-002` | `DEFERRED` | Public compile routes return 503 and contain no process-spawn path. Bounded execution remains deferred until body/time/output/process/concurrency/cleanup isolation is implemented. Focused 9/9 and full docs 46/46 tests pass. | `ed5b2ff` |
 | `SEC-003` | `NOT_STARTED` | Non-root/minimal docs container pending. | — |
 | `SAFE-001` | `NOT_STARTED` | Experimental-status and claims audit pending. | — |
-| `TEST-001` | `VERIFIED` | Added 18 isolated compiler/CLI characterization regressions covering every non-server Milestone 0 audit case; fixed server regressions remain active assertions. Debug and ReleaseSafe each pass 94/94 tests. | Checkpoint pending |
-| `OPT-001` | `NOT_STARTED` | Unsafe optimizer defaults pending regression harness. | — |
+| `TEST-001` | `VERIFIED` | Added 18 isolated compiler/CLI characterization regressions covering every non-server Milestone 0 audit case; fixed server regressions remain active assertions. Debug and ReleaseSafe each pass 94/94 tests. | `0334d05` |
+| `OPT-001` | `VERIFIED` | Stable code generation rejects optimize, autoprefix, dead-code, and critical-CSS requests before AST mutation or emission. All optimizer corruption/crash inputs now assert explicit containment; Debug and ReleaseSafe pass 95/95. | Checkpoint pending |
 | `PROF-001` | `NOT_STARTED` | Profiling lifecycle fix pending regression harness. | — |
 | `CLI-001` | `NOT_STARTED` | Input/output and batch collision protection pending. | — |
 | `CLI-002` | `NOT_STARTED` | Strict flag/value/feature rejection pending. | — |
@@ -56,6 +56,7 @@ Baseline captured on base commit `2d2c0d9` with Zig 0.15.2, Node 24.16.0, and np
 - `SEC-001`: static serving is contained within the configured real root and malformed URL encoding is handled without a process crash. Focused result: 7/7 security tests; integration result: 44/44 docs tests plus successful Vite build.
 - `SEC-002` containment decision: the public compile service is disabled rather than exposed without its required resource and isolation limits. Re-enablement requires the full package gates.
 - `TEST-001`: the audit corpus runs the actual CLI as a child process, safely captures crash signatures, and maps every quarantine to the package that must replace it with a target-contract assertion.
+- `OPT-001`: code generation no longer invokes the legacy optimizer. Transform-bearing requests fail with `UnsafeTransformsDisabled` and a CLI diagnostic; minification remains emission-only.
 
 ## Active blockers
 
@@ -91,7 +92,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - Inherited work is preserved and will not be rewritten or discarded.
 - The compile API will be disabled after `SEC-001` unless `SEC-002` isolation is implemented and verified immediately.
 - Legacy compiler failures are executable characterization quarantines, not accepted contracts. Each owning fix must replace its quarantine with the correct behavior assertion in the same commit.
+- Legacy optimizer functions remain reachable only to explicitly labeled internal tests. They are not part of the stable CLI/code-generation path and must not be re-enabled without pass-specific acceptance evidence.
 
 ## Last full validation
 
-Milestone 0 is not yet eligible for full validation. Latest package validation: `zig build test --summary all` and its ReleaseSafe variant both passed 94/94 tests (76 unit plus 18 audit regressions).
+Milestone 0 is not yet eligible for full validation. Latest package validation: `zig build test --summary all` and its ReleaseSafe variant both passed 95/95 tests (77 unit plus 18 audit regressions); the former selector panic now exits 1 with the containment diagnostic.
