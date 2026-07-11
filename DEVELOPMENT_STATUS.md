@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 1 — Tokenizer, source model, and AST foundation
-- Work package: `TOK-001`
+- Work package: `TOK-002`
 - State: `IN_PROGRESS`
-- Next eligible package: `TOK-001`, then `TOK-002`, `TOK-003`, and `MEM-001`
+- Next eligible package: `TOK-002`, `TOK-003`, and `MEM-001`
 
 ## Milestone 0 package ledger
 
@@ -90,8 +90,8 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 
 | Package | State | Evidence / decision | Commit |
 |---|---|---|---|
-| `ARCH-001` | `VERIFIED` | Public `zigcss` module now roots at `src/lib.zig`. `SourceManager` owns copied names/bytes/line indexes; spans are source-bound half-open byte ranges; locations handle CR/LF/CRLF/form-feed and Unicode scalar columns; diagnostics own structured messages; `Compilation` owns per-input sources/diagnostics and validates spans. Debug and ReleaseSafe pass 113/113. | Checkpoint pending |
-| `TOK-001` | `IN_PROGRESS` | CSS Syntax token kinds and state machine next. | — |
+| `ARCH-001` | `VERIFIED` | Public `zigcss` module now roots at `src/lib.zig`. `SourceManager` owns copied names/bytes/line indexes; spans are source-bound half-open byte ranges; locations handle CR/LF/CRLF/form-feed and Unicode scalar columns; diagnostics own structured messages; `Compilation` owns per-input sources/diagnostics and validates spans. Debug and ReleaseSafe pass 113/113. | `4f290c1` |
+| `TOK-001` | `VERIFIED` | Defined every CSS Syntax token category plus comment trivia/EOF and an on-demand progress-safe dispatcher for punctuation, CDO/CDC, whitespace, basic ASCII ident-like tokens, strings, UTF-8 delimiters, and EOF. All 256 byte values make progress; Debug and ReleaseSafe pass 120/120. | Checkpoint pending |
 | `TOK-002` | `NOT_STARTED` | Escapes, identifiers, numeric tokens, URLs, and bad-token recovery depend on `TOK-001`. | — |
 | `TOK-003` | `NOT_STARTED` | Trivia, source ranges, and line-index integration depend on `TOK-001`. | — |
 | `SYN-001` | `NOT_STARTED` | Lossless nested component values depend on `TOK-002` and `TOK-003`. | — |
@@ -157,4 +157,4 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 ## Last full validation
 
-Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`ARCH-001`): Debug and ReleaseSafe each pass 113/113 tests (80 legacy unit, 8 new library foundation, 25 CLI integration); all newly touched Zig files pass formatting. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
+Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`TOK-001`): Debug and ReleaseSafe each pass 120/120 tests (80 legacy unit, 15 new library/tokenizer, 25 CLI integration); every touched Zig file passes formatting. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
