@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 1 — Tokenizer, source model, and AST foundation
-- Work package: `TOK-002`
+- Work package: `TOK-003`
 - State: `IN_PROGRESS`
-- Next eligible package: `TOK-002`, `TOK-003`, and `MEM-001`
+- Next eligible package: `TOK-003` and `MEM-001`
 
 ## Milestone 0 package ledger
 
@@ -91,8 +91,8 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 | Package | State | Evidence / decision | Commit |
 |---|---|---|---|
 | `ARCH-001` | `VERIFIED` | Public `zigcss` module now roots at `src/lib.zig`. `SourceManager` owns copied names/bytes/line indexes; spans are source-bound half-open byte ranges; locations handle CR/LF/CRLF/form-feed and Unicode scalar columns; diagnostics own structured messages; `Compilation` owns per-input sources/diagnostics and validates spans. Debug and ReleaseSafe pass 113/113. | `4f290c1` |
-| `TOK-001` | `VERIFIED` | Defined every CSS Syntax token category plus comment trivia/EOF and an on-demand progress-safe dispatcher for punctuation, CDO/CDC, whitespace, basic ASCII ident-like tokens, strings, UTF-8 delimiters, and EOF. All 256 byte values make progress; Debug and ReleaseSafe pass 120/120. | Checkpoint pending |
-| `TOK-002` | `NOT_STARTED` | Escapes, identifiers, numeric tokens, URLs, and bad-token recovery depend on `TOK-001`. | — |
+| `TOK-001` | `VERIFIED` | Defined every CSS Syntax token category plus comment trivia/EOF and an on-demand progress-safe dispatcher for punctuation, CDO/CDC, whitespace, basic ASCII ident-like tokens, strings, UTF-8 delimiters, and EOF. All 256 byte values make progress; Debug and ReleaseSafe pass 120/120. | `a9d8a2c` |
+| `TOK-002` | `VERIFIED` | Added CSS input preprocessing over original-byte spans; escape decoding; Unicode identifiers; number, percentage, dimension, URL/bad-URL, and opt-in unicode-range consumers; numeric representation metadata; raw/decoded token access; and bounded EOF/malformed-input recovery. Tests cover distinct string/name EOF escapes, quoted URL dispatch, escaped bad-URL recovery, incomplete exponents, invalid UTF-8 progress, all escape scalar limits, and every decoded-value allocation failure. Debug and ReleaseSafe pass 135/135. | Checkpoint pending |
 | `TOK-003` | `NOT_STARTED` | Trivia, source ranges, and line-index integration depend on `TOK-001`. | — |
 | `SYN-001` | `NOT_STARTED` | Lossless nested component values depend on `TOK-002` and `TOK-003`. | — |
 | `AST-001` | `NOT_STARTED` | Selector structures depend on `SYN-001`. | — |
@@ -114,6 +114,7 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 - `CI-002`: target builds happen after native tests so tests cannot replace cross artifacts; a shared tested inspector validates architecture and executable format before upload or release archive creation.
 - `SEC-003`: the public docs runtime is static-only, non-root, high-port, and root-owned; a filtered build context excludes repository metadata, generated output, dependency trees, and environment files.
 - `SAFE-001`: the recovery CLI emits an experimental warning and rejects legacy format adapters; active public documentation is limited to the tested status, source-build, and CLI contracts, while prior performance comparisons are explicitly invalidated.
+- `TOK-002`: semantic token values decode CSS escapes on demand while raw original spelling remains source-addressable; URL and malformed-token recovery always terminates, and unicode-range recognition is enabled only for its descriptor-specific entry point.
 
 ## Active blockers
 
@@ -154,7 +155,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - Alternate-format parsers remain available only as experimental internals for characterization; `.scss`, `.sass`, `.less`, `.styl`, `.postcss`, `.module.css`, and CSS-in-JS extensions are rejected by the recovery CLI before any output is written.
 - The persistent Codex goal remains the scheduler. `scripts/autodevelop/orient.sh` is deliberately read-only and cannot launch a model, wake a task, or mutate repository/external state; `docs/operations/codex-loop-protocol.md` is the canonical resume procedure.
 - Foundational implementation must conform to accepted `ADR-001`, `ADR-002`, `ADR-003`, and `ADR-010`; changing stable scope, source/syntax boundaries, ownership, or autonomous runtime requires a superseding approved ADR.
+- CSS strings use their distinct trailing-backslash-at-EOF rule when producing decoded values; identifiers, dimensions, hashes, at-keywords, and URLs retain the general escaped-code-point replacement behavior.
 
 ## Last full validation
 
-Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`TOK-001`): Debug and ReleaseSafe each pass 120/120 tests (80 legacy unit, 15 new library/tokenizer, 25 CLI integration); every touched Zig file passes formatting. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
+Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`TOK-002`): Debug and ReleaseSafe each pass 135/135 tests (80 legacy unit, 30 library/tokenizer, 25 CLI integration); `src/tokenizer.zig` passes formatting. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.

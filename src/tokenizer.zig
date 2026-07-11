@@ -54,6 +54,7 @@ pub const Numeric = struct {
     value: f64,
     number_type: NumberType,
     sign: Sign,
+    representation: source.Span,
 };
 
 pub const Hash = struct {
@@ -67,8 +68,8 @@ pub const Dimension = struct {
 };
 
 pub const UnicodeRange = struct {
-    start: u21,
-    end: u21,
+    start: u32,
+    end: u32,
 };
 
 pub const TokenData = union(enum) {
@@ -90,6 +91,43 @@ pub const Token = struct {
     pub fn raw(self: Token, file: *const source.SourceFile) ![]const u8 {
         return file.slice(self.span);
     }
+
+    pub fn valueSpan(self: Token) ?source.Span {
+        return switch (self.data) {
+            .text => |span| span,
+            .hash => |hash| hash.value,
+            .dimension => |dimension| dimension.unit,
+            else => null,
+        };
+    }
+
+    /// Returns a caller-owned UTF-8 value with CSS escapes decoded. The token's
+    /// original spelling always remains available through `raw` and its span.
+    pub fn decodedTextAlloc(self: Token, allocator: std.mem.Allocator, file: *const source.SourceFile) ![]u8 {
+        const value_span = self.valueSpan() orelse return error.TokenHasNoText;
+        if (!value_span.source.eql(file.id)) return error.SourceMismatch;
+        const mode: DecodeMode = switch (self.kind) {
+            .string, .bad_string => .string,
+            else => .general,
+        };
+        return decodeSpanAlloc(allocator, file.bytes, value_span.start, value_span.end, mode);
+    }
+};
+
+pub const Options = struct {
+    /// CSS Syntax only enables unicode-range tokenization for the
+    /// `unicode-range` descriptor entry point.
+    unicode_ranges: bool = false,
+};
+
+const InputCodepoint = struct {
+    value: u21,
+    len: usize,
+};
+
+const DecodeMode = enum {
+    general,
+    string,
 };
 
 const State = enum {
@@ -100,16 +138,20 @@ const State = enum {
 };
 
 /// An on-demand tokenizer. Every non-EOF call consumes at least one byte.
-/// TOK-001 covers the dispatch state machine, punctuation, CDO/CDC, basic
-/// ASCII ident-like tokens, raw strings, whitespace, and delimiters. The
-/// spec-complete consumers named in TOK-002/TOK-003 extend this boundary.
+/// Input preprocessing follows CSS Syntax while all spans continue to address
+/// the original source bytes.
 pub const Tokenizer = struct {
     file: *const source.SourceFile,
     cursor: usize = 0,
     state: State = .data,
+    options: Options = .{},
 
     pub fn init(file: *const source.SourceFile) Tokenizer {
-        return .{ .file = file };
+        return initWithOptions(file, .{});
+    }
+
+    pub fn initWithOptions(file: *const source.SourceFile, options: Options) Tokenizer {
+        return .{ .file = file, .options = options };
     }
 
     pub fn next(self: *Tokenizer) Token {
@@ -119,7 +161,6 @@ pub const Tokenizer = struct {
         }
 
         const start = self.cursor;
-
         if (self.startsWith("<!--")) {
             self.cursor += 4;
             return self.makeToken(.cdo, start, self.cursor, .none);
@@ -129,61 +170,66 @@ pub const Tokenizer = struct {
             return self.makeToken(.cdc, start, self.cursor, .none);
         }
 
-        if (isWhitespace(self.file.bytes[self.cursor])) {
-            self.cursor += 1;
-            while (self.cursor < self.file.bytes.len and isWhitespace(self.file.bytes[self.cursor])) {
-                self.cursor += 1;
+        const current = self.peek(self.cursor).?;
+        if (isWhitespace(current.value)) {
+            self.cursor += current.len;
+            while (self.peek(self.cursor)) |next_codepoint| {
+                if (!isWhitespace(next_codepoint.value)) break;
+                self.cursor += next_codepoint.len;
             }
             return self.makeToken(.whitespace, start, self.cursor, .none);
         }
 
-        switch (self.file.bytes[self.cursor]) {
+        if (self.options.unicode_ranges and self.wouldStartUnicodeRange(self.cursor)) {
+            return self.consumeUnicodeRange(start);
+        }
+
+        switch (current.value) {
             '\'' => {
-                self.cursor += 1;
+                self.cursor += current.len;
                 self.state = .single_quoted_string;
                 return self.consumeString(start, self.cursor);
             },
             '"' => {
-                self.cursor += 1;
+                self.cursor += current.len;
                 self.state = .double_quoted_string;
                 return self.consumeString(start, self.cursor);
             },
             '#' => return self.consumeHash(start),
             '@' => return self.consumeAtKeywordOrDelim(start),
-            ':' => return self.consumePunctuation(.colon, start),
-            ';' => return self.consumePunctuation(.semicolon, start),
-            ',' => return self.consumePunctuation(.comma, start),
-            '[' => return self.consumePunctuation(.open_square, start),
-            ']' => return self.consumePunctuation(.close_square, start),
-            '(' => return self.consumePunctuation(.open_paren, start),
-            ')' => return self.consumePunctuation(.close_paren, start),
-            '{' => return self.consumePunctuation(.open_curly, start),
-            '}' => return self.consumePunctuation(.close_curly, start),
+            ':' => return self.consumePunctuation(.colon, start, current.len),
+            ';' => return self.consumePunctuation(.semicolon, start, current.len),
+            ',' => return self.consumePunctuation(.comma, start, current.len),
+            '[' => return self.consumePunctuation(.open_square, start, current.len),
+            ']' => return self.consumePunctuation(.close_square, start, current.len),
+            '(' => return self.consumePunctuation(.open_paren, start, current.len),
+            ')' => return self.consumePunctuation(.close_paren, start, current.len),
+            '{' => return self.consumePunctuation(.open_curly, start, current.len),
+            '}' => return self.consumePunctuation(.close_curly, start, current.len),
             else => {},
         }
 
-        if (self.wouldStartIdent(self.cursor)) {
-            return self.consumeIdentLike(start);
-        }
+        if (self.wouldStartNumber(self.cursor)) return self.consumeNumericToken(start);
+        if (self.wouldStartIdent(self.cursor)) return self.consumeIdentLike(start);
 
         const value = self.consumeCodepoint();
         return self.makeToken(.delim, start, self.cursor, .{ .delim = value });
     }
 
-    fn consumePunctuation(self: *Tokenizer, kind: TokenKind, start: usize) Token {
-        self.cursor += 1;
+    fn consumePunctuation(self: *Tokenizer, kind: TokenKind, start: usize, length: usize) Token {
+        self.cursor += length;
         return self.makeToken(kind, start, self.cursor, .none);
     }
 
     fn consumeHash(self: *Tokenizer, start: usize) Token {
         self.cursor += 1;
         const value_start = self.cursor;
-        if (self.cursor < self.file.bytes.len and isAsciiName(self.file.bytes[self.cursor])) {
+        const next_codepoint = self.peek(self.cursor);
+        if ((next_codepoint != null and isIdent(next_codepoint.?.value)) or self.isValidEscape(self.cursor)) {
             const hash_type: HashType = if (self.wouldStartIdent(self.cursor)) .id else .unrestricted;
-            self.consumeAsciiName();
-            const value_span = self.span(value_start, self.cursor);
+            self.consumeName();
             return self.makeToken(.hash, start, self.cursor, .{
-                .hash = .{ .value = value_span, .hash_type = hash_type },
+                .hash = .{ .value = self.span(value_start, self.cursor), .hash_type = hash_type },
             });
         }
         return self.makeToken(.delim, start, self.cursor, .{ .delim = '#' });
@@ -193,7 +239,7 @@ pub const Tokenizer = struct {
         self.cursor += 1;
         const value_start = self.cursor;
         if (self.wouldStartIdent(self.cursor)) {
-            self.consumeAsciiName();
+            self.consumeName();
             return self.makeToken(.at_keyword, start, self.cursor, .{
                 .text = self.span(value_start, self.cursor),
             });
@@ -202,13 +248,27 @@ pub const Tokenizer = struct {
     }
 
     fn consumeIdentLike(self: *Tokenizer, start: usize) Token {
-        self.consumeAsciiName();
+        self.consumeName();
         const value_end = self.cursor;
-        if (self.cursor < self.file.bytes.len and self.file.bytes[self.cursor] == '(') {
-            self.cursor += 1;
-            return self.makeToken(.function, start, self.cursor, .{
-                .text = self.span(start, value_end),
-            });
+        if (self.peek(self.cursor)) |next_codepoint| {
+            if (next_codepoint.value == '(') {
+                self.cursor += next_codepoint.len;
+                const value_span = self.span(start, value_end);
+                if (decodedSpanEqualsAscii(self.file.bytes, value_span.start, value_span.end, "url")) {
+                    var lookahead = self.cursor;
+                    while (inputCodepointAt(self.file.bytes, lookahead)) |lookahead_codepoint| {
+                        if (!isWhitespace(lookahead_codepoint.value)) break;
+                        lookahead += lookahead_codepoint.len;
+                    }
+                    if (inputCodepointAt(self.file.bytes, lookahead)) |after_whitespace| {
+                        if (after_whitespace.value == '"' or after_whitespace.value == '\'') {
+                            return self.makeToken(.function, start, self.cursor, .{ .text = value_span });
+                        }
+                    }
+                    return self.consumeUrl(start);
+                }
+                return self.makeToken(.function, start, self.cursor, .{ .text = value_span });
+            }
         }
         return self.makeToken(.ident, start, self.cursor, .{
             .text = self.span(start, value_end),
@@ -216,42 +276,38 @@ pub const Tokenizer = struct {
     }
 
     fn consumeString(self: *Tokenizer, start: usize, value_start: usize) Token {
-        const quote: u8 = switch (self.state) {
+        const quote: u21 = switch (self.state) {
             .single_quoted_string => '\'',
             .double_quoted_string => '"',
             else => unreachable,
         };
 
-        while (self.cursor < self.file.bytes.len) {
-            const byte = self.file.bytes[self.cursor];
-            if (byte == quote) {
+        while (self.peek(self.cursor)) |codepoint| {
+            if (codepoint.value == quote) {
                 const value_end = self.cursor;
-                self.cursor += 1;
+                self.cursor += codepoint.len;
                 self.state = .data;
                 return self.makeToken(.string, start, self.cursor, .{
                     .text = self.span(value_start, value_end),
                 });
             }
-            if (byte == '\n' or byte == '\r' or byte == '\x0c') {
+            if (codepoint.value == '\n') {
                 self.state = .data;
                 return self.makeToken(.bad_string, start, self.cursor, .{
                     .text = self.span(value_start, self.cursor),
                 });
             }
-            if (byte == '\\') {
-                self.cursor += 1;
-                if (self.cursor >= self.file.bytes.len) break;
-                if (self.file.bytes[self.cursor] == '\r') {
-                    self.cursor += 1;
-                    if (self.cursor < self.file.bytes.len and self.file.bytes[self.cursor] == '\n') self.cursor += 1;
-                    continue;
+            if (codepoint.value == '\\') {
+                self.cursor += codepoint.len;
+                const escaped = self.peek(self.cursor) orelse break;
+                if (escaped.value == '\n') {
+                    self.cursor += escaped.len;
+                } else {
+                    _ = self.consumeEscapedCodepoint();
                 }
-                if (self.file.bytes[self.cursor] == '\n' or self.file.bytes[self.cursor] == '\x0c') {
-                    self.cursor += 1;
-                    continue;
-                }
+                continue;
             }
-            _ = self.consumeCodepoint();
+            self.cursor += codepoint.len;
         }
 
         self.state = .data;
@@ -260,38 +316,277 @@ pub const Tokenizer = struct {
         });
     }
 
-    fn consumeAsciiName(self: *Tokenizer) void {
-        while (self.cursor < self.file.bytes.len and isAsciiName(self.file.bytes[self.cursor])) {
-            self.cursor += 1;
+    fn consumeNumericToken(self: *Tokenizer, start: usize) Token {
+        const numeric = self.consumeNumber();
+        if (self.wouldStartIdent(self.cursor)) {
+            const unit_start = self.cursor;
+            self.consumeName();
+            return self.makeToken(.dimension, start, self.cursor, .{
+                .dimension = .{ .numeric = numeric, .unit = self.span(unit_start, self.cursor) },
+            });
         }
+        if (self.peek(self.cursor)) |codepoint| {
+            if (codepoint.value == '%') {
+                self.cursor += codepoint.len;
+                return self.makeToken(.percentage, start, self.cursor, .{ .numeric = numeric });
+            }
+        }
+        return self.makeToken(.number, start, self.cursor, .{ .numeric = numeric });
+    }
+
+    fn consumeNumber(self: *Tokenizer) Numeric {
+        const start = self.cursor;
+        var number_type: NumberType = .integer;
+        var sign: Sign = .none;
+
+        if (self.cursor < self.file.bytes.len) {
+            if (self.file.bytes[self.cursor] == '+') {
+                sign = .plus;
+                self.cursor += 1;
+            } else if (self.file.bytes[self.cursor] == '-') {
+                sign = .minus;
+                self.cursor += 1;
+            }
+        }
+        while (self.asciiDigitAt(self.cursor)) self.cursor += 1;
+
+        if (self.cursor + 1 < self.file.bytes.len and
+            self.file.bytes[self.cursor] == '.' and self.asciiDigitAt(self.cursor + 1))
+        {
+            number_type = .number;
+            self.cursor += 1;
+            while (self.asciiDigitAt(self.cursor)) self.cursor += 1;
+        }
+
+        if (self.cursor < self.file.bytes.len and
+            (self.file.bytes[self.cursor] == 'e' or self.file.bytes[self.cursor] == 'E'))
+        {
+            var exponent_cursor = self.cursor + 1;
+            if (exponent_cursor < self.file.bytes.len and
+                (self.file.bytes[exponent_cursor] == '+' or self.file.bytes[exponent_cursor] == '-'))
+            {
+                exponent_cursor += 1;
+            }
+            if (self.asciiDigitAt(exponent_cursor)) {
+                number_type = .number;
+                self.cursor = exponent_cursor + 1;
+                while (self.asciiDigitAt(self.cursor)) self.cursor += 1;
+            }
+        }
+
+        const representation = self.span(start, self.cursor);
+        var parse_bytes = self.file.bytes[start..self.cursor];
+        if (parse_bytes.len > 0 and parse_bytes[0] == '+') parse_bytes = parse_bytes[1..];
+        const value = std.fmt.parseFloat(f64, parse_bytes) catch std.math.nan(f64);
+        return .{
+            .value = value,
+            .number_type = number_type,
+            .sign = sign,
+            .representation = representation,
+        };
+    }
+
+    fn consumeUrl(self: *Tokenizer, start: usize) Token {
+        while (self.peek(self.cursor)) |codepoint| {
+            if (!isWhitespace(codepoint.value)) break;
+            self.cursor += codepoint.len;
+        }
+        const value_start = self.cursor;
+
+        while (self.peek(self.cursor)) |codepoint| {
+            if (codepoint.value == ')') {
+                const value_end = self.cursor;
+                self.cursor += codepoint.len;
+                return self.makeToken(.url, start, self.cursor, .{
+                    .text = self.span(value_start, value_end),
+                });
+            }
+            if (isWhitespace(codepoint.value)) {
+                const value_end = self.cursor;
+                while (self.peek(self.cursor)) |whitespace| {
+                    if (!isWhitespace(whitespace.value)) break;
+                    self.cursor += whitespace.len;
+                }
+                if (self.peek(self.cursor)) |after_whitespace| {
+                    if (after_whitespace.value == ')') {
+                        self.cursor += after_whitespace.len;
+                        return self.makeToken(.url, start, self.cursor, .{
+                            .text = self.span(value_start, value_end),
+                        });
+                    }
+                    self.consumeBadUrlRemnants();
+                    return self.makeToken(.bad_url, start, self.cursor, .{
+                        .text = self.span(value_start, value_end),
+                    });
+                }
+                return self.makeToken(.url, start, self.cursor, .{
+                    .text = self.span(value_start, value_end),
+                });
+            }
+            if (codepoint.value == '"' or codepoint.value == '\'' or codepoint.value == '(' or
+                isNonPrintable(codepoint.value))
+            {
+                const value_end = self.cursor;
+                self.consumeBadUrlRemnants();
+                return self.makeToken(.bad_url, start, self.cursor, .{
+                    .text = self.span(value_start, value_end),
+                });
+            }
+            if (codepoint.value == '\\') {
+                if (!self.isValidEscape(self.cursor)) {
+                    const value_end = self.cursor;
+                    self.consumeBadUrlRemnants();
+                    return self.makeToken(.bad_url, start, self.cursor, .{
+                        .text = self.span(value_start, value_end),
+                    });
+                }
+                self.cursor += codepoint.len;
+                _ = self.consumeEscapedCodepoint();
+                continue;
+            }
+            self.cursor += codepoint.len;
+        }
+
+        return self.makeToken(.url, start, self.cursor, .{
+            .text = self.span(value_start, self.cursor),
+        });
+    }
+
+    fn consumeBadUrlRemnants(self: *Tokenizer) void {
+        while (self.peek(self.cursor)) |codepoint| {
+            if (codepoint.value == ')') {
+                self.cursor += codepoint.len;
+                return;
+            }
+            if (codepoint.value == '\\' and self.isValidEscape(self.cursor)) {
+                self.cursor += codepoint.len;
+                _ = self.consumeEscapedCodepoint();
+            } else {
+                self.cursor += codepoint.len;
+            }
+        }
+    }
+
+    fn consumeUnicodeRange(self: *Tokenizer, start: usize) Token {
+        self.cursor += 2; // U+
+        var range_start: u32 = 0;
+        var range_end: u32 = 0;
+        var hex_count: usize = 0;
+        while (hex_count < 6 and self.cursor < self.file.bytes.len and
+            std.ascii.isHex(self.file.bytes[self.cursor]))
+        {
+            const nibble = hexValue(self.file.bytes[self.cursor]);
+            range_start = (range_start << 4) | nibble;
+            range_end = (range_end << 4) | nibble;
+            self.cursor += 1;
+            hex_count += 1;
+        }
+
+        var question_count: usize = 0;
+        while (hex_count + question_count < 6 and self.cursor < self.file.bytes.len and
+            self.file.bytes[self.cursor] == '?')
+        {
+            range_start <<= 4;
+            range_end = (range_end << 4) | 0xf;
+            self.cursor += 1;
+            question_count += 1;
+        }
+
+        if (question_count == 0 and self.cursor + 1 < self.file.bytes.len and
+            self.file.bytes[self.cursor] == '-' and std.ascii.isHex(self.file.bytes[self.cursor + 1]))
+        {
+            self.cursor += 1;
+            range_end = 0;
+            var end_count: usize = 0;
+            while (end_count < 6 and self.cursor < self.file.bytes.len and
+                std.ascii.isHex(self.file.bytes[self.cursor]))
+            {
+                range_end = (range_end << 4) | hexValue(self.file.bytes[self.cursor]);
+                self.cursor += 1;
+                end_count += 1;
+            }
+        }
+
+        return self.makeToken(.unicode_range, start, self.cursor, .{
+            .unicode_range = .{ .start = range_start, .end = range_end },
+        });
+    }
+
+    fn consumeName(self: *Tokenizer) void {
+        while (self.peek(self.cursor)) |codepoint| {
+            if (isIdent(codepoint.value)) {
+                self.cursor += codepoint.len;
+            } else if (codepoint.value == '\\' and self.isValidEscape(self.cursor)) {
+                self.cursor += codepoint.len;
+                _ = self.consumeEscapedCodepoint();
+            } else {
+                return;
+            }
+        }
+    }
+
+    fn consumeEscapedCodepoint(self: *Tokenizer) u21 {
+        return consumeEscapedAt(self.file.bytes, &self.cursor, self.file.bytes.len);
     }
 
     fn wouldStartIdent(self: *const Tokenizer, at: usize) bool {
-        if (at >= self.file.bytes.len) return false;
-        const first = self.file.bytes[at];
-        if (isAsciiNameStart(first)) return true;
-        if (first != '-') return false;
-        if (at + 1 >= self.file.bytes.len) return false;
-        const second = self.file.bytes[at + 1];
-        return isAsciiNameStart(second) or second == '-';
+        const first = self.peek(at) orelse return false;
+        if (first.value == '-') {
+            const second_at = at + first.len;
+            const second = self.peek(second_at) orelse return false;
+            return isIdentStart(second.value) or second.value == '-' or self.isValidEscape(second_at);
+        }
+        if (isIdentStart(first.value)) return true;
+        return first.value == '\\' and self.isValidEscape(at);
+    }
+
+    fn wouldStartNumber(self: *const Tokenizer, at: usize) bool {
+        const first = self.peek(at) orelse return false;
+        const second_at = at + first.len;
+        const second = self.peek(second_at);
+        if (first.value == '+' or first.value == '-') {
+            if (second) |second_codepoint| {
+                if (isDigit(second_codepoint.value)) return true;
+                if (second_codepoint.value == '.') {
+                    const third = self.peek(second_at + second_codepoint.len);
+                    return third != null and isDigit(third.?.value);
+                }
+            }
+            return false;
+        }
+        if (first.value == '.') return second != null and isDigit(second.?.value);
+        return isDigit(first.value);
+    }
+
+    fn wouldStartUnicodeRange(self: *const Tokenizer, at: usize) bool {
+        const first = self.peek(at) orelse return false;
+        if (first.value != 'u' and first.value != 'U') return false;
+        const second_at = at + first.len;
+        const second = self.peek(second_at) orelse return false;
+        if (second.value != '+') return false;
+        const third = self.peek(second_at + second.len) orelse return false;
+        return third.value == '?' or isHexCodepoint(third.value);
+    }
+
+    fn isValidEscape(self: *const Tokenizer, at: usize) bool {
+        const first = self.peek(at) orelse return false;
+        if (first.value != '\\') return false;
+        const second = self.peek(at + first.len) orelse return true;
+        return second.value != '\n';
     }
 
     fn consumeCodepoint(self: *Tokenizer) u21 {
-        const first = self.file.bytes[self.cursor];
-        const sequence_length = std.unicode.utf8ByteSequenceLength(first) catch {
-            self.cursor += 1;
-            return first;
-        };
-        const length: usize = sequence_length;
-        if (self.cursor + length <= self.file.bytes.len) {
-            const bytes = self.file.bytes[self.cursor .. self.cursor + length];
-            if (std.unicode.utf8Decode(bytes)) |codepoint| {
-                self.cursor += length;
-                return codepoint;
-            } else |_| {}
-        }
-        self.cursor += 1;
-        return first;
+        const codepoint = self.peek(self.cursor).?;
+        self.cursor += codepoint.len;
+        return codepoint.value;
+    }
+
+    fn peek(self: *const Tokenizer, at: usize) ?InputCodepoint {
+        return inputCodepointAt(self.file.bytes, at);
+    }
+
+    fn asciiDigitAt(self: *const Tokenizer, at: usize) bool {
+        return at < self.file.bytes.len and std.ascii.isDigit(self.file.bytes[at]);
     }
 
     fn startsWith(self: *const Tokenizer, expected: []const u8) bool {
@@ -308,16 +603,141 @@ pub const Tokenizer = struct {
     }
 };
 
-fn isWhitespace(byte: u8) bool {
-    return byte == ' ' or byte == '\t' or byte == '\n' or byte == '\r' or byte == '\x0c';
+fn inputCodepointAt(bytes: []const u8, at: usize) ?InputCodepoint {
+    if (at >= bytes.len) return null;
+    const first = bytes[at];
+    if (first == 0) return .{ .value = 0xfffd, .len = 1 };
+    if (first == '\r') {
+        return .{
+            .value = '\n',
+            .len = if (at + 1 < bytes.len and bytes[at + 1] == '\n') 2 else 1,
+        };
+    }
+    if (first == '\x0c') return .{ .value = '\n', .len = 1 };
+
+    const sequence_length = std.unicode.utf8ByteSequenceLength(first) catch {
+        return .{ .value = 0xfffd, .len = 1 };
+    };
+    const length: usize = sequence_length;
+    if (at + length <= bytes.len) {
+        if (std.unicode.utf8Decode(bytes[at .. at + length])) |codepoint| {
+            return .{ .value = codepoint, .len = length };
+        } else |_| {}
+    }
+    return .{ .value = 0xfffd, .len = 1 };
 }
 
-fn isAsciiNameStart(byte: u8) bool {
-    return std.ascii.isAlphabetic(byte) or byte == '_';
+fn consumeEscapedAt(bytes: []const u8, cursor: *usize, limit: usize) u21 {
+    const first = if (cursor.* < limit) inputCodepointAt(bytes, cursor.*) else null;
+    const codepoint = first orelse return 0xfffd;
+    if (isHexCodepoint(codepoint.value)) {
+        var value: u32 = 0;
+        var count: usize = 0;
+        while (count < 6 and cursor.* < limit) {
+            const digit = inputCodepointAt(bytes, cursor.*) orelse break;
+            if (!isHexCodepoint(digit.value)) break;
+            value = (value << 4) | hexValue(@intCast(digit.value));
+            cursor.* += digit.len;
+            count += 1;
+        }
+        if (cursor.* < limit) {
+            if (inputCodepointAt(bytes, cursor.*)) |whitespace| {
+                if (isWhitespace(whitespace.value)) cursor.* += whitespace.len;
+            }
+        }
+        if (value == 0 or value > 0x10ffff or (value >= 0xd800 and value <= 0xdfff)) return 0xfffd;
+        return @intCast(value);
+    }
+
+    cursor.* += codepoint.len;
+    return codepoint.value;
 }
 
-fn isAsciiName(byte: u8) bool {
-    return isAsciiNameStart(byte) or std.ascii.isDigit(byte) or byte == '-';
+fn nextDecodedCodepoint(bytes: []const u8, cursor: *usize, end: usize, mode: DecodeMode) ?u21 {
+    while (cursor.* < end) {
+        const codepoint = inputCodepointAt(bytes, cursor.*) orelse return null;
+        cursor.* += codepoint.len;
+        if (codepoint.value != '\\') return codepoint.value;
+        if (cursor.* == end and mode == .string) return null;
+        if (cursor.* < end) {
+            const after_slash = inputCodepointAt(bytes, cursor.*) orelse return 0xfffd;
+            if (after_slash.value == '\n') {
+                cursor.* += after_slash.len;
+                continue;
+            }
+        }
+        return consumeEscapedAt(bytes, cursor, end);
+    }
+    return null;
+}
+
+fn decodeSpanAlloc(
+    allocator: std.mem.Allocator,
+    bytes: []const u8,
+    start: usize,
+    end: usize,
+    mode: DecodeMode,
+) ![]u8 {
+    if (start > end or end > bytes.len) return error.InvalidSpan;
+    var decoded = try std.ArrayList(u8).initCapacity(allocator, end - start);
+    errdefer decoded.deinit(allocator);
+
+    var cursor = start;
+    while (nextDecodedCodepoint(bytes, &cursor, end, mode)) |codepoint| {
+        var encoded: [4]u8 = undefined;
+        const length = try std.unicode.utf8Encode(codepoint, &encoded);
+        try decoded.appendSlice(allocator, encoded[0..length]);
+    }
+    return try decoded.toOwnedSlice(allocator);
+}
+
+fn decodedSpanEqualsAscii(bytes: []const u8, start: usize, end: usize, expected: []const u8) bool {
+    var cursor = start;
+    var expected_index: usize = 0;
+    while (nextDecodedCodepoint(bytes, &cursor, end, .general)) |codepoint| {
+        if (expected_index >= expected.len or codepoint > 0x7f) return false;
+        if (std.ascii.toLower(@intCast(codepoint)) != std.ascii.toLower(expected[expected_index])) return false;
+        expected_index += 1;
+    }
+    return expected_index == expected.len;
+}
+
+fn isWhitespace(codepoint: u21) bool {
+    return codepoint == ' ' or codepoint == '\t' or codepoint == '\n';
+}
+
+fn isIdentStart(codepoint: u21) bool {
+    return codepoint >= 0x80 or codepoint == '_' or
+        (codepoint >= 'A' and codepoint <= 'Z') or
+        (codepoint >= 'a' and codepoint <= 'z');
+}
+
+fn isIdent(codepoint: u21) bool {
+    return isIdentStart(codepoint) or isDigit(codepoint) or codepoint == '-';
+}
+
+fn isDigit(codepoint: u21) bool {
+    return codepoint >= '0' and codepoint <= '9';
+}
+
+fn isHexCodepoint(codepoint: u21) bool {
+    return isDigit(codepoint) or
+        (codepoint >= 'A' and codepoint <= 'F') or
+        (codepoint >= 'a' and codepoint <= 'f');
+}
+
+fn hexValue(byte: u8) u32 {
+    return switch (byte) {
+        '0'...'9' => byte - '0',
+        'A'...'F' => byte - 'A' + 10,
+        'a'...'f' => byte - 'a' + 10,
+        else => unreachable,
+    };
+}
+
+fn isNonPrintable(codepoint: u21) bool {
+    return codepoint <= 0x08 or codepoint == 0x0b or
+        (codepoint >= 0x0e and codepoint <= 0x1f) or codepoint == 0x7f;
 }
 
 fn expectKinds(file: *const source.SourceFile, expected: []const TokenKind) !void {
@@ -459,7 +879,7 @@ test "newline ends a bad string without consuming recovery whitespace" {
     try expectKindsFrom(&tokenizer, &.{ .bad_string, .whitespace, .ident, .eof });
 }
 
-test "valid UTF-8 delimiters consume whole codepoints" {
+test "valid non-ASCII codepoints form identifiers without splitting spans" {
     const allocator = std.testing.allocator;
     var manager = try source.SourceManager.init(allocator);
     defer manager.deinit();
@@ -468,12 +888,9 @@ test "valid UTF-8 delimiters consume whole codepoints" {
     var tokenizer = Tokenizer.init(file);
 
     const token = tokenizer.next();
-    try std.testing.expectEqual(TokenKind.delim, token.kind);
+    try std.testing.expectEqual(TokenKind.ident, token.kind);
     try std.testing.expectEqual(@as(usize, 2), token.span.len());
-    switch (token.data) {
-        .delim => |value| try std.testing.expectEqual(@as(u21, 0xe9), value),
-        else => return error.UnexpectedTokenData,
-    }
+    try expectDecoded(token, file, "é");
 }
 
 test "every byte makes progress and EOF is idempotent" {
@@ -494,4 +911,366 @@ test "every byte makes progress and EOF is idempotent" {
         try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
         try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
     }
+}
+
+fn expectDecoded(token: Token, file: *const source.SourceFile, expected: []const u8) !void {
+    const decoded = try token.decodedTextAlloc(std.testing.allocator, file);
+    defer std.testing.allocator.free(decoded);
+    try std.testing.expectEqualStrings(expected, decoded);
+}
+
+fn numericData(token: Token) !Numeric {
+    return switch (token.data) {
+        .numeric => |numeric| numeric,
+        else => error.UnexpectedTokenData,
+    };
+}
+
+fn dimensionData(token: Token) !Dimension {
+    return switch (token.data) {
+        .dimension => |dimension| dimension,
+        else => error.UnexpectedTokenData,
+    };
+}
+
+test "escapes and Unicode codepoints participate in ident sequences" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("names.css", "café \\66 oo --x #\\31 23 @média");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const unicode = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.ident, unicode.kind);
+    try expectDecoded(unicode, file, "café");
+    try std.testing.expectEqual(TokenKind.whitespace, tokenizer.next().kind);
+
+    const escaped = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.ident, escaped.kind);
+    try expectDecoded(escaped, file, "foo");
+    try std.testing.expectEqual(TokenKind.whitespace, tokenizer.next().kind);
+
+    const custom = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.ident, custom.kind);
+    try expectDecoded(custom, file, "--x");
+    try std.testing.expectEqual(TokenKind.whitespace, tokenizer.next().kind);
+
+    const hash = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.hash, hash.kind);
+    try expectDecoded(hash, file, "123");
+    try std.testing.expectEqual(HashType.id, hash.data.hash.hash_type);
+    try std.testing.expectEqual(TokenKind.whitespace, tokenizer.next().kind);
+
+    const at_keyword = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.at_keyword, at_keyword.kind);
+    try expectDecoded(at_keyword, file, "média");
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "numbers preserve value, representation type, sign, and suffix class" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("numbers.css", "12 -0.5 +.25 1e3 1E-2 10px 50% .75turn");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const integer = try numericData(tokenizer.next());
+    try std.testing.expectEqual(@as(f64, 12), integer.value);
+    try std.testing.expectEqual(NumberType.integer, integer.number_type);
+    try std.testing.expectEqual(Sign.none, integer.sign);
+    try std.testing.expectEqualStrings("12", try file.slice(integer.representation));
+
+    _ = tokenizer.next();
+    const negative = try numericData(tokenizer.next());
+    try std.testing.expectApproxEqAbs(@as(f64, -0.5), negative.value, 0.000001);
+    try std.testing.expectEqual(Sign.minus, negative.sign);
+
+    _ = tokenizer.next();
+    const positive = try numericData(tokenizer.next());
+    try std.testing.expectApproxEqAbs(@as(f64, 0.25), positive.value, 0.000001);
+    try std.testing.expectEqual(Sign.plus, positive.sign);
+
+    _ = tokenizer.next();
+    try std.testing.expectApproxEqAbs(@as(f64, 1000), (try numericData(tokenizer.next())).value, 0.000001);
+    _ = tokenizer.next();
+    try std.testing.expectApproxEqAbs(@as(f64, 0.01), (try numericData(tokenizer.next())).value, 0.000001);
+
+    _ = tokenizer.next();
+    const pixels_token = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.dimension, pixels_token.kind);
+    const pixels = try dimensionData(pixels_token);
+    try std.testing.expectEqual(@as(f64, 10), pixels.numeric.value);
+    try expectDecoded(pixels_token, file, "px");
+
+    _ = tokenizer.next();
+    const percentage = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.percentage, percentage.kind);
+    try std.testing.expectEqual(@as(f64, 50), (try numericData(percentage)).value);
+
+    _ = tokenizer.next();
+    const turns = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.dimension, turns.kind);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.75), (try dimensionData(turns)).numeric.value, 0.000001);
+    try expectDecoded(turns, file, "turn");
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "URL dispatch distinguishes quoted functions and recovers bad URLs" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add(
+        "urls.css",
+        "url(foo.png) URL(foo\\ bar) url(\"quoted.png\") url(foo bar) tail",
+    );
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const first = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.url, first.kind);
+    try expectDecoded(first, file, "foo.png");
+    _ = tokenizer.next();
+
+    const escaped = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.url, escaped.kind);
+    try expectDecoded(escaped, file, "foo bar");
+    _ = tokenizer.next();
+
+    const quoted = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.function, quoted.kind);
+    try expectDecoded(quoted, file, "url");
+    try std.testing.expectEqual(TokenKind.string, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.close_paren, tokenizer.next().kind);
+    _ = tokenizer.next();
+
+    try std.testing.expectEqual(TokenKind.bad_url, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.whitespace, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.ident, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "truncated and invalid escapes recover without losing following tokens" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("recovery.css", "url(foo\\\nbar)z \\110000  \\D800  \\0");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    try std.testing.expectEqual(TokenKind.bad_url, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.ident, tokenizer.next().kind);
+    _ = tokenizer.next();
+
+    const too_large = tokenizer.next();
+    try expectDecoded(too_large, file, "�");
+    _ = tokenizer.next();
+    const surrogate = tokenizer.next();
+    try expectDecoded(surrogate, file, "�");
+    _ = tokenizer.next();
+    const zero = tokenizer.next();
+    try expectDecoded(zero, file, "�");
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "string escape decoding removes continuations and decodes hex" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("escaped-string.css", "\"\\41\\\nB\"");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const token = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.string, token.kind);
+    try expectDecoded(token, file, "AB");
+}
+
+test "unicode ranges are emitted only for the explicit descriptor mode" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("ranges.css", "U+00A0-00FF u+4?? U+1234567");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.initWithOptions(file, .{ .unicode_ranges = true });
+
+    const explicit = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.unicode_range, explicit.kind);
+    try std.testing.expectEqual(UnicodeRange{ .start = 0x00a0, .end = 0x00ff }, explicit.data.unicode_range);
+    _ = tokenizer.next();
+    const wildcard = tokenizer.next();
+    try std.testing.expectEqual(UnicodeRange{ .start = 0x0400, .end = 0x04ff }, wildcard.data.unicode_range);
+    _ = tokenizer.next();
+    const capped = tokenizer.next();
+    try std.testing.expectEqual(UnicodeRange{ .start = 0x123456, .end = 0x123456 }, capped.data.unicode_range);
+    const trailing = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.number, trailing.kind);
+    try std.testing.expectEqual(@as(f64, 7), (try numericData(trailing)).value);
+}
+
+test "large exponents stay bounded and do not panic" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("large-number.css", "1e999 -1e999");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    try std.testing.expect(std.math.isInf((try numericData(tokenizer.next())).value));
+    _ = tokenizer.next();
+    const negative = (try numericData(tokenizer.next())).value;
+    try std.testing.expect(std.math.isInf(negative) and negative < 0);
+}
+
+test "string and identifier trailing escapes follow distinct EOF rules" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const string_id = try manager.add("string-eof.css", &.{ '"', '\\' });
+    const ident_id = try manager.add("ident-eof.css", &.{'\\'});
+
+    const string_file = try manager.get(string_id);
+    var string_tokenizer = Tokenizer.init(string_file);
+    const string = string_tokenizer.next();
+    try std.testing.expectEqual(TokenKind.string, string.kind);
+    try expectDecoded(string, string_file, "");
+
+    const ident_file = try manager.get(ident_id);
+    var ident_tokenizer = Tokenizer.init(ident_file);
+    const ident = ident_tokenizer.next();
+    try std.testing.expectEqual(TokenKind.ident, ident.kind);
+    try expectDecoded(ident, ident_file, "�");
+}
+
+test "escaped URL names and quoted lookahead follow ident-like dispatch" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("escaped-url.css", "u\\72l(foo) url(  \"x\")");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const escaped_name = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.url, escaped_name.kind);
+    try expectDecoded(escaped_name, file, "foo");
+    try std.testing.expectEqual(TokenKind.whitespace, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.function, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.whitespace, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.string, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.close_paren, tokenizer.next().kind);
+}
+
+test "bad URL recovery ignores escaped closing parentheses" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("bad-url-close.css", "url(foo bar\\) baz)tail");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    try std.testing.expectEqual(TokenKind.bad_url, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.ident, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "URL tokens recover at EOF and preserve trailing escapes" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const plain_id = try manager.add("url-eof.css", "url(foo");
+    const escaped_id = try manager.add("url-escape-eof.css", "url(foo\\");
+
+    const plain_file = try manager.get(plain_id);
+    var plain_tokenizer = Tokenizer.init(plain_file);
+    const plain = plain_tokenizer.next();
+    try std.testing.expectEqual(TokenKind.url, plain.kind);
+    try expectDecoded(plain, plain_file, "foo");
+    try std.testing.expectEqualStrings("url(foo", try plain.raw(plain_file));
+    try std.testing.expectEqual(TokenKind.eof, plain_tokenizer.next().kind);
+
+    const escaped_file = try manager.get(escaped_id);
+    var escaped_tokenizer = Tokenizer.init(escaped_file);
+    const escaped = escaped_tokenizer.next();
+    try std.testing.expectEqual(TokenKind.url, escaped.kind);
+    try expectDecoded(escaped, escaped_file, "foo�");
+    try std.testing.expectEqual(TokenKind.eof, escaped_tokenizer.next().kind);
+}
+
+test "invalid newline escapes remain separate tokens" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("invalid-escape.css", "\\\r\nx");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const slash = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.delim, slash.kind);
+    try std.testing.expectEqual(@as(u21, '\\'), slash.data.delim);
+    try std.testing.expectEqualStrings("\\", try slash.raw(file));
+    const newline = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.whitespace, newline.kind);
+    try std.testing.expectEqualStrings("\r\n", try newline.raw(file));
+    try std.testing.expectEqual(TokenKind.ident, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "incomplete exponents preserve CSS numeric dispatch boundaries" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("exponents.css", "1e+px 2E- 3e");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const first = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.dimension, first.kind);
+    try std.testing.expectEqualStrings("1", try file.slice((try dimensionData(first)).numeric.representation));
+    try expectDecoded(first, file, "e");
+    try std.testing.expectEqual(TokenKind.delim, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.ident, tokenizer.next().kind);
+    _ = tokenizer.next();
+
+    const second = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.dimension, second.kind);
+    try expectDecoded(second, file, "E-");
+    _ = tokenizer.next();
+
+    const third = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.dimension, third.kind);
+    try expectDecoded(third, file, "e");
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "truncated UTF-8 and preprocessed NUL bytes stay bounded" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const bytes = [_]u8{ 0xf0, 0x9f, 0, 'x' };
+    const id = try manager.add("invalid-utf8.css", &bytes);
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const token = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.ident, token.kind);
+    try std.testing.expectEqual(@as(usize, 0), token.span.start);
+    try std.testing.expectEqual(bytes.len, token.span.end);
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+fn decodeWithAllocator(allocator: std.mem.Allocator) !void {
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("allocation.css", "\\1f642 name");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+    const token = tokenizer.next();
+    const decoded = try token.decodedTextAlloc(allocator, file);
+    defer allocator.free(decoded);
+    try std.testing.expectEqualStrings("🙂name", decoded);
+}
+
+test "decoded token ownership handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, decodeWithAllocator, .{});
 }
