@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 1 — Tokenizer, source model, and AST foundation
-- Work package: foundational ADRs, then `ARCH-001` and `TOK-001`
+- Work package: `ARCH-001`
 - State: `IN_PROGRESS`
-- Next eligible package: `ADR-001`, `ADR-002`, `ADR-003`, `ADR-010`, `ARCH-001`, then `TOK-001`
+- Next eligible package: `ARCH-001`, then `MEM-001` and `TOK-001`
 
 ## Milestone 0 package ledger
 
@@ -75,7 +75,16 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 
 | Package | State | Evidence / decision | Commit |
 |---|---|---|---|
-| `OPS-001` | `VERIFIED` | Added a canonical single-agent Codex loop protocol and executable read-only `scripts/autodevelop/orient.sh`. Tests prove it preserves Git status while reporting branch, ledger work, blockers, validation, checkpoints, recovery delta, durable-file hashes, and local tool versions from a nested directory. Bash syntax, 61/61 docs tests, claims checks, and Vite build pass. | Checkpoint pending |
+| `OPS-001` | `VERIFIED` | Added a canonical single-agent Codex loop protocol and executable read-only `scripts/autodevelop/orient.sh`. Tests prove it preserves Git status while reporting branch, ledger work, blockers, validation, checkpoints, recovery delta, durable-file hashes, and local tool versions from a nested directory. Bash syntax, 61/61 docs tests, claims checks, and Vite build pass. | `a648ad6` |
+
+## Foundational ADR ledger
+
+| Decision | State | Evidence / decision | Commit |
+|---|---|---|---|
+| `ADR-001` | `VERIFIED` | Stable scope is standards-oriented CSS library/CLI parsing, diagnostics, spans, deterministic emission, and only evidence-backed transforms; ecosystem adapters remain explicit experiments. | Checkpoint pending |
+| `ADR-002` | `VERIFIED` | CSS Syntax algorithms define token behavior; original byte spans, retained trivia, lossless nested component values, recoverable diagnostics, and transform-free syntax boundaries are mandatory. | Checkpoint pending |
+| `ADR-003` | `VERIFIED` | A per-compilation arena owns sources through AST; returned CSS/maps/diagnostics have independent result ownership and one cleanup path with allocation-failure coverage. | Checkpoint pending |
+| `ADR-010` | `VERIFIED` | The configured `gpt-5.6-sol` ultra runtime and one implementation agent are hard gates; fallback models and delegated implementation are prohibited. | Checkpoint pending |
 
 ## Completed work packages
 
@@ -129,7 +138,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - Operator-requested post-Milestone-0 tooling: add a ZigCSS autonomous-loop protocol plus a read-only `orient.sh`, modeled on Alvo's protocol/orient split and adapted to this repository's no-push/no-deploy authority boundary.
 - Alternate-format parsers remain available only as experimental internals for characterization; `.scss`, `.sass`, `.less`, `.styl`, `.postcss`, `.module.css`, and CSS-in-JS extensions are rejected by the recovery CLI before any output is written.
 - The persistent Codex goal remains the scheduler. `scripts/autodevelop/orient.sh` is deliberately read-only and cannot launch a model, wake a task, or mutate repository/external state; `docs/operations/codex-loop-protocol.md` is the canonical resume procedure.
+- Foundational implementation must conform to accepted `ADR-001`, `ADR-002`, `ADR-003`, and `ADR-010`; changing stable scope, source/syntax boundaries, ownership, or autonomous runtime requires a superseding approved ADR.
 
 ## Last full validation
 
-Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`OPS-001`): Bash syntax and read-only behavior pass; documentation passes 61/61 tests and Vite build. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
+Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (foundational ADRs): 8/8 ADR contract tests pass as part of 69/69 documentation tests, and Vite build succeeds. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
