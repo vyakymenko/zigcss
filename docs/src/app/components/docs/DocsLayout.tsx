@@ -1,53 +1,14 @@
 import { Outlet, Link, useLocation } from "react-router";
-import { Book, FileCode, Layers } from "lucide-react";
+import { Book } from "lucide-react";
 
 const SIDEBAR = [
   {
-    text: "Getting Started",
+    text: "Recovery documentation",
     icon: Book,
     items: [
-      { text: "Introduction", link: "/docs/guide/getting-started" },
-      { text: "Installation", link: "/docs/guide/installation" },
-      { text: "Quick Start", link: "/docs/guide/quick-start" },
-    ],
-  },
-  {
-    text: "Features",
-    icon: Layers,
-    items: [
-      { text: "Preprocessors", link: "/docs/guide/preprocessors" },
-      { text: "Optimization", link: "/docs/guide/optimization" },
-      { text: "Performance", link: "/docs/guide/performance" },
-    ],
-  },
-  {
-    text: "Advanced",
-    icon: Book,
-    items: [
-      { text: "Plugin System", link: "/docs/guide/plugins" },
-      { text: "Build Integration", link: "/docs/guide/build-integration" },
-      { text: "LSP Support", link: "/docs/guide/lsp" },
-    ],
-  },
-  {
-    text: "API Reference",
-    icon: FileCode,
-    items: [
-      { text: "CompileOptions", link: "/docs/api/compile-options" },
-      { text: "CompileResult", link: "/docs/api/compile-result" },
-      { text: "Plugin API", link: "/docs/api/plugin-api" },
-    ],
-  },
-  {
-    text: "Examples",
-    icon: Layers,
-    items: [
-      { text: "CSS Nesting", link: "/docs/examples/css-nesting" },
-      { text: "Custom Properties", link: "/docs/examples/custom-properties" },
-      { text: "Media Queries", link: "/docs/examples/media-queries" },
-      { text: "Container Queries", link: "/docs/examples/container-queries" },
-      { text: "Tailwind @apply", link: "/docs/examples/tailwind-apply" },
-      { text: "SCSS Features", link: "/docs/examples/scss-features" },
+      { text: "Current status", link: "/docs/guide/status" },
+      { text: "Build from source", link: "/docs/guide/build-from-source" },
+      { text: "Recovery CLI", link: "/docs/guide/recovery-cli" },
     ],
   },
 ] as const;

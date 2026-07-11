@@ -1,5 +1,5 @@
 class Zigcss < Formula
-  desc "The world's fastest CSS compiler - Built with Zig"
+  desc "Experimental CSS compiler prototype built with Zig"
   homepage "https://github.com/vyakymenko/zigcss"
   url "https://github.com/vyakymenko/zigcss/archive/v0.1.0.tar.gz"
   sha256 ""

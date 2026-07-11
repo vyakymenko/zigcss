@@ -10,6 +10,8 @@ const profiler = @import("profiler.zig");
 const optimizer = @import("optimizer.zig");
 const lsp = @import("lsp.zig");
 
+const experimental_notice = "Warning: ZigCSS 0.3 is an experimental recovery build; do not use it for production CSS.\n";
+
 const CompileConfig = struct {
     input_file: []const u8,
     output_file: ?[]const u8,
@@ -541,6 +543,7 @@ fn requireOptionValue(args: []const []const u8, index: usize, option: []const u8
 }
 
 fn printUsage() void {
+    std.debug.print("ZigCSS 0.3 recovery CLI — EXPERIMENTAL, not production-ready\n\n", .{});
     std.debug.print("Usage: zigcss <input.css> [-o output.css] [options]\n", .{});
     std.debug.print("       zigcss <input1.css> <input2.css> ... -o <output-dir> --output-dir [options]\n", .{});
     std.debug.print("       zigcss --lsp          Start experimental Language Server Protocol server\n", .{});
@@ -593,6 +596,7 @@ pub fn main() !void {
 
     if (args.len >= 2 and (std.mem.eql(u8, args[1], "--lsp") or std.mem.eql(u8, args[1], "-lsp"))) {
         if (args.len != 2) exitWithCliError("--lsp does not accept additional arguments", .{});
+        std.debug.print("{s}", .{experimental_notice});
         try runLspServer(allocator);
         return;
     }
@@ -682,6 +686,18 @@ pub fn main() !void {
     if (output_dir_flag and output_file == null) {
         exitWithCliError("--output-dir requires -o or --output", .{});
     }
+
+    for (input_files.items) |input_file| {
+        const format = formats.detectFormat(input_file);
+        if (formats.isExperimental(format)) {
+            exitWithCliError(
+                "{s} format adapter is experimental and unavailable in the recovery CLI",
+                .{formats.displayName(format)},
+            );
+        }
+    }
+
+    std.debug.print("{s}", .{experimental_notice});
 
     if (input_files.items.len == 1) {
         if (output_file) |out| {

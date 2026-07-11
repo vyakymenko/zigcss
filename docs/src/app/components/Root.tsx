@@ -54,7 +54,7 @@ export function Root() {
                   : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
               }`}
             >
-              Playground
+              Playground (offline)
             </Link>
             <Link
               to="/docs"
@@ -102,7 +102,7 @@ export function Root() {
             <div className="flex items-center gap-2">
               <Code2 className="size-5 text-indigo-600" />
               <span className="text-slate-600">
-                © 2026 ZigCSS. Built with performance in mind.
+                © 2026 ZigCSS. Experimental recovery project.
               </span>
             </div>
             <div className="flex items-center gap-6">

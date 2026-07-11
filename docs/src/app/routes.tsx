@@ -20,7 +20,7 @@ export const router = createBrowserRouter(
           path: "docs",
           Component: DocsLayout,
           children: [
-            { index: true, element: <Navigate to="guide/getting-started" replace /> },
+            { index: true, element: <Navigate to="guide/status" replace /> },
             { path: "*", Component: DocView },
           ],
         },

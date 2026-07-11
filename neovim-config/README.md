@@ -1,6 +1,8 @@
 # zigcss Neovim Integration
 
-Neovim configuration for zigcss Language Server Protocol support.
+> Experimental: the ZigCSS language server shares the legacy parser and is not a stable editor contract. Non-CSS adapters are retained only as prototypes.
+
+Neovim configuration for ZigCSS Language Server Protocol development.
 
 ## Requirements
 

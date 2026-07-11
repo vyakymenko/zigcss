@@ -1,48 +1,18 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { BrowserRouter } from 'react-router'
 import { Playground } from './Playground'
 
 describe('Playground', () => {
-  it('renders ZigCSS Playground heading', () => {
-    render(<Playground />)
-    expect(screen.getByText('ZigCSS Playground')).toBeInTheDocument()
+  it('shows the playground as unavailable', () => {
+    render(<BrowserRouter><Playground /></BrowserRouter>)
+    expect(screen.getByRole('heading', { name: /playground unavailable/i })).toBeInTheDocument()
+    expect(screen.getByText(/public compile API is disabled/i)).toBeInTheDocument()
   })
 
-  it('shows Compile button', () => {
-    render(<Playground />)
-    expect(screen.getByRole('button', { name: /compile/i })).toBeInTheDocument()
-  })
-
-  it('shows Reset button', () => {
-    render(<Playground />)
-    expect(screen.getByRole('button', { name: /reset/i })).toBeInTheDocument()
-  })
-
-  it('shows Copy CSS button', () => {
-    render(<Playground />)
-    expect(screen.getByRole('button', { name: /copy css/i })).toBeInTheDocument()
-  })
-
-  it('initial CSS input contains .card', () => {
-    render(<Playground />)
-    const textareas = screen.getAllByRole('textbox')
-    expect((textareas[0] as HTMLTextAreaElement).value).toContain('.card')
-  })
-
-  it('initial CSS output contains .card', () => {
-    render(<Playground />)
-    const textareas = screen.getAllByRole('textbox')
-    expect((textareas[1] as HTMLTextAreaElement).value).toContain('.card')
-  })
-
-  it('output textarea is read-only', () => {
-    render(<Playground />)
-    const textareas = screen.getAllByRole('textbox')
-    expect(textareas[1]).toHaveAttribute('readonly')
-  })
-
-  it('shows Minify output checkbox', () => {
-    render(<Playground />)
-    expect(screen.getByRole('checkbox', { name: /minify output/i })).toBeInTheDocument()
+  it('does not expose a compile control', () => {
+    render(<BrowserRouter><Playground /></BrowserRouter>)
+    expect(screen.queryByRole('button', { name: /compile/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /read current status/i })).toHaveAttribute('href', '/docs/guide/status')
   })
 })

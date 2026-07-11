@@ -12,6 +12,25 @@ pub const Format = enum {
     stylus,
 };
 
+/// The legacy adapters are retained for characterization and future adapter
+/// work, but are not part of the recovery CLI's supported surface.
+pub fn isExperimental(format: Format) bool {
+    return format != .css;
+}
+
+pub fn displayName(format: Format) []const u8 {
+    return switch (format) {
+        .css => "CSS",
+        .scss => "SCSS",
+        .sass => "SASS",
+        .less => "LESS",
+        .css_modules => "CSS Modules",
+        .css_in_js => "CSS-in-JS",
+        .postcss => "PostCSS",
+        .stylus => "Stylus",
+    };
+}
+
 pub fn detectFormat(filename: []const u8) Format {
     if (std.mem.endsWith(u8, filename, ".scss")) {
         return .scss;
@@ -114,4 +133,10 @@ test "detect format from filename" {
     try std.testing.expect(detectFormat("style.css.ts") == .css_in_js);
     try std.testing.expect(detectFormat("style.postcss") == .postcss);
     try std.testing.expect(detectFormat("style.styl") == .stylus);
+}
+
+test "non-CSS format adapters are classified as experimental" {
+    inline for (std.meta.tags(Format)) |format| {
+        try std.testing.expectEqual(format != .css, isExperimental(format));
+    }
 }

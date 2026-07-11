@@ -1,7 +1,7 @@
 {
   "name": "zigcss",
   "version": "0.3.0",
-  "description": "The world's fastest CSS compiler - Built with Zig for uncompromising performance",
+  "description": "Experimental Zig CSS compiler prototype under correctness-first recovery",
   "main": "index.js",
   "bin": {
     "zigcss": "./index.js"
@@ -17,25 +17,17 @@
     "postinstall": "node install.js",
     "dev": "node dev.js",
     "dev:docker": "docker compose -f docker-compose.dev.yml up --build",
-    "build:website": "cd docs && npm install && npm run build"
+    "build:website": "cd docs && npm ci --ignore-scripts && npm run build"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/vyakymenko/zigcss.git"
   },
   "keywords": [
+    "experimental",
+    "zig",
     "css",
-    "compiler",
-    "preprocessor",
-    "scss",
-    "sass",
-    "less",
-    "stylus",
-    "postcss",
-    "minify",
-    "optimize",
-    "fast",
-    "zig"
+    "compiler"
   ],
   "author": "Valentyn Yakymenko",
   "license": "MIT",

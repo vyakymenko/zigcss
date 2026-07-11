@@ -1,55 +1,30 @@
-# npm Package Setup
+# npm package recovery status
 
-## Publishing to npm
+The ZigCSS npm wrapper is experimental and package publication is not currently authorized.
 
-1. **Update version** in `package.json`
-2. **Create a git tag**: `git tag v0.1.0`
-3. **Push tag**: `git push origin v0.1.0`
-4. **GitHub Actions** will automatically:
-   - Build binaries for all platforms
-   - Create a GitHub release with binaries
-5. **Publish to npm**: `npm publish`
+Do not publish from the recovery branch. Publication remains gated on the release packages in `DEVELOPMENT_PLAN.md`, including synchronized versions, verified native artifacts, checksums, installer smoke tests, and an explicit owner authorization.
 
-## Testing npm package locally
+## Local wrapper checks
+
+After building a local binary, place it under the package's ignored `bin/` directory and verify the wrapper without publishing:
 
 ```bash
-# Test install script
-node install.js
-
-# Test binary
-./bin/zigcss --version
-
-# Test via npm link (in project directory)
-npm link
-
-# In another directory
-npm link zigcss
-zigcss --version
+zig build
+mkdir -p bin
+cp zig-out/bin/zigcss bin/zigcss
+node index.js --help
+npm pack --dry-run --ignore-scripts
 ```
 
-## Package Structure
+The current wrapper and installer are legacy packaging surfaces. Their presence does not imply that a matching release asset exists or that package-manager installation is a supported recovery path.
 
-```
-zigcss/
-├── bin/              # Platform-specific binaries (created by install.js)
-│   ├── zigcss          # macOS/Linux binary
-│   └── zigcss.exe      # Windows binary
-├── index.js          # Node.js wrapper script
-├── install.js        # Post-install script to download binaries
-├── package.json      # npm package configuration
-└── README.md         # Package documentation
-```
+## Future publication gate
 
-## Binary Distribution
+Before any release is authorized:
 
-Binaries are downloaded from GitHub Releases:
-- Format: `zigcss-{version}-{platform}.{ext}`
-- Platforms: `x86_64-linux`, `aarch64-linux`, `x86_64-macos`, `aarch64-macos`, `x86_64-windows`
-- Extensions: `.tar.gz` (Unix), `.zip` (Windows)
-
-## Fallback Behavior
-
-If binary download fails:
-1. Shows helpful error message
-2. Provides instructions to build from source
-3. Links to Zig installation guide
+1. synchronize versions across Zig, npm, release workflows, containers, editor integration, and formula metadata;
+2. build, inspect, and smoke-test every advertised target;
+3. verify archive names against installer lookup paths;
+4. generate integrity and provenance artifacts required by the roadmap;
+5. update the public capability table from passing tests;
+6. obtain explicit authorization to publish.

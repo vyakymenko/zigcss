@@ -33,7 +33,7 @@ export function DocView() {
   const content = getContent(slug || undefined);
 
   if (!slug) {
-    return <Navigate to="/docs/guide/getting-started" replace />;
+    return <Navigate to="/docs/guide/status" replace />;
   }
 
   if (!content) {
@@ -53,4 +53,3 @@ export function DocView() {
     </article>
   );
 }
-

@@ -1,7 +1,7 @@
 {
   "name": "zigcss-language-server",
   "displayName": "zigcss Language Server",
-  "description": "Language Server Protocol support for zigcss - the world's fastest CSS compiler",
+  "description": "Experimental Language Server Protocol client for the ZigCSS recovery prototype",
   "version": "0.1.0",
   "publisher": "zigcss",
   "engines": {

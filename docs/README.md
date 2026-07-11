@@ -1,11 +1,11 @@
 # ZigCSS documentation
 
-Official documentation site for ZigCSS (guide, API, examples, playground).
+Documentation for the experimental ZigCSS recovery project. The site publishes the current capability boundary, verified source-build instructions, and recovery CLI contract. The public playground is disabled.
 
 ## Run locally
 
 ```bash
-npm install
+npm ci --ignore-scripts
 npm run dev
 ```
 

@@ -1,0 +1,38 @@
+# Build from source
+
+Source builds are the verified installation path during recovery. Package-manager and prebuilt-release instructions are intentionally not advertised until release artifacts and installers pass their later roadmap gates.
+
+## Requirements
+
+- Zig 0.15.2
+- Git
+
+## Build and test
+
+```bash
+git clone https://github.com/vyakymenko/zigcss.git
+cd zigcss
+zig build
+zig build test --summary all
+```
+
+The executable is written to `zig-out/bin/zigcss`.
+
+## Characterization example
+
+Use a deliberately simple stylesheet while evaluating the prototype:
+
+```css
+.notice {
+  color: red;
+}
+```
+
+```bash
+zig-out/bin/zigcss input.css -o output.css
+```
+
+The CLI writes an experimental-build warning to standard error. Treat successful output as prototype output, not as a compatibility guarantee.
+
+- [Current status](/guide/status)
+- [Recovery CLI](/guide/recovery-cli)

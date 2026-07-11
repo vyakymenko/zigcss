@@ -116,7 +116,9 @@ jobs:
           body: |
             ## zigcss ${{ steps.version.outputs.VERSION }}
 
-            Pre-built binaries for all supported platforms.
+            Experimental recovery binaries for development and evaluation only.
+
+            ZigCSS 0.3 has known parser and emitter defects and is not suitable for production stylesheets.
 
             ### Installation
 
@@ -128,12 +130,10 @@ jobs:
             - macOS (x86_64, aarch64)
             - Windows (x86_64)
 
-            ### Performance
-
-            zigcss is the world's fastest CSS compiler, processing typical production CSS files 80-130x faster than competitors.
+            Optimizer transforms, source maps, browser targeting, alternate format adapters, and the public compile API remain disabled or unavailable. Public performance comparisons are withdrawn until equivalent output is validated.
 
           draft: false
-          prerelease: false
+          prerelease: true
 
   publish-npm:
     name: Publish to npm

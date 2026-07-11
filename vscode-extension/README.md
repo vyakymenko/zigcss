@@ -1,13 +1,15 @@
 # zigcss VSCode Extension
 
-VSCode extension for zigcss Language Server Protocol support.
+> Experimental: this client and the ZigCSS language server share the legacy parser and are not a stable editor contract. Alternate-language adapters are also experimental.
+
+VSCode client prototype for ZigCSS Language Server Protocol development.
 
 ## Features
 
 - **Real-time diagnostics** - Get instant feedback on CSS parsing errors
 - **Hover information** - See CSS property descriptions and value types
 - **Code completion** - Autocomplete for common CSS properties
-- **Multi-format support** - Works with CSS, SCSS, SASS, LESS, and Stylus files
+- **Prototype language activation** - Can launch for CSS and legacy adapter file types; compatibility is not guaranteed
 
 ## Installation
 

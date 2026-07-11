@@ -19,16 +19,20 @@ fn runInDir(dir: std.fs.Dir, argv_tail: []const []const u8) !Child.RunResult {
     });
 }
 
-fn runCompiler(input: []const u8, extra_args: []const []const u8) !Child.RunResult {
+fn runCompilerNamed(filename: []const u8, input: []const u8, extra_args: []const []const u8) !Child.RunResult {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = input });
+    try tmp.dir.writeFile(.{ .sub_path = filename, .data = input });
 
     const argv_tail = try allocator.alloc([]const u8, extra_args.len + 1);
     defer allocator.free(argv_tail);
-    argv_tail[0] = "input.css";
+    argv_tail[0] = filename;
     @memcpy(argv_tail[1..], extra_args);
     return runInDir(tmp.dir, argv_tail);
+}
+
+fn runCompiler(input: []const u8, extra_args: []const []const u8) !Child.RunResult {
+    return runCompilerNamed("input.css", input, extra_args);
 }
 
 fn deinitRun(result: *Child.RunResult) void {
@@ -296,4 +300,29 @@ test "CLI strictness: output-dir is rejected outside explicit batch mode (CLI-00
     defer deinitRun(&result);
 
     try expectFailureContaining(result, "--output-dir requires multiple inputs");
+}
+
+test "recovery CLI identifies the current compiler as experimental (SAFE-001)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var help = try runInDir(tmp.dir, &.{"--help"});
+    defer deinitRun(&help);
+    try expectSuccess(help);
+    try std.testing.expect(std.mem.indexOf(u8, help.stderr, "EXPERIMENTAL") != null);
+
+    var compile = try runCompiler(@embedFile("fixtures/simple.css"), &.{"--minify"});
+    defer deinitRun(&compile);
+    try expectSuccess(compile);
+    try std.testing.expect(std.mem.indexOf(u8, compile.stderr, "experimental recovery build") != null);
+}
+
+test "recovery CLI rejects experimental format adapters before writing (SAFE-001)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.scss", .data = "$color: red; .a { color: $color; }" });
+
+    var result = try runInDir(tmp.dir, &.{ "input.scss", "-o", "output.css" });
+    defer deinitRun(&result);
+    try expectFailureContaining(result, "SCSS format adapter is experimental and unavailable");
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("output.css", .{}));
 }

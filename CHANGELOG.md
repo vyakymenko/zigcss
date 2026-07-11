@@ -1,5 +1,7 @@
 # Changelog
 
+> Recovery note: entries below describe prototype implementation history, not current compatibility guarantees. ZigCSS 0.3 and its format adapters are experimental; see `README.md` for the active contract.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
