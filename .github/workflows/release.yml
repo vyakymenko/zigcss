@@ -52,16 +52,16 @@ jobs:
         with:
           version: ${{ matrix.zig-version }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Build Release Binary
-        shell: bash
-        run: |
-          if [ "${{ matrix.target }}" == "aarch64-linux" ]; then
-            zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux
-          elif [ "${{ matrix.target }}" == "aarch64-macos" ]; then
-            zig build -Doptimize=ReleaseFast -Dtarget=aarch64-macos
-          else
-            zig build -Doptimize=ReleaseFast
-          fi
+        run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+
+      - name: Verify Target Architecture
+        run: node scripts/verify-artifact-target.mjs zig-out/bin/${{ matrix.binary-name }} ${{ matrix.target }}
 
       - name: Get Version
         id: version

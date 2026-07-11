@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 0 — Containment and regression baseline
-- Work package: `CI-002`
+- Work package: `SEC-003`, then `SAFE-001`
 - State: `IN_PROGRESS`
-- Next eligible package: `CI-002`
+- Next eligible package: `SEC-003`, then `SAFE-001`, then Milestone 0 validation
 
 ## Milestone 0 package ledger
 
@@ -32,8 +32,8 @@ Last updated: 2026-07-11
 | `PROF-001` | `VERIFIED` | Timing handles end idempotently and transfer/free their name exactly once. CLI profiling exits 0, emits CSS, and reports each stage once; Debug and ReleaseSafe pass 97/97. | `0c7e56d` |
 | `CLI-001` | `VERIFIED` | Canonical/real-path and inode-aware planning rejects input aliases, symlink/hard-link aliases, duplicate batch destinations, and unsafe default batch naming before writes. Debug and ReleaseSafe pass 99/99. | `5d2fc1d` |
 | `CLI-002` | `VERIFIED` | Unknown/duplicate options, missing values, invalid batch contracts, and unavailable features exit 2 with explicit diagnostics. Help separates available from rejected recovery features. Debug and ReleaseSafe pass 102/102. | `4719d02` |
-| `CI-001` | `VERIFIED` | PRs run locked docs install, 49 tests, and Vite build; Pages artifact uses `docs/dist`; deployment is isolated to non-PR events. Workflow regression tests and YAML parse pass. | Checkpoint pending |
-| `CI-002` | `NOT_STARTED` | Target triple and architecture inspection pending. | — |
+| `CI-001` | `VERIFIED` | PRs run locked docs install, 49 tests, and Vite build; Pages artifact uses `docs/dist`; deployment is isolated to non-PR events. Workflow regression tests and YAML parse pass. | `e39a674` |
+| `CI-002` | `VERIFIED` | Build/release pass every matrix target to Zig after native tests and verify headers before upload. Five real cross-builds verified: ELF x86_64/aarch64, Mach-O x86_64/aarch64, PE x86_64. | Checkpoint pending |
 
 ## Baseline commands and results
 
@@ -61,6 +61,7 @@ Baseline captured on base commit `2d2c0d9` with Zig 0.15.2, Node 24.16.0, and np
 - `CLI-001`: every planned output is checked against every input and prior output before directory creation or compilation; rejected plans preserve all sources.
 - `CLI-002`: the CLI accepts only functional recovery-scope options; unavailable source maps, transforms, target queries, and extraction modes fail before reading input.
 - `CI-001`: documentation validation and deployment are separate jobs; pull requests cannot execute the deploy job and the uploaded artifact matches Vite's verified output directory.
+- `CI-002`: target builds happen after native tests so tests cannot replace cross artifacts; a shared tested inspector validates architecture and executable format before upload or release archive creation.
 
 ## Active blockers
 
@@ -101,4 +102,4 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 ## Last full validation
 
-Milestone 0 is not yet eligible for full validation. Latest package validation: docs workflow tests passed as part of 49/49 docs tests, workflow YAML parsed successfully, and `npm run build` emitted `docs/dist`.
+Milestone 0 is not yet eligible for full validation. Latest package validation: five target builds and header inspections passed; 58/58 docs/workflow tests, Vite build, workflow YAML parse, and inspector syntax check passed.

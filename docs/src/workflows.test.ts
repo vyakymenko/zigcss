@@ -25,3 +25,26 @@ describe('documentation workflow', () => {
     expect(workflow).toContain('needs: build')
   })
 })
+
+describe('native artifact workflows', () => {
+  const buildWorkflow = fs.readFileSync(path.join(workflowsDir, 'build.yml'), 'utf8')
+  const releaseWorkflow = fs.readFileSync(path.join(workflowsDir, 'release.yml'), 'utf8')
+
+  test('passes every build matrix target to Zig after native tests', () => {
+    const nativeTests = buildWorkflow.indexOf('zig build test --summary all')
+    const targetBuild = buildWorkflow.indexOf('zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}')
+    const inspection = buildWorkflow.indexOf('node scripts/verify-artifact-target.mjs')
+    const upload = buildWorkflow.indexOf('uses: actions/upload-artifact@v4')
+
+    expect(nativeTests).toBeGreaterThan(-1)
+    expect(targetBuild).toBeGreaterThan(nativeTests)
+    expect(inspection).toBeGreaterThan(targetBuild)
+    expect(upload).toBeGreaterThan(inspection)
+  })
+
+  test('passes every release matrix target to Zig and verifies the result', () => {
+    expect(releaseWorkflow).toContain('zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}')
+    expect(releaseWorkflow).toContain('node scripts/verify-artifact-target.mjs')
+    expect(releaseWorkflow).not.toContain('if [ "${{ matrix.target }}"')
+  })
+})

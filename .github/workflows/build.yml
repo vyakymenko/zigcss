@@ -19,22 +19,27 @@ jobs:
             arch: x86_64
             target: x86_64-linux
             zig-version: 0.15.2
+            binary-name: zigcss
           - os: ubuntu-latest
             arch: aarch64
             target: aarch64-linux
             zig-version: 0.15.2
+            binary-name: zigcss
           - os: macos-latest
             arch: x86_64
             target: x86_64-macos
             zig-version: 0.15.2
+            binary-name: zigcss
           - os: macos-latest
             arch: aarch64
             target: aarch64-macos
             zig-version: 0.15.2
+            binary-name: zigcss
           - os: windows-latest
             arch: x86_64
             target: x86_64-windows
             zig-version: 0.15.2
+            binary-name: zigcss.exe
 
     steps:
       - name: Checkout code
@@ -45,17 +50,21 @@ jobs:
         with:
           version: ${{ matrix.zig-version }}
 
-      - name: Build Release Binary
-        run: zig build -Doptimize=ReleaseFast
+      - name: Run Native Tests
+        run: zig build test --summary all
 
-      - name: Test Binary
-        run: zig build test
+      - name: Build Target Binary
+        run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}
+
+      - name: Verify Target Architecture
+        run: node scripts/verify-artifact-target.mjs zig-out/bin/${{ matrix.binary-name }} ${{ matrix.target }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: zigcss-${{ matrix.target }}
-          path: zig-out/bin/zigcss*
+          path: zig-out/bin/${{ matrix.binary-name }}
+          if-no-files-found: error
           retention-days: 7
 
   test:
