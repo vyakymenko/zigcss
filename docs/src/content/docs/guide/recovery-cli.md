@@ -24,5 +24,8 @@ The recovery CLI also rejects legacy preprocessor and alternate-format extension
 
 Before reading and compiling inputs, the CLI plans destinations and rejects paths that resolve to an input, including relative aliases, symlinks, and hard links. It also rejects duplicate batch destinations.
 
+Valid inputs are parsed completely before emission. Structured parser diagnostics include the input name, line, column, and code; failed single or batch compilation writes no partial CSS.
+
 - [Current status](/guide/status)
+- [CSS compatibility](/guide/css-compatibility)
 - [Build from source](/guide/build-from-source)

@@ -79,8 +79,20 @@ jobs:
         with:
           version: 0.15.2
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install independent validator
+        run: npm ci --ignore-scripts
+
       - name: Run Tests
         run: zig build test --summary all
+
+      - name: Validate emitted CSS independently
+        run: npm run test:compat
 
       - name: Run Benchmarks
         run: zig build bench

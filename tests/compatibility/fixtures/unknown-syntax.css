@@ -1,0 +1,7 @@
+@future-device viewport and (fold: 1) {
+  token-list(a b; fn([c]));
+}
+.future {
+  --opaque: fn(a b, [c]);
+  future-property: alpha/**/beta;
+}

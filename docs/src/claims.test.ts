@@ -49,7 +49,7 @@ describe('public recovery claims', () => {
     expect(read('Formula/zigcss.rb')).toMatch(/experimental/i)
   })
 
-  test('publishes only the current status, source build, and recovery CLI guides', () => {
+  test('publishes only the current recovery and tested compatibility guides', () => {
     const contentRoot = path.join(repoRoot, 'docs/src/content/docs')
     const published = markdownFiles(contentRoot)
       .map(file => path.relative(contentRoot, file))
@@ -57,6 +57,7 @@ describe('public recovery claims', () => {
 
     expect(published).toEqual([
       'guide/build-from-source.md',
+      'guide/css-compatibility.md',
       'guide/recovery-cli.md',
       'guide/status.md',
     ])

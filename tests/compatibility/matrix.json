@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "validator": {
+    "package": "lightningcss",
+    "version": "1.30.1",
+    "errorRecovery": false,
+    "drafts": {
+      "nesting": true
+    }
+  },
+  "statuses": {
+    "Supported": "Parsed into typed ZigCSS structure and emitted deterministically.",
+    "Preserved": "Accepted and emitted from lossless component values without a complete typed semantic model.",
+    "Rejected": "Rejected with a structured diagnostic and no CSS output."
+  },
+  "features": [
+    {
+      "id": "tokens.escapes-and-unicode",
+      "area": "Tokens and syntax",
+      "syntax": "Unicode identifiers, CSS escapes, strings, URLs, numbers, dimensions, and percentages",
+      "status": "Supported",
+      "case": "declarations",
+      "notes": "Original byte spans are retained while decoded names remain available."
+    },
+    {
+      "id": "syntax.nested-components",
+      "area": "Tokens and syntax",
+      "syntax": "Nested functions and (), [], {} component blocks",
+      "status": "Supported",
+      "case": "declarations",
+      "notes": "Top-level declaration and rule boundaries never split nested delimiters."
+    },
+    {
+      "id": "selectors.compounds",
+      "area": "Selectors",
+      "syntax": "Type, universal, class, ID, compound, and selector-list syntax",
+      "status": "Supported",
+      "case": "selectors",
+      "notes": "Compound adjacency is structurally distinct from descendant combinators."
+    },
+    {
+      "id": "selectors.combinators",
+      "area": "Selectors",
+      "syntax": "Descendant, child (>), next-sibling (+), and subsequent-sibling (~) combinators",
+      "status": "Supported",
+      "case": "selectors",
+      "notes": "Pretty and minified modes retain the same combinator structure."
+    },
+    {
+      "id": "selectors.namespaces",
+      "area": "Selectors",
+      "syntax": "Namespace statements and namespace-qualified type, universal, and attribute selectors",
+      "status": "Supported",
+      "case": "statement-at-rules",
+      "notes": "Empty, wildcard, and named selector namespace states are distinct."
+    },
+    {
+      "id": "selectors.attributes",
+      "area": "Selectors",
+      "syntax": "Attribute matchers, quoted or identifier values, namespaces, and i/s flags",
+      "status": "Supported",
+      "case": "selectors",
+      "notes": "Operator, value spelling, quoting, namespace, and case metadata are retained."
+    },
+    {
+      "id": "selectors.functional-pseudos",
+      "area": "Selectors",
+      "syntax": ":is(), :where(), :not(), :has(), pseudo-classes, and pseudo-elements",
+      "status": "Supported",
+      "case": "selectors",
+      "notes": ":is() and :where() use forgiving selector lists; strict forms diagnose invalid arguments."
+    },
+    {
+      "id": "selectors.native-nesting",
+      "area": "Selectors",
+      "syntax": "Explicit &, implicit parent references, leading combinators, and nested group rules",
+      "status": "Supported",
+      "case": "native-nesting",
+      "notes": "Nesting is represented directly and is not expanded into flattened selectors."
+    },
+    {
+      "id": "selectors.column-combinator",
+      "area": "Selectors",
+      "syntax": "Column combinator (||)",
+      "status": "Rejected",
+      "case": "column-combinator",
+      "notes": "Representable internally but excluded from the selected stable Selectors Level 4 grammar."
+    },
+    {
+      "id": "declarations.order-and-importance",
+      "area": "Declarations",
+      "syntax": "Ordered duplicate declarations, fallback values, and !important",
+      "status": "Supported",
+      "case": "declarations",
+      "notes": "No property map or early cascade evaluation can remove authored fallback order."
+    },
+    {
+      "id": "declarations.custom-properties",
+      "area": "Declarations",
+      "syntax": "Custom property names and arbitrary nested component values",
+      "status": "Supported",
+      "case": "declarations",
+      "notes": "Custom-property identity and token boundaries are retained without substitution."
+    },
+    {
+      "id": "values.property-grammar",
+      "area": "Declarations",
+      "syntax": "Property-specific values and future value functions",
+      "status": "Preserved",
+      "case": "declarations",
+      "notes": "Values are lossless component trees; broad property-specific semantic validation is not yet claimed."
+    },
+    {
+      "id": "at-rules.conditional",
+      "area": "At-rules",
+      "syntax": "@media, @supports, and named or anonymous @container rules",
+      "status": "Supported",
+      "case": "conditional-at-rules",
+      "notes": "Typed preludes compose with ordered recursive rule blocks."
+    },
+    {
+      "id": "at-rules.layers",
+      "area": "At-rules",
+      "syntax": "@layer statements, names, and blocks",
+      "status": "Supported",
+      "case": "conditional-at-rules",
+      "notes": "Statement and block forms remain distinct."
+    },
+    {
+      "id": "at-rules.descriptors",
+      "area": "At-rules",
+      "syntax": "Declaration-backed @property and @font-face blocks",
+      "status": "Supported",
+      "case": "structured-at-rules",
+      "notes": "Rule-specific prelude requirements and declaration blocks are validated."
+    },
+    {
+      "id": "at-rules.keyframes",
+      "area": "At-rules",
+      "syntax": "@keyframes names, from/to, percentage selectors, and declaration blocks",
+      "status": "Supported",
+      "case": "structured-at-rules",
+      "notes": "Frame and declaration order are retained."
+    },
+    {
+      "id": "at-rules.page",
+      "area": "At-rules",
+      "syntax": "@page selectors, declarations, and margin at-rules",
+      "status": "Supported",
+      "case": "structured-at-rules",
+      "notes": "Mixed page items retain their authored ordering."
+    },
+    {
+      "id": "at-rules.statements",
+      "area": "At-rules",
+      "syntax": "Semicolon forms such as @charset, @import, and @namespace",
+      "status": "Preserved",
+      "case": "statement-at-rules",
+      "notes": "Names and preludes are lossless; import fetching and dependency analysis are out of scope."
+    },
+    {
+      "id": "at-rules.unknown",
+      "area": "At-rules",
+      "syntax": "Unknown or future at-rules and property values",
+      "status": "Preserved",
+      "case": "unknown-syntax",
+      "notes": "Nested component structure and whitespace-token presence are retained without invented semantics."
+    },
+    {
+      "id": "errors.invalid-declaration",
+      "area": "Diagnostics",
+      "syntax": "Declaration candidates missing a top-level colon",
+      "status": "Rejected",
+      "case": "invalid-declaration",
+      "notes": "The CLI reports a filename, location, and diagnostic code and emits no partial CSS."
+    }
+  ],
+  "cases": [
+    {
+      "id": "selectors",
+      "fixture": "fixtures/selectors.css",
+      "expectation": "emit",
+      "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "declarations",
+      "fixture": "fixtures/declarations.css",
+      "expectation": "emit",
+      "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "conditional-at-rules",
+      "fixture": "fixtures/conditional-at-rules.css",
+      "expectation": "emit",
+      "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "structured-at-rules",
+      "fixture": "fixtures/structured-at-rules.css",
+      "expectation": "emit",
+      "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "statement-at-rules",
+      "fixture": "fixtures/statement-at-rules.css",
+      "expectation": "emit",
+      "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "unknown-syntax",
+      "fixture": "fixtures/unknown-syntax.css",
+      "expectation": "emit",
+      "validatorWarnings": ["Unknown at rule: @future-device"],
+      "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "native-nesting",
+      "fixture": "fixtures/native-nesting.css",
+      "expectation": "emit",
+      "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "column-combinator",
+      "fixture": "fixtures/column-combinator.css",
+      "expectation": "reject",
+      "diagnostic": "error CSS0007",
+      "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "invalid-declaration",
+      "fixture": "fixtures/invalid-declaration.css",
+      "expectation": "reject",
+      "diagnostic": "declaration is missing ':'",
+      "modes": ["pretty", "minified"]
+    }
+  ]
+}

@@ -5,7 +5,7 @@ const capabilities = [
   {
     surface: "Basic CSS parsing and emission",
     status: "Experimental",
-    detail: "Useful for characterization, with known selector, delimiter, and at-rule defects.",
+    detail: "The stable CLI uses the new parser and emitter; its published grammar matrix is independently parsed in both output modes.",
   },
   {
     surface: "Compact emission (--minify)",
@@ -23,9 +23,14 @@ const capabilities = [
     detail: "Known unsafe transforms are unreachable from the recovery CLI and stable code generation path.",
   },
   {
-    surface: "Source maps and browser targets",
+    surface: "Source maps",
+    status: "Experimental / CLI-unavailable",
+    detail: "The library pipeline returns deterministic mappings; the CLI output policy is not yet defined.",
+  },
+  {
+    surface: "Browser targets",
     status: "Unavailable",
-    detail: "Requests fail explicitly until real mappings and validated target data exist.",
+    detail: "Target queries fail explicitly until versioned compatibility data is validated.",
   },
   {
     surface: "Alternate format adapters",
@@ -92,6 +97,9 @@ export function Features() {
         </div>
 
         <div className="mt-10 flex flex-col sm:flex-row gap-4">
+          <Link to="/docs/guide/css-compatibility" className="px-6 py-3 rounded-lg bg-indigo-700 text-white text-center">
+            Read CSS compatibility
+          </Link>
           <Link to="/docs/guide/status" className="px-6 py-3 rounded-lg bg-indigo-700 text-white text-center">
             Read known limitations
           </Link>

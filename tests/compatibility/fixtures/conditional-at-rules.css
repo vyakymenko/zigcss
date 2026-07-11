@@ -1,0 +1,16 @@
+@media screen and (width > 30rem), print {
+  .layout { display: grid; }
+}
+@supports (display: grid) and selector(.grid > *) {
+  .grid { display: grid; }
+}
+@container card (inline-size > 40rem) {
+  .card { padding: 1rem; }
+}
+@container (inline-size > 20rem) {
+  .compact { padding: .5rem; }
+}
+@layer reset, theme.components;
+@layer theme.components {
+  .button { color: rebeccapurple; }
+}

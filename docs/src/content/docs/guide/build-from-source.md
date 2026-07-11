@@ -18,6 +18,13 @@ zig build test --summary all
 
 The executable is written to `zig-out/bin/zigcss`.
 
+The independent parser gate additionally requires Node.js. After the Zig build has produced the executable, run:
+
+```bash
+npm ci --ignore-scripts
+npm run test:compat
+```
+
 ## Characterization example
 
 Use a deliberately simple stylesheet while evaluating the prototype:
@@ -35,4 +42,5 @@ zig-out/bin/zigcss input.css -o output.css
 The CLI writes an experimental-build warning to standard error. Treat successful output as prototype output, not as a compatibility guarantee.
 
 - [Current status](/guide/status)
+- [CSS compatibility](/guide/css-compatibility)
 - [Recovery CLI](/guide/recovery-cli)

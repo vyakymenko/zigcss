@@ -1,0 +1,18 @@
+@property --theme {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: red;
+}
+@font-face {
+  font-family: "Demo";
+  src: url("demo.woff2") format("woff2");
+}
+@keyframes fade {
+  from, 50% { opacity: 0; }
+  100% { opacity: 1; }
+}
+@page invoice:first, :left {
+  margin: 1cm;
+  @top-left { content: "Invoice"; }
+  size: A4;
+}

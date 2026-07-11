@@ -118,7 +118,7 @@ jobs:
 
             Experimental recovery binaries for development and evaluation only.
 
-            ZigCSS 0.3 has known parser and emitter defects and is not suitable for production stylesheets.
+            ZigCSS 0.3 has a tested experimental grammar boundary but is not suitable for production stylesheets.
 
             ### Installation
 
@@ -130,7 +130,7 @@ jobs:
             - macOS (x86_64, aarch64)
             - Windows (x86_64)
 
-            Optimizer transforms, source maps, browser targeting, alternate format adapters, and the public compile API remain disabled or unavailable. Public performance comparisons are withdrawn until equivalent output is validated.
+            Optimizer transforms, CLI source-map output, browser targeting, alternate format adapters, and the public compile API remain disabled or unavailable. Public performance comparisons are withdrawn until equivalent output is validated.
 
           draft: false
           prerelease: true

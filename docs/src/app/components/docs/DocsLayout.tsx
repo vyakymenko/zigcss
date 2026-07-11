@@ -7,6 +7,7 @@ const SIDEBAR = [
     icon: Book,
     items: [
       { text: "Current status", link: "/docs/guide/status" },
+      { text: "CSS compatibility", link: "/docs/guide/css-compatibility" },
       { text: "Build from source", link: "/docs/guide/build-from-source" },
       { text: "Recovery CLI", link: "/docs/guide/recovery-cli" },
     ],

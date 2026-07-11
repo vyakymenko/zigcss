@@ -17,7 +17,8 @@
     "postinstall": "node install.js",
     "dev": "node dev.js",
     "dev:docker": "docker compose -f docker-compose.dev.yml up --build",
-    "build:website": "cd docs && npm ci --ignore-scripts && npm run build"
+    "build:website": "cd docs && npm ci --ignore-scripts && npm run build",
+    "test:compat": "node tests/compatibility/validate.mjs"
   },
   "repository": {
     "type": "git",
@@ -38,7 +39,6 @@
   "engines": {
     "node": ">=14.0.0"
   },
-  "optionalDependencies": {},
   "preferGlobal": true,
   "os": [
     "darwin",
@@ -48,5 +48,8 @@
   "cpu": [
     "x64",
     "arm64"
-  ]
+  ],
+  "devDependencies": {
+    "lightningcss": "1.30.1"
+  }
 }

@@ -24,7 +24,13 @@ describe('Features', () => {
   it('lists disabled and unavailable surfaces explicitly', () => {
     renderFeatures()
     expect(screen.getByText('Optimizer, prefixing, critical CSS')).toBeInTheDocument()
-    expect(screen.getByText('Source maps and browser targets')).toBeInTheDocument()
+    expect(screen.getByText('Source maps')).toBeInTheDocument()
+    expect(screen.getByText('Browser targets')).toBeInTheDocument()
     expect(screen.getByText('Public compile API and playground')).toBeInTheDocument()
+  })
+
+  it('links to the tested CSS compatibility matrix', () => {
+    renderFeatures()
+    expect(screen.getByRole('link', { name: /read CSS compatibility/i })).toHaveAttribute('href', '/docs/guide/css-compatibility')
   })
 })

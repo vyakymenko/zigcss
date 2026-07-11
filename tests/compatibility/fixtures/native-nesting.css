@@ -1,0 +1,11 @@
+.card {
+  color: red;
+  .title { font-weight: bold; }
+  @media (width > 40rem) {
+    display: grid;
+    > .icon { opacity: 1; }
+    gap: 1rem;
+  }
+  background: blue;
+  &.active { color: green; }
+}

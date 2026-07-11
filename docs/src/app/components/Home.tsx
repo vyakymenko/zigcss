@@ -21,7 +21,7 @@ export function Home() {
               A CSS compiler prototype being rebuilt around security, standards parsing, and semantic preservation.
             </p>
             <p className="text-lg text-slate-600 mb-10">
-              The 0.3 compiler has known syntax and output defects. It is for development and evaluation, not production use.
+              The 0.3 recovery compiler has a tested grammar boundary, but browser semantics and later product gates remain incomplete. It is for development and evaluation, not production use.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4">

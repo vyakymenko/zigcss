@@ -1,0 +1,5 @@
+article#main.card[data-kind|="news" i][data-prefix^="pre"][data-suffix$=end][data-part*="mid"][data-list~="token"] > a:is(.primary, .secondary):not([aria-disabled="true"])::before,
+:where(section, aside) + .notice ~ [lang|="en"],
+.shell .gallery:has(> img, + .fallback) {
+  content: "selector corpus";
+}

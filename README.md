@@ -2,7 +2,7 @@
 
 > **Experimental recovery status:** ZigCSS 0.3 is an ambitious compiler prototype undergoing a correctness-first rebuild. It is not suitable for production stylesheets.
 
-The repository contains useful Zig scaffolding for a CSS CLI, parser, emitter, transforms, format adapters, an LSP, documentation, packaging, and benchmarks. The inherited byte-oriented parser and optimizer do not yet preserve standards CSS reliably, so the current program prioritizes security and semantics before features or speed.
+The repository contains a rebuilt CSS source/token/syntax/parser/emitter pipeline alongside inherited prototype transforms, format adapters, an LSP, documentation, packaging, and benchmarks. The stable CLI now uses the rebuilt pipeline, while the remaining program still prioritizes security and semantics before features or speed.
 
 The authoritative roadmap is [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Execution evidence and package state are tracked in [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md).
 
@@ -20,25 +20,21 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 
 | Surface | Status | Behavior |
 |---|---|---|
-| Basic `.css` parsing and emission | Experimental | Intended for development and characterization only; known syntax and semantic gaps remain. |
+| `.css` parsing and emission | Experimental, matrix-tested | Stable CLI input uses the rebuilt parser/emitter; the tested grammar boundary is published below. |
 | `--minify` | Experimental | Compacts emitted whitespace without enabling AST transforms. |
 | Output planning | Verified safety boundary | Rejects input/output aliases and duplicate batch destinations before writes. |
 | Optimizer, autoprefixing, critical CSS | Disabled | Unsafe transform requests fail explicitly. |
-| Source maps and browser target queries | Unavailable | Requests fail explicitly instead of acting as no-ops. |
+| Source maps | Experimental, library-only | Deterministic maps are available from the library pipeline; CLI output policy remains undefined. |
+| Browser target queries | Unavailable | Requests fail explicitly; versioned compatibility data is not yet available. |
 | SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS | Experimental and CLI-disabled | Legacy adapters remain internal until each has a compatibility decision and evidence suite. |
 | LSP | Experimental | Still consumes the legacy parser. |
-| Public compile API and playground | Disabled | Public compile routes return HTTP 503 pending bounded isolation and parser replacement. |
+| Public compile API and playground | Disabled | Public compile routes return HTTP 503 pending bounded isolation. |
 
-## Known limitations
+## Current limitations
 
-Committed regressions currently quarantine failures involving:
+The tested grammar boundary is published in [the CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md) and backed by `tests/compatibility/matrix.json`. Pretty and minified fixture output must parse in pinned Lightning CSS with error recovery disabled.
 
-- compound versus descendant selectors;
-- functional pseudo-classes and attribute selectors;
-- delimiters inside strings and functions;
-- declaration-bearing at-rules and percentage keyframes;
-- mandatory whitespace in some minified at-rules;
-- optimizer transformations affecting cascade, ordering, logical properties, shorthands, and typed math.
+Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, optimizer transforms, compatibility target data, CLI source-map output, LSP migration, alternate formats, and resource-bounded public compilation remain incomplete.
 
 Do not use current output in a production pipeline. A successful compile is not yet a standards-compatibility guarantee.
 
@@ -68,6 +64,13 @@ zig-out/bin/zigcss input.css -o output.css
 ```
 
 The CLI prints an experimental-build warning to standard error.
+
+After building, the independent grammar gate can be run with Node.js:
+
+```bash
+npm ci --ignore-scripts
+npm run test:compat
+```
 
 ## Recovery CLI
 

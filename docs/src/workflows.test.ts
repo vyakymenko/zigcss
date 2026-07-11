@@ -47,4 +47,14 @@ describe('native artifact workflows', () => {
     expect(releaseWorkflow).toContain('node scripts/verify-artifact-target.mjs')
     expect(releaseWorkflow).not.toContain('if [ "${{ matrix.target }}"')
   })
+
+  test('runs the locked independent CSS validator after native tests', () => {
+    const install = buildWorkflow.lastIndexOf('npm ci --ignore-scripts')
+    const nativeTests = buildWorkflow.lastIndexOf('zig build test --summary all')
+    const compatibility = buildWorkflow.lastIndexOf('npm run test:compat')
+
+    expect(install).toBeGreaterThan(-1)
+    expect(nativeTests).toBeGreaterThan(install)
+    expect(compatibility).toBeGreaterThan(nativeTests)
+  })
 })

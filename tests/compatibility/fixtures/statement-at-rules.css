@@ -1,0 +1,4 @@
+@charset "UTF-8";
+@import url("theme.css") layer(base) supports(display: grid) screen;
+@namespace svg url("http://www.w3.org/2000/svg");
+svg|a[svg|href^="icon" s], *|button, |input { fill: currentColor; }
