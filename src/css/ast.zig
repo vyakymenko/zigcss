@@ -619,6 +619,8 @@ pub const KeyframeRule = struct {
 
 pub const KeyframesBlock = struct {
     envelope: BlockSpan,
+    /// Retained until/alongside structured frame lowering.
+    raw_values: ?ComponentValueList = null,
     frames: []const KeyframeRule,
 
     pub fn init(envelope: BlockSpan, frames: []const KeyframeRule) AstError!KeyframesBlock {
@@ -631,6 +633,18 @@ pub const KeyframesBlock = struct {
             previous_end = frame.span.end;
         }
         return .{ .envelope = envelope, .frames = frames };
+    }
+
+    pub fn initWithRaw(
+        envelope: BlockSpan,
+        raw_values: ComponentValueList,
+        frames: []const KeyframeRule,
+    ) AstError!KeyframesBlock {
+        var block = try init(envelope, frames);
+        if (!spansEqual(envelope.content, raw_values.span)) return error.InvalidKeyframes;
+        _ = try ComponentValueList.init(raw_values.span, raw_values.values);
+        block.raw_values = raw_values;
+        return block;
     }
 };
 
@@ -712,7 +726,11 @@ pub const AtRule = struct {
                 try validateAtRuleBlock(candidate, block.envelope);
             },
             .keyframes => |block| {
-                _ = try KeyframesBlock.init(block.envelope, block.frames);
+                if (block.raw_values) |raw_values| {
+                    _ = try KeyframesBlock.initWithRaw(block.envelope, raw_values, block.frames);
+                } else {
+                    _ = try KeyframesBlock.init(block.envelope, block.frames);
+                }
                 try validateAtRuleBlock(candidate, block.envelope);
             },
             .raw => |block| {
