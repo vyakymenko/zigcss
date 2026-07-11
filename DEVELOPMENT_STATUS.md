@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 0 — Containment and regression baseline
-- Work package: `SEC-003`, then `SAFE-001`
+- Work package: `SAFE-001`
 - State: `IN_PROGRESS`
-- Next eligible package: `SEC-003`, then `SAFE-001`, then Milestone 0 validation
+- Next eligible package: `SAFE-001`, then Milestone 0 validation
 
 ## Milestone 0 package ledger
 
@@ -25,7 +25,7 @@ Last updated: 2026-07-11
 |---|---|---|---|
 | `SEC-001` | `VERIFIED` | HTTP regressions reject encoded slash/backslash traversal and escaping symlinks, malformed encoding returns 400 without terminating the server, safe assets and SPA fallback remain available; full docs tests and build pass. | `14e8878` |
 | `SEC-002` | `DEFERRED` | Public compile routes return 503 and contain no process-spawn path. Bounded execution remains deferred until body/time/output/process/concurrency/cleanup isolation is implemented. Focused 9/9 and full docs 46/46 tests pass. | `ed5b2ff` |
-| `SEC-003` | `NOT_STARTED` | Non-root/minimal docs container pending. | — |
+| `SEC-003` | `VERIFIED` | The docs image builds from a 5.46 kB filtered context, contains only the built site and static server under `/app`, carries no compiler/download stage, runs as uid 1000 (`node`), and serves on 8080. Static regressions, image inspection, and a live container smoke test pass. | Checkpoint pending |
 | `SAFE-001` | `NOT_STARTED` | Experimental-status and claims audit pending. | — |
 | `TEST-001` | `VERIFIED` | Added 18 isolated compiler/CLI characterization regressions covering every non-server Milestone 0 audit case; fixed server regressions remain active assertions. Debug and ReleaseSafe each pass 94/94 tests. | `0334d05` |
 | `OPT-001` | `VERIFIED` | Stable code generation rejects optimize, autoprefix, dead-code, and critical-CSS requests before AST mutation or emission. All optimizer corruption/crash inputs now assert explicit containment; Debug and ReleaseSafe pass 95/95. | `1f8323a` |
@@ -33,7 +33,7 @@ Last updated: 2026-07-11
 | `CLI-001` | `VERIFIED` | Canonical/real-path and inode-aware planning rejects input aliases, symlink/hard-link aliases, duplicate batch destinations, and unsafe default batch naming before writes. Debug and ReleaseSafe pass 99/99. | `5d2fc1d` |
 | `CLI-002` | `VERIFIED` | Unknown/duplicate options, missing values, invalid batch contracts, and unavailable features exit 2 with explicit diagnostics. Help separates available from rejected recovery features. Debug and ReleaseSafe pass 102/102. | `4719d02` |
 | `CI-001` | `VERIFIED` | PRs run locked docs install, 49 tests, and Vite build; Pages artifact uses `docs/dist`; deployment is isolated to non-PR events. Workflow regression tests and YAML parse pass. | `e39a674` |
-| `CI-002` | `VERIFIED` | Build/release pass every matrix target to Zig after native tests and verify headers before upload. Five real cross-builds verified: ELF x86_64/aarch64, Mach-O x86_64/aarch64, PE x86_64. | Checkpoint pending |
+| `CI-002` | `VERIFIED` | Build/release pass every matrix target to Zig after native tests and verify headers before upload. Five real cross-builds verified: ELF x86_64/aarch64, Mach-O x86_64/aarch64, PE x86_64. | `fcc1658` |
 
 ## Baseline commands and results
 
@@ -62,6 +62,7 @@ Baseline captured on base commit `2d2c0d9` with Zig 0.15.2, Node 24.16.0, and np
 - `CLI-002`: the CLI accepts only functional recovery-scope options; unavailable source maps, transforms, target queries, and extraction modes fail before reading input.
 - `CI-001`: documentation validation and deployment are separate jobs; pull requests cannot execute the deploy job and the uploaded artifact matches Vite's verified output directory.
 - `CI-002`: target builds happen after native tests so tests cannot replace cross artifacts; a shared tested inspector validates architecture and executable format before upload or release archive creation.
+- `SEC-003`: the public docs runtime is static-only, non-root, high-port, and root-owned; a filtered build context excludes repository metadata, generated output, dependency trees, and environment files.
 
 ## Active blockers
 
@@ -102,4 +103,4 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 ## Last full validation
 
-Milestone 0 is not yet eligible for full validation. Latest package validation: five target builds and header inspections passed; 58/58 docs/workflow tests, Vite build, workflow YAML parse, and inspector syntax check passed.
+Milestone 0 is not yet eligible for full validation. Latest package validation: 60/60 docs tests and Vite build passed; the production image built from a 5.46 kB context and served the site as uid 1000 with no compiler binary present.

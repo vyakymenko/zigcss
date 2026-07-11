@@ -2,47 +2,31 @@
 FROM node:22-alpine AS builder
 WORKDIR /repo
 
-# Copy the full repo (zigcss npm package lives at root, docs at /repo/docs)
-COPY . .
+# The docs package has a local dependency on the root npm wrapper. Copy only
+# that published wrapper plus locked documentation dependencies before source.
+COPY package.json index.js install.js README.md LICENSE ./
+COPY docs/package.json docs/package-lock.json ./docs/
 
-# Install docs deps — skip postinstall so the platform binary fetch is skipped
-# (we download the real binary below; compile-api-plugin is dev-only middleware)
+# Install docs deps without executing package lifecycle scripts. The production
+# image serves static files only and deliberately contains no compiler binary.
 WORKDIR /repo/docs
-RUN npm ci --ignore-scripts && npm run build
+RUN npm ci --ignore-scripts
+COPY docs/ ./
+RUN npm run build
 
-# ── Stage 2: download the zigcss binary for the current platform ──────────────
-FROM alpine:3.21 AS zigcss-bin
-RUN apk add --no-cache curl tar
-
-# Detect arch and pull the matching pre-built release binary
-RUN ARCH=$(uname -m) && \
-    case "$ARCH" in \
-      x86_64)  ZIG_ARCH=x86_64  ;; \
-      aarch64) ZIG_ARCH=aarch64 ;; \
-      *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
-    esac && \
-    curl -fSL \
-      "https://github.com/vyakymenko/zigcss/releases/download/v0.3.0/zigcss-v0.3.0-${ZIG_ARCH}-linux.tar.gz" \
-      -o /tmp/zigcss.tar.gz && \
-    tar -xzf /tmp/zigcss.tar.gz -C /tmp && \
-    find /tmp -name "zigcss" -type f | head -1 | xargs -I{} cp {} /usr/local/bin/zigcss && \
-    chmod +x /usr/local/bin/zigcss
-
-# ── Stage 3: production runtime ───────────────────────────────────────────────
-FROM node:22-alpine
+# ── Stage 2: static-only production runtime ──────────────────────────────────
+FROM node:22-alpine AS runtime
 
 WORKDIR /app
 
-# Copy the compiled static files
+# Copy only the files needed by the static server. They remain root-owned and
+# read-only to the unprivileged runtime account.
 COPY --from=builder /repo/docs/dist ./dist
-
-# Copy the production server (uses ESM, no extra deps needed)
 COPY --from=builder /repo/docs/server.js ./server.js
 
-# Copy the zigcss binary
-COPY --from=zigcss-bin /usr/local/bin/zigcss /usr/local/bin/zigcss
+ENV NODE_ENV=production
+ENV PORT=8080
+EXPOSE 8080
 
-EXPOSE 80
-ENV PORT=80
-
+USER node
 CMD ["node", "server.js"]

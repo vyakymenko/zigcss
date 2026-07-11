@@ -1,0 +1,11 @@
+.git
+.zig-cache
+zig-cache
+zig-out
+node_modules
+docs/node_modules
+docs/dist
+*.log
+.env
+.env.*
+.DS_Store
