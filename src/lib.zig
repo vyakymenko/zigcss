@@ -3,6 +3,7 @@ pub const diagnostics = @import("diagnostics.zig");
 pub const compilation = @import("compilation.zig");
 pub const tokenizer = @import("tokenizer.zig");
 pub const syntax = @import("syntax.zig");
+pub const css = @import("css.zig");
 
 pub const SourceId = source.SourceId;
 pub const Span = source.Span;
@@ -25,6 +26,7 @@ test "public foundation types compose through the library root" {
     const std = @import("std");
     _ = tokenizer;
     _ = syntax;
+    _ = css;
     var context = try Compilation.init(std.testing.allocator);
     defer context.deinit();
 
