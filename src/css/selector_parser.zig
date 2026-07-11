@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const diagnostics = @import("../diagnostics.zig");
+const recovery = @import("recovery.zig");
 const source = @import("../source.zig");
 const syntax = @import("../syntax.zig");
 const tokenizer = @import("../tokenizer.zig");
@@ -175,8 +176,9 @@ const Parser = struct {
             index = after.next;
         }
 
+        const head_checkpoint = recovery.DiagnosticCheckpoint.capture(self.context);
         const head = self.parseCompound(values, index, end, depth, selector_context) catch |err| {
-            if (err == error.InvalidSelector) {
+            if (err == error.InvalidSelector and head_checkpoint.unchanged(self.context)) {
                 try self.report(.unexpected_token, values[index].span(), "expected a compound selector");
             }
             return err;
@@ -213,6 +215,7 @@ const Parser = struct {
                 return error.InvalidSelector;
             }
 
+            const compound_checkpoint = recovery.DiagnosticCheckpoint.capture(self.context);
             const next_compound = self.parseCompound(
                 values,
                 compound_start,
@@ -220,7 +223,7 @@ const Parser = struct {
                 depth,
                 selector_context,
             ) catch |err| {
-                if (err == error.InvalidSelector) {
+                if (err == error.InvalidSelector and compound_checkpoint.unchanged(self.context)) {
                     try self.report(.unexpected_token, values[compound_start].span(), "expected a compound selector after combinator");
                 }
                 return err;
@@ -1026,6 +1029,21 @@ test "invalid selector boundaries report diagnostics without partial success" {
         const values = try ast.ComponentValueList.init(document.span, document.values);
         try std.testing.expectError(error.InvalidSelector, parse(&context, id, values));
         try std.testing.expect(context.diagnostics.items().len > 0);
+    }
+}
+
+test "nested strict selector failures emit one synchronized diagnostic" {
+    const cases = [_][]const u8{ ":not(.a,)", ".root > :not(.a,)" };
+    for (cases) |css| {
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const id = try context.addSource("nested-diagnostic.css", css);
+        const document = try syntax.parse(&context, id);
+        const values = try ast.ComponentValueList.init(document.span, document.values);
+
+        try std.testing.expectError(error.InvalidSelector, parse(&context, id, values));
+        try std.testing.expectEqual(@as(usize, 1), context.diagnostics.items().len);
+        try std.testing.expectEqualStrings("empty selector in selector list", context.diagnostics.items()[0].message);
     }
 }
 

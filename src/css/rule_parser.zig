@@ -4,6 +4,7 @@ const at_rule_parser = @import("at_rule_parser.zig");
 const compilation = @import("../compilation.zig");
 const declaration_parser = @import("declaration_parser.zig");
 const diagnostics = @import("../diagnostics.zig");
+const recovery = @import("recovery.zig");
 const selector_parser = @import("selector_parser.zig");
 const source = @import("../source.zig");
 const syntax = @import("../syntax.zig");
@@ -122,15 +123,13 @@ const Parser = struct {
     ) Error!ParsedRule {
         const at_token = tokenAt(values[start]).?;
         const name = try self.identifier(at_token);
-        var index = start + 1;
-        while (index < values.len and !isSemicolon(values[index]) and !isCurlyBlock(values[index])) {
-            index += 1;
-        }
+        const boundary = recovery.scanRuleBoundary(values, start + 1);
+        const index = boundary.index;
 
         const prelude = try componentList(values, start + 1, index, at_token.span.end);
         const at_sign = makeSpan(self.source_id, at_token.span.start, name.span.start);
-        if (index == values.len or isSemicolon(values[index])) {
-            const terminator = if (index < values.len) tokenAt(values[index]).?.span else null;
+        if (boundary.kind != .curly_block) {
+            const terminator = if (boundary.kind == .semicolon) tokenAt(values[index]).?.span else null;
             const rule_end = if (terminator) |span| span.end else prelude.span.end;
             const at_rule = self.allocator.create(ast.AtRule) catch return error.OutOfMemory;
             at_rule.* = ast.AtRule.init(.{
@@ -144,7 +143,7 @@ const Parser = struct {
                 return error.InternalInvariant;
             };
             try at_rule_parser.specialize(self.context, self.file, at_rule);
-            return .{ .rule = .{ .at_rule = at_rule }, .next = if (index < values.len) index + 1 else index };
+            return .{ .rule = .{ .at_rule = at_rule }, .next = boundary.next };
         }
 
         const syntax_block = values[index].simple_block;
@@ -201,7 +200,7 @@ const Parser = struct {
             return error.InternalInvariant;
         };
         try at_rule_parser.specialize(self.context, self.file, at_rule);
-        return .{ .rule = .{ .at_rule = at_rule }, .next = index + 1 };
+        return .{ .rule = .{ .at_rule = at_rule }, .next = boundary.next };
     }
 
     fn parseQualifiedRule(
@@ -211,18 +210,16 @@ const Parser = struct {
         depth: usize,
     ) Error!ParsedRule {
         _ = depth;
-        var index = start;
-        while (index < values.len and !isSemicolon(values[index]) and !isCurlyBlock(values[index])) {
-            index += 1;
-        }
-        if (index == values.len or isSemicolon(values[index])) {
-            const end = if (index < values.len) values[index].span().end else values[values.len - 1].span().end;
+        const boundary = recovery.scanRuleBoundary(values, start);
+        const index = boundary.index;
+        if (boundary.kind != .curly_block) {
+            const end = if (boundary.kind == .semicolon) values[index].span().end else values[values.len - 1].span().end;
             try self.report(
                 .unexpected_token,
                 makeSpan(self.source_id, values[start].span().start, end),
                 "qualified rule is missing a block",
             );
-            return .{ .rule = null, .next = if (index < values.len) index + 1 else index };
+            return .{ .rule = null, .next = boundary.next };
         }
 
         const prelude = try componentList(values, start, index, values[start].span().start);
@@ -251,7 +248,7 @@ const Parser = struct {
             try self.report(.internal, envelope.span, "style-rule span invariant failed");
             return error.InternalInvariant;
         };
-        return .{ .rule = .{ .style_rule = style_rule }, .next = index + 1 };
+        return .{ .rule = .{ .style_rule = style_rule }, .next = boundary.next };
     }
 
     fn identifier(self: *Parser, token: tokenizer.Token) Error!ast.Identifier {
@@ -345,21 +342,10 @@ fn isAtKeyword(value: syntax.ComponentValue) bool {
     return token.kind == .at_keyword;
 }
 
-fn isSemicolon(value: syntax.ComponentValue) bool {
-    const token = tokenAt(value) orelse return false;
-    return token.kind == .semicolon;
-}
-
-fn isCurlyBlock(value: syntax.ComponentValue) bool {
-    return switch (value) {
-        .simple_block => |block| block.opening.kind == .open_curly,
-        else => false,
-    };
-}
-
 fn isIgnorable(value: syntax.ComponentValue, top_level: bool) bool {
     const token = tokenAt(value) orelse return false;
-    return token.isTrivia() or (top_level and (token.kind == .cdo or token.kind == .cdc));
+    return token.isTrivia() or recovery.isStrayClosing(value) or
+        (top_level and (token.kind == .cdo or token.kind == .cdc));
 }
 
 fn skipIgnorable(values: []const syntax.ComponentValue, start: usize, top_level: bool) usize {
@@ -724,6 +710,119 @@ test "structured at-rule lowering handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseStructuredAtRuleAllocationFailures,
+        .{},
+    );
+}
+
+const synchronized_recovery_css =
+    "???;.before{a:1;broken;b:2}" ++
+    ":not(.a,){ignored:1}.after{c:3}" ++
+    "@media all{???;.nested{bad;d:4}:has(.x,){x:1}.tail{e:5}}" ++
+    "@keyframes f{bad{x:0}25%{broken;y:1}50%{z:2}}" ++
+    "@page{bad;size:A4;@top-left{broken;content:\"x\"}}";
+
+test "synchronized recovery preserves valid siblings nested rules frames and descriptors" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(&context, "synchronized-recovery.css", synchronized_recovery_css);
+    const rules = parsed[1].rules;
+
+    try std.testing.expectEqual(@as(usize, 5), rules.len);
+    try std.testing.expectEqualStrings("before", rules[0].style_rule.selectors.selectors[0].head.simple_selectors[0].class.name.value);
+    try std.testing.expectEqual(@as(usize, 2), rules[0].style_rule.block.declarations.declarations.len);
+    try std.testing.expectEqualStrings("after", rules[1].style_rule.selectors.selectors[0].head.simple_selectors[0].class.name.value);
+
+    const media = rules[2].at_rule.details.?.media;
+    try std.testing.expectEqual(@as(usize, 2), media.block.rules.rules.len);
+    try std.testing.expectEqualStrings("nested", media.block.rules.rules[0].style_rule.selectors.selectors[0].head.simple_selectors[0].class.name.value);
+    try std.testing.expectEqualStrings("d", media.block.rules.rules[0].style_rule.block.declarations.declarations[0].name.value);
+    try std.testing.expectEqualStrings("tail", media.block.rules.rules[1].style_rule.selectors.selectors[0].head.simple_selectors[0].class.name.value);
+
+    const keyframes = rules[3].at_rule.details.?.keyframes;
+    try std.testing.expectEqual(@as(usize, 2), keyframes.block.frames.len);
+    try std.testing.expectEqual(@as(f64, 25), keyframes.block.frames[0].selectors[0].percentage.value);
+    try std.testing.expectEqualStrings("y", keyframes.block.frames[0].block.declarations.declarations[0].name.value);
+
+    const page = rules[4].at_rule.details.?.page;
+    try std.testing.expectEqual(@as(usize, 1), page.declarations.declarations.len);
+    try std.testing.expectEqualStrings("size", page.declarations.declarations[0].name.value);
+    try std.testing.expectEqual(@as(usize, 1), page.margins.len);
+    try std.testing.expectEqualStrings("content", page.margins[0].declarations.declarations[0].name.value);
+
+    const diagnostic_items = context.diagnostics.items();
+    try std.testing.expectEqual(@as(usize, 10), diagnostic_items.len);
+    const file = try context.sources.get(parsed[0]);
+    var previous_start: usize = 0;
+    for (diagnostic_items) |diagnostic| {
+        _ = try file.slice(diagnostic.span);
+        try std.testing.expect(diagnostic.span.start >= previous_start);
+        previous_start = diagnostic.span.start;
+    }
+}
+
+test "syntax-diagnosed stray closers do not consume the following valid rule" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "stray-closers.css",
+        "}].before{x:1}@media all{).nested{y:2}}.after{z:3}",
+    );
+    const rules = parsed[1].rules;
+
+    try std.testing.expectEqual(@as(usize, 3), rules.len);
+    try std.testing.expectEqualStrings("before", rules[0].style_rule.selectors.selectors[0].head.simple_selectors[0].class.name.value);
+    const media = rules[1].at_rule.details.?.media;
+    try std.testing.expectEqual(@as(usize, 1), media.block.rules.rules.len);
+    try std.testing.expectEqualStrings("nested", media.block.rules.rules[0].style_rule.selectors.selectors[0].head.simple_selectors[0].class.name.value);
+    try std.testing.expectEqualStrings("after", rules[2].style_rule.selectors.selectors[0].head.simple_selectors[0].class.name.value);
+    try std.testing.expectEqual(@as(usize, 3), context.diagnostics.items().len);
+}
+
+test "every typed parser truncation boundary remains recoverable with valid diagnostic spans" {
+    const css = "@media all{.café:not(.x,.y){color:fn(1;[x]);broken}@supports (display:grid){.b{x:1}}}@keyframes f{from{opacity:0}50%{opacity:1}}@page:left{size:A4;@top-left{content:\"x\"}}";
+    var cut: usize = 0;
+    while (cut <= css.len) : (cut += 1) {
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const parsed = try parseSource(&context, "typed-prefix.css", css[0..cut]);
+        const file = try context.sources.get(parsed[0]);
+        _ = try ast.RuleList.init(parsed[1].span, parsed[1].rules);
+        for (context.diagnostics.items()) |diagnostic| {
+            try std.testing.expect(diagnostic.span.source.eql(parsed[0]));
+            _ = try file.slice(diagnostic.span);
+        }
+    }
+}
+
+test "every single byte survives typed rule recovery" {
+    var raw: [1]u8 = undefined;
+    var value: usize = 0;
+    while (value <= std.math.maxInt(u8)) : (value += 1) {
+        raw[0] = @intCast(value);
+        var context = try compilation.Compilation.init(std.testing.allocator);
+        defer context.deinit();
+        const parsed = try parseSource(&context, "typed-byte.css", &raw);
+        const file = try context.sources.get(parsed[0]);
+        _ = try ast.RuleList.init(parsed[1].span, parsed[1].rules);
+        for (context.diagnostics.items()) |diagnostic| {
+            _ = try file.slice(diagnostic.span);
+        }
+    }
+}
+
+fn exerciseSynchronizedRecoveryAllocationFailures(allocator: std.mem.Allocator) !void {
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const parsed = try parseSource(&context, "oom-synchronized-recovery.css", synchronized_recovery_css);
+    try std.testing.expectEqual(@as(usize, 5), parsed[1].rules.len);
+    try std.testing.expectEqual(@as(usize, 10), context.diagnostics.items().len);
+}
+
+test "synchronized recovery handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseSynchronizedRecoveryAllocationFailures,
         .{},
     );
 }

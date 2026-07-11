@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const declaration_parser = @import("declaration_parser.zig");
 const diagnostics = @import("../diagnostics.zig");
+const recovery = @import("recovery.zig");
 const source = @import("../source.zig");
 const syntax = @import("../syntax.zig");
 const tokenizer = @import("../tokenizer.zig");
@@ -344,15 +345,9 @@ const Parser = struct {
         errdefer frames.deinit(self.allocator);
         var cursor: usize = 0;
         while (cursor < raw_values.values.len) {
-            var block_index = cursor;
-            var rejected_end: ?usize = null;
-            while (block_index < raw_values.values.len and !isCurlyBlock(raw_values.values[block_index])) : (block_index += 1) {
-                if (isTokenKind(raw_values.values[block_index], .semicolon)) {
-                    rejected_end = block_index + 1;
-                    break;
-                }
-            }
-            if (rejected_end) |end| {
+            const boundary = recovery.scanRuleBoundary(raw_values.values, cursor);
+            if (boundary.kind == .semicolon) {
+                const end = boundary.next;
                 const rejected = trim(raw_values.values, cursor, end);
                 if (!rejected.empty()) {
                     try self.invalid(spanOf(raw_values.values, rejected, old_block.envelope.content), "invalid keyframe rule before ';'");
@@ -360,13 +355,15 @@ const Parser = struct {
                 cursor = end;
                 continue;
             }
-            if (block_index == raw_values.values.len) {
+            if (boundary.kind == .end) {
                 const trailing = trim(raw_values.values, cursor, raw_values.values.len);
                 if (!trailing.empty()) {
                     try self.invalid(spanOf(raw_values.values, trailing, old_block.envelope.content), "keyframe selector is missing a declaration block");
                 }
                 break;
             }
+
+            const block_index = boundary.index;
 
             const prelude_range = Range{ .start = cursor, .end = block_index };
             const selector_range = trim(raw_values.values, cursor, block_index);
@@ -483,7 +480,7 @@ const Parser = struct {
                 continue;
             }
 
-            const invalid_end = skipInvalidPageAtRule(values, index);
+            const invalid_end = recovery.scanRuleBoundary(values, index + 1).next;
             const invalid_span: source.Span = .{
                 .source = self.file.id,
                 .start = at_token.span.start,
@@ -774,14 +771,6 @@ fn isAtRuleBoundary(
 ) bool {
     const before = trim(values, chunk_start, at_index);
     return before.empty() or isTokenKind(values[before.end - 1], .semicolon);
-}
-
-fn skipInvalidPageAtRule(values: []const syntax.ComponentValue, start: usize) usize {
-    var index = start + 1;
-    while (index < values.len) : (index += 1) {
-        if (isTokenKind(values[index], .semicolon) or isCurlyBlock(values[index])) return index + 1;
-    }
-    return values.len;
 }
 
 fn isPageMarginName(name: []const u8) bool {

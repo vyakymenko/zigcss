@@ -3,6 +3,7 @@ pub const selector_parser = @import("css/selector_parser.zig");
 pub const declaration_parser = @import("css/declaration_parser.zig");
 pub const rule_parser = @import("css/rule_parser.zig");
 pub const at_rule_parser = @import("css/at_rule_parser.zig");
+pub const recovery = @import("css/recovery.zig");
 
 test {
     _ = ast;
@@ -10,4 +11,5 @@ test {
     _ = declaration_parser;
     _ = rule_parser;
     _ = at_rule_parser;
+    _ = recovery;
 }
