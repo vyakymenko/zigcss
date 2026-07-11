@@ -1,5 +1,6 @@
 const std = @import("std");
 const compilation = @import("compilation.zig");
+const diagnostics = @import("diagnostics.zig");
 const source = @import("source.zig");
 const tokenizer = @import("tokenizer.zig");
 
@@ -79,8 +80,11 @@ pub fn parseWithOptions(
     options: Options,
 ) Error!Document {
     const file = try context.sources.get(source_id);
+    try diagnoseInvalidUtf8(context, file);
     var parser = Parser{
         .allocator = context.arenaAllocator(),
+        .context = context,
+        .file = file,
         .tokenizer = tokenizer.Tokenizer.init(file),
         .options = options,
     };
@@ -100,6 +104,8 @@ const ConsumedList = struct {
 
 const Parser = struct {
     allocator: std.mem.Allocator,
+    context: *compilation.Compilation,
+    file: *const source.SourceFile,
     tokenizer: tokenizer.Tokenizer,
     options: Options,
 
@@ -114,18 +120,34 @@ const Parser = struct {
         while (true) {
             const token = self.tokenizer.next();
             if (token.kind == .eof) {
+                if (expected_closing) |closing| {
+                    try self.reportUnexpectedEof(token.span, closing);
+                }
                 return .{
                     .values = try values.toOwnedSlice(self.allocator),
                     .closing = null,
                     .end_offset = token.span.end,
                 };
             }
+            try self.diagnoseToken(token);
             if (expected_closing != null and token.kind == expected_closing.?) {
                 return .{
                     .values = try values.toOwnedSlice(self.allocator),
                     .closing = token,
                     .end_offset = token.span.end,
                 };
+            }
+            if (isClosing(token.kind)) {
+                try reportDiagnostic(
+                    self.context,
+                    .err,
+                    .unexpected_token,
+                    token.span,
+                    if (expected_closing == null)
+                        "unexpected closing token at the top level"
+                    else
+                        "closing token does not match the current block",
+                );
             }
 
             try values.append(self.allocator, try self.consumeValue(token, depth));
@@ -141,7 +163,7 @@ const Parser = struct {
     }
 
     fn consumeSimpleBlock(self: *Parser, opening: tokenizer.Token, depth: usize) BuildError!ComponentValue {
-        try self.requireNestingCapacity(depth);
+        try self.requireNestingCapacity(depth, opening);
         const contents = try self.consumeList(expectedClosing(opening.kind), depth + 1);
         const block = try self.allocator.create(SimpleBlock);
         block.* = .{
@@ -158,7 +180,7 @@ const Parser = struct {
     }
 
     fn consumeFunction(self: *Parser, opening: tokenizer.Token, depth: usize) BuildError!ComponentValue {
-        try self.requireNestingCapacity(depth);
+        try self.requireNestingCapacity(depth, opening);
         const contents = try self.consumeList(.close_paren, depth + 1);
         const function = try self.allocator.create(Function);
         function.* = .{
@@ -174,10 +196,150 @@ const Parser = struct {
         return .{ .function = function };
     }
 
-    fn requireNestingCapacity(self: *const Parser, depth: usize) error{NestingLimitExceeded}!void {
-        if (depth >= self.options.max_nesting) return error.NestingLimitExceeded;
+    fn requireNestingCapacity(
+        self: *Parser,
+        depth: usize,
+        opening: tokenizer.Token,
+    ) BuildError!void {
+        if (depth < self.options.max_nesting) return;
+        try reportDiagnostic(
+            self.context,
+            .err,
+            .resource_limit,
+            opening.span,
+            "component-value nesting limit exceeded",
+        );
+        return error.NestingLimitExceeded;
+    }
+
+    fn diagnoseToken(self: *Parser, token: tokenizer.Token) std.mem.Allocator.Error!void {
+        if (token.issue) |issue| {
+            switch (issue.kind) {
+                .invalid_escape => try reportDiagnostic(
+                    self.context,
+                    .err,
+                    .invalid_escape,
+                    issue.span,
+                    "invalid CSS escape replaced with U+FFFD",
+                ),
+            }
+        }
+
+        switch (token.kind) {
+            .comment => if (!token.isTerminated()) {
+                try reportDiagnostic(
+                    self.context,
+                    .err,
+                    .unterminated_comment,
+                    token.span,
+                    "unterminated CSS comment",
+                );
+            },
+            .bad_string => try reportDiagnostic(
+                self.context,
+                .err,
+                .unterminated_string,
+                token.span,
+                "unescaped newline terminated the CSS string",
+            ),
+            .string => if (!token.isTerminated()) {
+                try reportDiagnostic(
+                    self.context,
+                    .err,
+                    .unterminated_string,
+                    token.span,
+                    "CSS string reached EOF before its closing quote",
+                );
+            },
+            .bad_url => try reportDiagnostic(
+                self.context,
+                .err,
+                .bad_url,
+                token.span,
+                "invalid unquoted CSS URL",
+            ),
+            .url => if (!token.isTerminated()) {
+                try reportDiagnostic(
+                    self.context,
+                    .err,
+                    .unexpected_eof,
+                    token.span,
+                    "CSS URL reached EOF before its closing parenthesis",
+                );
+            },
+            else => {},
+        }
+    }
+
+    fn reportUnexpectedEof(
+        self: *Parser,
+        eof_span: source.Span,
+        expected_closing: tokenizer.TokenKind,
+    ) std.mem.Allocator.Error!void {
+        try reportDiagnostic(
+            self.context,
+            .err,
+            .unexpected_eof,
+            eof_span,
+            switch (expected_closing) {
+                .close_curly => "expected '}' before EOF",
+                .close_square => "expected ']' before EOF",
+                .close_paren => "expected ')' before EOF",
+                else => unreachable,
+            },
+        );
     }
 };
+
+fn diagnoseInvalidUtf8(
+    context: *compilation.Compilation,
+    file: *const source.SourceFile,
+) std.mem.Allocator.Error!void {
+    var index: usize = 0;
+    while (index < file.bytes.len) {
+        const sequence_length = std.unicode.utf8ByteSequenceLength(file.bytes[index]) catch {
+            try reportInvalidUtf8Byte(context, file, index);
+            index += 1;
+            continue;
+        };
+        const length: usize = sequence_length;
+        if (index + length <= file.bytes.len) {
+            if (std.unicode.utf8Decode(file.bytes[index .. index + length])) |_| {
+                index += length;
+                continue;
+            } else |_| {}
+        }
+        try reportInvalidUtf8Byte(context, file, index);
+        index += 1;
+    }
+}
+
+fn reportInvalidUtf8Byte(
+    context: *compilation.Compilation,
+    file: *const source.SourceFile,
+    index: usize,
+) std.mem.Allocator.Error!void {
+    try reportDiagnostic(
+        context,
+        .err,
+        .invalid_utf8,
+        .{ .source = file.id, .start = index, .end = index + 1 },
+        "invalid UTF-8 byte replaced with U+FFFD",
+    );
+}
+
+fn reportDiagnostic(
+    context: *compilation.Compilation,
+    severity: diagnostics.Severity,
+    code: diagnostics.Code,
+    span: source.Span,
+    message: []const u8,
+) std.mem.Allocator.Error!void {
+    context.report(severity, code, span, message) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidSpan, error.UnknownSource, error.SourceMismatch => unreachable,
+    };
+}
 
 fn expectedClosing(opening: tokenizer.TokenKind) tokenizer.TokenKind {
     return switch (opening) {
@@ -186,6 +348,10 @@ fn expectedClosing(opening: tokenizer.TokenKind) tokenizer.TokenKind {
         .open_paren => .close_paren,
         else => unreachable,
     };
+}
+
+fn isClosing(kind: tokenizer.TokenKind) bool {
+    return kind == .close_curly or kind == .close_square or kind == .close_paren;
 }
 
 fn expectRoundTrip(document: Document, file: *const source.SourceFile) !void {
@@ -206,6 +372,7 @@ test "nested blocks and functions remain structured and lossless" {
 
     const document = try parse(&context, id);
     try expectRoundTrip(document, file);
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
     try std.testing.expectEqual(@as(usize, 2), document.values.len);
     const block = document.values[1].simple_block;
     try std.testing.expect(block.terminated());
@@ -236,6 +403,8 @@ test "mismatched closers are preserved inside their containing block" {
     try std.testing.expect(block.terminated());
     try std.testing.expectEqual(@as(usize, 3), block.values.len);
     try std.testing.expectEqual(tokenizer.TokenKind.close_square, block.values[1].token.kind);
+    try std.testing.expectEqual(@as(usize, 1), context.diagnostics.items().len);
+    try std.testing.expectEqual(diagnostics.Code.unexpected_token, context.diagnostics.items()[0].code);
 }
 
 test "truncated nested input returns unterminated nodes through EOF" {
@@ -256,6 +425,11 @@ test "truncated nested input returns unterminated nodes through EOF" {
     try std.testing.expectEqual(file.bytes.len, block.span.end);
     try std.testing.expectEqual(file.bytes.len, function.span.end);
     try std.testing.expectEqual(file.bytes.len, square.span.end);
+    try std.testing.expectEqual(@as(usize, 3), context.diagnostics.items().len);
+    for (context.diagnostics.items()) |diagnostic| {
+        try std.testing.expectEqual(diagnostics.Code.unexpected_eof, diagnostic.code);
+        try std.testing.expect(diagnostic.span.isEmpty());
+    }
 }
 
 test "strings URLs and retained trivia do not corrupt nesting" {
@@ -314,6 +488,7 @@ test "empty input and top-level closing tokens remain representable" {
     try std.testing.expectEqual(tokenizer.TokenKind.close_paren, closers.values[0].token.kind);
     try std.testing.expectEqual(tokenizer.TokenKind.close_square, closers.values[1].token.kind);
     try std.testing.expectEqual(tokenizer.TokenKind.close_curly, closers.values[2].token.kind);
+    try std.testing.expectEqual(@as(usize, 3), context.diagnostics.items().len);
 }
 
 test "unknown source IDs fail before syntax allocation" {
@@ -335,6 +510,8 @@ test "nesting limit rejects adversarial depth before stack exhaustion" {
         error.NestingLimitExceeded,
         parseWithOptions(&context, id, .{ .max_nesting = 8 }),
     );
+    try std.testing.expectEqual(@as(usize, 1), context.diagnostics.items().len);
+    try std.testing.expectEqual(diagnostics.Code.resource_limit, context.diagnostics.items()[0].code);
 }
 
 fn exerciseSyntaxAllocationFailures(allocator: std.mem.Allocator) !void {
@@ -349,6 +526,77 @@ test "syntax construction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseSyntaxAllocationFailures,
+        .{},
+    );
+}
+
+test "malformed token and syntax recovery produces ordered structured diagnostics" {
+    const allocator = std.testing.allocator;
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const input = "\xff \\110000  \"bad\nurl(foo bar) ){ /*";
+    const id = try context.addSource("diagnostics.css", input);
+    const file = try context.sources.get(id);
+
+    const document = try parse(&context, id);
+    try expectRoundTrip(document, file);
+    const expected = [_]diagnostics.Code{
+        .invalid_utf8,
+        .invalid_escape,
+        .unterminated_string,
+        .bad_url,
+        .unexpected_token,
+        .unterminated_comment,
+        .unexpected_eof,
+    };
+    const actual = context.diagnostics.items();
+    try std.testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |code, diagnostic| {
+        try std.testing.expectEqual(code, diagnostic.code);
+        try std.testing.expectEqual(diagnostics.Severity.err, diagnostic.severity);
+        try std.testing.expect(diagnostic.span.source.eql(id));
+        _ = try file.slice(diagnostic.span);
+        try std.testing.expect(diagnostic.message.len > 0);
+    }
+    try std.testing.expectEqual(@as(usize, 0), actual[0].span.start);
+    try std.testing.expectEqual(@as(usize, 1), actual[0].span.end);
+    try std.testing.expect(actual[actual.len - 1].span.isEmpty());
+    try std.testing.expectEqual(file.bytes.len, actual[actual.len - 1].span.start);
+}
+
+test "strings and URLs ending at EOF remain usable tokens with diagnostics" {
+    const allocator = std.testing.allocator;
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const string_id = try context.addSource("string-eof.css", "\"value");
+    const url_id = try context.addSource("url-eof.css", "url(value");
+
+    const string_document = try parse(&context, string_id);
+    try std.testing.expectEqual(tokenizer.TokenKind.string, string_document.values[0].token.kind);
+    try std.testing.expect(!string_document.values[0].token.isTerminated());
+    const url_document = try parse(&context, url_id);
+    try std.testing.expectEqual(tokenizer.TokenKind.url, url_document.values[0].token.kind);
+    try std.testing.expect(!url_document.values[0].token.isTerminated());
+
+    const items = context.diagnostics.items();
+    try std.testing.expectEqual(@as(usize, 2), items.len);
+    try std.testing.expectEqual(diagnostics.Code.unterminated_string, items[0].code);
+    try std.testing.expectEqual(diagnostics.Code.unexpected_eof, items[1].code);
+}
+
+fn exerciseDiagnosticAllocationFailures(allocator: std.mem.Allocator) !void {
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const id = try context.addSource("oom-diagnostics.css", "\\110000  \"bad\n) {x");
+    const document = try parse(&context, id);
+    try std.testing.expectEqual(@as(usize, 4), context.diagnostics.items().len);
+    try std.testing.expectEqual(@as(usize, 7), document.values.len);
+}
+
+test "diagnostic recovery handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseDiagnosticAllocationFailures,
         .{},
     );
 }

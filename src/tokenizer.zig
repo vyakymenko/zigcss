@@ -72,6 +72,19 @@ pub const Comment = struct {
     terminated: bool,
 };
 
+pub const IssueKind = enum {
+    invalid_escape,
+};
+
+pub const Issue = struct {
+    kind: IssueKind,
+    span: source.Span,
+};
+
+pub const TokenFlags = struct {
+    unterminated: bool = false,
+};
+
 pub const UnicodeRange = struct {
     start: u32,
     end: u32,
@@ -93,6 +106,8 @@ pub const Token = struct {
     kind: TokenKind,
     span: source.Span,
     data: TokenData = .none,
+    flags: TokenFlags = .{},
+    issue: ?Issue = null,
 
     pub fn raw(self: Token, file: *const source.SourceFile) ![]const u8 {
         return file.slice(self.span);
@@ -100,6 +115,10 @@ pub const Token = struct {
 
     pub fn isTrivia(self: Token) bool {
         return self.kind == .whitespace or self.kind == .comment;
+    }
+
+    pub fn isTerminated(self: Token) bool {
+        return !self.flags.unterminated;
     }
 
     pub fn startLocation(self: Token, file: *const source.SourceFile) error{
@@ -155,6 +174,11 @@ const InputCodepoint = struct {
     len: usize,
 };
 
+const EscapedCodepoint = struct {
+    value: u21,
+    invalid: bool = false,
+};
+
 const DecodeMode = enum {
     general,
     string,
@@ -175,6 +199,7 @@ pub const Tokenizer = struct {
     cursor: usize = 0,
     state: State = .data,
     options: Options = .{},
+    current_issue: ?Issue = null,
 
     pub fn init(file: *const source.SourceFile) Tokenizer {
         return initWithOptions(file, .{});
@@ -185,6 +210,7 @@ pub const Tokenizer = struct {
     }
 
     pub fn next(self: *Tokenizer) Token {
+        self.current_issue = null;
         if (self.state == .eof or self.cursor >= self.file.bytes.len) {
             self.state = .eof;
             return self.makeToken(.eof, self.cursor, self.cursor, .none);
@@ -271,7 +297,7 @@ pub const Tokenizer = struct {
             _ = self.consumeCodepoint();
         }
 
-        return self.makeToken(.comment, start, self.cursor, .{
+        return self.makeUnterminatedToken(.comment, start, self.cursor, .{
             .comment = .{
                 .content = self.span(content_start, self.cursor),
                 .terminated = false,
@@ -369,7 +395,7 @@ pub const Tokenizer = struct {
         }
 
         self.state = .data;
-        return self.makeToken(.string, start, self.cursor, .{
+        return self.makeUnterminatedToken(.string, start, self.cursor, .{
             .text = self.span(value_start, self.cursor),
         });
     }
@@ -477,7 +503,7 @@ pub const Tokenizer = struct {
                         .text = self.span(value_start, value_end),
                     });
                 }
-                return self.makeToken(.url, start, self.cursor, .{
+                return self.makeUnterminatedToken(.url, start, self.cursor, .{
                     .text = self.span(value_start, value_end),
                 });
             }
@@ -505,7 +531,7 @@ pub const Tokenizer = struct {
             self.cursor += codepoint.len;
         }
 
-        return self.makeToken(.url, start, self.cursor, .{
+        return self.makeUnterminatedToken(.url, start, self.cursor, .{
             .text = self.span(value_start, self.cursor),
         });
     }
@@ -584,7 +610,15 @@ pub const Tokenizer = struct {
     }
 
     fn consumeEscapedCodepoint(self: *Tokenizer) u21 {
-        return consumeEscapedAt(self.file.bytes, &self.cursor, self.file.bytes.len);
+        const escape_start = self.cursor - 1;
+        const escaped = consumeEscapedAt(self.file.bytes, &self.cursor, self.file.bytes.len);
+        if (escaped.invalid and self.current_issue == null) {
+            self.current_issue = .{
+                .kind = .invalid_escape,
+                .span = self.span(escape_start, self.cursor),
+            };
+        }
+        return escaped.value;
     }
 
     fn wouldStartIdent(self: *const Tokenizer, at: usize) bool {
@@ -657,7 +691,24 @@ pub const Tokenizer = struct {
     }
 
     fn makeToken(self: *const Tokenizer, kind: TokenKind, start: usize, end: usize, data: TokenData) Token {
-        return .{ .kind = kind, .span = self.span(start, end), .data = data };
+        return .{
+            .kind = kind,
+            .span = self.span(start, end),
+            .data = data,
+            .issue = self.current_issue,
+        };
+    }
+
+    fn makeUnterminatedToken(
+        self: *const Tokenizer,
+        kind: TokenKind,
+        start: usize,
+        end: usize,
+        data: TokenData,
+    ) Token {
+        var token = self.makeToken(kind, start, end, data);
+        token.flags.unterminated = true;
+        return token;
     }
 };
 
@@ -685,9 +736,9 @@ fn inputCodepointAt(bytes: []const u8, at: usize) ?InputCodepoint {
     return .{ .value = 0xfffd, .len = 1 };
 }
 
-fn consumeEscapedAt(bytes: []const u8, cursor: *usize, limit: usize) u21 {
+fn consumeEscapedAt(bytes: []const u8, cursor: *usize, limit: usize) EscapedCodepoint {
     const first = if (cursor.* < limit) inputCodepointAt(bytes, cursor.*) else null;
-    const codepoint = first orelse return 0xfffd;
+    const codepoint = first orelse return .{ .value = 0xfffd, .invalid = true };
     if (isHexCodepoint(codepoint.value)) {
         var value: u32 = 0;
         var count: usize = 0;
@@ -703,12 +754,14 @@ fn consumeEscapedAt(bytes: []const u8, cursor: *usize, limit: usize) u21 {
                 if (isWhitespace(whitespace.value)) cursor.* += whitespace.len;
             }
         }
-        if (value == 0 or value > 0x10ffff or (value >= 0xd800 and value <= 0xdfff)) return 0xfffd;
-        return @intCast(value);
+        if (value == 0 or value > 0x10ffff or (value >= 0xd800 and value <= 0xdfff)) {
+            return .{ .value = 0xfffd, .invalid = true };
+        }
+        return .{ .value = @intCast(value) };
     }
 
     cursor.* += codepoint.len;
-    return codepoint.value;
+    return .{ .value = codepoint.value };
 }
 
 fn nextDecodedCodepoint(bytes: []const u8, cursor: *usize, end: usize, mode: DecodeMode) ?u21 {
@@ -724,7 +777,7 @@ fn nextDecodedCodepoint(bytes: []const u8, cursor: *usize, end: usize, mode: Dec
                 continue;
             }
         }
-        return consumeEscapedAt(bytes, cursor, end);
+        return consumeEscapedAt(bytes, cursor, end).value;
     }
     return null;
 }
@@ -1123,12 +1176,15 @@ test "truncated and invalid escapes recover without losing following tokens" {
 
     const too_large = tokenizer.next();
     try expectDecoded(too_large, file, "�");
+    try std.testing.expectEqual(IssueKind.invalid_escape, too_large.issue.?.kind);
     _ = tokenizer.next();
     const surrogate = tokenizer.next();
     try expectDecoded(surrogate, file, "�");
+    try std.testing.expectEqual(IssueKind.invalid_escape, surrogate.issue.?.kind);
     _ = tokenizer.next();
     const zero = tokenizer.next();
     try expectDecoded(zero, file, "�");
+    try std.testing.expectEqual(IssueKind.invalid_escape, zero.issue.?.kind);
     try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
 }
 
@@ -1192,12 +1248,14 @@ test "string and identifier trailing escapes follow distinct EOF rules" {
     var string_tokenizer = Tokenizer.init(string_file);
     const string = string_tokenizer.next();
     try std.testing.expectEqual(TokenKind.string, string.kind);
+    try std.testing.expect(!string.isTerminated());
     try expectDecoded(string, string_file, "");
 
     const ident_file = try manager.get(ident_id);
     var ident_tokenizer = Tokenizer.init(ident_file);
     const ident = ident_tokenizer.next();
     try std.testing.expectEqual(TokenKind.ident, ident.kind);
+    try std.testing.expectEqual(IssueKind.invalid_escape, ident.issue.?.kind);
     try expectDecoded(ident, ident_file, "�");
 }
 
@@ -1243,6 +1301,7 @@ test "URL tokens recover at EOF and preserve trailing escapes" {
     var plain_tokenizer = Tokenizer.init(plain_file);
     const plain = plain_tokenizer.next();
     try std.testing.expectEqual(TokenKind.url, plain.kind);
+    try std.testing.expect(!plain.isTerminated());
     try expectDecoded(plain, plain_file, "foo");
     try std.testing.expectEqualStrings("url(foo", try plain.raw(plain_file));
     try std.testing.expectEqual(TokenKind.eof, plain_tokenizer.next().kind);
@@ -1251,6 +1310,8 @@ test "URL tokens recover at EOF and preserve trailing escapes" {
     var escaped_tokenizer = Tokenizer.init(escaped_file);
     const escaped = escaped_tokenizer.next();
     try std.testing.expectEqual(TokenKind.url, escaped.kind);
+    try std.testing.expect(!escaped.isTerminated());
+    try std.testing.expectEqual(IssueKind.invalid_escape, escaped.issue.?.kind);
     try expectDecoded(escaped, escaped_file, "foo�");
     try std.testing.expectEqual(TokenKind.eof, escaped_tokenizer.next().kind);
 }
