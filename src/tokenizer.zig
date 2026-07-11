@@ -67,6 +67,11 @@ pub const Dimension = struct {
     unit: source.Span,
 };
 
+pub const Comment = struct {
+    content: source.Span,
+    terminated: bool,
+};
+
 pub const UnicodeRange = struct {
     start: u32,
     end: u32,
@@ -80,6 +85,7 @@ pub const TokenData = union(enum) {
     delim: u21,
     numeric: Numeric,
     dimension: Dimension,
+    comment: Comment,
     unicode_range: UnicodeRange,
 };
 
@@ -90,6 +96,30 @@ pub const Token = struct {
 
     pub fn raw(self: Token, file: *const source.SourceFile) ![]const u8 {
         return file.slice(self.span);
+    }
+
+    pub fn isTrivia(self: Token) bool {
+        return self.kind == .whitespace or self.kind == .comment;
+    }
+
+    pub fn startLocation(self: Token, file: *const source.SourceFile) error{
+        SourceMismatch,
+        InvalidLineIndex,
+        InvalidOffset,
+        OffsetInsideCodepoint,
+    }!source.Location {
+        if (!self.span.source.eql(file.id)) return error.SourceMismatch;
+        return file.location(self.span.start);
+    }
+
+    pub fn endLocation(self: Token, file: *const source.SourceFile) error{
+        SourceMismatch,
+        InvalidLineIndex,
+        InvalidOffset,
+        OffsetInsideCodepoint,
+    }!source.Location {
+        if (!self.span.source.eql(file.id)) return error.SourceMismatch;
+        return file.location(self.span.end);
     }
 
     pub fn valueSpan(self: Token) ?source.Span {
@@ -161,6 +191,7 @@ pub const Tokenizer = struct {
         }
 
         const start = self.cursor;
+        if (self.startsWith("/*")) return self.consumeComment(start);
         if (self.startsWith("<!--")) {
             self.cursor += 4;
             return self.makeToken(.cdo, start, self.cursor, .none);
@@ -219,6 +250,33 @@ pub const Tokenizer = struct {
     fn consumePunctuation(self: *Tokenizer, kind: TokenKind, start: usize, length: usize) Token {
         self.cursor += length;
         return self.makeToken(kind, start, self.cursor, .none);
+    }
+
+    fn consumeComment(self: *Tokenizer, start: usize) Token {
+        self.cursor += 2;
+        const content_start = self.cursor;
+        while (self.cursor < self.file.bytes.len) {
+            if (self.cursor + 1 < self.file.bytes.len and
+                self.file.bytes[self.cursor] == '*' and self.file.bytes[self.cursor + 1] == '/')
+            {
+                const content_end = self.cursor;
+                self.cursor += 2;
+                return self.makeToken(.comment, start, self.cursor, .{
+                    .comment = .{
+                        .content = self.span(content_start, content_end),
+                        .terminated = true,
+                    },
+                });
+            }
+            _ = self.consumeCodepoint();
+        }
+
+        return self.makeToken(.comment, start, self.cursor, .{
+            .comment = .{
+                .content = self.span(content_start, self.cursor),
+                .terminated = false,
+            },
+        });
     }
 
     fn consumeHash(self: *Tokenizer, start: usize) Token {
@@ -1273,4 +1331,91 @@ fn decodeWithAllocator(allocator: std.mem.Allocator) !void {
 
 test "decoded token ownership handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, decodeWithAllocator, .{});
+}
+
+test "comments are retained as terminated lossless trivia" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("comments.css", "a/* one */ /**/b");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    try std.testing.expectEqual(TokenKind.ident, tokenizer.next().kind);
+    const first = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.comment, first.kind);
+    try std.testing.expect(first.isTrivia());
+    try std.testing.expectEqualStrings("/* one */", try first.raw(file));
+    try std.testing.expectEqualStrings(" one ", try file.slice(first.data.comment.content));
+    try std.testing.expect(first.data.comment.terminated);
+
+    const whitespace = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.whitespace, whitespace.kind);
+    try std.testing.expect(whitespace.isTrivia());
+    const empty = tokenizer.next();
+    try std.testing.expectEqualStrings("", try file.slice(empty.data.comment.content));
+    try std.testing.expect(empty.data.comment.terminated);
+    try std.testing.expectEqual(TokenKind.ident, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "unterminated comments consume through EOF without indexing past input" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("comment-eof.css", "/* unterminated *");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    const comment = tokenizer.next();
+    try std.testing.expectEqual(TokenKind.comment, comment.kind);
+    try std.testing.expect(!comment.data.comment.terminated);
+    try std.testing.expectEqualStrings(" unterminated *", try file.slice(comment.data.comment.content));
+    try std.testing.expectEqual(file.bytes.len, comment.span.end);
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+    try std.testing.expectEqual(TokenKind.eof, tokenizer.next().kind);
+}
+
+test "token locations derive from original CRLF Unicode and form-feed bytes" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("locations.css", "é/*a\r\nβ*/\x0c x");
+    const other_id = try manager.add("other.css", "x");
+    const file = try manager.get(id);
+    const other = try manager.get(other_id);
+    var tokenizer = Tokenizer.init(file);
+
+    const ident = tokenizer.next();
+    try std.testing.expectEqual(source.Location{ .line = 1, .column = 1, .byte_offset = 0 }, try ident.startLocation(file));
+    try std.testing.expectEqual(source.Location{ .line = 1, .column = 2, .byte_offset = 2 }, try ident.endLocation(file));
+    try std.testing.expectError(error.SourceMismatch, ident.startLocation(other));
+
+    const comment = tokenizer.next();
+    try std.testing.expectEqual(source.Location{ .line = 1, .column = 2, .byte_offset = 2 }, try comment.startLocation(file));
+    try std.testing.expectEqual(source.Location{ .line = 2, .column = 4, .byte_offset = 11 }, try comment.endLocation(file));
+
+    const whitespace = tokenizer.next();
+    try std.testing.expectEqualStrings("\x0c ", try whitespace.raw(file));
+    try std.testing.expectEqual(source.Location{ .line = 2, .column = 4, .byte_offset = 11 }, try whitespace.startLocation(file));
+    try std.testing.expectEqual(source.Location{ .line = 3, .column = 2, .byte_offset = 13 }, try whitespace.endLocation(file));
+}
+
+test "retained trivia keeps token spans contiguous over original bytes" {
+    const allocator = std.testing.allocator;
+    var manager = try source.SourceManager.init(allocator);
+    defer manager.deinit();
+    const id = try manager.add("contiguous.css", "/*x*/\r\n.a\\62 { color: 'é' }");
+    const file = try manager.get(id);
+    var tokenizer = Tokenizer.init(file);
+
+    var previous_end: usize = 0;
+    while (true) {
+        const token = tokenizer.next();
+        try std.testing.expectEqual(previous_end, token.span.start);
+        if (token.kind == .eof) break;
+        try std.testing.expect(token.span.end > token.span.start);
+        previous_end = token.span.end;
+    }
+    try std.testing.expectEqual(file.bytes.len, previous_end);
 }
