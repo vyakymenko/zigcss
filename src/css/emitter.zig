@@ -6,9 +6,16 @@ const source = @import("../source.zig");
 const syntax = @import("../syntax.zig");
 const tokenizer = @import("../tokenizer.zig");
 
+pub const Mode = enum {
+    pretty,
+    minified,
+};
+
 pub const Options = struct {
+    mode: Mode = .pretty,
     indent_width: u8 = 2,
-    final_newline: bool = true,
+    /// Defaults to true for pretty output and false for minified output.
+    final_newline: ?bool = null,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -36,7 +43,7 @@ pub fn emit(
     };
     errdefer emitter.output.deinit(allocator);
     try emitter.writeRuleList(rules, 0, true);
-    if (options.final_newline and emitter.output.items.len > 0) {
+    if ((options.final_newline orelse (options.mode == .pretty)) and emitter.output.items.len > 0) {
         try emitter.appendByte('\n');
     }
     return emitter.output.toOwnedSlice(allocator);
@@ -65,8 +72,8 @@ const Emitter = struct {
     fn writeRuleList(self: *Emitter, rules: *const ast.RuleList, depth: usize, top_level: bool) Error!void {
         try self.validateRuleCoverage(rules, top_level);
         for (rules.rules, 0..) |rule, index| {
-            if (index > 0) try self.appendByte('\n');
-            try self.writeIndent(depth);
+            if (index > 0 and self.pretty()) try self.appendByte('\n');
+            if (self.pretty()) try self.writeIndent(depth);
             try self.writeRule(rule, depth);
         }
     }
@@ -81,14 +88,14 @@ const Emitter = struct {
     fn writeStyleRule(self: *Emitter, rule: *const ast.StyleRule, depth: usize) Error!void {
         _ = ast.StyleRule.init(rule.*) catch return error.InvalidAst;
         try self.writeSelectorList(&rule.selectors);
-        try self.appendSlice(" ");
+        try self.writePrettySpace();
         try self.writeDeclarationBlock(&rule.block, depth);
     }
 
     fn writeSelectorList(self: *Emitter, list: *const ast.SelectorList) Error!void {
         _ = ast.SelectorList.init(list.span, list.selectors) catch return error.InvalidAst;
         for (list.selectors, 0..) |selector, index| {
-            if (index > 0) try self.appendSlice(", ");
+            if (index > 0) try self.appendSlice(if (self.pretty()) ", " else ",");
             try self.writeComplexSelector(selector);
         }
     }
@@ -106,6 +113,16 @@ const Emitter = struct {
 
     fn writeCombinator(self: *Emitter, kind: ast.CombinatorKind, leading: bool) Error!void {
         if (leading and kind == .descendant) return error.InvalidAst;
+        if (!self.pretty()) {
+            try self.appendSlice(switch (kind) {
+                .descendant => " ",
+                .child => ">",
+                .next_sibling => "+",
+                .subsequent_sibling => "~",
+                .column => "||",
+            });
+            return;
+        }
         switch (kind) {
             .descendant => try self.appendByte(' '),
             .child => try self.appendSlice(if (leading) "> " else " > "),
@@ -223,19 +240,19 @@ const Emitter = struct {
         switch (rule.block) {
             .none => try self.appendByte(';'),
             .declarations => |block| {
-                try self.appendByte(' ');
+                try self.writePrettySpace();
                 try self.writeDeclarationBlock(block, depth);
             },
             .rules => |block| {
-                try self.appendByte(' ');
+                try self.writePrettySpace();
                 try self.writeRulesBlock(block, depth);
             },
             .keyframes => |block| {
-                try self.appendByte(' ');
+                try self.writePrettySpace();
                 try self.writeKeyframesBlock(block, depth);
             },
             .raw => |block| {
-                try self.appendByte(' ');
+                try self.writePrettySpace();
                 if (page) |details| {
                     try self.writePageBlock(details, block, depth);
                 } else {
@@ -253,10 +270,12 @@ const Emitter = struct {
             try self.appendByte('}');
             return;
         }
-        try self.appendByte('\n');
+        if (self.pretty()) try self.appendByte('\n');
         try self.writeRuleList(&block.rules, depth + 1, false);
-        try self.appendByte('\n');
-        try self.writeIndent(depth);
+        if (self.pretty()) {
+            try self.appendByte('\n');
+            try self.writeIndent(depth);
+        }
         try self.appendByte('}');
     }
 
@@ -278,28 +297,33 @@ const Emitter = struct {
             try self.appendByte('}');
             return;
         }
-        try self.appendByte('\n');
+        if (self.pretty()) try self.appendByte('\n');
         for (declarations.declarations, 0..) |declaration, index| {
-            if (index > 0) try self.appendByte('\n');
-            try self.writeIndent(depth + 1);
-            try self.writeDeclaration(declaration);
+            if (index > 0 and self.pretty()) try self.appendByte('\n');
+            if (self.pretty()) try self.writeIndent(depth + 1);
+            try self.writeDeclaration(
+                declaration,
+                self.pretty() or index + 1 < declarations.declarations.len,
+            );
         }
-        try self.appendByte('\n');
-        try self.writeIndent(depth);
+        if (self.pretty()) {
+            try self.appendByte('\n');
+            try self.writeIndent(depth);
+        }
         try self.appendByte('}');
     }
 
-    fn writeDeclaration(self: *Emitter, declaration: ast.Declaration) Error!void {
+    fn writeDeclaration(self: *Emitter, declaration: ast.Declaration, terminate: bool) Error!void {
         _ = ast.Declaration.init(declaration) catch return error.InvalidAst;
         try self.writeIdentifier(declaration.name.value);
-        try self.appendSlice(": ");
+        try self.appendSlice(if (self.pretty()) ": " else ":");
         const value = declaration.valueWithoutImportance();
         try self.writeComponentValues(value);
         if (declaration.important != null) {
-            if (hasNonWhitespace(value)) try self.appendByte(' ');
+            if (self.pretty() and hasNonWhitespace(value)) try self.appendByte(' ');
             try self.appendSlice("!important");
         }
-        try self.appendByte(';');
+        if (terminate) try self.appendByte(';');
     }
 
     fn writeKeyframesBlock(self: *Emitter, block: *const ast.KeyframesBlock, depth: usize) Error!void {
@@ -310,14 +334,16 @@ const Emitter = struct {
             try self.appendByte('}');
             return;
         }
-        try self.appendByte('\n');
+        if (self.pretty()) try self.appendByte('\n');
         for (block.frames, 0..) |frame, index| {
-            if (index > 0) try self.appendByte('\n');
-            try self.writeIndent(depth + 1);
+            if (index > 0 and self.pretty()) try self.appendByte('\n');
+            if (self.pretty()) try self.writeIndent(depth + 1);
             try self.writeKeyframeRule(frame, depth + 1);
         }
-        try self.appendByte('\n');
-        try self.writeIndent(depth);
+        if (self.pretty()) {
+            try self.appendByte('\n');
+            try self.writeIndent(depth);
+        }
         try self.appendByte('}');
     }
 
@@ -325,20 +351,20 @@ const Emitter = struct {
         _ = ast.KeyframeRule.init(frame) catch return error.InvalidAst;
         if (frame.selectors.len == 0) return error.UnrepresentableRecovery;
         for (frame.selectors, 0..) |selector, index| {
-            if (index > 0) try self.appendSlice(", ");
+            if (index > 0) try self.appendSlice(if (self.pretty()) ", " else ",");
             switch (selector) {
                 .from => try self.appendSlice("from"),
                 .to => try self.appendSlice("to"),
                 .percentage => |percentage| try self.appendSlice(try self.raw(percentage.span)),
             }
         }
-        try self.appendByte(' ');
+        try self.writePrettySpace();
         try self.writeDeclarationBlock(&frame.block, depth);
     }
 
     fn writePageSelectors(self: *Emitter, selectors: []const ast.PageSelector) Error!void {
         for (selectors, 0..) |selector, index| {
-            if (index > 0) try self.appendSlice(", ");
+            if (index > 0) try self.appendSlice(if (self.pretty()) ", " else ",");
             if (selector.name) |name| try self.writeIdentifier(name.value);
             for (selector.pseudos) |pseudo| {
                 try self.appendByte(':');
@@ -361,30 +387,35 @@ const Emitter = struct {
             try self.appendByte('}');
             return;
         }
-        try self.appendByte('\n');
+        if (self.pretty()) try self.appendByte('\n');
         var declaration_index: usize = 0;
         var margin_index: usize = 0;
         var emitted: usize = 0;
         while (emitted < total) : (emitted += 1) {
-            if (emitted > 0) try self.appendByte('\n');
-            try self.writeIndent(depth + 1);
+            if (emitted > 0 and self.pretty()) try self.appendByte('\n');
+            if (self.pretty()) try self.writeIndent(depth + 1);
             if (nextPageItemIsDeclaration(page, declaration_index, margin_index)) {
-                try self.writeDeclaration(page.declarations.declarations[declaration_index]);
+                try self.writeDeclaration(
+                    page.declarations.declarations[declaration_index],
+                    self.pretty() or emitted + 1 < total,
+                );
                 declaration_index += 1;
             } else {
                 try self.writePageMargin(page.margins[margin_index], depth + 1);
                 margin_index += 1;
             }
         }
-        try self.appendByte('\n');
-        try self.writeIndent(depth);
+        if (self.pretty()) {
+            try self.appendByte('\n');
+            try self.writeIndent(depth);
+        }
         try self.appendByte('}');
     }
 
     fn writePageMargin(self: *Emitter, margin: ast.PageMarginRule, depth: usize) Error!void {
         try self.appendByte('@');
         try self.writeIdentifier(margin.name.value);
-        try self.appendByte(' ');
+        try self.writePrettySpace();
         try self.writeDeclarationListBlock(margin.declarations, margin.envelope, depth);
     }
 
@@ -405,9 +436,29 @@ const Emitter = struct {
                 continue;
             }
             if (pending_space) try self.appendByte(' ');
-            try self.appendSlice(try self.raw(value.span()));
+            if (self.pretty()) {
+                try self.appendSlice(try self.raw(value.span()));
+            } else {
+                try self.writeMinifiedComponent(value);
+            }
             wrote_value = true;
             pending_space = false;
+        }
+    }
+
+    fn writeMinifiedComponent(self: *Emitter, value: syntax.ComponentValue) Error!void {
+        switch (value) {
+            .token => |token| try self.appendSlice(try self.raw(token.span)),
+            .simple_block => |block| {
+                try self.appendSlice(try self.raw(block.opening.span));
+                try self.writeComponentValues(block.values);
+                try self.appendSlice(try self.raw(block.closing.?.span));
+            },
+            .function => |function| {
+                try self.appendSlice(try self.raw(function.opening.span));
+                try self.writeComponentValues(function.values);
+                try self.appendSlice(try self.raw(function.closing.?.span));
+            },
         }
     }
 
@@ -534,6 +585,14 @@ const Emitter = struct {
 
     fn writeIdentifier(self: *Emitter, value: []const u8) Error!void {
         try appendIdentifier(&self.output, self.allocator, value);
+    }
+
+    fn pretty(self: *const Emitter) bool {
+        return self.options.mode == .pretty;
+    }
+
+    fn writePrettySpace(self: *Emitter) Error!void {
+        if (self.pretty()) try self.appendByte(' ');
     }
 
     fn writeIndent(self: *Emitter, depth: usize) Error!void {
@@ -981,6 +1040,101 @@ test "statements empty blocks and formatting options remain deterministic" {
     try std.testing.expectEqual(@as(usize, 0), empty_output.len);
 }
 
+test "minified emission removes only grammar-safe structural whitespace" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "minified.css",
+        ".a .b, #\\31 id[data-x=\"a b\"] { color : red ; color : blue ! IMPORTANT ; --x : a/**/b ; width : calc( 1  +  2 ) }" ++
+            " @media   screen and (width > 1px) { .c > .d { margin : 0  auto } }",
+    );
+    const output = try emit(
+        std.testing.allocator,
+        try context.sources.get(parsed[0]),
+        parsed[1],
+        .{ .mode = .minified },
+    );
+    defer std.testing.allocator.free(output);
+
+    try std.testing.expectEqualStrings(
+        ".a .b,#\\31 id[data-x=\"a b\"]{color:red;color:blue!important;--x:a/**/b;width:calc(1 + 2)}" ++
+            "@media screen and (width > 1px){.c>.d{margin:0 auto}}",
+        output,
+    );
+    const repeated = try emit(
+        std.testing.allocator,
+        try context.sources.get(parsed[0]),
+        parsed[1],
+        .{ .mode = .minified },
+    );
+    defer std.testing.allocator.free(repeated);
+    const pretty_output = try emit(std.testing.allocator, try context.sources.get(parsed[0]), parsed[1], .{});
+    defer std.testing.allocator.free(pretty_output);
+    try std.testing.expectEqualStrings(output, repeated);
+    try std.testing.expect(output.len < pretty_output.len);
+}
+
+test "minified raw values retain token and grammar separators" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "minified-separators.css",
+        ".x{--ident:foo   bar;--number:1  2;--dimension:1px  solid;--operator:1  +  2;--comment:a/**/b;--nested:var( --x,  a   b )}",
+    );
+    const output = try emit(
+        std.testing.allocator,
+        try context.sources.get(parsed[0]),
+        parsed[1],
+        .{ .mode = .minified },
+    );
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings(
+        ".x{--ident:foo bar;--number:1 2;--dimension:1px solid;--operator:1 + 2;--comment:a/**/b;--nested:var(--x, a b)}",
+        output,
+    );
+
+    var reparsed_context = try compilation.Compilation.init(std.testing.allocator);
+    defer reparsed_context.deinit();
+    const reparsed = try parseSource(&reparsed_context, "minified-separators-output.css", output);
+    try std.testing.expectEqual(@as(usize, 6), reparsed[1].rules[0].style_rule.block.declarations.declarations.len);
+    try std.testing.expectEqual(@as(usize, 0), reparsed_context.diagnostics.items().len);
+}
+
+test "minified structured and raw at-rules retain source order" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "minified-structures.css",
+        "@keyframes fade{from,50%{opacity:0}100%{opacity:1}}" ++
+            "@page invoice:first,:left{margin:1cm;@top-left{content:\"Invoice\"}size:A4}" ++
+            "@font-face{font-family:'A';src:url(x)}" ++
+            "@unknown foo{a( 1  ;  2 )}",
+    );
+    const output = try emit(
+        std.testing.allocator,
+        try context.sources.get(parsed[0]),
+        parsed[1],
+        .{ .mode = .minified },
+    );
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings(
+        "@keyframes fade{from,50%{opacity:0}100%{opacity:1}}" ++
+            "@page invoice:first,:left{margin:1cm;@top-left{content:\"Invoice\"}size:A4}" ++
+            "@font-face{font-family:'A';src:url(x)}" ++
+            "@unknown foo{a(1 ; 2)}",
+        output,
+    );
+
+    var reparsed_context = try compilation.Compilation.init(std.testing.allocator);
+    defer reparsed_context.deinit();
+    const reparsed = try parseSource(&reparsed_context, "minified-structures-output.css", output);
+    try std.testing.expectEqual(@as(usize, 4), reparsed[1].rules.len);
+    try std.testing.expectEqual(@as(usize, 0), reparsed_context.diagnostics.items().len);
+}
+
 test "emission is bound to the AST source file" {
     var context = try compilation.Compilation.init(std.testing.allocator);
     defer context.deinit();
@@ -1005,10 +1159,13 @@ test "emission refuses recovery gaps and missing closing syntax" {
         var context = try compilation.Compilation.init(std.testing.allocator);
         defer context.deinit();
         const parsed = try parseSource(&context, "recovered-emission.css", case[0]);
-        try std.testing.expectError(
-            case[1],
-            emit(std.testing.allocator, try context.sources.get(parsed[0]), parsed[1], .{}),
-        );
+        const modes = [_]Mode{ .pretty, .minified };
+        for (modes) |mode| {
+            try std.testing.expectError(
+                case[1],
+                emit(std.testing.allocator, try context.sources.get(parsed[0]), parsed[1], .{ .mode = mode }),
+            );
+        }
     }
 }
 
@@ -1020,9 +1177,17 @@ fn exerciseEmitterAllocationFailures(allocator: std.mem.Allocator) !void {
         "oom-emitter.css",
         ".a,.b > c{color:red;color:blue!important;--x:fn(a/**/b)}@media all{.c{display:grid}}@keyframes f{from{opacity:0}to{opacity:1}}",
     );
-    const output = try emit(allocator, try context.sources.get(parsed[0]), parsed[1], .{});
-    defer allocator.free(output);
-    try std.testing.expect(output.len > 0);
+    const pretty_output = try emit(allocator, try context.sources.get(parsed[0]), parsed[1], .{});
+    defer allocator.free(pretty_output);
+    const minified_output = try emit(
+        allocator,
+        try context.sources.get(parsed[0]),
+        parsed[1],
+        .{ .mode = .minified },
+    );
+    defer allocator.free(minified_output);
+    try std.testing.expect(pretty_output.len > 0);
+    try std.testing.expect(minified_output.len < pretty_output.len);
 }
 
 test "pretty emission handles every allocation failure" {
