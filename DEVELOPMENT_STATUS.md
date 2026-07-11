@@ -15,9 +15,9 @@ Last updated: 2026-07-11
 ## Current work
 
 - Milestone: Milestone 1 — Tokenizer, source model, and AST foundation
-- Work package: `AST-002`
+- Work package: `AST-003`
 - State: `IN_PROGRESS`
-- Next eligible package: `AST-002` and `AST-003`
+- Next eligible package: `AST-003`
 
 ## Milestone 0 package ledger
 
@@ -95,8 +95,8 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 | `TOK-002` | `VERIFIED` | Added CSS input preprocessing over original-byte spans; escape decoding; Unicode identifiers; number, percentage, dimension, URL/bad-URL, and opt-in unicode-range consumers; numeric representation metadata; raw/decoded token access; and bounded EOF/malformed-input recovery. Tests cover distinct string/name EOF escapes, quoted URL dispatch, escaped bad-URL recovery, incomplete exponents, invalid UTF-8 progress, all escape scalar limits, and every decoded-value allocation failure. Debug and ReleaseSafe pass 135/135. | `ece86be` |
 | `TOK-003` | `VERIFIED` | Retains terminated and unterminated comments as explicit trivia with content/raw spans, identifies whitespace/comment trivia uniformly, and derives token start/end locations through the source line index. Tests prove bounded comment EOF recovery, contiguous lossless spans, and original-byte locations across CRLF, form feed, and multibyte UTF-8. Debug and ReleaseSafe pass 139/139. | `ccfa315` |
 | `SYN-001` | `VERIFIED` | Added arena-owned lossless component values with preserved tokens, recursive simple blocks, functions, optional closing tokens, and original-byte node spans. Tests prove exact top-level round trips, independent `()[]{}` nesting, quoted/unquoted URL behavior, retained trivia, mismatched-closer preservation, bounded truncated-input recovery, unknown-source errors, exhaustive allocation-failure cleanup, and a configurable default nesting cap. Debug and ReleaseSafe pass 152/152. | `396b6b9` |
-| `AST-001` | `VERIFIED` | Introduced the new `src/css/ast.zig` selector model: selector lists, complex selectors with optional leading and explicit inter-compound combinators, ordered compounds/simple selectors, namespace states, type/universal/id/class/nesting selectors, fully representable attribute operators/quoted values/case flags, and pseudo class/element arguments retaining both raw component values and optional typed selector lists. Constructors validate source/span containment and impossible shapes. Tests prove `.a.b` differs structurally from `.a .b`, every combinator/namespace is representable, functional pseudo syntax stays lossless, and attribute metadata survives. Debug and ReleaseSafe pass 161/161. | Checkpoint pending |
-| `AST-002` | `NOT_STARTED` | Declaration/component-value structures depend on `SYN-001`. | — |
+| `AST-001` | `VERIFIED` | Introduced the new `src/css/ast.zig` selector model: selector lists, complex selectors with optional leading and explicit inter-compound combinators, ordered compounds/simple selectors, namespace states, type/universal/id/class/nesting selectors, fully representable attribute operators/quoted values/case flags, and pseudo class/element arguments retaining both raw component values and optional typed selector lists. Constructors validate source/span containment and impossible shapes. Tests prove `.a.b` differs structurally from `.a .b`, every combinator/namespace is representable, functional pseudo syntax stays lossless, and attribute metadata survives. Debug and ReleaseSafe pass 161/161. | `ef810d5` |
+| `AST-002` | `VERIFIED` | Added contiguous lossless component-value lists, ordered declaration lists, explicit name/colon/value/terminator spans, custom-property identity, and validated top-level `!important` metadata that retains its raw marker/trivia while exposing the semantic value prefix. Tests prove nested semicolons/colons stay inside component nodes, comments/case in `!important` are preserved, invalid markers are rejected, and duplicate fallback declarations retain order. Debug and ReleaseSafe pass 164/164. | Checkpoint pending |
 | `AST-003` | `NOT_STARTED` | At-rule block variants depend on `SYN-001`. | — |
 | `MEM-001` | `VERIFIED` | `Compilation` now owns a heap-stable, caller-backed arena used by sources, diagnostics, and temporary syntax storage. Foundational `CompileResult` storage deeply owns CSS, optional source-map bytes, and cloned diagnostic messages independently of compilation lifetime; `take` makes moves explicit and leaves one safe cleanup path. Tests cover compilation moves, unfreed arena temporaries, post-compilation result access, empty/double cleanup, diagnostic-bearing results, and every constructor allocation failure. Debug and ReleaseSafe pass 143/143. | `3330a57` |
 | `DIAG-001` | `VERIFIED` | Token recovery metadata and syntax parsing now append compilation-owned diagnostics for invalid UTF-8 and escapes, bad/unterminated strings and URLs, unterminated comments/blocks/functions, mismatched or top-level closers, and nesting limits while preserving a usable lossless document whenever recovery is possible. Diagnostic spans remain source-valid (including zero-width EOF spans), allocation failures propagate separately, and result cloning already deep-copies messages. Debug and ReleaseSafe pass 155/155, including exhaustive diagnostic-allocation failure injection. | `182aa5c` |
@@ -120,6 +120,7 @@ Milestone 0 exit criteria pass: static serving is contained; the public compiler
 - `SYN-001`: component values retain every top-level source byte while representing nested blocks and functions explicitly; missing closers remain `null` metadata for recovery/diagnostics instead of being synthesized into the source model.
 - `DIAG-001`: CSS parse problems are structured values on `Compilation.diagnostics`; only allocator exhaustion, unknown sources, and explicit resource limits leave the parse API as operational errors.
 - `AST-001`: the new standards-oriented selector AST represents adjacency inside a compound separately from explicit combinators between compounds; typed pseudo arguments never replace their lossless component-value backing.
+- `AST-002`: declaration values retain the complete raw component stream (including `!important` and trivia); `ImportantAnnotation.value_end` identifies the semantic prefix without deleting spelling or collapsing duplicate declarations.
 
 ## Active blockers
 
@@ -165,7 +166,8 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 - Component-value recursion defaults to a 256-container nesting budget and returns `NestingLimitExceeded` before exceeding it; resource-limit diagnostics are added by `DIAG-001` rather than conflated with allocation failures.
 - The allocation-free tokenizer records bounded recovery metadata on tokens; the compilation-backed syntax layer converts it to owned diagnostics so no allocation error can be swallowed inside `Tokenizer.next`.
 - The new `src/css/ast.zig` model coexists with the inherited `src/ast.zig` prototype until Milestone 2 parsing/emission migration; stable recovery paths do not consume the legacy selector representation.
+- Declaration lists are ordered slices rather than property maps, preserving fallback declarations and leaving cascade/importance decisions to later explicit passes.
 
 ## Last full validation
 
-Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`AST-001`): Debug and ReleaseSafe each pass 161/161 tests (80 legacy unit, 56 new library/core, 25 CLI integration); `src/css/ast.zig`, `src/css.zig`, and `src/lib.zig` pass formatting. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.
+Milestone 0 remains `PASS` on commit `6a2b594`. Latest package validation (`AST-002`): Debug and ReleaseSafe each pass 164/164 tests (80 legacy unit, 59 new library/core, 25 CLI integration); `src/css/ast.zig` passes formatting. Known repository-wide formatting and dependency-audit debt is recorded above and remains scheduled work.

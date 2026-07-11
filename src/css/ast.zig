@@ -3,21 +3,30 @@ const compilation = @import("../compilation.zig");
 const source = @import("../source.zig");
 const syntax = @import("../syntax.zig");
 
-pub const SelectorError = error{
+pub const AstError = error{
     EmptyCompoundSelector,
     EmptySelectorList,
     InvalidAttributeSelector,
+    InvalidComponentValueList,
+    InvalidDeclaration,
+    InvalidImportantAnnotation,
     InvalidSpan,
     InvalidTypeSelectorPosition,
     SourceMismatch,
     SpanOutsideParent,
 };
 
+pub const SelectorError = AstError;
+
 pub const Identifier = struct {
     /// Decoded identifier value owned by the compilation arena.
     value: []const u8,
     /// Original spelling, excluding selector punctuation such as `.` or `#`.
     span: source.Span,
+
+    pub fn isCustomProperty(self: Identifier) bool {
+        return std.mem.startsWith(u8, self.value, "--");
+    }
 };
 
 pub const Namespace = union(enum) {
@@ -302,6 +311,164 @@ pub const SelectorList = struct {
     }
 };
 
+/// An exact, contiguous slice of the lossless component-value stream.
+pub const ComponentValueList = struct {
+    values: []const syntax.ComponentValue,
+    span: source.Span,
+
+    pub fn init(span: source.Span, values: []const syntax.ComponentValue) AstError!ComponentValueList {
+        try validateSpan(span);
+        if (values.len == 0) {
+            if (!span.isEmpty()) return error.InvalidComponentValueList;
+            return .{ .values = values, .span = span };
+        }
+        if (values[0].span().start != span.start or values[values.len - 1].span().end != span.end) {
+            return error.InvalidComponentValueList;
+        }
+
+        var previous_end = span.start;
+        for (values) |value| {
+            const value_span = value.span();
+            try validateChild(span, value_span);
+            if (value_span.start != previous_end) return error.InvalidComponentValueList;
+            previous_end = value_span.end;
+        }
+        return .{ .values = values, .span = span };
+    }
+};
+
+pub const ImportantAnnotation = struct {
+    /// End of the semantic value after trailing trivia is removed.
+    value_end: usize,
+    bang_index: usize,
+    keyword_index: usize,
+    bang: source.Span,
+    keyword: Identifier,
+    span: source.Span,
+
+    pub fn init(
+        value: ComponentValueList,
+        value_end: usize,
+        bang_index: usize,
+        keyword_index: usize,
+        keyword: Identifier,
+    ) AstError!ImportantAnnotation {
+        if (value_end > bang_index or bang_index >= keyword_index or keyword_index >= value.values.len) {
+            return error.InvalidImportantAnnotation;
+        }
+
+        const bang_token = switch (value.values[bang_index]) {
+            .token => |token| token,
+            else => return error.InvalidImportantAnnotation,
+        };
+        const is_bang = switch (bang_token.data) {
+            .delim => |delimiter| delimiter == '!',
+            else => false,
+        };
+        if (bang_token.kind != .delim or !is_bang) return error.InvalidImportantAnnotation;
+
+        const keyword_token = switch (value.values[keyword_index]) {
+            .token => |token| token,
+            else => return error.InvalidImportantAnnotation,
+        };
+        if (keyword_token.kind != .ident or
+            !std.ascii.eqlIgnoreCase(keyword.value, "important"))
+        {
+            return error.InvalidImportantAnnotation;
+        }
+        const keyword_span = keyword_token.valueSpan() orelse return error.InvalidImportantAnnotation;
+        if (!spansEqual(keyword.span, keyword_span)) return error.InvalidImportantAnnotation;
+
+        for (value.values[value_end..bang_index]) |component| {
+            if (!isTrivia(component)) return error.InvalidImportantAnnotation;
+        }
+        for (value.values[bang_index + 1 .. keyword_index]) |component| {
+            if (!isTrivia(component)) return error.InvalidImportantAnnotation;
+        }
+        for (value.values[keyword_index + 1 ..]) |component| {
+            if (!isTrivia(component)) return error.InvalidImportantAnnotation;
+        }
+
+        return .{
+            .value_end = value_end,
+            .bang_index = bang_index,
+            .keyword_index = keyword_index,
+            .bang = bang_token.span,
+            .keyword = keyword,
+            .span = .{
+                .source = bang_token.span.source,
+                .start = bang_token.span.start,
+                .end = keyword_token.span.end,
+            },
+        };
+    }
+};
+
+pub const Declaration = struct {
+    name: Identifier,
+    colon: source.Span,
+    /// Includes all raw leading/trailing trivia and the `!important` marker.
+    value: ComponentValueList,
+    important: ?ImportantAnnotation = null,
+    terminator: ?source.Span = null,
+    span: source.Span,
+
+    pub fn init(candidate: Declaration) AstError!Declaration {
+        try validateSpan(candidate.span);
+        try validateChild(candidate.span, candidate.name.span);
+        try validateChild(candidate.span, candidate.colon);
+        try validateChild(candidate.span, candidate.value.span);
+        if (candidate.name.span.end > candidate.colon.start or
+            candidate.colon.end > candidate.value.span.start)
+        {
+            return error.InvalidDeclaration;
+        }
+
+        if (candidate.important) |important| {
+            const validated = ImportantAnnotation.init(
+                candidate.value,
+                important.value_end,
+                important.bang_index,
+                important.keyword_index,
+                important.keyword,
+            ) catch return error.InvalidDeclaration;
+            if (!spansEqual(validated.span, important.span) or
+                !spansEqual(validated.bang, important.bang))
+            {
+                return error.InvalidDeclaration;
+            }
+        }
+        if (candidate.terminator) |terminator| {
+            try validateChild(candidate.span, terminator);
+            if (terminator.start < candidate.value.span.end) return error.InvalidDeclaration;
+        }
+        return candidate;
+    }
+
+    pub fn valueWithoutImportance(self: Declaration) []const syntax.ComponentValue {
+        if (self.important) |important| return self.value.values[0..important.value_end];
+        return self.value.values;
+    }
+};
+
+/// Ordered storage intentionally preserves duplicate/fallback declarations.
+pub const DeclarationList = struct {
+    declarations: []const Declaration,
+    span: source.Span,
+
+    pub fn init(span: source.Span, declarations: []const Declaration) AstError!DeclarationList {
+        try validateSpan(span);
+        var previous_end = span.start;
+        for (declarations) |declaration| {
+            try validateChild(span, declaration.span);
+            _ = Declaration.init(declaration) catch return error.InvalidDeclaration;
+            if (declaration.span.start < previous_end) return error.InvalidDeclaration;
+            previous_end = declaration.span.end;
+        }
+        return .{ .declarations = declarations, .span = span };
+    }
+};
+
 fn validateSpan(span: source.Span) SelectorError!void {
     if (span.start > span.end) return error.InvalidSpan;
 }
@@ -311,6 +478,17 @@ fn validateChild(parent: source.Span, child: source.Span) SelectorError!void {
     try validateSpan(child);
     if (!parent.source.eql(child.source)) return error.SourceMismatch;
     if (child.start < parent.start or child.end > parent.end) return error.SpanOutsideParent;
+}
+
+fn spansEqual(a: source.Span, b: source.Span) bool {
+    return a.source.eql(b.source) and a.start == b.start and a.end == b.end;
+}
+
+fn isTrivia(value: syntax.ComponentValue) bool {
+    return switch (value) {
+        .token => |token| token.isTrivia(),
+        else => false,
+    };
 }
 
 fn validateSimpleSelector(simple: SimpleSelector) SelectorError!void {
@@ -519,4 +697,103 @@ test "relative selectors namespaces and every combinator remain explicit" {
     try std.testing.expect(namespaces[1] == .any);
     try std.testing.expect(namespaces[2] == .empty);
     try std.testing.expect(namespaces[3] == .named);
+}
+
+fn spanForValues(values: []const syntax.ComponentValue) source.Span {
+    return .{
+        .source = values[0].span().source,
+        .start = values[0].span().start,
+        .end = values[values.len - 1].span().end,
+    };
+}
+
+test "declaration values retain nested components and explicit important metadata" {
+    const allocator = std.testing.allocator;
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const id = try context.addSource("declaration.css", "x: fn(a;b, [c:d]) ! /*keep*/ IMPORTANT ;");
+    const file = try context.sources.get(id);
+    const document = try syntax.parse(&context, id);
+    const raw_values = document.values[2..11];
+    const value = try ComponentValueList.init(spanForValues(raw_values), raw_values);
+    const important = try ImportantAnnotation.init(
+        value,
+        2,
+        3,
+        7,
+        .{ .value = "IMPORTANT", .span = document.values[9].token.valueSpan().? },
+    );
+    const declaration = try Declaration.init(.{
+        .name = .{ .value = "x", .span = document.values[0].token.valueSpan().? },
+        .colon = document.values[1].token.span,
+        .value = value,
+        .important = important,
+        .terminator = document.values[11].token.span,
+        .span = file.fullSpan(),
+    });
+
+    try std.testing.expectEqual(@as(usize, 9), declaration.value.values.len);
+    try std.testing.expectEqual(@as(usize, 2), declaration.valueWithoutImportance().len);
+    try std.testing.expectEqual(@as(usize, 6), declaration.value.values[1].function.values.len);
+    try std.testing.expectEqualStrings(
+        " fn(a;b, [c:d]) ! /*keep*/ IMPORTANT ",
+        try file.slice(declaration.value.span),
+    );
+    try std.testing.expectEqualStrings("IMPORTANT", declaration.important.?.keyword.value);
+    try std.testing.expect(declaration.important.?.span.start < declaration.important.?.span.end);
+}
+
+test "important markers reject non-trivia gaps and non-important keywords" {
+    const allocator = std.testing.allocator;
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const id = try context.addSource("invalid-important.css", "red ! urgent");
+    const document = try syntax.parse(&context, id);
+    const value = try ComponentValueList.init(document.span, document.values);
+
+    try std.testing.expectError(error.InvalidImportantAnnotation, ImportantAnnotation.init(
+        value,
+        1,
+        2,
+        4,
+        .{ .value = "urgent", .span = document.values[4].token.valueSpan().? },
+    ));
+    try std.testing.expectError(error.InvalidImportantAnnotation, ImportantAnnotation.init(
+        value,
+        1,
+        0,
+        4,
+        .{ .value = "important", .span = document.values[4].token.valueSpan().? },
+    ));
+}
+
+test "declaration lists preserve fallback order and custom-property identity" {
+    const id = source.SourceId{ .value = 11 };
+    const first_value = try ComponentValueList.init(testSpan(id, 6, 6), &.{});
+    const second_value = try ComponentValueList.init(testSpan(id, 13, 13), &.{});
+    const first = try Declaration.init(.{
+        .name = .{ .value = "color", .span = testSpan(id, 0, 5) },
+        .colon = testSpan(id, 5, 6),
+        .value = first_value,
+        .terminator = testSpan(id, 6, 7),
+        .span = testSpan(id, 0, 7),
+    });
+    const second = try Declaration.init(.{
+        .name = .{ .value = "color", .span = testSpan(id, 7, 12) },
+        .colon = testSpan(id, 12, 13),
+        .value = second_value,
+        .terminator = testSpan(id, 13, 14),
+        .span = testSpan(id, 7, 14),
+    });
+    const declarations = [_]Declaration{ first, second };
+    const list = try DeclarationList.init(testSpan(id, 0, 14), &declarations);
+
+    try std.testing.expectEqual(@as(usize, 2), list.declarations.len);
+    try std.testing.expectEqual(@as(usize, 0), list.declarations[0].span.start);
+    try std.testing.expectEqual(@as(usize, 7), list.declarations[1].span.start);
+    try std.testing.expect(!list.declarations[0].name.isCustomProperty());
+    try std.testing.expect((Identifier{
+        .value = "--theme",
+        .span = testSpan(id, 0, 7),
+    }).isCustomProperty());
 }
