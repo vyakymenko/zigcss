@@ -7,9 +7,14 @@ pub const AstError = error{
     EmptyCompoundSelector,
     EmptySelectorList,
     InvalidAttributeSelector,
+    InvalidAtRule,
+    InvalidBlockSpan,
     InvalidComponentValueList,
     InvalidDeclaration,
     InvalidImportantAnnotation,
+    InvalidKeyframes,
+    InvalidRule,
+    InvalidRuleBlock,
     InvalidSpan,
     InvalidTypeSelectorPosition,
     SourceMismatch,
@@ -469,6 +474,253 @@ pub const DeclarationList = struct {
     }
 };
 
+/// Exact brace and content boundaries for a block. A missing closing span is a
+/// recoverable EOF state, never a synthesized source token.
+pub const BlockSpan = struct {
+    opening: source.Span,
+    content: source.Span,
+    closing: ?source.Span,
+    span: source.Span,
+
+    pub fn init(candidate: BlockSpan) AstError!BlockSpan {
+        try validateSpan(candidate.span);
+        try validateChild(candidate.span, candidate.opening);
+        try validateChild(candidate.span, candidate.content);
+        if (candidate.opening.isEmpty() or
+            candidate.span.start != candidate.opening.start or
+            candidate.opening.end != candidate.content.start)
+        {
+            return error.InvalidBlockSpan;
+        }
+
+        if (candidate.closing) |closing| {
+            try validateChild(candidate.span, closing);
+            if (closing.isEmpty() or
+                candidate.content.end != closing.start or
+                candidate.span.end != closing.end)
+            {
+                return error.InvalidBlockSpan;
+            }
+        } else if (candidate.span.end != candidate.content.end) {
+            return error.InvalidBlockSpan;
+        }
+        return candidate;
+    }
+
+    pub fn terminated(self: BlockSpan) bool {
+        return self.closing != null;
+    }
+};
+
+pub const DeclarationBlock = struct {
+    envelope: BlockSpan,
+    declarations: DeclarationList,
+
+    pub fn init(envelope: BlockSpan, declarations: DeclarationList) AstError!DeclarationBlock {
+        _ = try BlockSpan.init(envelope);
+        if (!spansEqual(envelope.content, declarations.span)) return error.InvalidRuleBlock;
+        _ = try DeclarationList.init(declarations.span, declarations.declarations);
+        return .{ .envelope = envelope, .declarations = declarations };
+    }
+};
+
+pub const StyleRule = struct {
+    selectors: SelectorList,
+    block: DeclarationBlock,
+    span: source.Span,
+
+    pub fn init(candidate: StyleRule) AstError!StyleRule {
+        try validateSpan(candidate.span);
+        try validateChild(candidate.span, candidate.selectors.span);
+        try validateChild(candidate.span, candidate.block.envelope.span);
+        if (candidate.span.start != candidate.selectors.span.start or
+            candidate.selectors.span.end > candidate.block.envelope.span.start or
+            candidate.span.end != candidate.block.envelope.span.end)
+        {
+            return error.InvalidRule;
+        }
+        _ = try DeclarationBlock.init(candidate.block.envelope, candidate.block.declarations);
+        return candidate;
+    }
+};
+
+pub const Rule = union(enum) {
+    style_rule: *const StyleRule,
+    at_rule: *const AtRule,
+
+    pub fn span(self: Rule) source.Span {
+        return switch (self) {
+            .style_rule => |rule| rule.span,
+            .at_rule => |rule| rule.span,
+        };
+    }
+};
+
+/// Ordered rule storage prevents non-adjacent rules or at-rules from merging.
+pub const RuleList = struct {
+    rules: []const Rule,
+    span: source.Span,
+
+    pub fn init(span: source.Span, rules: []const Rule) AstError!RuleList {
+        try validateSpan(span);
+        var previous_end = span.start;
+        for (rules) |rule| {
+            const rule_span = rule.span();
+            try validateChild(span, rule_span);
+            if (rule_span.start < previous_end) return error.InvalidRule;
+            previous_end = rule_span.end;
+        }
+        return .{ .rules = rules, .span = span };
+    }
+};
+
+pub const RulesBlock = struct {
+    envelope: BlockSpan,
+    rules: RuleList,
+
+    pub fn init(envelope: BlockSpan, rules: RuleList) AstError!RulesBlock {
+        _ = try BlockSpan.init(envelope);
+        if (!spansEqual(envelope.content, rules.span)) return error.InvalidRuleBlock;
+        _ = try RuleList.init(rules.span, rules.rules);
+        return .{ .envelope = envelope, .rules = rules };
+    }
+};
+
+pub const KeyframeRule = struct {
+    prelude: ComponentValueList,
+    block: DeclarationBlock,
+    span: source.Span,
+
+    pub fn init(candidate: KeyframeRule) AstError!KeyframeRule {
+        if (candidate.prelude.values.len == 0) return error.InvalidKeyframes;
+        try validateSpan(candidate.span);
+        try validateChild(candidate.span, candidate.prelude.span);
+        try validateChild(candidate.span, candidate.block.envelope.span);
+        if (candidate.span.start != candidate.prelude.span.start or
+            candidate.prelude.span.end != candidate.block.envelope.span.start or
+            candidate.span.end != candidate.block.envelope.span.end)
+        {
+            return error.InvalidKeyframes;
+        }
+        _ = try DeclarationBlock.init(candidate.block.envelope, candidate.block.declarations);
+        return candidate;
+    }
+};
+
+pub const KeyframesBlock = struct {
+    envelope: BlockSpan,
+    frames: []const KeyframeRule,
+
+    pub fn init(envelope: BlockSpan, frames: []const KeyframeRule) AstError!KeyframesBlock {
+        _ = try BlockSpan.init(envelope);
+        var previous_end = envelope.content.start;
+        for (frames) |frame| {
+            try validateChild(envelope.content, frame.span);
+            _ = try KeyframeRule.init(frame);
+            if (frame.span.start < previous_end) return error.InvalidKeyframes;
+            previous_end = frame.span.end;
+        }
+        return .{ .envelope = envelope, .frames = frames };
+    }
+};
+
+pub const RawBlock = struct {
+    envelope: BlockSpan,
+    values: ComponentValueList,
+
+    pub fn init(envelope: BlockSpan, values: ComponentValueList) AstError!RawBlock {
+        _ = try BlockSpan.init(envelope);
+        if (!spansEqual(envelope.content, values.span)) return error.InvalidRuleBlock;
+        _ = try ComponentValueList.init(values.span, values.values);
+        return .{ .envelope = envelope, .values = values };
+    }
+};
+
+pub const NoBlock = struct {
+    terminator: ?source.Span = null,
+};
+
+pub const AtRuleBlock = union(enum) {
+    none: NoBlock,
+    declarations: *const DeclarationBlock,
+    rules: *const RulesBlock,
+    keyframes: *const KeyframesBlock,
+    raw: *const RawBlock,
+
+    pub fn envelope(self: AtRuleBlock) ?BlockSpan {
+        return switch (self) {
+            .none => null,
+            .declarations => |block| block.envelope,
+            .rules => |block| block.envelope,
+            .keyframes => |block| block.envelope,
+            .raw => |block| block.envelope,
+        };
+    }
+};
+
+pub const AtRule = struct {
+    at_sign: source.Span,
+    name: Identifier,
+    /// Includes trivia between the name and block/terminator.
+    prelude: ComponentValueList,
+    block: AtRuleBlock,
+    span: source.Span,
+
+    pub fn init(candidate: AtRule) AstError!AtRule {
+        try validateSpan(candidate.span);
+        try validateChild(candidate.span, candidate.at_sign);
+        try validateChild(candidate.span, candidate.name.span);
+        try validateChild(candidate.span, candidate.prelude.span);
+        if (candidate.at_sign.isEmpty() or
+            candidate.span.start != candidate.at_sign.start or
+            candidate.at_sign.end != candidate.name.span.start or
+            candidate.name.span.end != candidate.prelude.span.start)
+        {
+            return error.InvalidAtRule;
+        }
+        _ = try ComponentValueList.init(candidate.prelude.span, candidate.prelude.values);
+
+        switch (candidate.block) {
+            .none => |no_block| {
+                if (no_block.terminator) |terminator| {
+                    try validateChild(candidate.span, terminator);
+                    if (terminator.start != candidate.prelude.span.end or
+                        candidate.span.end != terminator.end)
+                    {
+                        return error.InvalidAtRule;
+                    }
+                } else if (candidate.span.end != candidate.prelude.span.end) {
+                    return error.InvalidAtRule;
+                }
+            },
+            .declarations => |block| {
+                _ = try DeclarationBlock.init(block.envelope, block.declarations);
+                try validateAtRuleBlock(candidate, block.envelope);
+            },
+            .rules => |block| {
+                _ = try RulesBlock.init(block.envelope, block.rules);
+                try validateAtRuleBlock(candidate, block.envelope);
+            },
+            .keyframes => |block| {
+                _ = try KeyframesBlock.init(block.envelope, block.frames);
+                try validateAtRuleBlock(candidate, block.envelope);
+            },
+            .raw => |block| {
+                _ = try RawBlock.init(block.envelope, block.values);
+                try validateAtRuleBlock(candidate, block.envelope);
+            },
+        }
+        return candidate;
+    }
+};
+
+fn validateAtRuleBlock(at_rule: AtRule, envelope: BlockSpan) AstError!void {
+    try validateChild(at_rule.span, envelope.span);
+    if (at_rule.prelude.span.end != envelope.span.start or at_rule.span.end != envelope.span.end) {
+        return error.InvalidAtRule;
+    }
+}
+
 fn validateSpan(span: source.Span) SelectorError!void {
     if (span.start > span.end) return error.InvalidSpan;
 }
@@ -796,4 +1048,202 @@ test "declaration lists preserve fallback order and custom-property identity" {
         .value = "--theme",
         .span = testSpan(id, 0, 7),
     }).isCustomProperty());
+}
+
+fn emptyBlockSpan(id: source.SourceId, opening_start: usize) !BlockSpan {
+    return BlockSpan.init(.{
+        .opening = testSpan(id, opening_start, opening_start + 1),
+        .content = testSpan(id, opening_start + 1, opening_start + 1),
+        .closing = testSpan(id, opening_start + 1, opening_start + 2),
+        .span = testSpan(id, opening_start, opening_start + 2),
+    });
+}
+
+test "at-rule block categories are explicit and non-interchangeable" {
+    const id = source.SourceId{ .value = 20 };
+    const prelude = try ComponentValueList.init(testSpan(id, 2, 2), &.{});
+    const envelope = try emptyBlockSpan(id, 2);
+    const declarations = try DeclarationList.init(envelope.content, &.{});
+    const declaration_block = try DeclarationBlock.init(envelope, declarations);
+    const rules = try RuleList.init(envelope.content, &.{});
+    const rules_block = try RulesBlock.init(envelope, rules);
+    const keyframes_block = try KeyframesBlock.init(envelope, &.{});
+    const raw_values = try ComponentValueList.init(envelope.content, &.{});
+    const raw_block = try RawBlock.init(envelope, raw_values);
+
+    const common = AtRule{
+        .at_sign = testSpan(id, 0, 1),
+        .name = .{ .value = "x", .span = testSpan(id, 1, 2) },
+        .prelude = prelude,
+        .block = .{ .raw = &raw_block },
+        .span = testSpan(id, 0, 4),
+    };
+    const declaration_at_rule = try AtRule.init(.{
+        .at_sign = common.at_sign,
+        .name = common.name,
+        .prelude = prelude,
+        .block = .{ .declarations = &declaration_block },
+        .span = common.span,
+    });
+    const rules_at_rule = try AtRule.init(.{
+        .at_sign = common.at_sign,
+        .name = common.name,
+        .prelude = prelude,
+        .block = .{ .rules = &rules_block },
+        .span = common.span,
+    });
+    const keyframes_at_rule = try AtRule.init(.{
+        .at_sign = common.at_sign,
+        .name = common.name,
+        .prelude = prelude,
+        .block = .{ .keyframes = &keyframes_block },
+        .span = common.span,
+    });
+    const raw_at_rule = try AtRule.init(common);
+    const no_block = try AtRule.init(.{
+        .at_sign = common.at_sign,
+        .name = common.name,
+        .prelude = prelude,
+        .block = .{ .none = .{ .terminator = testSpan(id, 2, 3) } },
+        .span = testSpan(id, 0, 3),
+    });
+
+    try std.testing.expect(declaration_at_rule.block == .declarations);
+    try std.testing.expect(rules_at_rule.block == .rules);
+    try std.testing.expect(keyframes_at_rule.block == .keyframes);
+    try std.testing.expect(raw_at_rule.block == .raw);
+    try std.testing.expect(no_block.block == .none);
+}
+
+test "raw at-rule blocks preserve nested unknown syntax exactly" {
+    const allocator = std.testing.allocator;
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const id = try context.addSource("raw-at-rule.css", "@x foo{a(b;c)}");
+    const file = try context.sources.get(id);
+    const document = try syntax.parse(&context, id);
+    const block = document.values[3].simple_block;
+    const prelude_values = document.values[1..3];
+    const prelude = try ComponentValueList.init(spanForValues(prelude_values), prelude_values);
+    const raw_values = try ComponentValueList.init(
+        testSpan(id, block.opening.span.end, block.closing.?.span.start),
+        block.values,
+    );
+    const envelope = try BlockSpan.init(.{
+        .opening = block.opening.span,
+        .content = raw_values.span,
+        .closing = block.closing.?.span,
+        .span = block.span,
+    });
+    const raw_block = try RawBlock.init(envelope, raw_values);
+    const at_rule = try AtRule.init(.{
+        .at_sign = testSpan(id, 0, 1),
+        .name = .{ .value = "x", .span = document.values[0].token.valueSpan().? },
+        .prelude = prelude,
+        .block = .{ .raw = &raw_block },
+        .span = file.fullSpan(),
+    });
+
+    try std.testing.expectEqualStrings("@x foo{a(b;c)}", try file.slice(at_rule.span));
+    try std.testing.expectEqual(@as(usize, 1), raw_block.values.values.len);
+    try std.testing.expectEqual(@as(usize, 3), raw_block.values.values[0].function.values.len);
+}
+
+test "rule lists retain style and at-rule order" {
+    const id = source.SourceId{ .value = 21 };
+    const empty_first = try ComponentValueList.init(testSpan(id, 2, 2), &.{});
+    const first = try AtRule.init(.{
+        .at_sign = testSpan(id, 0, 1),
+        .name = .{ .value = "x", .span = testSpan(id, 1, 2) },
+        .prelude = empty_first,
+        .block = .{ .none = .{ .terminator = testSpan(id, 2, 3) } },
+        .span = testSpan(id, 0, 3),
+    });
+    const empty_second = try ComponentValueList.init(testSpan(id, 5, 5), &.{});
+    const second = try AtRule.init(.{
+        .at_sign = testSpan(id, 3, 4),
+        .name = .{ .value = "y", .span = testSpan(id, 4, 5) },
+        .prelude = empty_second,
+        .block = .{ .none = .{ .terminator = testSpan(id, 5, 6) } },
+        .span = testSpan(id, 3, 6),
+    });
+    const entries = [_]Rule{
+        .{ .at_rule = &first },
+        .{ .at_rule = &second },
+    };
+    const rules = try RuleList.init(testSpan(id, 0, 6), &entries);
+
+    try std.testing.expectEqualStrings("x", rules.rules[0].at_rule.name.value);
+    try std.testing.expectEqualStrings("y", rules.rules[1].at_rule.name.value);
+}
+
+test "block envelopes support bounded EOF recovery and reject gaps" {
+    const id = source.SourceId{ .value = 22 };
+    const unterminated = try BlockSpan.init(.{
+        .opening = testSpan(id, 0, 1),
+        .content = testSpan(id, 1, 3),
+        .closing = null,
+        .span = testSpan(id, 0, 3),
+    });
+    try std.testing.expect(!unterminated.terminated());
+    try std.testing.expectError(error.InvalidBlockSpan, BlockSpan.init(.{
+        .opening = testSpan(id, 0, 1),
+        .content = testSpan(id, 1, 2),
+        .closing = testSpan(id, 3, 4),
+        .span = testSpan(id, 0, 4),
+    }));
+}
+
+test "keyframe rules retain percentage selector preludes and declaration blocks" {
+    const allocator = std.testing.allocator;
+    var context = try compilation.Compilation.init(allocator);
+    defer context.deinit();
+    const id = try context.addSource("keyframes.css", "{0%, to{}}");
+    const file = try context.sources.get(id);
+    const document = try syntax.parse(&context, id);
+    const outer = document.values[0].simple_block;
+    const inner = outer.values[4].simple_block;
+
+    const frame_prelude_values = outer.values[0..4];
+    const frame_prelude = try ComponentValueList.init(
+        spanForValues(frame_prelude_values),
+        frame_prelude_values,
+    );
+    const declaration_envelope = try BlockSpan.init(.{
+        .opening = inner.opening.span,
+        .content = testSpan(id, inner.opening.span.end, inner.closing.?.span.start),
+        .closing = inner.closing.?.span,
+        .span = inner.span,
+    });
+    const declarations = try DeclarationList.init(declaration_envelope.content, &.{});
+    const declaration_block = try DeclarationBlock.init(declaration_envelope, declarations);
+    const frame = try KeyframeRule.init(.{
+        .prelude = frame_prelude,
+        .block = declaration_block,
+        .span = testSpan(id, frame_prelude.span.start, declaration_envelope.span.end),
+    });
+    const outer_envelope = try BlockSpan.init(.{
+        .opening = outer.opening.span,
+        .content = testSpan(id, outer.opening.span.end, outer.closing.?.span.start),
+        .closing = outer.closing.?.span,
+        .span = outer.span,
+    });
+    const frames = [_]KeyframeRule{frame};
+    const keyframes = try KeyframesBlock.init(outer_envelope, &frames);
+
+    try std.testing.expectEqualStrings("0%, to", try file.slice(keyframes.frames[0].prelude.span));
+    try std.testing.expectEqual(@as(usize, 4), keyframes.frames[0].prelude.values.len);
+}
+
+test "semicolon-free at-rules retain the no-block EOF form" {
+    const id = source.SourceId{ .value = 23 };
+    const prelude = try ComponentValueList.init(testSpan(id, 2, 2), &.{});
+    const at_rule = try AtRule.init(.{
+        .at_sign = testSpan(id, 0, 1),
+        .name = .{ .value = "x", .span = testSpan(id, 1, 2) },
+        .prelude = prelude,
+        .block = .{ .none = .{} },
+        .span = testSpan(id, 0, 2),
+    });
+    try std.testing.expect(at_rule.block.none.terminator == null);
 }
