@@ -1,0 +1,116 @@
+@media screen and (width > 40rem) {
+  .media-first {
+    color: red;
+    --token-boundary: a/**/b;
+  }
+  .media-second {
+    color: blue;
+  }
+}
+.keep {
+  order: 1;
+}
+@supports (display: grid) {
+  .supports-first {
+    display: grid;
+  }
+  .supports-second {
+    display: grid;
+  }
+}
+@container card (inline-size > 30rem) {
+  .container-first {
+    inline-size: 100%;
+  }
+  .container-second {
+    inline-size: 50%;
+  }
+}
+@layer theme {
+  .layer-first {
+    color: green;
+  }
+  .layer-second {
+    color: purple;
+  }
+}
+.host {
+  @media (hover: hover) {
+    color: red;
+  }
+  @media (hover: hover) {
+    color: blue;
+    .child {
+      opacity: 0.5;
+    }
+  }
+}
+@layer outer {
+  @supports (selector(:has(*))) {
+    .nested-first {
+      color: orange;
+    }
+    .nested-second {
+      color: teal;
+    }
+  }
+}
+@media screen {
+  .different-one {
+    color: red;
+  }
+}
+@media print {
+  .different-two {
+    color: red;
+  }
+}
+@layer {
+  .anonymous-one {
+    color: red;
+  }
+}
+@layer {
+  .anonymous-two {
+    color: red;
+  }
+}
+@layer first {
+  .named-one {
+    color: red;
+  }
+}
+@layer second {
+  .named-two {
+    color: red;
+  }
+}
+@scope (.root) {
+  .scoped-one {
+    color: red;
+  }
+}
+@scope (.root) {
+  .scoped-two {
+    color: red;
+  }
+}
+@supports (display: flex) {}
+@supports (display: flex) {
+  .nonempty {
+    display: flex;
+  }
+}
+@media (color) {
+  .separated-one {
+    color: red;
+  }
+}
+.separator {
+  color: black;
+}
+@media (color) {
+  .separated-two {
+    color: red;
+  }
+}

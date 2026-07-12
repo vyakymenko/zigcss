@@ -1,18 +1,25 @@
 const std = @import("std");
 const ast = @import("ast.zig");
+const component_compare = @import("component_compare.zig");
 const source = @import("../source.zig");
-const syntax = @import("../syntax.zig");
-const tokenizer = @import("../tokenizer.zig");
 
-pub const Error = std.mem.Allocator.Error || error{
+pub const Error = component_compare.Error || error{
     InvalidAst,
-    InvalidSpan,
-    InvalidToken,
-    SourceMismatch,
 };
 
 pub const SelectorMergeProof = struct {
     source_span: source.Span,
+};
+
+pub const AtRuleMergeProof = struct {
+    source_span: source.Span,
+};
+
+const MergeableAtRuleKind = enum {
+    media,
+    supports,
+    container,
+    named_layer,
 };
 
 /// Proves the narrow selector-list merge form:
@@ -72,6 +79,106 @@ pub fn analyzeSelectorMerge(
     return .{ .source_span = causal_span };
 }
 
+/// Proves the narrow adjacent group-rule merge form:
+///
+///     @group condition { first rules }
+///     @group condition { second rules }
+///       -> @group condition { first rules; second rules }
+///
+/// Only typed media, supports, container, and named layer blocks participate.
+/// Anonymous layers and every untyped or non-rule-block at-rule are excluded.
+pub fn analyzeAtRuleMerge(
+    allocator: std.mem.Allocator,
+    file: *const source.SourceFile,
+    rules: []const ast.Rule,
+) Error!?AtRuleMergeProof {
+    if (rules.len != 2 or rules[0] != .at_rule or rules[1] != .at_rule) return null;
+    const first = rules[0].at_rule;
+    const second = rules[1].at_rule;
+    _ = ast.AtRule.init(first.*) catch return error.InvalidAst;
+    _ = ast.AtRule.init(second.*) catch return error.InvalidAst;
+    const first_group = mergeableGroup(first) orelse return null;
+    const second_group = mergeableGroup(second) orelse return null;
+    if (first_group.kind != second_group.kind or
+        first_group.block.nested != second_group.block.nested or
+        first_group.block.rules.rules.len == 0 or
+        second_group.block.rules.rules.len == 0 or
+        hasDirectNestedDeclarations(&first_group.block.rules) or
+        hasDirectNestedDeclarations(&second_group.block.rules) or
+        !first_group.block.envelope.terminated() or
+        !second_group.block.envelope.terminated())
+    {
+        return null;
+    }
+    if (!try component_compare.equivalent(
+        allocator,
+        file,
+        first.prelude.values,
+        second.prelude.values,
+        .{},
+    )) return null;
+
+    const gap = source.Span{
+        .source = first.span.source,
+        .start = first.span.end,
+        .end = second.span.start,
+    };
+    const gap_bytes = file.slice(gap) catch |err| switch (err) {
+        error.SourceMismatch => return error.SourceMismatch,
+        error.InvalidSpan => return error.InvalidSpan,
+    };
+    if (!isTriviaOnly(gap_bytes)) return null;
+
+    const causal_span = source.Span{
+        .source = first.span.source,
+        .start = first.span.start,
+        .end = second.span.end,
+    };
+    _ = file.slice(causal_span) catch |err| switch (err) {
+        error.SourceMismatch => return error.SourceMismatch,
+        error.InvalidSpan => return error.InvalidSpan,
+    };
+    return .{ .source_span = causal_span };
+}
+
+fn hasDirectNestedDeclarations(rules: *const ast.RuleList) bool {
+    for (rules.rules) |rule| if (rule == .nested_declarations) return true;
+    return false;
+}
+
+const MergeableGroup = struct {
+    kind: MergeableAtRuleKind,
+    block: *const ast.RulesBlock,
+};
+
+fn mergeableGroup(rule: *const ast.AtRule) ?MergeableGroup {
+    const block = switch (rule.block) {
+        .rules => |value| value,
+        else => return null,
+    };
+    const details = rule.details orelse return null;
+    if (std.ascii.eqlIgnoreCase(rule.name.value, "media")) return switch (details) {
+        .media => |value| if (value.block == block) .{ .kind = .media, .block = block } else null,
+        else => null,
+    };
+    if (std.ascii.eqlIgnoreCase(rule.name.value, "supports")) return switch (details) {
+        .supports => |value| if (value.block == block) .{ .kind = .supports, .block = block } else null,
+        else => null,
+    };
+    if (std.ascii.eqlIgnoreCase(rule.name.value, "container")) return switch (details) {
+        .container => |value| if (value.block == block) .{ .kind = .container, .block = block } else null,
+        else => null,
+    };
+    if (std.ascii.eqlIgnoreCase(rule.name.value, "layer")) return switch (details) {
+        .layer => |value| if (!value.statement and value.names.len == 1)
+            .{ .kind = .named_layer, .block = block }
+        else
+            null,
+        else => null,
+    };
+    return null;
+}
+
 fn declarationListsEqual(
     allocator: std.mem.Allocator,
     file: *const source.SourceFile,
@@ -87,174 +194,18 @@ fn declarationListsEqual(
     for (first.declarations, second.declarations) |left, right| {
         if (!std.mem.eql(u8, left.name.value, right.name.value) or
             (left.important == null) != (right.important == null) or
-            !try componentListsEqual(
+            !try component_compare.equivalent(
                 allocator,
                 file,
                 left.valueWithoutImportance(),
                 right.valueWithoutImportance(),
-                true,
+                .{},
             ))
         {
             return false;
         }
     }
     return true;
-}
-
-fn componentListsEqual(
-    allocator: std.mem.Allocator,
-    file: *const source.SourceFile,
-    left: []const syntax.ComponentValue,
-    right: []const syntax.ComponentValue,
-    trim_edges: bool,
-) Error!bool {
-    var left_iterator = SemanticIterator{ .values = left, .trim_edges = trim_edges };
-    var right_iterator = SemanticIterator{ .values = right, .trim_edges = trim_edges };
-    while (true) {
-        const left_item = left_iterator.next();
-        const right_item = right_iterator.next();
-        if (left_item == null or right_item == null) return left_item == null and right_item == null;
-        switch (left_item.?) {
-            .whitespace => if (right_item.? != .whitespace) return false,
-            .component => |left_component| switch (right_item.?) {
-                .component => |right_component| if (!try componentsEqual(
-                    allocator,
-                    file,
-                    left_component,
-                    right_component,
-                )) return false,
-                else => return false,
-            },
-        }
-    }
-}
-
-fn componentsEqual(
-    allocator: std.mem.Allocator,
-    file: *const source.SourceFile,
-    left: syntax.ComponentValue,
-    right: syntax.ComponentValue,
-) Error!bool {
-    return switch (left) {
-        .token => |left_token| switch (right) {
-            .token => |right_token| try tokensEqual(allocator, file, left_token, right_token),
-            else => false,
-        },
-        .simple_block => |left_block| switch (right) {
-            .simple_block => |right_block| left_block.opening.kind == right_block.opening.kind and
-                left_block.terminated() == right_block.terminated() and
-                try componentListsEqual(allocator, file, left_block.values, right_block.values, false),
-            else => false,
-        },
-        .function => |left_function| switch (right) {
-            .function => |right_function| left_function.terminated() == right_function.terminated() and
-                try tokenTextEqual(allocator, file, left_function.opening, right_function.opening) and
-                try componentListsEqual(allocator, file, left_function.values, right_function.values, false),
-            else => false,
-        },
-    };
-}
-
-fn tokensEqual(
-    allocator: std.mem.Allocator,
-    file: *const source.SourceFile,
-    left: tokenizer.Token,
-    right: tokenizer.Token,
-) Error!bool {
-    if (left.kind != right.kind or left.isTerminated() != right.isTerminated()) return false;
-    return switch (left.kind) {
-        .ident, .function, .at_keyword, .string, .bad_string, .url, .bad_url => try tokenTextEqual(allocator, file, left, right),
-        .hash => left.data.hash.hash_type == right.data.hash.hash_type and
-            try tokenTextEqual(allocator, file, left, right),
-        .delim => left.data.delim == right.data.delim,
-        .number, .percentage => numericEqual(left.data.numeric, right.data.numeric),
-        .dimension => numericEqual(left.data.dimension.numeric, right.data.dimension.numeric) and
-            try tokenTextEqual(allocator, file, left, right),
-        .comment => try tokenRawEqual(file, left, right),
-        .unicode_range => left.data.unicode_range.start == right.data.unicode_range.start and
-            left.data.unicode_range.end == right.data.unicode_range.end,
-        else => true,
-    };
-}
-
-fn tokenRawEqual(
-    file: *const source.SourceFile,
-    left: tokenizer.Token,
-    right: tokenizer.Token,
-) Error!bool {
-    const left_bytes = file.slice(left.span) catch |err| switch (err) {
-        error.SourceMismatch => return error.SourceMismatch,
-        error.InvalidSpan => return error.InvalidSpan,
-    };
-    const right_bytes = file.slice(right.span) catch |err| switch (err) {
-        error.SourceMismatch => return error.SourceMismatch,
-        error.InvalidSpan => return error.InvalidSpan,
-    };
-    return std.mem.eql(u8, left_bytes, right_bytes);
-}
-
-fn tokenTextEqual(
-    allocator: std.mem.Allocator,
-    file: *const source.SourceFile,
-    left: tokenizer.Token,
-    right: tokenizer.Token,
-) Error!bool {
-    const left_text = left.decodedTextAlloc(allocator, file) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.SourceMismatch => return error.SourceMismatch,
-        else => return error.InvalidToken,
-    };
-    defer allocator.free(left_text);
-    const right_text = right.decodedTextAlloc(allocator, file) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.SourceMismatch => return error.SourceMismatch,
-        else => return error.InvalidToken,
-    };
-    defer allocator.free(right_text);
-    return std.mem.eql(u8, left_text, right_text);
-}
-
-fn numericEqual(left: tokenizer.Numeric, right: tokenizer.Numeric) bool {
-    return left.value == right.value and left.number_type == right.number_type and left.sign == right.sign;
-}
-
-const SemanticItem = union(enum) {
-    whitespace,
-    component: syntax.ComponentValue,
-};
-
-const SemanticIterator = struct {
-    values: []const syntax.ComponentValue,
-    index: usize = 0,
-    saw_component: bool = false,
-    trim_edges: bool,
-
-    fn next(self: *SemanticIterator) ?SemanticItem {
-        while (true) {
-            if (self.index == self.values.len) return null;
-            if (isWhitespace(self.values[self.index])) {
-                var next_index = self.index;
-                while (next_index < self.values.len and isWhitespace(self.values[next_index])) next_index += 1;
-                self.index = next_index;
-                if (self.trim_edges and (!self.saw_component or self.index == self.values.len)) {
-                    if (self.index == self.values.len) return null;
-                    continue;
-                }
-                return .whitespace;
-            }
-            const value = self.values[self.index];
-            self.index += 1;
-            self.saw_component = true;
-            return .{ .component = value };
-        }
-    }
-};
-
-fn isWhitespace(value: syntax.ComponentValue) bool {
-    return switch (value) {
-        .token => |token| token.kind == .whitespace,
-        else => false,
-    };
 }
 
 fn eligibleBlock(block: *const ast.StyleBlock) bool {
@@ -357,4 +308,44 @@ test "selector merge proof rejects a foreign source binding" {
             parsed.rules.rules,
         ),
     );
+}
+
+test "at-rule merge proof accepts typed adjacent query and named layer blocks" {
+    const cases = [_][]const u8{
+        "@media  screen{.a{x:1}} /* gap */ @media screen{.b{y:2}}",
+        "@supports (display:grid){.a{x:1}}@supports (display:grid){.b{y:2}}",
+        "@container card (width>1px){.a{x:1}}@container card (width>1px){.b{y:2}}",
+        "@layer theme{.a{x:1}}@layer theme{.b{y:2}}",
+    };
+    for (cases) |css| {
+        var parsed = try pipeline.parse(std.testing.allocator, "at-rule-merge-proof.css", css);
+        defer parsed.deinit();
+        const proof = (try analyzeAtRuleMerge(
+            std.testing.allocator,
+            parsed.file(),
+            parsed.rules.rules,
+        )).?;
+        try std.testing.expectEqual(parsed.rules.rules[0].span().start, proof.source_span.start);
+        try std.testing.expectEqual(parsed.rules.rules[1].span().end, proof.source_span.end);
+    }
+}
+
+test "at-rule merge proof declines different anonymous empty and unsupported groups" {
+    const cases = [_][]const u8{
+        "@media screen{.a{x:1}}@media print{.b{y:2}}",
+        "@layer{.a{x:1}}@layer{.b{y:2}}",
+        "@layer first{.a{x:1}}@layer second{.b{y:2}}",
+        "@supports (display:grid){}@supports (display:grid){.b{y:2}}",
+        "@scope (.root){.a{x:1}}@scope (.root){.b{y:2}}",
+        "@media screen{.a{x:1}}@supports (display:grid){.b{y:2}}",
+    };
+    for (cases) |css| {
+        var parsed = try pipeline.parse(std.testing.allocator, "at-rule-merge-decline.css", css);
+        defer parsed.deinit();
+        try std.testing.expect((try analyzeAtRuleMerge(
+            std.testing.allocator,
+            parsed.file(),
+            parsed.rules.rules,
+        )) == null);
+    }
 }

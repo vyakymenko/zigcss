@@ -825,10 +825,11 @@ pub const Rule = union(enum) {
 
 pub const GeneratedRuleKind = enum {
     selector_list_merge,
+    group_at_rule_merge,
 
     pub fn inputCount(self: GeneratedRuleKind) usize {
         return switch (self) {
-            .selector_list_merge => 2,
+            .selector_list_merge, .group_at_rule_merge => 2,
         };
     }
 };
@@ -954,7 +955,44 @@ fn validateGeneratedRuleStructure(
                 second.selectors.selectors.len,
             ) catch return error.InvalidRule;
         },
+        .group_at_rule_merge => {
+            if (inputs[0] != .at_rule or inputs[1] != .at_rule) return error.InvalidRule;
+            const first = inputs[0].at_rule;
+            const second = inputs[1].at_rule;
+            _ = try AtRule.init(first.*);
+            _ = try AtRule.init(second.*);
+            const first_block = generatedAtRuleMergeBlock(first) orelse return error.InvalidRule;
+            const second_block = generatedAtRuleMergeBlock(second) orelse return error.InvalidRule;
+            if (first_block.nested != second_block.nested) return error.InvalidRule;
+        },
     }
+}
+
+fn generatedAtRuleMergeBlock(rule: *const AtRule) ?*const RulesBlock {
+    const block = switch (rule.block) {
+        .rules => |value| value,
+        else => return null,
+    };
+    if (!block.envelope.terminated() or block.rules.rules.len == 0) return null;
+    for (block.rules.rules) |child| if (child == .nested_declarations) return null;
+    const details = rule.details orelse return null;
+    if (std.ascii.eqlIgnoreCase(rule.name.value, "media")) return switch (details) {
+        .media => |value| if (value.block == block) block else null,
+        else => null,
+    };
+    if (std.ascii.eqlIgnoreCase(rule.name.value, "supports")) return switch (details) {
+        .supports => |value| if (value.block == block) block else null,
+        else => null,
+    };
+    if (std.ascii.eqlIgnoreCase(rule.name.value, "container")) return switch (details) {
+        .container => |value| if (value.block == block) block else null,
+        else => null,
+    };
+    if (std.ascii.eqlIgnoreCase(rule.name.value, "layer")) return switch (details) {
+        .layer => |value| if (!value.statement and value.names.len == 1) block else null,
+        else => null,
+    };
+    return null;
 }
 
 fn generatedSelectorMergeBlockEligible(block: *const StyleBlock) bool {

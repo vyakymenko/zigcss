@@ -1,4 +1,5 @@
 pub const pass_manager = @import("transform/pass_manager.zig");
+pub const at_rule_merge = @import("transform/at_rule_merge.zig");
 pub const empty_cleanup = @import("transform/empty_cleanup.zig");
 pub const duplicate_declarations = @import("transform/duplicate_declarations.zig");
 pub const color_zero_shortening = @import("transform/color_zero_shortening.zig");
@@ -10,6 +11,7 @@ pub const selector_rule_merge = @import("transform/selector_rule_merge.zig");
 
 test {
     _ = pass_manager;
+    _ = at_rule_merge;
     _ = empty_cleanup;
     _ = duplicate_declarations;
     _ = color_zero_shortening;

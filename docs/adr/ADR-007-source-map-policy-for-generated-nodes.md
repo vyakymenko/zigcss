@@ -35,6 +35,8 @@ For one declaration synthesized from multiple adjacent declarations, the generat
 
 A logical rule assembled from authored segments is compositional rather than one opaque generated payload. For an adjacent selector-list merge, the output-start mapping anchors the validated multi-input causal span, each verbatim authored selector list and the surviving declaration block retain their own mappings, and the omitted duplicate declaration block receives none. Structural separators inserted between authored selector lists receive no mapping because no individual authored byte caused them. This exception does not permit arbitrary generated rule text: the AST retains both complete input rules, and the emitter must independently re-prove adjacency, declaration equivalence, and source containment before composing their typed selectors and authored block.
 
+An adjacent typed group-rule merge follows the same compositional rule. The first authored at-rule header and both ordered child rule streams retain their mappings; the removed second header and structural braces receive none. The output-start mapping anchors the joint causal span, while child mappings continue to point into their respective original blocks. The emitter independently re-proves group kind, condition or named-layer identity, nesting mode, child eligibility, and source containment before writing the composition.
+
 Mappings remain ordered four-field Source Map v3 segments with original and generated columns measured in zero-based UTF-16 code units. `sources`, optional `sourcesContent`, and source identity continue to describe the original file only; transforms do not synthesize source content or implicit source-map comments.
 
 ### Validation obligations

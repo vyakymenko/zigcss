@@ -81,6 +81,14 @@ Nested style rules are eligible only when both blocks contain declarations and n
 
 The AST retains both complete authored rules plus ordered non-overlapping proof metadata. Property identity, importance, numeric token type/sign, decoded token text, nested component structure, meaningful whitespace, custom-property token boundaries, and authored value comments are compared before eligibility. The emitter independently repeats that proof before composing typed selectors with the first authored block, and `ADR-007` defines mappings for the retained authored segments and unmapped structural separator. The pass remains available only through explicit semantic-rewrite policy and the test driver.
 
+### Adjacent typed group-rule merge
+
+`OPT-015` is limited to adjacent typed `@media`, `@supports`, `@container`, and named `@layer` rule blocks. [CSS Conditional Rules Level 3](https://drafts.csswg.org/css-conditional-3/) applies the contents of a true conditional group as though they occurred at the group's location, and [CSS Conditional Rules Level 5](https://drafts.csswg.org/css-conditional/) defines `@container` as a conditional group rule. Two adjacent groups of the same kind, nesting mode, and structurally equivalent condition can therefore share one header while their complete child streams remain in source order. Different, untyped, recovered, empty, or non-rule-block contexts remain authored.
+
+[CSS Cascade Level 5](https://drafts.csswg.org/css-cascade-5/) defines identical named layer paths as the same cascade layer and fixes layer order by the first declaration of that name. Combining adjacent blocks with one identical nonempty name retains that first occurrence and concatenates contents without crossing another layer or rule. Anonymous layer occurrences have unique identities and are never merged. Nested named layers are considered only within their existing parent rule list, so a child cannot escape or change parent layer context.
+
+The current independent oracle cannot prove direct declaration runs inside nested conditional groups: Lightning CSS 1.30.1 serializes the two-group input without a required declaration separator. `OPT-015` therefore excludes any candidate block whose immediate child list contains a nested-declarations rule, even though ordinary nested style-rule groups remain eligible. Both authored at-rules remain as proof metadata; the emitter rechecks typed kind, prelude equivalence, layer identity, termination, nesting mode, child shape, adjacency, and source containment before composing the first header with both child streams. The pass is available only through semantic-rewrite policy and the test driver.
+
 ### Deterministic planning
 
 - Requested passes include their transitive dependencies.

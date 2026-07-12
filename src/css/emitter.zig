@@ -88,7 +88,7 @@ fn emitInternal(
         .source_map_builder = source_map_builder,
     };
     errdefer emitter.output.deinit(allocator);
-    try emitter.writeRuleList(rules, 0, true, false);
+    try emitter.writeRuleList(rules, 0, true, false, false);
     if ((options.final_newline orelse (options.mode == .pretty)) and emitter.output.items.len > 0) {
         try emitter.appendByte('\n');
     }
@@ -125,6 +125,7 @@ const Emitter = struct {
         depth: usize,
         top_level: bool,
         allow_nested_declarations: bool,
+        external_following_rule: bool,
     ) Error!void {
         try self.validateRuleCoverage(rules, top_level, allow_nested_declarations);
         const output_count = try logicalRuleCount(rules);
@@ -149,7 +150,11 @@ const Emitter = struct {
                 }
                 const rule = rules.rules[rule_index];
                 if (self.pretty() and rule != .nested_declarations) try self.writeIndent(depth);
-                try self.writeRule(rule, depth, output_index + 1 < output_count);
+                try self.writeRule(
+                    rule,
+                    depth,
+                    output_index + 1 < output_count or external_following_rule,
+                );
                 rule_index += 1;
             }
             output_index += 1;
@@ -193,7 +198,85 @@ const Emitter = struct {
                 try self.writePrettySpace();
                 try self.writeStyleBlock(&first.block, depth);
             },
+            .group_at_rule_merge => {
+                const proof = rule_merge.analyzeAtRuleMerge(self.allocator, self.file, inputs) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.SourceMismatch => return error.SourceMismatch,
+                    error.InvalidSpan => return error.InvalidSpan,
+                    error.InvalidAst, error.InvalidToken => return error.InvalidAst,
+                } orelse return error.InvalidAst;
+                if (!spansEqual(proof.source_span, generated.source_span)) return error.InvalidAst;
+                const first = inputs[0].at_rule;
+                const second = inputs[1].at_rule;
+                const first_block = switch (first.block) {
+                    .rules => |value| value,
+                    else => return error.InvalidAst,
+                };
+                const second_block = switch (second.block) {
+                    .rules => |value| value,
+                    else => return error.InvalidAst,
+                };
+                try self.mark(first.span);
+                try self.writeAtRuleHeader(first);
+                try self.writeAtRuleBlockSeparator(first);
+                try self.writeMergedRulesBlock(first_block, second_block, depth);
+            },
         }
+    }
+
+    fn writeMergedRulesBlock(
+        self: *Emitter,
+        first: *const ast.RulesBlock,
+        second: *const ast.RulesBlock,
+        depth: usize,
+    ) Error!void {
+        _ = (if (first.nested)
+            ast.RulesBlock.initNested(first.envelope, first.rules)
+        else
+            ast.RulesBlock.init(first.envelope, first.rules)) catch return error.InvalidAst;
+        _ = (if (second.nested)
+            ast.RulesBlock.initNested(second.envelope, second.rules)
+        else
+            ast.RulesBlock.init(second.envelope, second.rules)) catch return error.InvalidAst;
+        if (first.nested != second.nested) return error.InvalidAst;
+        if (!first.envelope.terminated() or !second.envelope.terminated()) {
+            return error.UnterminatedSyntax;
+        }
+        const first_count = try logicalRuleCount(&first.rules);
+        const second_count = try logicalRuleCount(&second.rules);
+        const total_count = std.math.add(usize, first_count, second_count) catch {
+            return error.InvalidAst;
+        };
+        try self.appendByte('{');
+        if (total_count == 0) {
+            try self.appendByte('}');
+            return;
+        }
+        if (self.pretty()) try self.appendByte('\n');
+        if (first_count > 0) {
+            try self.writeRuleList(
+                &first.rules,
+                depth + 1,
+                false,
+                first.nested,
+                second_count > 0,
+            );
+        }
+        if (first_count > 0 and second_count > 0 and self.pretty()) try self.appendByte('\n');
+        if (second_count > 0) {
+            try self.writeRuleList(
+                &second.rules,
+                depth + 1,
+                false,
+                second.nested,
+                false,
+            );
+        }
+        if (self.pretty()) {
+            try self.appendByte('\n');
+            try self.writeIndent(depth);
+        }
+        try self.appendByte('}');
     }
 
     fn writeRule(self: *Emitter, rule: ast.Rule, depth: usize, terminate_nested: bool) Error!void {
@@ -348,19 +431,7 @@ const Emitter = struct {
     fn writeAtRule(self: *Emitter, rule: *const ast.AtRule, depth: usize) Error!void {
         _ = ast.AtRule.init(rule.*) catch return error.InvalidAst;
         if (!structuredDetailsMatch(rule)) return error.UnrepresentableRecovery;
-        try self.appendByte('@');
-        try self.writeIdentifier(rule.name.value);
-
-        const page = pageDetails(rule.details);
-        if (page) |details| {
-            if (details.selectors.len > 0) {
-                try self.appendByte(' ');
-                try self.writePageSelectors(details.selectors);
-            }
-        } else if (hasNonWhitespace(rule.prelude.values)) {
-            if (rule.details != null or beginsWithWhitespace(rule.prelude.values)) try self.appendByte(' ');
-            try self.writeComponentValues(rule.prelude.values);
-        }
+        try self.writeAtRuleHeader(rule);
 
         switch (rule.block) {
             .none => try self.appendByte(';'),
@@ -378,12 +449,28 @@ const Emitter = struct {
             },
             .raw => |block| {
                 try self.writeAtRuleBlockSeparator(rule);
-                if (page) |details| {
+                if (pageDetails(rule.details)) |details| {
                     try self.writePageBlock(details, block, depth);
                 } else {
                     try self.writeRawBlock(block);
                 }
             },
+        }
+    }
+
+    fn writeAtRuleHeader(self: *Emitter, rule: *const ast.AtRule) Error!void {
+        try self.appendByte('@');
+        try self.writeIdentifier(rule.name.value);
+
+        const page = pageDetails(rule.details);
+        if (page) |details| {
+            if (details.selectors.len > 0) {
+                try self.appendByte(' ');
+                try self.writePageSelectors(details.selectors);
+            }
+        } else if (hasNonWhitespace(rule.prelude.values)) {
+            if (rule.details != null or beginsWithWhitespace(rule.prelude.values)) try self.appendByte(' ');
+            try self.writeComponentValues(rule.prelude.values);
         }
     }
 
@@ -400,7 +487,7 @@ const Emitter = struct {
             return;
         }
         if (self.pretty()) try self.appendByte('\n');
-        try self.writeRuleList(&block.rules, depth + 1, false, block.nested);
+        try self.writeRuleList(&block.rules, depth + 1, false, block.nested, false);
         if (self.pretty()) {
             try self.appendByte('\n');
             try self.writeIndent(depth);
@@ -431,7 +518,7 @@ const Emitter = struct {
         }
         if (has_rules) {
             if (has_declarations and self.pretty()) try self.appendByte('\n');
-            try self.writeRuleList(&block.rules, depth + 1, false, true);
+            try self.writeRuleList(&block.rules, depth + 1, false, true, false);
         }
         if (self.pretty()) {
             try self.appendByte('\n');
@@ -1541,6 +1628,103 @@ test "selector merge emission rejects semantically different declaration blocks"
     const file = try context.sources.get(parsed[0]);
     const generated = [_]ast.GeneratedRule{.{
         .kind = .selector_list_merge,
+        .first_rule = 0,
+        .source_span = file.fullSpan(),
+    }};
+    const forged = try ast.RuleList.initWithGeneratedRules(
+        parsed[1].span,
+        parsed[1].rules,
+        parsed[1].omitted_rules,
+        &generated,
+    );
+    try std.testing.expectError(
+        error.InvalidAst,
+        emit(std.testing.allocator, file, &forged, .{ .mode = .minified }),
+    );
+}
+
+test "proof-carrying at-rule merge composes child mappings in source order" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "generated-at-rule-merge.css",
+        "@media screen{.a{x:1}}/*gap*/@media screen{.b{y:2}}.keep{z:3}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const generated = [_]ast.GeneratedRule{.{
+        .kind = .group_at_rule_merge,
+        .first_rule = 0,
+        .source_span = .{
+            .source = file.id,
+            .start = parsed[1].rules[0].span().start,
+            .end = parsed[1].rules[1].span().end,
+        },
+    }};
+    const transformed = try ast.RuleList.initWithGeneratedRules(
+        parsed[1].span,
+        parsed[1].rules,
+        parsed[1].omitted_rules,
+        &generated,
+    );
+
+    const pretty_output = try emit(std.testing.allocator, file, &transformed, .{});
+    defer std.testing.allocator.free(pretty_output);
+    try std.testing.expectEqualStrings(
+        "@media screen {\n  .a {\n    x: 1;\n  }\n  .b {\n    y: 2;\n  }\n}\n" ++
+            ".keep {\n  z: 3;\n}\n",
+        pretty_output,
+    );
+
+    var mapped = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        &transformed,
+        .{ .mode = .minified },
+        .{},
+    );
+    defer mapped.deinit();
+    try std.testing.expectEqualStrings(
+        "@media screen{.a{x:1}.b{y:2}}.keep{z:3}",
+        mapped.css,
+    );
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, mapped.source_map, .{});
+    defer json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const second = parsed[1].rules[1].at_rule.block.rules.rules.rules[0].style_rule;
+    const sibling = parsed[1].rules[2].style_rule;
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(std.mem.indexOf(u8, mapped.css, ".b").?),
+        .original_line = 0,
+        .original_column = @intCast(second.selectors.selectors[0].span.start),
+    }));
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(std.mem.indexOf(u8, mapped.css, ".keep").?),
+        .original_line = 0,
+        .original_column = @intCast(sibling.selectors.selectors[0].span.start),
+    }));
+    for (mappings) |mapping| {
+        try std.testing.expect(mapping.original_column != parsed[1].rules[1].span().start);
+    }
+}
+
+test "at-rule merge emission rejects a different query proof" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "forged-at-rule-merge.css",
+        "@media screen{.a{x:1}}@media print{.b{y:2}}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const generated = [_]ast.GeneratedRule{.{
+        .kind = .group_at_rule_merge,
         .first_rule = 0,
         .source_span = file.fullSpan(),
     }};

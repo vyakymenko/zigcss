@@ -86,6 +86,26 @@ const Comparator = struct {
         generated: LogicalGeneratedRule,
         generated_is_left: bool,
     ) Error!bool {
+        return switch (generated.proof.kind) {
+            .selector_list_merge => self.authoredMatchesGeneratedSelectorRule(
+                authored,
+                generated,
+                generated_is_left,
+            ),
+            .group_at_rule_merge => self.authoredMatchesGeneratedAtRule(
+                authored,
+                generated,
+                generated_is_left,
+            ),
+        };
+    }
+
+    fn authoredMatchesGeneratedSelectorRule(
+        self: *Comparator,
+        authored: ast.Rule,
+        generated: LogicalGeneratedRule,
+        generated_is_left: bool,
+    ) Error!bool {
         const style = switch (authored) {
             .style_rule => |value| value,
             else => return false,
@@ -116,6 +136,49 @@ const Comparator = struct {
             ) and try self.ruleLists(&style.block.rules, &proof_style.block.rules);
     }
 
+    fn authoredMatchesGeneratedAtRule(
+        self: *Comparator,
+        authored: ast.Rule,
+        generated: LogicalGeneratedRule,
+        generated_is_left: bool,
+    ) Error!bool {
+        const at_rule = switch (authored) {
+            .at_rule => |value| value,
+            else => return false,
+        };
+        _ = try self.generatedRuleProof(generated, if (generated_is_left) self.left_file else self.right_file) orelse return false;
+        const first = generated.inputs[0].at_rule;
+        const second = generated.inputs[1].at_rule;
+        const first_block = switch (first.block) {
+            .rules => |value| value,
+            else => return false,
+        };
+        const second_block = switch (second.block) {
+            .rules => |value| value,
+            else => return false,
+        };
+        const authored_block = switch (at_rule.block) {
+            .rules => |value| value,
+            else => return false,
+        };
+        if (authored_block.nested != first_block.nested or
+            first_block.nested != second_block.nested)
+        {
+            return false;
+        }
+        const same_header = if (generated_is_left)
+            try self.atRuleHeaders(first, at_rule)
+        else
+            try self.atRuleHeaders(at_rule, first);
+        if (!same_header) return false;
+        return self.ruleListMatchesConcatenated(
+            &authored_block.rules,
+            &first_block.rules,
+            &second_block.rules,
+            generated_is_left,
+        );
+    }
+
     fn generatedRules(
         self: *Comparator,
         left: LogicalGeneratedRule,
@@ -124,6 +187,17 @@ const Comparator = struct {
         if (left.proof.kind != right.proof.kind) return false;
         _ = try self.generatedRuleProof(left, self.left_file) orelse return false;
         _ = try self.generatedRuleProof(right, self.right_file) orelse return false;
+        return switch (left.proof.kind) {
+            .selector_list_merge => self.generatedSelectorRules(left, right),
+            .group_at_rule_merge => self.generatedAtRules(left, right),
+        };
+    }
+
+    fn generatedSelectorRules(
+        self: *Comparator,
+        left: LogicalGeneratedRule,
+        right: LogicalGeneratedRule,
+    ) Error!bool {
         const selector_count = generatedSelectorCount(left);
         if (selector_count != generatedSelectorCount(right)) return false;
         for (0..selector_count) |index| {
@@ -138,13 +212,53 @@ const Comparator = struct {
         );
     }
 
+    fn generatedAtRules(
+        self: *Comparator,
+        left: LogicalGeneratedRule,
+        right: LogicalGeneratedRule,
+    ) Error!bool {
+        const left_first = left.inputs[0].at_rule;
+        const left_second = left.inputs[1].at_rule;
+        const right_first = right.inputs[0].at_rule;
+        const right_second = right.inputs[1].at_rule;
+        const left_first_block = switch (left_first.block) {
+            .rules => |value| value,
+            else => return false,
+        };
+        const left_second_block = switch (left_second.block) {
+            .rules => |value| value,
+            else => return false,
+        };
+        const right_first_block = switch (right_first.block) {
+            .rules => |value| value,
+            else => return false,
+        };
+        const right_second_block = switch (right_second.block) {
+            .rules => |value| value,
+            else => return false,
+        };
+        if (left_first_block.nested != left_second_block.nested or
+            right_first_block.nested != right_second_block.nested or
+            left_first_block.nested != right_first_block.nested or
+            !try self.atRuleHeaders(left_first, right_first))
+        {
+            return false;
+        }
+        return self.concatenatedRuleLists(
+            &left_first_block.rules,
+            &left_second_block.rules,
+            &right_first_block.rules,
+            &right_second_block.rules,
+        );
+    }
+
     fn generatedRuleProof(
         self: *Comparator,
         generated: LogicalGeneratedRule,
         file: *const source.SourceFile,
-    ) Error!?rule_merge.SelectorMergeProof {
+    ) Error!?GeneratedRuleProof {
         const proof = switch (generated.proof.kind) {
-            .selector_list_merge => rule_merge.analyzeSelectorMerge(
+            .selector_list_merge => if (rule_merge.analyzeSelectorMerge(
                 self.allocator,
                 file,
                 generated.inputs,
@@ -153,15 +267,70 @@ const Comparator = struct {
                 error.SourceMismatch => return error.SourceMismatch,
                 error.InvalidSpan => return error.InvalidSpan,
                 error.InvalidAst, error.InvalidToken => null,
-            },
+            }) |value| GeneratedRuleProof{ .selector_list_merge = value } else null,
+            .group_at_rule_merge => if (rule_merge.analyzeAtRuleMerge(
+                self.allocator,
+                file,
+                generated.inputs,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.SourceMismatch => return error.SourceMismatch,
+                error.InvalidSpan => return error.InvalidSpan,
+                error.InvalidAst, error.InvalidToken => null,
+            }) |value| GeneratedRuleProof{ .group_at_rule_merge = value } else null,
         } orelse return null;
-        if (!proof.source_span.source.eql(generated.proof.source_span.source) or
-            proof.source_span.start != generated.proof.source_span.start or
-            proof.source_span.end != generated.proof.source_span.end)
+        const source_span = proof.sourceSpan();
+        if (!source_span.source.eql(generated.proof.source_span.source) or
+            source_span.start != generated.proof.source_span.start or
+            source_span.end != generated.proof.source_span.end)
         {
             return null;
         }
         return proof;
+    }
+
+    fn ruleListMatchesConcatenated(
+        self: *Comparator,
+        authored: *const ast.RuleList,
+        first: *const ast.RuleList,
+        second: *const ast.RuleList,
+        concatenated_is_left: bool,
+    ) Error!bool {
+        var authored_iterator = LogicalRuleIterator{ .list = authored };
+        var concatenated_iterator = ConcatenatedRuleIterator.init(first, second);
+        while (true) {
+            const authored_rule = authored_iterator.next();
+            const concatenated_rule = concatenated_iterator.next();
+            if (authored_rule == null or concatenated_rule == null) {
+                return authored_rule == null and concatenated_rule == null and
+                    !authored_iterator.invalid and !concatenated_iterator.invalid;
+            }
+            const same = if (concatenated_is_left)
+                try self.logicalRules(concatenated_rule.?, authored_rule.?)
+            else
+                try self.logicalRules(authored_rule.?, concatenated_rule.?);
+            if (!same) return false;
+        }
+    }
+
+    fn concatenatedRuleLists(
+        self: *Comparator,
+        left_first: *const ast.RuleList,
+        left_second: *const ast.RuleList,
+        right_first: *const ast.RuleList,
+        right_second: *const ast.RuleList,
+    ) Error!bool {
+        var left_iterator = ConcatenatedRuleIterator.init(left_first, left_second);
+        var right_iterator = ConcatenatedRuleIterator.init(right_first, right_second);
+        while (true) {
+            const left_rule = left_iterator.next();
+            const right_rule = right_iterator.next();
+            if (left_rule == null or right_rule == null) {
+                return left_rule == null and right_rule == null and
+                    !left_iterator.invalid and !right_iterator.invalid;
+            }
+            if (!try self.logicalRules(left_rule.?, right_rule.?)) return false;
+        }
     }
 
     fn rules(self: *Comparator, left: ast.Rule, right: ast.Rule) Error!bool {
@@ -443,18 +612,9 @@ const Comparator = struct {
     }
 
     fn atRules(self: *Comparator, left: *const ast.AtRule, right: *const ast.AtRule) Error!bool {
-        if (!identifiersEqual(left.name, right.name) or !detailsTagsEqual(left.details, right.details)) {
-            return false;
-        }
+        if (!try self.atRuleHeaders(left, right)) return false;
         const left_page = pageDetails(left.details);
         const right_page = pageDetails(right.details);
-        if (left_page == null) {
-            const same_prelude = if (left.details == null)
-                try self.rawComponentLists(left.prelude.values, right.prelude.values)
-            else
-                try self.componentLists(left.prelude.values, right.prelude.values);
-            if (!same_prelude) return false;
-        }
         return switch (left.block) {
             .none => switch (right.block) {
                 .none => true,
@@ -487,6 +647,23 @@ const Comparator = struct {
                 else => false,
             },
         };
+    }
+
+    fn atRuleHeaders(self: *Comparator, left: *const ast.AtRule, right: *const ast.AtRule) Error!bool {
+        if (!identifiersEqual(left.name, right.name) or !detailsTagsEqual(left.details, right.details)) {
+            return false;
+        }
+        const left_page = pageDetails(left.details);
+        const right_page = pageDetails(right.details);
+        if ((left_page == null) != (right_page == null)) return false;
+        if (left_page == null) {
+            const same_prelude = if (left.details == null)
+                try self.rawComponentLists(left.prelude.values, right.prelude.values)
+            else
+                try self.componentLists(left.prelude.values, right.prelude.values);
+            if (!same_prelude) return false;
+        }
+        return true;
     }
 
     fn keyframes(
@@ -619,6 +796,18 @@ const LogicalGeneratedRule = struct {
     inputs: []const ast.Rule,
 };
 
+const GeneratedRuleProof = union(enum) {
+    selector_list_merge: rule_merge.SelectorMergeProof,
+    group_at_rule_merge: rule_merge.AtRuleMergeProof,
+
+    fn sourceSpan(self: GeneratedRuleProof) source.Span {
+        return switch (self) {
+            .selector_list_merge => |value| value.source_span,
+            .group_at_rule_merge => |value| value.source_span,
+        };
+    }
+};
+
 const LogicalRule = union(enum) {
     authored: ast.Rule,
     generated: LogicalGeneratedRule,
@@ -667,6 +856,35 @@ const LogicalRuleIterator = struct {
         const result = LogicalRule{ .authored = self.list.rules[self.rule_index] };
         self.rule_index += 1;
         return result;
+    }
+};
+
+const ConcatenatedRuleIterator = struct {
+    first: LogicalRuleIterator,
+    second: LogicalRuleIterator,
+    using_second: bool = false,
+    invalid: bool = false,
+
+    fn init(first: *const ast.RuleList, second: *const ast.RuleList) ConcatenatedRuleIterator {
+        return .{
+            .first = .{ .list = first },
+            .second = .{ .list = second },
+        };
+    }
+
+    fn next(self: *ConcatenatedRuleIterator) ?LogicalRule {
+        if (self.invalid) return null;
+        if (!self.using_second) {
+            if (self.first.next()) |rule| return rule;
+            if (self.first.invalid) {
+                self.invalid = true;
+                return null;
+            }
+            self.using_second = true;
+        }
+        if (self.second.next()) |rule| return rule;
+        if (self.second.invalid) self.invalid = true;
+        return null;
     }
 };
 

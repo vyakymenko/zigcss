@@ -9,6 +9,7 @@ pub const equivalence = @import("css/equivalence.zig");
 pub const pipeline = @import("css/pipeline.zig");
 pub const color = @import("css/color.zig");
 pub const color_value = @import("css/color_value.zig");
+pub const component_compare = @import("css/component_compare.zig");
 pub const numeric_unit = @import("css/numeric_unit.zig");
 pub const numeric_value = @import("css/numeric_value.zig");
 pub const shorthand = @import("css/shorthand.zig");
@@ -26,6 +27,7 @@ test {
     _ = pipeline;
     _ = color;
     _ = color_value;
+    _ = component_compare;
     _ = numeric_unit;
     _ = numeric_value;
     _ = shorthand;
