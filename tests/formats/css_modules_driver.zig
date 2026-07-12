@@ -56,6 +56,7 @@ pub fn main() !void {
         .{std.json.fmt(.{
             .css = result.css,
             .exports = module_exports.entries,
+            .dependencies = result.dependencies,
         }, .{})},
     );
     try writer.interface.flush();

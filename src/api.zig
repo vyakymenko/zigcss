@@ -88,6 +88,8 @@ pub const Diagnostic = struct {
 pub const CssModuleLimits = css_modules.Limits;
 /// Result-owned decoded authored name and generated CSS identifier.
 pub const ModuleExport = css_modules.Export;
+pub const ModuleReference = css_modules.Reference;
+pub const ModuleDependencyReference = css_modules.DependencyReference;
 
 pub const ModuleExports = struct {
     /// Unique entries in first authored occurrence order.
@@ -199,10 +201,11 @@ fn compileInternal(
         defer dependency_list.deinit();
         if (!parsed.hasErrors()) {
             const dependency_started_ns = profile.startStage();
-            dependency_list = try dependencies.collect(
+            dependency_list = try dependencies.collectWithExtra(
                 work_allocator,
                 &parsed,
                 options.dependency_limits,
+                prepared_modules.dependencyCandidates(),
             );
             profile.endStage(.dependencies, dependency_started_ns);
         }
@@ -477,6 +480,10 @@ fn pipelineOptions(
             .css => null,
             .css_modules => prepared_modules.scopes(),
         },
+        .omit_declarations = switch (options.syntax) {
+            .css => null,
+            .css_modules => prepared_modules.declarationsToOmit(),
+        },
     };
 }
 
@@ -563,12 +570,7 @@ fn releaseDiagnosticFields(allocator: std.mem.Allocator, items: []const Diagnost
 
 fn releaseModuleExports(allocator: std.mem.Allocator, exports: ?ModuleExports) void {
     const module_exports = exports orelse return;
-    if (module_exports.entries.len == 0) return;
-    for (module_exports.entries) |entry| {
-        if (entry.name.len > 0) allocator.free(entry.name);
-        if (entry.value.len > 0) allocator.free(entry.value);
-    }
-    allocator.free(module_exports.entries);
+    css_modules.release(allocator, module_exports.entries);
 }
 
 test "public compile returns owned CSS maps dependencies and no CSS modules" {
@@ -1356,23 +1358,154 @@ test "CSS Modules global-only scope publishes an owned empty export set" {
     try std.testing.expectEqualStrings(".shared{color:red}", result.css);
 }
 
+test "CSS Modules composition owns ordered local global and dependency references" {
+    const input =
+        "@import \"base.css\";.base{color:red}" ++
+        ".item{composes:base;composes:reset from global;" ++
+        "composes:button icon from \"./theme.module.css\";background:blue}";
+    var result = try compile(
+        std.testing.allocator,
+        "composition.module.css",
+        input,
+        .{
+            .syntax = .css_modules,
+            .format = .minified,
+            .source_map = .{ .external = .{} },
+        },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "composes") == null);
+    const entries = result.module_exports.?.entries;
+    try std.testing.expectEqual(@as(usize, 2), entries.len);
+    try std.testing.expectEqualStrings("base", entries[0].name);
+    try std.testing.expectEqualStrings("item", entries[1].name);
+    try std.testing.expectEqual(@as(usize, 4), entries[1].composes.len);
+    switch (entries[1].composes[0]) {
+        .local => |name| try std.testing.expectEqualStrings(entries[0].value, name),
+        else => return error.UnexpectedModuleReference,
+    }
+    switch (entries[1].composes[1]) {
+        .global => |name| try std.testing.expectEqualStrings("reset", name),
+        else => return error.UnexpectedModuleReference,
+    }
+    const expected_dependency_names = [_][]const u8{ "button", "icon" };
+    for (entries[1].composes[2..], expected_dependency_names) |reference, expected_name| {
+        switch (reference) {
+            .dependency => |dependency| {
+                try std.testing.expectEqualStrings(expected_name, dependency.name);
+                try std.testing.expectEqualStrings("./theme.module.css", dependency.specifier);
+            },
+            else => return error.UnexpectedModuleReference,
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 2), result.dependencies.len);
+    try std.testing.expectEqual(dependencies.Kind.import, result.dependencies[0].kind);
+    try std.testing.expectEqual(dependencies.Kind.css_module, result.dependencies[1].kind);
+    try std.testing.expectEqualStrings("./theme.module.css", result.dependencies[1].specifier);
+    try std.testing.expectEqualStrings(
+        "composition.module.css",
+        result.dependencies[1].source_name,
+    );
+    try std.testing.expect(result.dependencies[1].span.start < result.dependencies[1].span.end);
+
+    var map_json = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        result.source_map.?,
+        .{},
+    );
+    defer map_json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        map_json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const composes_start = std.mem.indexOf(u8, input, "composes").?;
+    const background_start = std.mem.indexOf(u8, input, "background").?;
+    var found_composes_mapping = false;
+    var found_background_mapping = false;
+    for (mappings) |mapping| {
+        if (mapping.original_line != 0) continue;
+        found_composes_mapping = found_composes_mapping or
+            mapping.original_column == composes_start;
+        found_background_mapping = found_background_mapping or
+            mapping.original_column == background_start;
+    }
+    try std.testing.expect(!found_composes_mapping);
+    try std.testing.expect(found_background_mapping);
+
+    var reparsed = try pipeline.parse(std.testing.allocator, "composition-output.css", result.css);
+    defer reparsed.deinit();
+    try std.testing.expect(!reparsed.hasErrors());
+}
+
+test "CSS Modules rejects malformed unsafe and cyclic composition" {
+    const cases = [_][]const u8{
+        ".base{}.item.active{composes:base}",
+        ".base{}.item:hover{composes:base}",
+        ".item{composes:missing}",
+        ".a{composes:b}.b{composes:a}",
+        ".base{}.item{color:red;composes:base}",
+        ".base{}.item{composes:base!important}",
+        ".item{composes:}",
+        ".item{composes:from global}",
+        ".item{composes:base from}",
+        ".item{composes:base from other}",
+        ".item{composes:base from \"\"}",
+        ".base{}.item{composes:base from global extra}",
+        ".base{}.item{composes:(base)}",
+        ".base{}.item{composes-with:base}",
+        "@font-face{composes:base}",
+        ".base{}:local(.item){composes:base}",
+    };
+    for (cases) |input| {
+        var result = try compile(
+            std.testing.allocator,
+            "bad-composition.module.css",
+            input,
+            .{ .syntax = .css_modules, .format = .minified },
+        );
+        defer result.deinit();
+        if (result.css.len != 0) {
+            std.debug.print("unexpected CSS Modules composition success for {s}: {s}\n", .{
+                input,
+                result.css,
+            });
+            return error.UnexpectedModuleSuccess;
+        }
+        try std.testing.expectEqual(@as(usize, 0), result.dependencies.len);
+        try std.testing.expect(result.module_exports == null);
+        try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
+        try std.testing.expectEqual(
+            diagnostics.Code.unsupported_syntax,
+            result.diagnostics[0].code,
+        );
+    }
+}
+
 test "CSS Modules exports survive explicit moves and repeated cleanup" {
     var original = try compile(
         std.testing.allocator,
         "move.module.css",
-        ".card{x:1}",
+        ".base{x:0}.card{composes:base;composes:reset from global;" ++
+            "composes:button from \"./buttons.module.css\";x:1}",
         .{ .syntax = .css_modules, .format = .minified },
     );
     var moved = original.take();
     original.deinit();
     original.deinit();
     try std.testing.expect(original.module_exports == null);
-    try std.testing.expectEqualStrings("card", moved.module_exports.?.entries[0].name);
+    try std.testing.expectEqualStrings("card", moved.module_exports.?.entries[1].name);
     try std.testing.expect(std.mem.indexOf(
         u8,
         moved.css,
-        moved.module_exports.?.entries[0].value,
+        moved.module_exports.?.entries[1].value,
     ) != null);
+    try std.testing.expectEqual(@as(usize, 3), moved.module_exports.?.entries[1].composes.len);
+    try std.testing.expectEqual(dependencies.Kind.css_module, moved.dependencies[0].kind);
     moved.deinit();
     moved.deinit();
     try std.testing.expect(moved.module_exports == null);
@@ -1495,6 +1628,23 @@ test "CSS Modules validates identity limits and incompatible transforms" {
         rewrite_limited.diagnostics[0].code,
     );
 
+    var reference_limited = try compile(
+        std.testing.allocator,
+        "reference-limited.module.css",
+        ".item{composes:one two from \"./dependency.module.css\"}",
+        .{
+            .syntax = .css_modules,
+            .module_limits = .{ .max_references = 1 },
+        },
+    );
+    defer reference_limited.deinit();
+    try std.testing.expectEqual(@as(usize, 0), reference_limited.css.len);
+    try std.testing.expect(reference_limited.module_exports == null);
+    try std.testing.expectEqual(
+        diagnostics.Code.resource_limit,
+        reference_limited.diagnostics[0].code,
+    );
+
     var dependency_limited = try compile(
         std.testing.allocator,
         "dependency-limited.module.css",
@@ -1513,6 +1663,24 @@ test "CSS Modules validates identity limits and incompatible transforms" {
         dependency_limited.diagnostics[0].code,
     );
 
+    var combined_dependency_limited = try compile(
+        std.testing.allocator,
+        "combined-dependency-limited.module.css",
+        "@import \"one.css\";.item{composes:external from \"./module.css\"}",
+        .{
+            .syntax = .css_modules,
+            .dependency_limits = .{ .max_dependencies = 1 },
+        },
+    );
+    defer combined_dependency_limited.deinit();
+    try std.testing.expectEqual(@as(usize, 0), combined_dependency_limited.css.len);
+    try std.testing.expectEqual(@as(usize, 0), combined_dependency_limited.dependencies.len);
+    try std.testing.expect(combined_dependency_limited.module_exports == null);
+    try std.testing.expectEqual(
+        diagnostics.Code.resource_limit,
+        combined_dependency_limited.diagnostics[0].code,
+    );
+
     var empty = try compile(
         std.testing.allocator,
         "empty.module.css",
@@ -1528,7 +1696,9 @@ fn exerciseCssModulesAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
         "oom/components.module.css",
-        "@import \"theme.css\";.card:is(:local(.icon),:global(.reset),.card){color:red}",
+        "@import \"theme.css\";.base{x:0}.card{composes:base;" ++
+            "composes:reset from global;composes:external from \"./external.module.css\";" ++
+            "color:red}.scope:is(:local(.icon),:global(.reset)){x:1}",
         .{
             .syntax = .css_modules,
             .format = .minified,
@@ -1537,8 +1707,9 @@ fn exerciseCssModulesAllocationFailures(allocator: std.mem.Allocator) !void {
         },
     );
     defer result.deinit();
-    try std.testing.expectEqual(@as(usize, 2), result.module_exports.?.entries.len);
-    try std.testing.expectEqual(@as(usize, 1), result.dependencies.len);
+    try std.testing.expectEqual(@as(usize, 4), result.module_exports.?.entries.len);
+    try std.testing.expectEqual(@as(usize, 3), result.module_exports.?.entries[1].composes.len);
+    try std.testing.expectEqual(@as(usize, 2), result.dependencies.len);
     try std.testing.expect(result.source_map != null);
     try std.testing.expect(result.metrics != null);
 }

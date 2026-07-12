@@ -30,6 +30,9 @@ pub const Options = struct {
     /// Functional scope wrappers removed after their replacement compound is
     /// validated by the CSS Modules adapter.
     scope_rewrites: ?[]const module_names.Scope = null,
+    /// Adapter-owned declarations that have semantic result behavior but no
+    /// CSS representation, such as validated `composes` declarations.
+    omit_declarations: ?[]const source.Span = null,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -100,6 +103,9 @@ fn emitInternal(
     if (options.scope_rewrites) |entries| {
         if (options.class_rewrites == null) return error.InvalidMappings;
         module_names.validateScopes(entries) catch return error.InvalidMappings;
+    }
+    if (options.omit_declarations) |spans| {
+        module_names.validateSpans(spans) catch return error.InvalidMappings;
     }
     rules.validate() catch return error.InvalidAst;
     if (!rules.span.source.eql(file.id)) return error.SourceMismatch;
@@ -706,7 +712,7 @@ const Emitter = struct {
         try self.validateRuleCoverage(&block.rules, false, true);
 
         try self.appendByte('{');
-        const has_declarations = block.declarations.declarations.len > 0;
+        const has_declarations = try self.declarationOutputCount(&block.declarations) > 0;
         const has_rules = block.rules.rules.len > 0;
         if (!has_declarations and !has_rules) {
             try self.appendByte('}');
@@ -748,19 +754,20 @@ const Emitter = struct {
         depth: usize,
         terminate_last: bool,
     ) Error!void {
-        const output_count = try logicalDeclarationCount(declarations);
+        const output_count = try self.declarationOutputCount(declarations);
         var declaration_index: usize = 0;
         var generated_index: usize = 0;
         var output_index: usize = 0;
         while (declaration_index < declarations.declarations.len) {
-            if (output_index > 0 and self.pretty()) try self.appendByte('\n');
-            if (self.pretty()) try self.writeIndent(depth);
-            const terminate = self.pretty() or output_index + 1 < output_count or terminate_last;
             if (generated_index < declarations.generated_declarations.len and
                 declarations.generated_declarations[generated_index].first_declaration == declaration_index)
             {
                 const generated = declarations.generated_declarations[generated_index];
                 const generated_output_count = generated.outputCount() catch return error.InvalidAst;
+                if (generated_output_count > 0 and self.pretty()) {
+                    if (output_index > 0) try self.appendByte('\n');
+                    try self.writeIndent(depth);
+                }
                 const terminate_generated = self.pretty() or
                     output_index + generated_output_count < output_count or terminate_last;
                 try self.writeGeneratedDeclaration(
@@ -778,8 +785,13 @@ const Emitter = struct {
                 {
                     return error.InvalidAst;
                 }
-                try self.writeDeclaration(declarations.declarations[declaration_index], terminate);
+                const declaration = declarations.declarations[declaration_index];
                 declaration_index += 1;
+                if (self.omitDeclaration(declaration.span)) continue;
+                if (output_index > 0 and self.pretty()) try self.appendByte('\n');
+                if (self.pretty()) try self.writeIndent(depth);
+                const terminate = self.pretty() or output_index + 1 < output_count or terminate_last;
+                try self.writeDeclaration(declaration, terminate);
                 output_index += 1;
             }
         }
@@ -802,7 +814,7 @@ const Emitter = struct {
         if (!spansEqual(declarations.span, envelope.content)) return error.InvalidAst;
         try self.validateDeclarationCoverage(declarations);
         try self.appendByte('{');
-        if (declarations.declarations.len == 0) {
+        if (try self.declarationOutputCount(declarations) == 0) {
             try self.appendByte('}');
             return;
         }
@@ -813,6 +825,24 @@ const Emitter = struct {
             try self.writeIndent(depth);
         }
         try self.appendByte('}');
+    }
+
+    fn declarationOutputCount(
+        self: *const Emitter,
+        declarations: *const ast.DeclarationList,
+    ) Error!usize {
+        if (self.options.omit_declarations == null) return logicalDeclarationCount(declarations);
+        if (declarations.generated_declarations.len != 0) return error.InvalidMappings;
+        var count: usize = 0;
+        for (declarations.declarations) |declaration| {
+            if (!self.omitDeclaration(declaration.span)) count += 1;
+        }
+        return count;
+    }
+
+    fn omitDeclaration(self: *const Emitter, span: source.Span) bool {
+        const spans = self.options.omit_declarations orelse return false;
+        return module_names.containsSpan(spans, span);
     }
 
     fn writeDeclaration(self: *Emitter, declaration: ast.Declaration, terminate: bool) Error!void {

@@ -76,6 +76,36 @@ function canonicalize(css, label) {
   return result.code.toString('utf8')
 }
 
+function validateCompositionOracle(css, sourceName) {
+  let result
+  try {
+    result = transform({
+      filename: sourceName,
+      code: Buffer.from(css),
+      minify: true,
+      errorRecovery: false,
+      drafts: { nesting: true },
+      cssModules: { pattern: 'oracle_[local]_[hash]' },
+    })
+  } catch (error) {
+    fail(`Lightning CSS rejected the composition oracle input: ${error.message}`)
+  }
+  if (result.warnings.length !== 0) {
+    fail(`composition oracle emitted warnings: ${JSON.stringify(result.warnings)}`)
+  }
+  const base = result.exports?.base
+  const item = result.exports?.item
+  if (!base || !item) fail('composition oracle omitted base or item exports')
+  const expected = [
+    { type: 'local', name: base.name },
+    { type: 'global', name: 'global-reset' },
+    { type: 'dependency', name: 'external', specifier: './external.module.css' },
+  ]
+  if (JSON.stringify(item.composes) !== JSON.stringify(expected)) {
+    fail(`Lightning CSS composition projection differs: ${JSON.stringify(item.composes)}`)
+  }
+}
+
 function validateSuccess(result, sourceName, mode) {
   if (result.status !== 0) {
     fail(`CSS Modules ${mode} driver exited ${result.status}\n${result.stderr}`)
@@ -87,10 +117,14 @@ function validateSuccess(result, sourceName, mode) {
   } catch (error) {
     fail(`CSS Modules ${mode} emitted invalid JSON: ${error.message}\n${result.stdout}`)
   }
-  if (typeof payload.css !== 'string' || !Array.isArray(payload.exports)) {
+  if (
+    typeof payload.css !== 'string' ||
+    !Array.isArray(payload.exports) ||
+    !Array.isArray(payload.dependencies)
+  ) {
     fail(`CSS Modules ${mode} payload has the wrong shape`)
   }
-  const expectedClasses = ['card', 'icon', 'badge', '🔥']
+  const expectedClasses = ['card', 'icon', 'badge', '🔥', 'base', 'item']
   if (JSON.stringify(payload.exports.map(entry => entry.name)) !== JSON.stringify(expectedClasses)) {
     fail(`CSS Modules ${mode} exports are not unique first-seen classes`)
   }
@@ -102,10 +136,37 @@ function validateSuccess(result, sourceName, mode) {
       fail(`CSS Modules ${mode} name mismatch for ${entry.name}`)
     }
   }
+  const item = payload.exports.find(entry => entry.name === 'item')
+  const base = payload.exports.find(entry => entry.name === 'base')
+  const expectedComposes = [
+    { local: base.value },
+    { global: 'global-reset' },
+    { dependency: { name: 'external', specifier: './external.module.css' } },
+  ]
+  if (JSON.stringify(item.composes) !== JSON.stringify(expectedComposes)) {
+    fail(`CSS Modules ${mode} composition references differ: ${JSON.stringify(item.composes)}`)
+  }
+  const dependencies = payload.dependencies.map(dependency => ({
+    kind: dependency.kind,
+    specifier: dependency.specifier,
+    source_name: dependency.source_name,
+  }))
+  const expectedDependencies = [
+    { kind: 'import', specifier: 'theme.css', source_name: sourceName },
+    {
+      kind: 'css_module',
+      specifier: './external.module.css',
+      source_name: sourceName,
+    },
+  ]
+  if (JSON.stringify(dependencies) !== JSON.stringify(expectedDependencies)) {
+    fail(`CSS Modules ${mode} dependency facts differ: ${JSON.stringify(dependencies)}`)
+  }
   const expectedCss =
     `@import "theme.css";.card,.${names.card}:hover{color:red}` +
     `@media all{.${names.icon}:is(.${names.card},.${names.badge}){display:block}}` +
-    `.${names['🔥']}{opacity:1}`
+    `.${names['🔥']}{opacity:1}` +
+    `.${names.base}{color:black}.${names.item}{display:grid}`
   const actualCanonical = canonicalize(payload.css, `css-modules-${mode}-actual`)
   const expectedCanonical = canonicalize(expectedCss, `css-modules-${mode}-expected`)
   if (actualCanonical !== expectedCanonical) {
@@ -129,11 +190,14 @@ export function validateCssModules(driver) {
   fs.writeFileSync(
     input,
     '@import "theme.css";:global(.card),:local(.card):hover{color:red}' +
-      '@media all{.icon:is(.card,.badge){display:block}}.🔥{opacity:1}',
+      '@media all{.icon:is(.card,.badge){display:block}}.🔥{opacity:1}' +
+      '.base{color:black}.item{composes:base;composes:global-reset from global;' +
+      'composes:external from "./external.module.css";display:grid}',
   )
   fs.writeFileSync(invalid, ':local .card{color:red}')
 
   try {
+    validateCompositionOracle(fs.readFileSync(input), sourceName)
     const prettyResult = runDriver(driver, input, sourceName, false)
     const minifiedResult = runDriver(driver, input, sourceName, true)
     const pretty = validateSuccess(prettyResult, sourceName, 'pretty')
@@ -170,6 +234,7 @@ export function validateCssModules(driver) {
   return {
     outputs: 3,
     rejections: 1,
+    compositionDifferentials: 1,
     validatorVersion: validatorPackage.version,
   }
 }

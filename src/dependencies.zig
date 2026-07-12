@@ -7,6 +7,16 @@ const tokenizer = @import("tokenizer.zig");
 
 pub const Kind = enum {
     import,
+    css_module,
+};
+
+/// Borrowed dependency evidence supplied by an experimental adapter. The
+/// collector clones it into result ownership and applies the same combined
+/// count/byte limits as ordinary CSS imports.
+pub const Candidate = struct {
+    kind: Kind,
+    specifier: []const u8,
+    span: source.Span,
 };
 
 /// Result-owned dependency evidence. Entries retain authored order and
@@ -83,6 +93,15 @@ pub fn collect(
     parsed: *pipeline.ParsedStylesheet,
     options: Options,
 ) !OwnedList {
+    return collectWithExtra(allocator, parsed, options, &.{});
+}
+
+pub fn collectWithExtra(
+    allocator: std.mem.Allocator,
+    parsed: *pipeline.ParsedStylesheet,
+    options: Options,
+    extra: []const Candidate,
+) !OwnedList {
     var builder = try Builder.init(allocator);
     defer builder.deinit();
     const file = parsed.file();
@@ -134,10 +153,67 @@ pub fn collect(
         owned_bytes = next_bytes;
     }
 
+    for (extra) |candidate| {
+        if (!candidate.span.source.eql(parsed.source_id) or
+            candidate.span.start > candidate.span.end or
+            candidate.span.end > file.bytes.len or
+            candidate.specifier.len == 0)
+        {
+            return error.InvalidDependencyCandidate;
+        }
+        const next_bytes = std.math.add(
+            usize,
+            owned_bytes,
+            std.math.add(usize, candidate.specifier.len, file.name.len) catch std.math.maxInt(usize),
+        ) catch std.math.maxInt(usize);
+        if (builder.items.items.len >= options.max_dependencies or
+            next_bytes > options.max_owned_bytes)
+        {
+            try parsed.compilation.report(
+                .err,
+                .resource_limit,
+                candidate.span,
+                "CSS dependency reporting limit exceeded",
+            );
+            return OwnedList.init(allocator);
+        }
+
+        const specifier = try allocator.dupe(u8, candidate.specifier);
+        const source_name = allocator.dupe(u8, file.name) catch |err| {
+            if (specifier.len > 0) allocator.free(specifier);
+            return err;
+        };
+        builder.items.append(allocator, .{
+            .kind = candidate.kind,
+            .specifier = specifier,
+            .source_name = source_name,
+            .span = candidate.span,
+        }) catch |err| {
+            if (specifier.len > 0) allocator.free(specifier);
+            if (source_name.len > 0) allocator.free(source_name);
+            return err;
+        };
+        owned_bytes = next_bytes;
+    }
+
+    std.mem.sort(Dependency, builder.items.items, {}, lessThanDependency);
+
     return .{
         .allocator = allocator,
         .items = try builder.items.toOwnedSlice(allocator),
     };
+}
+
+fn lessThanDependency(_: void, left: Dependency, right: Dependency) bool {
+    if (left.span.source.value != right.span.source.value) {
+        return left.span.source.value < right.span.source.value;
+    }
+    if (left.span.start != right.span.start) return left.span.start < right.span.start;
+    if (left.span.end != right.span.end) return left.span.end < right.span.end;
+    if (@intFromEnum(left.kind) != @intFromEnum(right.kind)) {
+        return @intFromEnum(left.kind) < @intFromEnum(right.kind);
+    }
+    return std.mem.order(u8, left.specifier, right.specifier) == .lt;
 }
 
 fn importSpecifier(
@@ -259,9 +335,15 @@ fn exerciseDependencyAllocationFailures(allocator: std.mem.Allocator) !void {
         "@import \"a.css\";@import url(b.css);",
     );
     defer parsed.deinit();
-    var dependencies = try collect(allocator, &parsed, .{});
+    const extra = [_]Candidate{.{
+        .kind = .css_module,
+        .specifier = "./module.css",
+        .span = .{ .source = parsed.source_id, .start = 0, .end = 1 },
+    }};
+    var dependencies = try collectWithExtra(allocator, &parsed, .{}, &extra);
     defer dependencies.deinit();
-    try std.testing.expectEqual(@as(usize, 2), dependencies.items.len);
+    try std.testing.expectEqual(@as(usize, 3), dependencies.items.len);
+    try std.testing.expectEqual(Kind.css_module, dependencies.items[0].kind);
 }
 
 test "dependency collection handles every allocation failure" {

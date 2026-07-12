@@ -21,12 +21,33 @@ const exports = result.module_exports orelse return error.MissingModuleExports;
 for (exports.entries) |entry| {
     // entry.name is the decoded authored class; entry.value is emitted CSS.
     try useExport(entry.name, entry.value);
+    // entry.composes owns ordered local, global, or dependency references.
 }
 ```
 
 A successful CSS Modules compile always returns non-null `module_exports`, including an owned empty entry slice when no classes exist. Entries are unique by decoded authored class name and retain first occurrence order across top-level rules, nested rules, selector lists, and typed selector pseudos. Repeated classes reuse one generated value. Ordinary CSS continues to return `module_exports = null`.
 
 Every export name/value and the entry slice belong to `CompileResult`. They remain valid after parser cleanup and explicit `take()`, and one idempotent `CompileResult.deinit()` path releases them with CSS, maps, diagnostics, dependencies, and metrics.
+
+## Composition and module dependencies
+
+The canonical `composes` property is supported only in a style rule whose selector is one plain local class, such as `.button { ... }`. Composition declarations must precede ordinary declarations and are removed from generated CSS after validation. `composes-with`, `!important`, complex/pseudo/explicit-wrapper targets, malformed operands, missing local classes, and local composition cycles return `CSS0009` without partial output.
+
+One declaration may contain multiple decoded identifier names:
+
+```css
+.base { color: black; }
+.button {
+  composes: base;
+  composes: reset from global;
+  composes: icon label from "./theme.module.css";
+  display: grid;
+}
+```
+
+The `button` export keeps its generated `value` and owns ordered `composes` references. A local reference contains the referenced generated class name; a global reference contains the authored global name; a dependency reference contains the requested export name and decoded quoted module specifier. ZigCSS does not read the filesystem, resolve packages, flatten imported exports, or execute a loader.
+
+Each external composition declaration also adds one result-owned `DependencyKind.css_module` fact, regardless of how many names it references. These facts share the existing dependency count/owned-byte limits with top-level CSS `@import` facts and are sorted by authored span. Repeated declarations remain repeated facts. A combined limit failure discards all dependency facts, exports, and CSS.
 
 ## Accepted selector scope
 
@@ -64,14 +85,14 @@ The full digest includes both module identity and class name, so the same input 
 The following deferred semantics return one structured `CSS0009` diagnostic and no CSS or partial export map:
 
 - `:import` and `:export`;
-- `composes` and `composes-with` declarations;
+- `composes-with` and any `composes` form outside the composition grammar above;
 - `@value`;
 - untyped functional pseudos such as `:nth-child(...)`, `:lang(...)`, and functional pseudo-elements;
 - any at-rule outside the allowlist or any raw at-rule block.
 
-Composition, value, and module-import/export behavior remain owned by the later slices of `MODULE-002`; ZigCSS does not delete, guess, or treat them as ordinary CSS. Invalid or ambiguous explicit-scope forms fail under the same no-partial-output rule. Parser errors similarly produce no CSS. An empty module identity returns `API0001`.
+Value and raw module-import/export behavior remain owned by the later slices of `MODULE-002`; ZigCSS does not delete, guess, or treat them as ordinary CSS. Invalid composition or explicit-scope forms fail under the same no-partial-output rule. Parser errors similarly produce no CSS. An empty module identity returns `API0001`.
 
-`CssModuleLimits` defaults to 100,000 unique exports, 64 MiB of owned export name/value bytes, a 64 KiB source identity, and 1,000,000 combined class/scope rewrite records. Limit exhaustion returns `CSS0008`, discards all prepared exports, and emits no CSS. Export lookup is hash-based during collection; emission uses source-span-sorted occurrence and wrapper arrays with bounded binary lookup.
+`CssModuleLimits` defaults to 100,000 unique exports, 100,000 composition references, 64 MiB of owned export/reference bytes, a 64 KiB source identity, and 1,000,000 combined class/scope rewrite records. Limit exhaustion returns `CSS0008`, discards all prepared exports, and emits no CSS. Export lookup is hash-based during collection; emission uses source-span-sorted occurrence, wrapper, and declaration-omission arrays with bounded binary lookup.
 
 ## Compatible result features
 

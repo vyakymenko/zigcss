@@ -114,6 +114,35 @@ pub fn lessThanScope(_: void, left: Scope, right: Scope) bool {
     return spanLessThan(left.span, right.span);
 }
 
+pub fn validateSpans(spans: []const source.Span) Error!void {
+    var previous: ?source.Span = null;
+    for (spans) |span| {
+        if (span.start >= span.end) return error.InvalidMappings;
+        if (previous) |value| {
+            if (!spanLessThan(value, span)) return error.InvalidMappings;
+        }
+        previous = span;
+    }
+}
+
+pub fn containsSpan(spans: []const source.Span, span: source.Span) bool {
+    var low: usize = 0;
+    var high = spans.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        switch (orderSpan(span, spans[middle])) {
+            .lt => high = middle,
+            .gt => low = middle + 1,
+            .eq => return true,
+        }
+    }
+    return false;
+}
+
+pub fn lessThanSpan(_: void, left: source.Span, right: source.Span) bool {
+    return spanLessThan(left, right);
+}
+
 fn spanLessThan(left: source.Span, right: source.Span) bool {
     return orderSpan(left, right) == .lt;
 }
