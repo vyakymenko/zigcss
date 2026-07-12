@@ -11,6 +11,7 @@ pub const color = @import("css/color.zig");
 pub const color_value = @import("css/color_value.zig");
 pub const numeric_unit = @import("css/numeric_unit.zig");
 pub const numeric_value = @import("css/numeric_value.zig");
+pub const shorthand = @import("css/shorthand.zig");
 
 test {
     _ = ast;
@@ -26,4 +27,5 @@ test {
     _ = color_value;
     _ = numeric_unit;
     _ = numeric_value;
+    _ = shorthand;
 }

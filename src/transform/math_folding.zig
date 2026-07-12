@@ -358,8 +358,13 @@ fn foldDeclarationList(
     input: ast.DeclarationList,
     budget: *Budget,
 ) pass_manager.Error!FoldedDeclarationList {
-    _ = ast.DeclarationList.init(input.span, input.declarations) catch return error.InvalidAst;
+    input.validate() catch return error.InvalidAst;
     if (input.declarations.len == 0) return .{ .value = input, .changed = false };
+
+    if (input.generated_declarations.len != 0) {
+        for (input.declarations) |_| try budget.visitDeclaration();
+        return .{ .value = input, .changed = false };
+    }
 
     const scratch = context.scratchAllocator();
     const candidates = try scratch.alloc(ast.Declaration, input.declarations.len);
@@ -767,6 +772,40 @@ test "math folding returns the exact root when every value is conservatively ine
     var result = try parsed.emitResult(std.testing.allocator, .{ .mode = .minified });
     defer result.deinit();
     try std.testing.expectEqualStrings(css, result.css);
+}
+
+test "math folding preserves an existing declaration-level proof boundary" {
+    var parsed = try pipeline.parse(
+        std.testing.allocator,
+        "math-proof-boundary.css",
+        ".a{margin-top:0;margin-right:0;margin-bottom:0;margin-left:0}",
+    );
+    defer parsed.deinit();
+    const original = parsed.rules.rules[0].style_rule.block.declarations;
+    const generated = [_]ast.GeneratedDeclaration{.{
+        .kind = .margin,
+        .first_declaration = 0,
+        .source_span = .{
+            .source = parsed.source_id,
+            .start = original.declarations[0].span.start,
+            .end = original.declarations[3].span.end,
+        },
+    }};
+    const protected = try ast.DeclarationList.initWithGenerated(
+        original.span,
+        original.declarations,
+        &generated,
+    );
+    var context = try pass_manager.Context.init(
+        &parsed.compilation,
+        parsed.source_id,
+        std.testing.allocator,
+    );
+    var budget = Budget{};
+    const result = try foldDeclarationList(&context, protected, &budget);
+    try std.testing.expect(!result.changed);
+    try std.testing.expectEqual(@as(usize, 1), result.value.generated_declarations.len);
+    try std.testing.expectEqual(@as(usize, 4), budget.declarations);
 }
 
 test "math folding source maps anchor generated values and retain siblings" {

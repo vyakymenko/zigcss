@@ -13,6 +13,21 @@ pub const GenerateFn = *const fn (
     declaration: ast.Declaration,
 ) pass_manager.Error!?ast.GeneratedValue;
 
+pub const DeclarationContext = enum {
+    style,
+    nested,
+    keyframe,
+    page,
+    page_margin,
+};
+
+pub const GenerateDeclarationsFn = *const fn (
+    user_data: ?*anyopaque,
+    context: *pass_manager.Context,
+    declaration_context: DeclarationContext,
+    declarations: ast.DeclarationList,
+) pass_manager.Error!?[]const ast.GeneratedDeclaration;
+
 pub const Result = struct {
     value: *const ast.RuleList,
     changed: bool,
@@ -52,6 +67,17 @@ const RewrittenPage = struct {
     changed: bool,
 };
 
+const Strategy = union(enum) {
+    values: struct {
+        generate: GenerateFn,
+        user_data: ?*anyopaque,
+    },
+    declarations: struct {
+        generate: GenerateDeclarationsFn,
+        user_data: ?*anyopaque,
+    },
+};
+
 /// Applies a whole-declaration-value generator while reconstructing only
 /// changed AST paths. Declaration-backed descriptor at-rules are deliberately
 /// excluded because their grammars are not ordinary property grammars.
@@ -63,14 +89,40 @@ pub fn rewrite(
     options: Options,
 ) pass_manager.Error!Result {
     var budget = Budget{ .options = options };
-    return rewriteRuleList(context, input, generate, user_data, &budget, 0);
+    return rewriteRuleList(
+        context,
+        input,
+        .{ .values = .{ .generate = generate, .user_data = user_data } },
+        &budget,
+        0,
+    );
+}
+
+/// Adds proof-carrying generated declarations while preserving the complete
+/// authored declaration array. The callback can annotate a list only once;
+/// already-annotated lists are exact no-ops, which makes later value passes
+/// unable to invalidate or silently discard a declaration-level proof.
+pub fn rewriteDeclarations(
+    context: *pass_manager.Context,
+    input: *const ast.RuleList,
+    generate: GenerateDeclarationsFn,
+    user_data: ?*anyopaque,
+    options: Options,
+) pass_manager.Error!Result {
+    var budget = Budget{ .options = options };
+    return rewriteRuleList(
+        context,
+        input,
+        .{ .declarations = .{ .generate = generate, .user_data = user_data } },
+        &budget,
+        0,
+    );
 }
 
 fn rewriteRuleList(
     context: *pass_manager.Context,
     input: *const ast.RuleList,
-    generate: GenerateFn,
-    user_data: ?*anyopaque,
+    strategy: Strategy,
     budget: *Budget,
     depth: usize,
 ) pass_manager.Error!Result {
@@ -83,7 +135,7 @@ fn rewriteRuleList(
     defer scratch.free(candidates);
     var changed = false;
     for (input.rules, 0..) |rule, index| {
-        const candidate = try rewriteRule(context, rule, generate, user_data, budget, depth);
+        const candidate = try rewriteRule(context, rule, strategy, budget, depth);
         candidates[index] = candidate.value;
         changed = changed or candidate.changed;
     }
@@ -101,8 +153,7 @@ fn rewriteRuleList(
 fn rewriteRule(
     context: *pass_manager.Context,
     input: ast.Rule,
-    generate: GenerateFn,
-    user_data: ?*anyopaque,
+    strategy: Strategy,
     budget: *Budget,
     depth: usize,
 ) pass_manager.Error!RewrittenRule {
@@ -112,15 +163,14 @@ fn rewriteRule(
             const declarations = try rewriteDeclarationList(
                 context,
                 style.block.declarations,
-                generate,
-                user_data,
+                strategy,
+                .style,
                 budget,
             );
             const rules = try rewriteRuleList(
                 context,
                 &style.block.rules,
-                generate,
-                user_data,
+                strategy,
                 budget,
                 try nextDepth(depth),
             );
@@ -145,8 +195,7 @@ fn rewriteRule(
             context,
             at_rule,
             input,
-            generate,
-            user_data,
+            strategy,
             budget,
             depth,
         ),
@@ -155,8 +204,8 @@ fn rewriteRule(
             const declarations = try rewriteDeclarationList(
                 context,
                 nested.declarations,
-                generate,
-                user_data,
+                strategy,
+                .nested,
                 budget,
             );
             if (!declarations.changed) break :blk .{ .value = input, .changed = false };
@@ -175,8 +224,7 @@ fn rewriteAtRule(
     context: *pass_manager.Context,
     input: *const ast.AtRule,
     original: ast.Rule,
-    generate: GenerateFn,
-    user_data: ?*anyopaque,
+    strategy: Strategy,
     budget: *Budget,
     depth: usize,
 ) pass_manager.Error!RewrittenRule {
@@ -187,8 +235,7 @@ fn rewriteAtRule(
             const child = try rewriteRuleList(
                 context,
                 &old_block.rules,
-                generate,
-                user_data,
+                strategy,
                 budget,
                 try nextDepth(depth),
             );
@@ -215,8 +262,7 @@ fn rewriteAtRule(
             const block = try rewriteKeyframes(
                 context,
                 old_block,
-                generate,
-                user_data,
+                strategy,
                 budget,
                 try nextDepth(depth),
             );
@@ -249,7 +295,7 @@ fn rewriteAtRule(
                 .page => |page| page,
                 else => break :blk .{ .value = original, .changed = false },
             };
-            const page = try rewritePage(context, old_page, generate, user_data, budget);
+            const page = try rewritePage(context, old_page, strategy, budget);
             if (!page.changed) break :blk .{ .value = original, .changed = false };
             const output = try context.arenaAllocator().create(ast.AtRule);
             output.* = ast.AtRule.init(.{
@@ -301,8 +347,7 @@ fn cloneRuleDetails(
 fn rewriteKeyframes(
     context: *pass_manager.Context,
     input: *const ast.KeyframesBlock,
-    generate: GenerateFn,
-    user_data: ?*anyopaque,
+    strategy: Strategy,
     budget: *Budget,
     depth: usize,
 ) pass_manager.Error!RewrittenKeyframes {
@@ -317,8 +362,8 @@ fn rewriteKeyframes(
         const declarations = try rewriteDeclarationList(
             context,
             frame.block.declarations,
-            generate,
-            user_data,
+            strategy,
+            .keyframe,
             budget,
         );
         candidates[index] = if (declarations.changed)
@@ -350,15 +395,14 @@ fn rewriteKeyframes(
 fn rewritePage(
     context: *pass_manager.Context,
     input: *const ast.PageRule,
-    generate: GenerateFn,
-    user_data: ?*anyopaque,
+    strategy: Strategy,
     budget: *Budget,
 ) pass_manager.Error!RewrittenPage {
     const declarations = try rewriteDeclarationList(
         context,
         input.declarations.*,
-        generate,
-        user_data,
+        strategy,
+        .page,
         budget,
     );
     const scratch = context.scratchAllocator();
@@ -369,8 +413,8 @@ fn rewritePage(
         const child = try rewriteDeclarationList(
             context,
             margin.declarations.*,
-            generate,
-            user_data,
+            strategy,
+            .page_margin,
             budget,
         );
         margins[index] = margin;
@@ -402,20 +446,57 @@ fn rewritePage(
 fn rewriteDeclarationList(
     context: *pass_manager.Context,
     input: ast.DeclarationList,
-    generate: GenerateFn,
-    user_data: ?*anyopaque,
+    strategy: Strategy,
+    declaration_context: DeclarationContext,
     budget: *Budget,
 ) pass_manager.Error!RewrittenDeclarationList {
-    _ = ast.DeclarationList.init(input.span, input.declarations) catch return error.InvalidAst;
+    input.validate() catch return error.InvalidAst;
     if (input.declarations.len == 0) return .{ .value = input, .changed = false };
 
+    for (input.declarations) |declaration| {
+        try budget.visitDeclaration();
+        _ = ast.Declaration.init(declaration) catch return error.InvalidAst;
+    }
+    if (input.generated_declarations.len != 0) return .{ .value = input, .changed = false };
+
+    return switch (strategy) {
+        .values => |value_strategy| rewriteDeclarationValues(
+            context,
+            input,
+            value_strategy.generate,
+            value_strategy.user_data,
+        ),
+        .declarations => |declaration_strategy| blk: {
+            const generated = try declaration_strategy.generate(
+                declaration_strategy.user_data,
+                context,
+                declaration_context,
+                input,
+            ) orelse break :blk .{ .value = input, .changed = false };
+            if (generated.len == 0) return error.InvalidAst;
+            break :blk .{
+                .value = ast.DeclarationList.initWithGenerated(
+                    input.span,
+                    input.declarations,
+                    generated,
+                ) catch return error.InvalidAst,
+                .changed = true,
+            };
+        },
+    };
+}
+
+fn rewriteDeclarationValues(
+    context: *pass_manager.Context,
+    input: ast.DeclarationList,
+    generate: GenerateFn,
+    user_data: ?*anyopaque,
+) pass_manager.Error!RewrittenDeclarationList {
     const scratch = context.scratchAllocator();
     const candidates = try scratch.alloc(ast.Declaration, input.declarations.len);
     defer scratch.free(candidates);
     var changed = false;
     for (input.declarations, 0..) |declaration, index| {
-        try budget.visitDeclaration();
-        _ = ast.Declaration.init(declaration) catch return error.InvalidAst;
         const generated = try generate(user_data, context, declaration);
         candidates[index] = declaration;
         if (generated) |value| {

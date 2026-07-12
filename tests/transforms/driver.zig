@@ -11,6 +11,7 @@ const RequestedPass = enum {
     empty_cleanup,
     color_zero_shortening,
     math_folding,
+    shorthand_synthesis,
 };
 
 pub fn main() !void {
@@ -49,7 +50,7 @@ pub fn main() !void {
         input_path = argument;
     }
     const input = input_path orelse return invalidArguments(
-        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding>] [--minify]",
+        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis>] [--minify]",
         .{},
     );
 
@@ -68,6 +69,8 @@ pub fn main() !void {
         zigcss.transform.empty_cleanup.definition(),
         zigcss.transform.color_zero_shortening.definition(),
         zigcss.transform.math_folding.definition(),
+        zigcss.transform.duplicate_declarations.definition(),
+        zigcss.transform.shorthand_synthesis.definition(),
     };
     if (requested_pass != .none) {
         const requested_ids = [_][]const u8{switch (requested_pass) {
@@ -75,12 +78,14 @@ pub fn main() !void {
             .empty_cleanup => zigcss.transform.empty_cleanup.id,
             .color_zero_shortening => zigcss.transform.color_zero_shortening.id,
             .math_folding => zigcss.transform.math_folding.id,
+            .shorthand_synthesis => zigcss.transform.shorthand_synthesis.id,
         }};
         const policy: zigcss.transform.pass_manager.Policy = switch (requested_pass) {
             .none => unreachable,
             .empty_cleanup => .{ .allow_lossless_cleanup = true },
             .color_zero_shortening => .{ .allow_semantic_rewrite = true },
             .math_folding => .{ .allow_semantic_rewrite = true },
+            .shorthand_synthesis => .{ .allow_semantic_rewrite = true },
         };
         var plan = try zigcss.transform.pass_manager.buildPlan(
             allocator,
@@ -108,6 +113,7 @@ fn parsePass(value: []const u8) ?RequestedPass {
     if (std.mem.eql(u8, value, zigcss.transform.empty_cleanup.id)) return .empty_cleanup;
     if (std.mem.eql(u8, value, zigcss.transform.color_zero_shortening.id)) return .color_zero_shortening;
     if (std.mem.eql(u8, value, zigcss.transform.math_folding.id)) return .math_folding;
+    if (std.mem.eql(u8, value, zigcss.transform.shorthand_synthesis.id)) return .shorthand_synthesis;
     return null;
 }
 

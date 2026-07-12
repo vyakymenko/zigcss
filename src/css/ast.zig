@@ -537,6 +537,9 @@ pub const Declaration = struct {
 
     pub fn init(candidate: Declaration) AstError!Declaration {
         try validateSpan(candidate.span);
+        _ = ComponentValueList.init(candidate.value.span, candidate.value.values) catch {
+            return error.InvalidDeclaration;
+        };
         try validateChild(candidate.span, candidate.name.span);
         try validateChild(candidate.span, candidate.colon);
         try validateChild(candidate.span, candidate.value.span);
@@ -590,12 +593,40 @@ pub const Declaration = struct {
     }
 };
 
+pub const GeneratedDeclarationKind = enum {
+    margin,
+
+    pub fn inputCount(self: GeneratedDeclarationKind) usize {
+        return switch (self) {
+            .margin => 4,
+        };
+    }
+};
+
+/// Proof metadata for replacing a contiguous authored declaration group with
+/// one structured generated declaration. The authored declarations remain in
+/// the AST so validation and emission can independently re-check the rewrite.
+pub const GeneratedDeclaration = struct {
+    kind: GeneratedDeclarationKind,
+    first_declaration: usize,
+    source_span: source.Span,
+};
+
 /// Ordered storage intentionally preserves duplicate/fallback declarations.
 pub const DeclarationList = struct {
     declarations: []const Declaration,
+    generated_declarations: []const GeneratedDeclaration = &.{},
     span: source.Span,
 
     pub fn init(span: source.Span, declarations: []const Declaration) AstError!DeclarationList {
+        return initWithGenerated(span, declarations, &.{});
+    }
+
+    pub fn initWithGenerated(
+        span: source.Span,
+        declarations: []const Declaration,
+        generated_declarations: []const GeneratedDeclaration,
+    ) AstError!DeclarationList {
         try validateSpan(span);
         var previous_end = span.start;
         for (declarations) |declaration| {
@@ -604,9 +635,65 @@ pub const DeclarationList = struct {
             if (declaration.span.start < previous_end) return error.InvalidDeclaration;
             previous_end = declaration.span.end;
         }
-        return .{ .declarations = declarations, .span = span };
+
+        var previous_generated_end: usize = 0;
+        for (generated_declarations) |generated| {
+            try validateChild(span, generated.source_span);
+            const count = generated.kind.inputCount();
+            const end = std.math.add(usize, generated.first_declaration, count) catch {
+                return error.InvalidDeclaration;
+            };
+            if (generated.first_declaration < previous_generated_end or end > declarations.len) {
+                return error.InvalidDeclaration;
+            }
+            const inputs = declarations[generated.first_declaration..end];
+            if (generated.source_span.start != inputs[0].span.start or
+                generated.source_span.end != inputs[inputs.len - 1].span.end)
+            {
+                return error.InvalidDeclaration;
+            }
+            try validateGeneratedDeclarationStructure(generated.kind, inputs);
+            previous_generated_end = end;
+        }
+        return .{
+            .declarations = declarations,
+            .generated_declarations = generated_declarations,
+            .span = span,
+        };
+    }
+
+    pub fn validate(self: DeclarationList) AstError!void {
+        _ = try initWithGenerated(
+            self.span,
+            self.declarations,
+            self.generated_declarations,
+        );
     }
 };
+
+fn validateGeneratedDeclarationStructure(
+    kind: GeneratedDeclarationKind,
+    inputs: []const Declaration,
+) AstError!void {
+    const expected = switch (kind) {
+        .margin => [_][]const u8{
+            "margin-top",
+            "margin-right",
+            "margin-bottom",
+            "margin-left",
+        },
+    };
+    if (inputs.len != expected.len) return error.InvalidDeclaration;
+    const important = inputs[0].important != null;
+    for (inputs, expected) |declaration, name| {
+        if (!std.ascii.eqlIgnoreCase(declaration.name.value, name) or
+            (declaration.important != null) != important or
+            declaration.generated_value != null)
+        {
+            return error.InvalidDeclaration;
+        }
+    }
+}
 
 /// Exact brace and content boundaries for a block. A missing closing span is a
 /// recoverable EOF state, never a synthesized source token.
@@ -653,7 +740,7 @@ pub const DeclarationBlock = struct {
     pub fn init(envelope: BlockSpan, declarations: DeclarationList) AstError!DeclarationBlock {
         _ = try BlockSpan.init(envelope);
         if (!spansEqual(envelope.content, declarations.span)) return error.InvalidRuleBlock;
-        _ = try DeclarationList.init(declarations.span, declarations.declarations);
+        try declarations.validate();
         return .{ .envelope = envelope, .declarations = declarations };
     }
 };
@@ -672,7 +759,7 @@ pub const StyleBlock = struct {
         rules: RuleList,
     ) AstError!StyleBlock {
         _ = try BlockSpan.init(envelope);
-        _ = try DeclarationList.init(declarations.span, declarations.declarations);
+        try declarations.validate();
         try rules.validate();
         if (!envelope.content.source.eql(declarations.span.source) or
             !envelope.content.source.eql(rules.span.source) or
@@ -717,7 +804,7 @@ pub const NestedDeclarationsRule = struct {
         {
             return error.InvalidRule;
         }
-        _ = try DeclarationList.init(candidate.declarations.span, candidate.declarations.declarations);
+        try candidate.declarations.validate();
         return candidate;
     }
 };
@@ -1482,6 +1569,57 @@ test "declaration lists preserve fallback order and custom-property identity" {
         .value = "--theme",
         .span = testSpan(id, 0, 7),
     }).isCustomProperty());
+}
+
+test "generated declaration proofs require one canonical adjacent margin group" {
+    const id = source.SourceId{ .value = 29 };
+    const names = [_][]const u8{
+        "margin-top",
+        "margin-right",
+        "margin-bottom",
+        "margin-left",
+    };
+    var declarations: [4]Declaration = undefined;
+    var cursor: usize = 0;
+    for (names, 0..) |name, index| {
+        const name_span = testSpan(id, cursor, cursor + name.len);
+        const colon = testSpan(id, name_span.end, name_span.end + 1);
+        const value = try ComponentValueList.init(testSpan(id, colon.end, colon.end), &.{});
+        const terminator = testSpan(id, value.span.end, value.span.end + 1);
+        declarations[index] = try Declaration.init(.{
+            .name = .{ .value = name, .span = name_span },
+            .colon = colon,
+            .value = value,
+            .terminator = terminator,
+            .span = testSpan(id, cursor, terminator.end),
+        });
+        cursor = terminator.end;
+    }
+    const generated = [_]GeneratedDeclaration{.{
+        .kind = .margin,
+        .first_declaration = 0,
+        .source_span = testSpan(id, 0, cursor),
+    }};
+    const list = try DeclarationList.initWithGenerated(
+        testSpan(id, 0, cursor),
+        &declarations,
+        &generated,
+    );
+    try list.validate();
+    try std.testing.expectEqual(@as(usize, 1), list.generated_declarations.len);
+
+    var wrong_order = declarations;
+    wrong_order[1].name.value = "margin-left";
+    try std.testing.expectError(
+        error.InvalidDeclaration,
+        DeclarationList.initWithGenerated(testSpan(id, 0, cursor), &wrong_order, &generated),
+    );
+    var wrong_span = generated;
+    wrong_span[0].source_span.end -= 1;
+    try std.testing.expectError(
+        error.InvalidDeclaration,
+        DeclarationList.initWithGenerated(testSpan(id, 0, cursor), &declarations, &wrong_span),
+    );
 }
 
 test "style and nested group blocks distinguish leading and nested declarations" {

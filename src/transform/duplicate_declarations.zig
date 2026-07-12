@@ -244,11 +244,15 @@ fn buildPropertyMap(
     allocator: std.mem.Allocator,
     list: *const ast.DeclarationList,
 ) Error!PropertyMap {
-    _ = ast.DeclarationList.init(list.span, list.declarations) catch return error.InvalidAst;
+    list.validate() catch return error.InvalidAst;
     if (list.declarations.len > std.math.maxInt(u32)) return error.AnalysisLimit;
 
     var map = PropertyMap.empty;
     errdefer map.deinit(allocator);
+    // Authored declarations covered by a generated-declaration proof are no
+    // longer the logical emitted declaration sequence. Decline analysis until
+    // the report API can expose that logical view without misleading callers.
+    if (list.generated_declarations.len != 0) return map;
     for (list.declarations, 0..) |declaration, index| {
         const importance: Importance = if (declaration.important == null) .normal else .important;
         const entry = try map.getOrPutContext(allocator, declaration.name.value, .{});
@@ -286,8 +290,9 @@ const CountState = struct {
     ) Error!void {
         _ = context;
         if (!contains(owner_span, list.span)) return error.InvalidAst;
+        list.validate() catch return error.InvalidAst;
+        if (list.generated_declarations.len != 0) return;
         if (list.declarations.len < 2) {
-            _ = ast.DeclarationList.init(list.span, list.declarations) catch return error.InvalidAst;
             return;
         }
 
@@ -326,8 +331,9 @@ const FillState = struct {
         list: *const ast.DeclarationList,
     ) Error!void {
         if (!contains(owner_span, list.span)) return error.InvalidAst;
+        list.validate() catch return error.InvalidAst;
+        if (list.generated_declarations.len != 0) return;
         if (list.declarations.len < 2) {
-            _ = ast.DeclarationList.init(list.span, list.declarations) catch return error.InvalidAst;
             return;
         }
 

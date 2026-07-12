@@ -1,0 +1,65 @@
+/* only proof-complete adjacent physical groups become margin shorthands */
+@layer base {
+  .card {
+    margin-top: 2vh;
+    margin-inline-start: 9px;
+    margin-top: 1rem;
+    margin-right: 1rem;
+    margin-bottom: 1rem;
+    margin-left: 1rem;
+    margin-inline-end: 8px;
+    margin-top: auto !important;
+    margin-right: auto !important;
+    margin-bottom: auto !important;
+    margin-left: auto !important;
+    .child {
+      margin-top: -5%;
+      margin-right: -5%;
+      margin-bottom: -5%;
+      margin-left: -5%;
+    }
+  }
+}
+@media (width > 40rem) {
+  .responsive {
+    margin-top: 2px;
+    margin-right: 2px;
+    margin-bottom: 2px;
+    margin-left: 2px;
+  }
+}
+@keyframes settle {
+  to {
+    margin-top: 0;
+    margin-right: 0;
+    margin-bottom: 0;
+    margin-left: 0;
+  }
+}
+@page {
+  margin-top: 1cm;
+  margin-right: 1cm;
+  margin-bottom: 1cm;
+  margin-left: 1cm;
+  @top-left {
+    margin-top: 1px;
+    margin-right: 1px;
+    margin-bottom: 1px;
+    margin-left: 1px;
+  }
+}
+.guarded {
+  --space: 1px;
+  margin-top: 1px;
+  margin-right: 2px;
+  margin-bottom: 1px;
+  margin-left: 1px;
+  margin-top: var(--space);
+  margin-right: var(--space);
+  margin-bottom: var(--space);
+  margin-left: var(--space);
+  margin-top: inherit;
+  margin-right: inherit;
+  margin-bottom: inherit;
+  margin-left: inherit;
+}

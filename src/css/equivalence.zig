@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const emitter = @import("emitter.zig");
 const rule_parser = @import("rule_parser.zig");
+const shorthand = @import("shorthand.zig");
 const source = @import("../source.zig");
 const syntax = @import("../syntax.zig");
 const tokenizer = @import("../tokenizer.zig");
@@ -23,6 +24,8 @@ pub fn equivalent(
     if (!left.span.source.eql(left_file.id) or !right.span.source.eql(right_file.id)) {
         return error.SourceMismatch;
     }
+    left.validate() catch return false;
+    right.validate() catch return false;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var comparator = Comparator{
@@ -197,16 +200,103 @@ const Comparator = struct {
         left: *const ast.DeclarationList,
         right: *const ast.DeclarationList,
     ) Error!bool {
-        if (left.declarations.len != right.declarations.len) return false;
-        for (left.declarations, right.declarations) |left_declaration, right_declaration| {
-            if (!identifiersEqual(left_declaration.name, right_declaration.name) or
-                (left_declaration.important == null) != (right_declaration.important == null) or
-                !try self.declarationValues(left_declaration, right_declaration))
-            {
-                return false;
+        var left_iterator = LogicalDeclarationIterator{ .list = left };
+        var right_iterator = LogicalDeclarationIterator{ .list = right };
+        while (true) {
+            const left_declaration = left_iterator.next();
+            const right_declaration = right_iterator.next();
+            if (left_declaration == null or right_declaration == null) {
+                return left_declaration == null and right_declaration == null and
+                    !left_iterator.invalid and !right_iterator.invalid;
             }
+            if (!try self.logicalDeclarations(left_declaration.?, right_declaration.?)) return false;
         }
-        return true;
+    }
+
+    fn logicalDeclarations(
+        self: *Comparator,
+        left: LogicalDeclaration,
+        right: LogicalDeclaration,
+    ) Error!bool {
+        return switch (left) {
+            .authored => |left_declaration| switch (right) {
+                .authored => |right_declaration| identifiersEqual(
+                    left_declaration.name,
+                    right_declaration.name,
+                ) and
+                    (left_declaration.important == null) == (right_declaration.important == null) and
+                    try self.declarationValues(left_declaration, right_declaration),
+                .generated => |right_generated| try self.authoredMatchesGenerated(
+                    left_declaration,
+                    right_generated,
+                    false,
+                ),
+            },
+            .generated => |left_generated| switch (right) {
+                .authored => |right_declaration| try self.authoredMatchesGenerated(
+                    right_declaration,
+                    left_generated,
+                    true,
+                ),
+                .generated => |right_generated| try self.generatedDeclarations(
+                    left_generated,
+                    right_generated,
+                ),
+            },
+        };
+    }
+
+    fn authoredMatchesGenerated(
+        self: *Comparator,
+        authored: ast.Declaration,
+        generated: LogicalGeneratedDeclaration,
+        generated_is_left: bool,
+    ) Error!bool {
+        const file = if (generated_is_left) self.left_file else self.right_file;
+        const proof = try self.generatedProof(generated, file) orelse return false;
+        if (!std.ascii.eqlIgnoreCase(authored.name.value, "margin") or
+            (authored.important != null) != proof.important)
+        {
+            return false;
+        }
+        return if (generated_is_left)
+            self.declarationValues(generated.inputs[0], authored)
+        else
+            self.declarationValues(authored, generated.inputs[0]);
+    }
+
+    fn generatedDeclarations(
+        self: *Comparator,
+        left: LogicalGeneratedDeclaration,
+        right: LogicalGeneratedDeclaration,
+    ) Error!bool {
+        if (left.proof.kind != right.proof.kind) return false;
+        const left_proof = try self.generatedProof(left, self.left_file) orelse return false;
+        const right_proof = try self.generatedProof(right, self.right_file) orelse return false;
+        return left_proof.important == right_proof.important and
+            try self.declarationValues(left.inputs[0], right.inputs[0]);
+    }
+
+    fn generatedProof(
+        self: *Comparator,
+        generated: LogicalGeneratedDeclaration,
+        file: *const source.SourceFile,
+    ) Error!?shorthand.MarginProof {
+        const proof = switch (generated.proof.kind) {
+            .margin => shorthand.analyzeMargin(self.allocator, file, generated.inputs) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.SourceMismatch => return error.SourceMismatch,
+                error.InvalidSpan => return error.InvalidSpan,
+                error.InvalidAst => null,
+            },
+        } orelse return null;
+        if (!proof.source_span.source.eql(generated.proof.source_span.source) or
+            proof.source_span.start != generated.proof.source_span.start or
+            proof.source_span.end != generated.proof.source_span.end)
+        {
+            return null;
+        }
+        return proof;
     }
 
     fn declarationValues(
@@ -406,6 +496,62 @@ const Comparator = struct {
             else => return error.InvalidToken,
         };
         return std.mem.eql(u8, left_text, right_text);
+    }
+};
+
+const LogicalGeneratedDeclaration = struct {
+    proof: ast.GeneratedDeclaration,
+    inputs: []const ast.Declaration,
+};
+
+const LogicalDeclaration = union(enum) {
+    authored: ast.Declaration,
+    generated: LogicalGeneratedDeclaration,
+};
+
+const LogicalDeclarationIterator = struct {
+    list: *const ast.DeclarationList,
+    declaration_index: usize = 0,
+    generated_index: usize = 0,
+    invalid: bool = false,
+
+    fn next(self: *LogicalDeclarationIterator) ?LogicalDeclaration {
+        if (self.invalid) return null;
+        if (self.declaration_index == self.list.declarations.len) {
+            if (self.generated_index != self.list.generated_declarations.len) self.invalid = true;
+            return null;
+        }
+        if (self.generated_index < self.list.generated_declarations.len) {
+            const generated = self.list.generated_declarations[self.generated_index];
+            if (generated.first_declaration < self.declaration_index) {
+                self.invalid = true;
+                return null;
+            }
+            if (generated.first_declaration == self.declaration_index) {
+                const end = std.math.add(
+                    usize,
+                    self.declaration_index,
+                    generated.kind.inputCount(),
+                ) catch {
+                    self.invalid = true;
+                    return null;
+                };
+                if (end > self.list.declarations.len) {
+                    self.invalid = true;
+                    return null;
+                }
+                const result = LogicalDeclaration{ .generated = .{
+                    .proof = generated,
+                    .inputs = self.list.declarations[self.declaration_index..end],
+                } };
+                self.declaration_index = end;
+                self.generated_index += 1;
+                return result;
+            }
+        }
+        const result = LogicalDeclaration{ .authored = self.list.declarations[self.declaration_index] };
+        self.declaration_index += 1;
+        return result;
     }
 };
 

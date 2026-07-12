@@ -43,6 +43,16 @@ const fixtures = [
     },
     warningExpectation: 'none',
   },
+  {
+    label: 'margin-shorthand-synthesis',
+    passId: 'margin-shorthand-synthesis',
+    input: path.join(scriptDirectory, 'fixtures', 'margin-shorthand-synthesis.css'),
+    expected: {
+      pretty: path.join(scriptDirectory, 'fixtures', 'margin-shorthand-synthesis.expected.css'),
+      minified: path.join(scriptDirectory, 'fixtures', 'margin-shorthand-synthesis.expected.min.css'),
+    },
+    warningExpectation: 'none',
+  },
 ]
 const validatorOptions = {
   errorRecovery: false,

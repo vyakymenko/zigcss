@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const rule_parser = @import("rule_parser.zig");
+const shorthand = @import("shorthand.zig");
 const source = @import("../source.zig");
 const sourcemap = @import("../sourcemap.zig");
 const syntax = @import("../syntax.zig");
@@ -393,13 +394,34 @@ const Emitter = struct {
         depth: usize,
         terminate_last: bool,
     ) Error!void {
-        for (declarations.declarations, 0..) |declaration, index| {
-            if (index > 0 and self.pretty()) try self.appendByte('\n');
+        const output_count = try logicalDeclarationCount(declarations);
+        var declaration_index: usize = 0;
+        var generated_index: usize = 0;
+        var output_index: usize = 0;
+        while (declaration_index < declarations.declarations.len) {
+            if (output_index > 0 and self.pretty()) try self.appendByte('\n');
             if (self.pretty()) try self.writeIndent(depth);
-            try self.writeDeclaration(
-                declaration,
-                self.pretty() or index + 1 < declarations.declarations.len or terminate_last,
-            );
+            const terminate = self.pretty() or output_index + 1 < output_count or terminate_last;
+            if (generated_index < declarations.generated_declarations.len and
+                declarations.generated_declarations[generated_index].first_declaration == declaration_index)
+            {
+                const generated = declarations.generated_declarations[generated_index];
+                try self.writeGeneratedDeclaration(declarations, generated, terminate);
+                declaration_index += generated.kind.inputCount();
+                generated_index += 1;
+            } else {
+                if (generated_index < declarations.generated_declarations.len and
+                    declarations.generated_declarations[generated_index].first_declaration < declaration_index)
+                {
+                    return error.InvalidAst;
+                }
+                try self.writeDeclaration(declarations.declarations[declaration_index], terminate);
+                declaration_index += 1;
+            }
+            output_index += 1;
+        }
+        if (generated_index != declarations.generated_declarations.len or output_index != output_count) {
+            return error.InvalidAst;
         }
     }
 
@@ -453,6 +475,38 @@ const Emitter = struct {
             try self.appendSlice("!important");
         }
         if (terminate) try self.appendByte(';');
+    }
+
+    fn writeGeneratedDeclaration(
+        self: *Emitter,
+        declarations: *const ast.DeclarationList,
+        generated: ast.GeneratedDeclaration,
+        terminate: bool,
+    ) Error!void {
+        const count = generated.kind.inputCount();
+        const end = std.math.add(usize, generated.first_declaration, count) catch return error.InvalidAst;
+        if (end > declarations.declarations.len) return error.InvalidAst;
+        const inputs = declarations.declarations[generated.first_declaration..end];
+        switch (generated.kind) {
+            .margin => {
+                const proof = shorthand.analyzeMargin(self.allocator, self.file, inputs) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.SourceMismatch => return error.SourceMismatch,
+                    error.InvalidSpan => return error.InvalidSpan,
+                    error.InvalidAst => return error.InvalidAst,
+                } orelse return error.InvalidAst;
+                if (!spansEqual(proof.source_span, generated.source_span)) return error.InvalidAst;
+                try self.mark(generated.source_span);
+                try self.appendSlice("margin");
+                try self.appendSlice(if (self.pretty()) ": " else ":");
+                try self.appendSlice(try self.raw(proof.value_span));
+                if (proof.important) {
+                    if (self.pretty()) try self.appendByte(' ');
+                    try self.appendSlice("!important");
+                }
+                if (terminate) try self.appendByte(';');
+            },
+        }
     }
 
     fn writeKeyframesBlock(self: *Emitter, block: *const ast.KeyframesBlock, depth: usize) Error!void {
@@ -685,7 +739,7 @@ const Emitter = struct {
     }
 
     fn validateDeclarationCoverage(self: *Emitter, declarations: *const ast.DeclarationList) Error!void {
-        _ = ast.DeclarationList.init(declarations.span, declarations.declarations) catch return error.InvalidAst;
+        declarations.validate() catch return error.InvalidAst;
         var cursor = declarations.span.start;
         for (declarations.declarations) |declaration| {
             if (declaration.span.start < cursor) return error.InvalidAst;
@@ -707,6 +761,9 @@ const Emitter = struct {
     }
 
     fn validatePageCoverage(self: *Emitter, page: *const ast.PageRule, content: source.Span) Error!void {
+        // Page margin at-rules are interleaved with this declaration array.
+        // A declaration-only proof cannot establish source adjacency here.
+        if (page.declarations.generated_declarations.len != 0) return error.InvalidAst;
         var declaration_index: usize = 0;
         var margin_index: usize = 0;
         var cursor = content.start;
@@ -862,6 +919,17 @@ const Emitter = struct {
         }
     }
 };
+
+fn logicalDeclarationCount(declarations: *const ast.DeclarationList) Error!usize {
+    declarations.validate() catch return error.InvalidAst;
+    var count = declarations.declarations.len;
+    for (declarations.generated_declarations) |generated| {
+        const removed = generated.kind.inputCount() - 1;
+        if (removed > count) return error.InvalidAst;
+        count -= removed;
+    }
+    return count;
+}
 
 fn pageDetails(details: ?ast.AtRuleDetails) ?*const ast.PageRule {
     const value = details orelse return null;
@@ -1064,6 +1132,30 @@ fn parseSource(
     return .{ id, try rule_parser.parse(context, id, values) };
 }
 
+fn replaceFirstStyleDeclarations(
+    context: *compilation.Compilation,
+    old_root: *const ast.RuleList,
+    declarations: ast.DeclarationList,
+) !*const ast.RuleList {
+    const arena = context.arenaAllocator();
+    const old_style = old_root.rules[0].style_rule;
+    const style = try arena.create(ast.StyleRule);
+    style.* = try ast.StyleRule.init(.{
+        .selectors = old_style.selectors,
+        .block = try ast.StyleBlock.init(
+            old_style.block.envelope,
+            declarations,
+            old_style.block.rules,
+        ),
+        .span = old_style.span,
+    });
+    const rules = try arena.dupe(ast.Rule, old_root.rules);
+    rules[0] = .{ .style_rule = style };
+    const root = try arena.create(ast.RuleList);
+    root.* = try ast.RuleList.initWithOmissions(old_root.span, rules, old_root.omitted_rules);
+    return root;
+}
+
 test "pretty emission deterministically formats typed rules without reordering" {
     var context = try compilation.Compilation.init(std.testing.allocator);
     defer context.deinit();
@@ -1184,6 +1276,107 @@ test "structured generated numeric values emit closed syntax with causal mapping
         try std.testing.expect(mapping.generated_column != generated_start + 1);
         try std.testing.expect(mapping.generated_column != generated_start + 2);
     }
+}
+
+test "proof-carrying margin shorthand emits one causal mapping" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "generated-margin.css",
+        ".a{x:0;margin-top:a\\75to!important;margin-right:a\\75to!important;" ++
+            "margin-bottom:a\\75to!important;margin-left:a\\75to!important;y:2}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const original = parsed[1].rules[0].style_rule.block.declarations;
+    const generated = [_]ast.GeneratedDeclaration{.{
+        .kind = .margin,
+        .first_declaration = 1,
+        .source_span = .{
+            .source = file.id,
+            .start = original.declarations[1].span.start,
+            .end = original.declarations[4].span.end,
+        },
+    }};
+    const declarations = try ast.DeclarationList.initWithGenerated(
+        original.span,
+        original.declarations,
+        &generated,
+    );
+    const root = try replaceFirstStyleDeclarations(&context, parsed[1], declarations);
+
+    const pretty_output = try emit(std.testing.allocator, file, root, .{});
+    defer std.testing.allocator.free(pretty_output);
+    try std.testing.expectEqualStrings(
+        ".a {\n  x: 0;\n  margin: a\\75to !important;\n  y: 2;\n}\n",
+        pretty_output,
+    );
+
+    var mapped = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        root,
+        .{ .mode = .minified },
+        .{},
+    );
+    defer mapped.deinit();
+    try std.testing.expectEqualStrings(".a{x:0;margin:a\\75to!important;y:2}", mapped.css);
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, mapped.source_map, .{});
+    defer json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const generated_start = std.mem.indexOf(u8, mapped.css, "margin").?;
+    const sibling_start = std.mem.indexOf(u8, mapped.css, "y:2").?;
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(generated_start),
+        .original_line = 0,
+        .original_column = @intCast(generated[0].source_span.start),
+    }));
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(sibling_start),
+        .original_line = 0,
+        .original_column = @intCast(original.declarations[5].span.start),
+    }));
+    for (mappings) |mapping| {
+        try std.testing.expect(mapping.generated_column <= generated_start or
+            mapping.generated_column >= sibling_start);
+    }
+}
+
+test "margin shorthand emission rejects a structurally plausible forged proof" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "forged-margin.css",
+        ".a{margin-top:1px;margin-right:2px;margin-bottom:1px;margin-left:1px}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const original = parsed[1].rules[0].style_rule.block.declarations;
+    const generated = [_]ast.GeneratedDeclaration{.{
+        .kind = .margin,
+        .first_declaration = 0,
+        .source_span = .{
+            .source = file.id,
+            .start = original.declarations[0].span.start,
+            .end = original.declarations[3].span.end,
+        },
+    }};
+    const declarations = try ast.DeclarationList.initWithGenerated(
+        original.span,
+        original.declarations,
+        &generated,
+    );
+    const root = try replaceFirstStyleDeclarations(&context, parsed[1], declarations);
+    try std.testing.expectError(
+        error.InvalidAst,
+        emit(std.testing.allocator, file, root, .{ .mode = .minified }),
+    );
 }
 
 test "keyframes and page structures receive ordered nested pretty formatting" {
