@@ -58,6 +58,17 @@ pub fn validateGeneratedDeclarations(
             proof.kind.inputCount(),
         ) catch return error.InvalidAst;
         if (end > declarations.len) return error.InvalidAst;
+        if (proof.kind == .compatibility) {
+            const compatibility = proof.compatibility orelse return error.InvalidAst;
+            if (!ast.compatibilityDeclarationMatchesStructure(
+                declarations[proof.first_declaration],
+                compatibility.feature,
+            )) return error.InvalidAst;
+            // Compatibility expansion copies the complete value verbatim; it
+            // neither resolves nor substitutes a custom property. The source
+            // declaration remains the standard-last proof input.
+            continue;
+        }
         for (declarations[proof.first_declaration..end]) |declaration| {
             if (try protectsDeclaration(allocator, file, declaration, options)) {
                 return error.ProtectedDeclarationRewrite;
@@ -197,6 +208,30 @@ test "custom property guard rejects generated declarations that consume substitu
             &generated,
             .{},
         ),
+    );
+}
+
+test "custom property guard permits closed compatibility copies of var consumers" {
+    var parsed = try pipeline.parse(
+        std.testing.allocator,
+        "custom-property-prefix.css",
+        ".a{appearance:var(--appearance)}",
+    );
+    defer parsed.deinit();
+    const declarations = parsed.rules.rules[0].style_rule.block.declarations.declarations;
+    const forms = [_]ast.CompatibilityForm{.webkit};
+    const generated = [_]ast.GeneratedDeclaration{.{
+        .kind = .compatibility,
+        .first_declaration = 0,
+        .source_span = declarations[0].span,
+        .compatibility = .{ .feature = .appearance, .forms = &forms },
+    }};
+    try validateGeneratedDeclarations(
+        std.testing.allocator,
+        parsed.file(),
+        declarations,
+        &generated,
+        .{},
     );
 }
 

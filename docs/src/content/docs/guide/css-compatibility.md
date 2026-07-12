@@ -40,15 +40,22 @@ Each row maps to a versioned fixture in `tests/compatibility/matrix.json`. For e
 
 ## Validation boundary
 
-The independent parser gate proves that emitted bytes are accepted as CSS syntax by a separate browser-oriented parser. It does not yet prove computed-style equivalence in browsers, validate every property grammar, execute imports, or enable transformations. Unknown future at-rules are expected to produce a named Lightning CSS warning while still parsing successfully.
+The independent parser gate proves that emitted bytes are accepted as CSS syntax by a separate browser-oriented parser. It does not yet prove computed-style equivalence in browsers, validate every property grammar, execute imports, or by itself authorize a pass or stable CLI option. Unknown future at-rules are expected to produce a named Lightning CSS warning while still parsing successfully.
 
-Source-map generation exists in the library pipeline, but the recovery CLI still rejects `--source-map` until its map-file and comment policy is defined. Optimizer, prefixing, browser targeting, critical CSS, preprocessors, CSS Modules, CSS-in-JS, and the public compile service remain outside this grammar matrix.
+## Target compatibility rewrite
+
+A separate `PREFIX-002` acceptance fixture verifies the library-only target pass over the pinned eight-feature subset: `appearance`, `user-select`, `backdrop-filter`, `position: sticky`, `display: flex`, `::placeholder`, `:fullscreen`, and `@keyframes`. Vendor declarations precede the retained standard form; selector variants are separate adjacent rules; prefixed keyframes precede standard keyframes. Layers, media queries, importance, fallback chains, custom properties, logical properties, manual prefixes, unsupported selector shapes, descriptor blocks, and nested declarations are explicit fixture boundaries.
+
+The fixture has reviewed pretty and minified goldens, reparses byte-idempotently, and is independently projected with Lightning CSS 1.30.1 to remove compatibility-only forms before comparison with the original standard semantics. The reviewed legacy target query expands the output, while `chrome >= 120, edge >= 120, firefox >= 120` is exactly transform-free. This evidence is narrower than browser computed-style testing and is not a claim of general autoprefixing.
+
+Source-map generation exists in the library pipeline, but the recovery CLI still rejects `--source-map` until its map-file and comment policy is defined. Optimizer CLI wiring, target/prefix CLI flags, critical CSS, preprocessors, CSS Modules, CSS-in-JS, and the public compile service remain outside this grammar matrix.
 
 To run the independent gate after building the compiler:
 
 ```bash
 npm ci --ignore-scripts
 npm run test:compat
+npm run test:transforms
 ```
 
 - [Current status](/guide/status)

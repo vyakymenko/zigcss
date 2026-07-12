@@ -14,6 +14,7 @@ const RequestedPass = enum {
     shorthand_synthesis,
     selector_rule_merge,
     at_rule_merge,
+    target_prefix_rewrite,
 };
 
 pub fn main() !void {
@@ -26,6 +27,7 @@ pub fn main() !void {
     var input_path: ?[]const u8 = null;
     var requested_pass: RequestedPass = .empty_cleanup;
     var pass_was_set = false;
+    var targets: ?[]const u8 = null;
     var minified = false;
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
@@ -45,6 +47,13 @@ pub fn main() !void {
             pass_was_set = true;
             continue;
         }
+        if (std.mem.eql(u8, argument, "--targets")) {
+            if (targets != null) return invalidArguments("duplicate --targets argument", .{});
+            index += 1;
+            if (index >= args.len) return invalidArguments("--targets requires a value", .{});
+            targets = args[index];
+            continue;
+        }
         if (std.mem.startsWith(u8, argument, "--")) {
             return invalidArguments("unknown argument: {s}", .{argument});
         }
@@ -52,7 +61,7 @@ pub fn main() !void {
         input_path = argument;
     }
     const input = input_path orelse return invalidArguments(
-        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis|adjacent-selector-rule-merge|adjacent-at-rule-merge>] [--minify]",
+        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis|adjacent-selector-rule-merge|adjacent-at-rule-merge|target-prefix-rewrite>] [--targets <query>] [--minify]",
         .{},
     );
 
@@ -67,16 +76,43 @@ pub fn main() !void {
         return error.ParseFailed;
     }
 
-    const registry = [_]zigcss.transform.pass_manager.Pass{
-        zigcss.transform.empty_cleanup.definition(),
-        zigcss.transform.color_zero_shortening.definition(),
-        zigcss.transform.math_folding.definition(),
-        zigcss.transform.duplicate_declarations.definition(),
-        zigcss.transform.shorthand_synthesis.definition(),
-        zigcss.transform.selector_rule_merge.definition(),
-        zigcss.transform.at_rule_merge.definition(),
-    };
-    if (requested_pass != .none) {
+    if (requested_pass == .target_prefix_rewrite) {
+        const target_input = targets orelse return invalidArguments(
+            "target-prefix-rewrite requires --targets",
+            .{},
+        );
+        const target_result = try zigcss.prefixing.target_query.parse(allocator, target_input, .{});
+        var target_query = switch (target_result) {
+            .query => |value| value,
+            .invalid => |failure| return invalidArguments(
+                "invalid target query at byte {d}: {s}",
+                .{ failure.offset, @tagName(failure.kind) },
+            ),
+        };
+        defer target_query.deinit();
+        const config = try zigcss.prefixing.rewrite.Configuration.init(allocator, &target_query);
+        const registry = [_]zigcss.transform.pass_manager.Pass{
+            zigcss.prefixing.rewrite.definition(&config),
+        };
+        var plan = try zigcss.transform.pass_manager.buildPlan(
+            allocator,
+            &registry,
+            &.{zigcss.prefixing.rewrite.id},
+            .{ .allow_compatibility_rewrite = true },
+        );
+        defer plan.deinit();
+        try parsed.applyPassPlan(allocator, &plan, .{ .verify_idempotence = true });
+    } else if (requested_pass != .none) {
+        if (targets != null) return invalidArguments("--targets requires target-prefix-rewrite", .{});
+        const registry = [_]zigcss.transform.pass_manager.Pass{
+            zigcss.transform.empty_cleanup.definition(),
+            zigcss.transform.color_zero_shortening.definition(),
+            zigcss.transform.math_folding.definition(),
+            zigcss.transform.duplicate_declarations.definition(),
+            zigcss.transform.shorthand_synthesis.definition(),
+            zigcss.transform.selector_rule_merge.definition(),
+            zigcss.transform.at_rule_merge.definition(),
+        };
         const requested_ids = [_][]const u8{switch (requested_pass) {
             .none => unreachable,
             .empty_cleanup => zigcss.transform.empty_cleanup.id,
@@ -85,6 +121,7 @@ pub fn main() !void {
             .shorthand_synthesis => zigcss.transform.shorthand_synthesis.id,
             .selector_rule_merge => zigcss.transform.selector_rule_merge.id,
             .at_rule_merge => zigcss.transform.at_rule_merge.id,
+            .target_prefix_rewrite => unreachable,
         }};
         const policy: zigcss.transform.pass_manager.Policy = switch (requested_pass) {
             .none => unreachable,
@@ -94,6 +131,7 @@ pub fn main() !void {
             .shorthand_synthesis => .{ .allow_semantic_rewrite = true },
             .selector_rule_merge => .{ .allow_semantic_rewrite = true },
             .at_rule_merge => .{ .allow_semantic_rewrite = true },
+            .target_prefix_rewrite => unreachable,
         };
         var plan = try zigcss.transform.pass_manager.buildPlan(
             allocator,
@@ -103,6 +141,8 @@ pub fn main() !void {
         );
         defer plan.deinit();
         try parsed.applyPassPlan(allocator, &plan, .{ .verify_idempotence = true });
+    } else if (targets != null) {
+        return invalidArguments("--targets requires target-prefix-rewrite", .{});
     }
 
     var result = try parsed.emitResult(allocator, .{
@@ -124,6 +164,7 @@ fn parsePass(value: []const u8) ?RequestedPass {
     if (std.mem.eql(u8, value, zigcss.transform.shorthand_synthesis.id)) return .shorthand_synthesis;
     if (std.mem.eql(u8, value, zigcss.transform.selector_rule_merge.id)) return .selector_rule_merge;
     if (std.mem.eql(u8, value, zigcss.transform.at_rule_merge.id)) return .at_rule_merge;
+    if (std.mem.eql(u8, value, zigcss.prefixing.rewrite.id)) return .target_prefix_rewrite;
     return null;
 }
 

@@ -100,7 +100,14 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('@mdn/browser-compat-data` 8.0.0')
     expect(adr).toContain('manifest and normalized-data SHA-256')
     expect(adr).toContain('annotated result remains explicit')
-    expect(adr).toContain('library only')
+    expect(adr).toContain('Zig library and test-only pass driver')
+    expect(adr).toContain('`compatibility_rewrite`')
+    expect(adr).toContain('https://drafts.csswg.org/css-cascade-5/')
+    expect(adr).toContain('https://drafts.csswg.org/selectors/')
+    expect(adr).toContain('standard-last ordering')
+    expect(adr).toContain('separate adjacent style rules')
+    expect(adr).toContain('manual vendor form')
+    expect(adr).toContain('stable recovery CLI')
   })
 
   test('makes the approved model and single-agent rule a hard autonomous gate', () => {

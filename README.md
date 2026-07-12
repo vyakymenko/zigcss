@@ -23,9 +23,10 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | `.css` parsing and emission | Experimental, matrix-tested | Stable CLI input uses the rebuilt parser/emitter; the tested grammar boundary is published below. |
 | `--minify` | Experimental | Compacts emitted whitespace without enabling AST transforms. |
 | Output planning | Verified safety boundary | Rejects input/output aliases and duplicate batch destinations before writes. |
-| Optimizer, autoprefixing, critical CSS | Disabled | Unsafe transform requests fail explicitly. |
+| Optimizer and critical CSS | Disabled | Unsafe transform requests fail explicitly. |
+| Target prefix rewrite | Experimental, library-only | One verified pass adds closed forms for eight pinned property/value/selector/at-rule features; it is exercised through the pass manager and test driver, not the recovery CLI. |
 | Source maps | Experimental, library-only | Deterministic maps are available from the library pipeline; CLI output policy remains undefined. |
-| Browser target queries | Experimental, library-only | A strict explicit-minimum grammar and pinned BCD 8.0.0 subset are available from the Zig library; CLI requests remain unavailable until verified prefix rewriting exists. |
+| Browser target queries | Experimental, library-only | A strict explicit-minimum grammar and pinned BCD 8.0.0 subset deterministically configure the verified rewrite; `--browsers` and `--autoprefix` remain unavailable pending later public CLI wiring. |
 | SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS | Experimental and CLI-disabled | Legacy adapters remain internal until each has a compatibility decision and evidence suite. |
 | LSP | Experimental | Still consumes the legacy parser. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 pending bounded isolation. |
@@ -34,7 +35,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 
 The tested grammar boundary is published in [the CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md) and backed by `tests/compatibility/matrix.json`. Pretty and minified fixture output must parse in pinned Lightning CSS with error recovery disabled.
 
-Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, prefix rewriting and broader compatibility data, CLI source-map output, LSP migration, alternate formats, and resource-bounded public compilation remain incomplete.
+Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, broader prefix data and stable CLI exposure, CLI source-map output, LSP migration, alternate formats, and resource-bounded public compilation remain incomplete.
 
 Do not use current output in a production pipeline. A successful compile is not yet a standards-compatibility guarantee.
 
@@ -72,6 +73,7 @@ npm ci --ignore-scripts
 npm run test:prefix-data
 npm run check:prefix-data
 npm run test:compat
+npm run test:transforms
 ```
 
 ## Recovery CLI

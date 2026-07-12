@@ -10,9 +10,10 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 | `--minify` | Experimental | Changes whitespace during emission only. It does not enable optimizer transforms. |
 | Output planning | Safety boundary verified | Input/output aliases and multi-file destination collisions are rejected before writes. |
 | `--profile` | Experimental | Reports parse, optimizer-stage, and emission timings without the former lifecycle crash. |
-| Optimizer, autoprefixing, critical CSS | Disabled | Unsafe transform paths fail explicitly. |
+| Optimizer and critical CSS | Disabled | Unsafe transform paths fail explicitly. |
+| Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property/value/selector/at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
 | Source maps | Experimental, library-only | The library pipeline produces deterministic mappings; the CLI flag remains unavailable until its output policy is defined. |
-| Browser target queries | Experimental, library-only | The Zig API accepts a strict explicit-minimum grammar over six browsers and resolves a pinned BCD 8.0.0 feature subset; CLI flags remain unavailable pending verified prefix rewriting. |
+| Browser target queries | Experimental, library-only | The Zig API accepts a strict explicit-minimum grammar over six browsers and deterministically configures the verified rewrite from pinned BCD 8.0.0 data; CLI flags remain unavailable pending public option wiring. |
 | SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS | Experimental and CLI-disabled | Legacy adapters remain internal pending a compatibility contract and dedicated test suites. |
 | LSP | Experimental | Shares the legacy parser and is not a stable editor contract. |
 | Public compile API and playground | Disabled | Public routes return HTTP 503 until bounded isolation is implemented. |
@@ -21,13 +22,15 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 
 The stable CLI no longer consumes the inherited byte parser. Its typed and lossless grammar boundary is listed in the [CSS compatibility matrix](/guide/css-compatibility), and every emitting fixture is checked in pretty and minified modes by an independent parser with recovery disabled.
 
-Property-specific values are generally preserved as component trees rather than fully validated semantic values. Browser computed-style validation, prefix rewriting and broader target data, CLI source-map output, the LSP migration, alternate formats, and public untrusted compilation remain later gates. Independent syntax acceptance is evidence, not a complete browser-semantics guarantee.
+Property-specific values are generally preserved as component trees rather than fully validated semantic values. Browser computed-style validation, broader target data and stable CLI prefix exposure, CLI source-map output, the LSP migration, alternate formats, and public untrusted compilation remain later gates. Independent syntax acceptance is evidence, not a complete browser-semantics guarantee.
 
 ## Library target boundary
 
 The experimental Zig API accepts comma-separated explicit minimums such as `chrome >= 120, firefox >= 115, safari >= 17.2`. The closed browser set is `chrome`, `edge`, `firefox`, `safari`, `ios_safari`, and `ie`. Queries are lowercase, contain no defaults, and do not implement Browserslist market-share, recency, negation, alias, or configuration syntax.
 
-Compatibility facts are generated from the exact `@mdn/browser-compat-data` 8.0.0 lock for a reviewed eight-feature property/value/selector/at-rule subset. This proves deterministic target parsing and data resolution; it does not enable autoprefixing. `--browsers` and `--autoprefix` continue to fail until the later rewrite package can preserve ordering and validate target-dependent output.
+Compatibility facts are generated from the exact `@mdn/browser-compat-data` 8.0.0 lock for a reviewed eight-feature property/value/selector/at-rule subset. The verified library pass emits only complete, unannotated closed forms, keeps vendor declarations before the authored standard, separates vendor selector rules, clones prefixed keyframes, retains manual vendor policy, and produces deterministic source maps. A modern Chrome/Edge/Firefox query is an exact no-op; the reviewed legacy query materially changes output and passes independent Lightning CSS projection in both modes.
+
+This is still not general autoprefixing. Partial, annotated, unsupported, mixed-selector, functional-pseudo, descriptor, recovered, and conflicting/manual cases default to no rewrite. `--browsers` and `--autoprefix` continue to fail until later public API/CLI work carries the target query and authorizes only the rebuilt pass.
 
 Use the current binary only for contributing, testing, or evaluating the recovery work. Do not place it in a production build pipeline.
 

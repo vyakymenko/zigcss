@@ -21,9 +21,10 @@ describe('Features', () => {
     expect(screen.getAllByText(/experimental/i).length).toBeGreaterThan(1)
   })
 
-  it('lists disabled and unavailable surfaces explicitly', () => {
+  it('lists disabled and library-only surfaces explicitly', () => {
     renderFeatures()
-    expect(screen.getByText('Optimizer, prefixing, critical CSS')).toBeInTheDocument()
+    expect(screen.getByText('Optimizer and critical CSS')).toBeInTheDocument()
+    expect(screen.getByText('Target prefix rewrite')).toBeInTheDocument()
     expect(screen.getByText('Source maps')).toBeInTheDocument()
     expect(screen.getByText('Browser targets')).toBeInTheDocument()
     expect(screen.getByText('Public compile API and playground')).toBeInTheDocument()

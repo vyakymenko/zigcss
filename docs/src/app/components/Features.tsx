@@ -18,9 +18,14 @@ const capabilities = [
     detail: "Rejects input aliases and duplicate batch destinations before writes.",
   },
   {
-    surface: "Optimizer, prefixing, critical CSS",
+    surface: "Optimizer and critical CSS",
     status: "Disabled",
     detail: "Known unsafe transforms are unreachable from the recovery CLI and stable code generation path.",
+  },
+  {
+    surface: "Target prefix rewrite",
+    status: "Experimental / library-only",
+    detail: "One verified pass covers eight pinned features with target-dependent output; the recovery CLI does not expose it yet.",
   },
   {
     surface: "Source maps",
@@ -29,8 +34,8 @@ const capabilities = [
   },
   {
     surface: "Browser targets",
-    status: "Unavailable",
-    detail: "Target queries fail explicitly until versioned compatibility data is validated.",
+    status: "Experimental / library-only",
+    detail: "Strict explicit-minimum queries configure pinned BCD 8.0.0 data; --browsers and --autoprefix still fail in the recovery CLI.",
   },
   {
     surface: "Alternate format adapters",

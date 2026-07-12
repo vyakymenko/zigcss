@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-11
 - Owners: ZigCSS prefixing, transform, and release maintainers
-- Roadmap: `PREFIX-001`, prerequisite for `PREFIX-002`
+- Roadmap: `PREFIX-001`, `PREFIX-002`
 
 ## Context
 
@@ -53,9 +53,21 @@ For every target, the resolver proves continuous support from the requested mini
 
 If no known statement covers the current boundary, resolution reports the browser, requested minimum, and first unsupported version instead of guessing. Partial and annotated support remain explicit result facts. Unknown feature IDs and any forged noncanonical query are errors. Resolution is deterministic, bounded, allocation-failure tested, and independent of network or wall-clock state.
 
+### Prefix rewrite contract
+
+`PREFIX-002` registers one verified `compatibility_rewrite` pass for the eight reviewed features. It consumes an explicit `Configuration` built from the canonical query and pinned data, then stores only closed property, value, selector, or at-rule forms in proof-carrying AST nodes. The emitter independently validates each proof and serializes known syntax; the pass cannot inject raw CSS bytes.
+
+Each feature is resolved per target. Complete, unannotated statements may contribute a required form. Partial or annotated statements remain visible as conservative facts but do not authorize output, and an unsupported interval is recorded rather than guessed. Forms from other targets can still be emitted when independently proven safe. A query requiring no reviewed legacy form returns the exact input root.
+
+Compatibility declarations are emitted immediately before the retained authored standard declaration, preserving declaration-list position, fallback order, and `!important`. This standard-last ordering follows the [CSS Cascade rule that the last declaration in document order wins](https://drafts.csswg.org/css-cascade-5/#cascade-order). Selector variants are emitted as separate adjacent style rules rather than combined with the standard selector: ordinary style rules use unforgiving selector lists, where an invalid selector invalidates the list, as defined by [Selectors Level 4](https://drafts.csswg.org/selectors/#invalid). Prefixed keyframes are complete adjacent clones followed by the authored standard `@keyframes` rule.
+
+Selector eligibility is intentionally narrow: every selector in the list must contain exactly one direct `::placeholder` or `:fullscreen`, and functional or mixed compatibility selector lists remain authored. Any manual vendor form in the same declaration or rule list makes that feature a list-level no-op, preventing duplication and avoiding a guess about the author's fallback policy. Descriptor blocks, page contexts, supports conditions, custom-property definitions, unsupported values, recovered syntax, and conflicting or already-generated proofs are not rewritten. `var()` consumers may be copied only byte-for-byte as fallbacks; they are never resolved or substituted.
+
+Generated segments follow `ADR-007`: each has one causal authored span, no fabricated inner precision, and deterministic maps. Validators recompute the candidate, standard-semantic equivalence, emitted CSS, source map, and second-run idempotence. Reviewed pretty and minified fixtures are also projected independently through Lightning CSS 1.30.1; legacy targets add required forms while a modern query produces exact transform-free output.
+
 ### Product boundary
 
-`PREFIX-001` exposes target parsing and compatibility resolution through the Zig library only. It does not register a compatibility rewrite, enable the inherited autoprefixer, or make `--browsers`/`--autoprefix` available. CLI enablement waits for `PREFIX-002` to implement property, value, selector, and at-rule forms with proof-carrying ordering, source maps, independent validation, and materially different target outputs.
+`PREFIX-001` and `PREFIX-002` expose target parsing, compatibility resolution, and the verified rewrite through the Zig library and test-only pass driver. They do not enable the inherited autoprefixer or make `--browsers`/`--autoprefix` available in the stable recovery CLI. CLI enablement is separate public API/option work: it must carry an owned target query, surface structured failures, authorize only the rebuilt verified pass, and preserve the existing output contract.
 
 ## Consequences
 
@@ -63,7 +75,9 @@ If no known statement covers the current boundary, resolution reports the browse
 - Invalid or unsupported inputs fail locally with no database lookup or fallback default.
 - The supported language is less convenient than Browserslist but does not silently pretend to implement it.
 - Compatibility data updates are intentional source changes rather than ambient dependency drift.
-- The initial feature/browser surface is incomplete and must not be advertised as general autoprefixing until `PREFIX-002` and later data expansions pass their acceptance suites.
+- The initial feature/browser surface remains incomplete despite the verified rewrite and must not be advertised as general autoprefixing; every data expansion needs reviewed semantic fixtures and the same acceptance suite.
+- Legacy and modern target queries materially and deterministically differ only where the pinned evidence grants a closed form.
+- Stable CLI flags remain explicit failures until the later public option package wires the verified library path.
 
 ## Rejected alternatives
 

@@ -1,6 +1,7 @@
 pub const target_query = @import("prefixing/target_query.zig");
 pub const compatibility = @import("prefixing/compatibility.zig");
 pub const compatibility_types = @import("prefixing/compatibility_types.zig");
+pub const rewrite = @import("prefixing/rewrite.zig");
 
 pub const Browser = target_query.Browser;
 pub const TargetVersion = target_query.Version;
@@ -19,4 +20,5 @@ test {
     _ = target_query;
     _ = compatibility;
     _ = compatibility_types;
+    _ = rewrite;
 }

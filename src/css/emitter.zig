@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
+const compatibility_analysis = @import("../prefixing/rewrite_analysis.zig");
 const rule_parser = @import("rule_parser.zig");
 const rule_merge = @import("rule_merge.zig");
 const shorthand = @import("shorthand.zig");
@@ -139,9 +140,13 @@ const Emitter = struct {
             {
                 if (self.pretty()) try self.writeIndent(depth);
                 const generated = rules.generated_rules[generated_index];
-                try self.writeGeneratedRule(rules, generated, depth);
+                const generated_output_count = generated.outputCount() catch return error.InvalidAst;
+                const has_following = output_index + generated_output_count < output_count or
+                    external_following_rule;
+                try self.writeGeneratedRule(rules, generated, depth, has_following);
                 rule_index += generated.kind.inputCount();
                 generated_index += 1;
+                output_index += generated_output_count;
             } else {
                 if (generated_index < rules.generated_rules.len and
                     rules.generated_rules[generated_index].first_rule < rule_index)
@@ -156,8 +161,8 @@ const Emitter = struct {
                     output_index + 1 < output_count or external_following_rule,
                 );
                 rule_index += 1;
+                output_index += 1;
             }
-            output_index += 1;
         }
         if (generated_index != rules.generated_rules.len or output_index != output_count) {
             return error.InvalidAst;
@@ -169,6 +174,7 @@ const Emitter = struct {
         rules: *const ast.RuleList,
         generated: ast.GeneratedRule,
         depth: usize,
+        external_following_rule: bool,
     ) Error!void {
         const count = generated.kind.inputCount();
         const end = std.math.add(usize, generated.first_rule, count) catch return error.InvalidAst;
@@ -221,6 +227,115 @@ const Emitter = struct {
                 try self.writeAtRuleBlockSeparator(first);
                 try self.writeMergedRulesBlock(first_block, second_block, depth);
             },
+            .compatibility => {
+                compatibility_analysis.validateRuleExpansion(self.file, rules, generated) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.SourceMismatch => return error.SourceMismatch,
+                    error.InvalidSpan => return error.InvalidSpan,
+                    else => return error.InvalidAst,
+                };
+                const compatibility = generated.compatibility orelse return error.InvalidAst;
+                const input = inputs[0];
+                for (compatibility.forms, 0..) |form, index| {
+                    if (index > 0 and self.pretty()) {
+                        try self.appendByte('\n');
+                        try self.writeIndent(depth);
+                    }
+                    try self.writeCompatibilityRule(input, compatibility.feature, form, depth);
+                }
+                if (self.pretty()) {
+                    try self.appendByte('\n');
+                    try self.writeIndent(depth);
+                }
+                try self.writeRule(input, depth, external_following_rule);
+            },
+        }
+    }
+
+    fn writeCompatibilityRule(
+        self: *Emitter,
+        rule: ast.Rule,
+        feature: ast.CompatibilityRuleFeature,
+        form: ast.CompatibilityForm,
+        depth: usize,
+    ) Error!void {
+        try self.mark(rule.span());
+        switch (feature) {
+            .placeholder, .fullscreen => {
+                const style = switch (rule) {
+                    .style_rule => |value| value,
+                    else => return error.InvalidAst,
+                };
+                try self.writeCompatibilitySelectorList(&style.selectors, feature, form);
+                try self.writePrettySpace();
+                try self.writeStyleBlock(&style.block, depth);
+            },
+            .keyframes => {
+                const at_rule = switch (rule) {
+                    .at_rule => |value| value,
+                    else => return error.InvalidAst,
+                };
+                const name = compatibility_analysis.atRuleName(feature, form) orelse return error.InvalidAst;
+                const block = switch (at_rule.block) {
+                    .keyframes => |value| value,
+                    else => return error.InvalidAst,
+                };
+                try self.appendByte('@');
+                try self.mark(at_rule.name.span);
+                try self.appendSlice(name);
+                if (hasNonWhitespace(at_rule.prelude.values)) {
+                    try self.appendByte(' ');
+                    try self.writeComponentValues(at_rule.prelude.values);
+                }
+                try self.writeAtRuleBlockSeparator(at_rule);
+                try self.writeKeyframesBlock(block, depth);
+            },
+        }
+    }
+
+    fn writeCompatibilitySelectorList(
+        self: *Emitter,
+        list: *const ast.SelectorList,
+        feature: ast.CompatibilityRuleFeature,
+        form: ast.CompatibilityForm,
+    ) Error!void {
+        _ = ast.SelectorList.init(list.span, list.selectors) catch return error.InvalidAst;
+        for (list.selectors, 0..) |selector, index| {
+            if (index > 0) try self.appendSlice(if (self.pretty()) ", " else ",");
+            try self.writeCompatibilityComplexSelector(selector, feature, form);
+        }
+    }
+
+    fn writeCompatibilityComplexSelector(
+        self: *Emitter,
+        selector: ast.ComplexSelector,
+        feature: ast.CompatibilityRuleFeature,
+        form: ast.CompatibilityForm,
+    ) Error!void {
+        if (selector.leading_combinator) |combinator| try self.writeCombinator(combinator.kind, true);
+        try self.writeCompatibilityCompoundSelector(selector.head, feature, form);
+        for (selector.tails) |tail| {
+            try self.writeCombinator(tail.combinator.kind, false);
+            try self.writeCompatibilityCompoundSelector(tail.compound, feature, form);
+        }
+    }
+
+    fn writeCompatibilityCompoundSelector(
+        self: *Emitter,
+        compound: ast.CompoundSelector,
+        feature: ast.CompatibilityRuleFeature,
+        form: ast.CompatibilityForm,
+    ) Error!void {
+        _ = ast.CompoundSelector.init(compound.span, compound.simple_selectors) catch return error.InvalidAst;
+        for (compound.simple_selectors) |simple| {
+            if (!compatibility_analysis.simpleMatchesFeature(simple, feature)) {
+                try self.writeSimpleSelector(simple);
+                continue;
+            }
+            const output = compatibility_analysis.pseudoOutput(feature, form) orelse return error.InvalidAst;
+            try self.mark(simple.span());
+            try self.appendSlice(if (output.element) "::" else ":");
+            try self.appendSlice(output.name);
         }
     }
 
@@ -556,9 +671,18 @@ const Emitter = struct {
                 declarations.generated_declarations[generated_index].first_declaration == declaration_index)
             {
                 const generated = declarations.generated_declarations[generated_index];
-                try self.writeGeneratedDeclaration(declarations, generated, terminate);
+                const generated_output_count = generated.outputCount() catch return error.InvalidAst;
+                const terminate_generated = self.pretty() or
+                    output_index + generated_output_count < output_count or terminate_last;
+                try self.writeGeneratedDeclaration(
+                    declarations,
+                    generated,
+                    depth,
+                    terminate_generated,
+                );
                 declaration_index += generated.kind.inputCount();
                 generated_index += 1;
+                output_index += generated_output_count;
             } else {
                 if (generated_index < declarations.generated_declarations.len and
                     declarations.generated_declarations[generated_index].first_declaration < declaration_index)
@@ -567,8 +691,8 @@ const Emitter = struct {
                 }
                 try self.writeDeclaration(declarations.declarations[declaration_index], terminate);
                 declaration_index += 1;
+                output_index += 1;
             }
-            output_index += 1;
         }
         if (generated_index != declarations.generated_declarations.len or output_index != output_count) {
             return error.InvalidAst;
@@ -631,6 +755,7 @@ const Emitter = struct {
         self: *Emitter,
         declarations: *const ast.DeclarationList,
         generated: ast.GeneratedDeclaration,
+        depth: usize,
         terminate: bool,
     ) Error!void {
         const count = generated.kind.inputCount();
@@ -656,7 +781,67 @@ const Emitter = struct {
                 }
                 if (terminate) try self.appendByte(';');
             },
+            .compatibility => {
+                compatibility_analysis.validateDeclarationExpansion(
+                    self.allocator,
+                    self.file,
+                    declarations,
+                    generated,
+                ) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.SourceMismatch => return error.SourceMismatch,
+                    error.InvalidSpan => return error.InvalidSpan,
+                    else => return error.InvalidAst,
+                };
+                const compatibility = generated.compatibility orelse return error.InvalidAst;
+                const input = inputs[0];
+                for (compatibility.forms, 0..) |form, index| {
+                    if (index > 0 and self.pretty()) {
+                        try self.appendByte('\n');
+                        try self.writeIndent(depth);
+                    }
+                    try self.writeCompatibilityDeclaration(input, compatibility.feature, form);
+                }
+                if (self.pretty()) {
+                    try self.appendByte('\n');
+                    try self.writeIndent(depth);
+                }
+                try self.writeDeclaration(input, terminate);
+            },
         }
+    }
+
+    fn writeCompatibilityDeclaration(
+        self: *Emitter,
+        declaration: ast.Declaration,
+        feature: ast.CompatibilityDeclarationFeature,
+        form: ast.CompatibilityForm,
+    ) Error!void {
+        const output = compatibility_analysis.declarationOutput(feature, form) orelse return error.InvalidAst;
+        try self.mark(declaration.span);
+        try self.appendSlice(output.name);
+        try self.appendSlice(if (self.pretty()) ": " else ":");
+        const value = declaration.valueWithoutImportance();
+        if (output.value) |generated_value| {
+            try self.mark(declaration.value.span);
+            try self.appendSlice(generated_value);
+        } else if (declaration.generated_value) |generated_value| {
+            _ = ast.GeneratedValue.init(generated_value) catch return error.InvalidAst;
+            try self.mark(generated_value.sourceSpan());
+            var buffer: [ast.generated_value_buffer_size]u8 = undefined;
+            try self.appendSlice(generated_value.serialize(&buffer) catch return error.InvalidAst);
+        } else {
+            try self.writeComponentValues(value);
+        }
+        if (declaration.important != null) {
+            if (self.pretty() and (output.value != null or
+                declaration.generated_value != null or hasNonWhitespace(value)))
+            {
+                try self.appendByte(' ');
+            }
+            try self.appendSlice("!important");
+        }
+        try self.appendByte(';');
     }
 
     fn writeKeyframesBlock(self: *Emitter, block: *const ast.KeyframesBlock, depth: usize) Error!void {
@@ -1074,9 +1259,11 @@ fn logicalDeclarationCount(declarations: *const ast.DeclarationList) Error!usize
     declarations.validate() catch return error.InvalidAst;
     var count = declarations.declarations.len;
     for (declarations.generated_declarations) |generated| {
-        const removed = generated.kind.inputCount() - 1;
-        if (removed > count) return error.InvalidAst;
-        count -= removed;
+        const inputs = generated.kind.inputCount();
+        const outputs = generated.outputCount() catch return error.InvalidAst;
+        if (inputs > count) return error.InvalidAst;
+        count -= inputs;
+        count = std.math.add(usize, count, outputs) catch return error.ValueOverflow;
     }
     return count;
 }
@@ -1085,9 +1272,11 @@ fn logicalRuleCount(rules: *const ast.RuleList) Error!usize {
     rules.validate() catch return error.InvalidAst;
     var count = rules.rules.len;
     for (rules.generated_rules) |generated| {
-        const removed = generated.kind.inputCount() - 1;
-        if (removed > count) return error.InvalidAst;
-        count -= removed;
+        const inputs = generated.kind.inputCount();
+        const outputs = generated.outputCount() catch return error.InvalidAst;
+        if (inputs > count) return error.InvalidAst;
+        count -= inputs;
+        count = std.math.add(usize, count, outputs) catch return error.ValueOverflow;
     }
     return count;
 }
@@ -1110,7 +1299,8 @@ fn structuredDetailsMatch(rule: *const ast.AtRule) bool {
     if (std.ascii.eqlIgnoreCase(rule.name.value, "page")) return details != null and details.? == .page;
     if (std.ascii.eqlIgnoreCase(rule.name.value, "font-face")) return details != null and details.? == .font_face;
     if (std.ascii.eqlIgnoreCase(rule.name.value, "keyframes") or
-        std.ascii.eqlIgnoreCase(rule.name.value, "-webkit-keyframes"))
+        std.ascii.eqlIgnoreCase(rule.name.value, "-webkit-keyframes") or
+        std.ascii.eqlIgnoreCase(rule.name.value, "-moz-keyframes"))
     {
         return details != null and details.? == .keyframes;
     }
@@ -1509,6 +1699,121 @@ test "proof-carrying margin shorthand emits one causal mapping" {
     }
 }
 
+test "proof-carrying compatibility declarations emit fallbacks before authored syntax" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "generated-prefix-declarations.css",
+        ".a{appearance:none;position:st\\69 cky!important;display:flex}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const original = parsed[1].rules[0].style_rule.block.declarations;
+    const appearance_forms = [_]ast.CompatibilityForm{ .webkit, .moz };
+    const sticky_forms = [_]ast.CompatibilityForm{.webkit};
+    const flex_forms = [_]ast.CompatibilityForm{ .webkit, .ms };
+    const generated = [_]ast.GeneratedDeclaration{
+        .{
+            .kind = .compatibility,
+            .first_declaration = 0,
+            .source_span = original.declarations[0].span,
+            .compatibility = .{ .feature = .appearance, .forms = &appearance_forms },
+        },
+        .{
+            .kind = .compatibility,
+            .first_declaration = 1,
+            .source_span = original.declarations[1].span,
+            .compatibility = .{ .feature = .position_sticky, .forms = &sticky_forms },
+        },
+        .{
+            .kind = .compatibility,
+            .first_declaration = 2,
+            .source_span = original.declarations[2].span,
+            .compatibility = .{ .feature = .display_flex, .forms = &flex_forms },
+        },
+    };
+    const declarations = try ast.DeclarationList.initWithGenerated(
+        original.span,
+        original.declarations,
+        &generated,
+    );
+    const root = try replaceFirstStyleDeclarations(&context, parsed[1], declarations);
+
+    const pretty_output = try emit(std.testing.allocator, file, root, .{});
+    defer std.testing.allocator.free(pretty_output);
+    try std.testing.expectEqualStrings(
+        ".a {\n" ++
+            "  -webkit-appearance: none;\n" ++
+            "  -moz-appearance: none;\n" ++
+            "  appearance: none;\n" ++
+            "  position: -webkit-sticky !important;\n" ++
+            "  position: st\\69 cky !important;\n" ++
+            "  display: -webkit-flex;\n" ++
+            "  display: -ms-flexbox;\n" ++
+            "  display: flex;\n" ++
+            "}\n",
+        pretty_output,
+    );
+
+    var mapped = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        root,
+        .{ .mode = .minified },
+        .{},
+    );
+    defer mapped.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{-webkit-appearance:none;-moz-appearance:none;appearance:none;" ++
+            "position:-webkit-sticky!important;position:st\\69 cky!important;" ++
+            "display:-webkit-flex;display:-ms-flexbox;display:flex}",
+        mapped.css,
+    );
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, mapped.source_map, .{});
+    defer json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const webkit_start = std.mem.indexOf(u8, mapped.css, "-webkit-appearance").?;
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(webkit_start),
+        .original_line = 0,
+        .original_column = @intCast(original.declarations[0].span.start),
+    }));
+}
+
+test "compatibility declaration emission rejects authored vendor conflicts" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "forged-prefix-declarations.css",
+        ".a{-webkit-appearance:none;appearance:none}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const original = parsed[1].rules[0].style_rule.block.declarations;
+    const forms = [_]ast.CompatibilityForm{.webkit};
+    const generated = [_]ast.GeneratedDeclaration{.{
+        .kind = .compatibility,
+        .first_declaration = 1,
+        .source_span = original.declarations[1].span,
+        .compatibility = .{ .feature = .appearance, .forms = &forms },
+    }};
+    const declarations = try ast.DeclarationList.initWithGenerated(
+        original.span,
+        original.declarations,
+        &generated,
+    );
+    const root = try replaceFirstStyleDeclarations(&context, parsed[1], declarations);
+    try std.testing.expectError(
+        error.InvalidAst,
+        emit(std.testing.allocator, file, root, .{ .mode = .minified }),
+    );
+}
+
 test "margin shorthand emission rejects a structurally plausible forged proof" {
     var context = try compilation.Compilation.init(std.testing.allocator);
     defer context.deinit();
@@ -1537,6 +1842,143 @@ test "margin shorthand emission rejects a structurally plausible forged proof" {
     try std.testing.expectError(
         error.InvalidAst,
         emit(std.testing.allocator, file, root, .{ .mode = .minified }),
+    );
+}
+
+test "proof-carrying selector and keyframes compatibility rules remain separate and standard-last" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "generated-prefix-rules.css",
+        "input::placeholder,textarea::placeholder{color:red}" ++
+            "@keyframes spin{from{opacity:0}to{opacity:1}}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const placeholder_forms = [_]ast.CompatibilityForm{ .webkit, .moz, .ms };
+    const keyframes_forms = [_]ast.CompatibilityForm{ .webkit, .moz };
+    const generated = [_]ast.GeneratedRule{
+        .{
+            .kind = .compatibility,
+            .first_rule = 0,
+            .source_span = parsed[1].rules[0].span(),
+            .compatibility = .{ .feature = .placeholder, .forms = &placeholder_forms },
+        },
+        .{
+            .kind = .compatibility,
+            .first_rule = 1,
+            .source_span = parsed[1].rules[1].span(),
+            .compatibility = .{ .feature = .keyframes, .forms = &keyframes_forms },
+        },
+    };
+    const transformed = try ast.RuleList.initWithGeneratedRules(
+        parsed[1].span,
+        parsed[1].rules,
+        parsed[1].omitted_rules,
+        &generated,
+    );
+    var mapped = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        &transformed,
+        .{ .mode = .minified },
+        .{},
+    );
+    defer mapped.deinit();
+    try std.testing.expectEqualStrings(
+        "input::-webkit-input-placeholder,textarea::-webkit-input-placeholder{color:red}" ++
+            "input::-moz-placeholder,textarea::-moz-placeholder{color:red}" ++
+            "input:-ms-input-placeholder,textarea:-ms-input-placeholder{color:red}" ++
+            "input::placeholder,textarea::placeholder{color:red}" ++
+            "@-webkit-keyframes spin{from{opacity:0}to{opacity:1}}" ++
+            "@-moz-keyframes spin{from{opacity:0}to{opacity:1}}" ++
+            "@keyframes spin{from{opacity:0}to{opacity:1}}",
+        mapped.css,
+    );
+
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, mapped.source_map, .{});
+    defer json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const original_style = parsed[1].rules[0].style_rule;
+    const original_pseudo = original_style.selectors.selectors[0].head.simple_selectors[1].span();
+    const webkit_pseudo = std.mem.indexOf(u8, mapped.css, "::-webkit-input-placeholder").?;
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(webkit_pseudo),
+        .original_line = 0,
+        .original_column = @intCast(original_pseudo.start),
+    }));
+    const keyframes = parsed[1].rules[1].at_rule;
+    const webkit_keyframes = std.mem.indexOf(u8, mapped.css, "-webkit-keyframes").?;
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(webkit_keyframes),
+        .original_line = 0,
+        .original_column = @intCast(keyframes.name.span.start),
+    }));
+
+    var reparsed_context = try compilation.Compilation.init(std.testing.allocator);
+    defer reparsed_context.deinit();
+    _ = try parseSource(&reparsed_context, "generated-prefix-rules-output.css", mapped.css);
+    try std.testing.expectEqual(@as(usize, 0), reparsed_context.diagnostics.items().len);
+}
+
+test "compatibility rule proofs reject mixed lists and authored vendor conflicts" {
+    var mixed_context = try compilation.Compilation.init(std.testing.allocator);
+    defer mixed_context.deinit();
+    const mixed = try parseSource(
+        &mixed_context,
+        "mixed-prefix-selector.css",
+        ".plain,input::placeholder{color:red}",
+    );
+    const forms = [_]ast.CompatibilityForm{.webkit};
+    const mixed_generated = [_]ast.GeneratedRule{.{
+        .kind = .compatibility,
+        .first_rule = 0,
+        .source_span = mixed[1].rules[0].span(),
+        .compatibility = .{ .feature = .placeholder, .forms = &forms },
+    }};
+    try std.testing.expectError(
+        error.InvalidRule,
+        ast.RuleList.initWithGeneratedRules(
+            mixed[1].span,
+            mixed[1].rules,
+            mixed[1].omitted_rules,
+            &mixed_generated,
+        ),
+    );
+
+    var conflict_context = try compilation.Compilation.init(std.testing.allocator);
+    defer conflict_context.deinit();
+    const conflict = try parseSource(
+        &conflict_context,
+        "conflicting-prefix-selector.css",
+        "input::-webkit-input-placeholder{color:red}input::placeholder{color:red}",
+    );
+    const conflict_generated = [_]ast.GeneratedRule{.{
+        .kind = .compatibility,
+        .first_rule = 1,
+        .source_span = conflict[1].rules[1].span(),
+        .compatibility = .{ .feature = .placeholder, .forms = &forms },
+    }};
+    const transformed = try ast.RuleList.initWithGeneratedRules(
+        conflict[1].span,
+        conflict[1].rules,
+        conflict[1].omitted_rules,
+        &conflict_generated,
+    );
+    try std.testing.expectError(
+        error.InvalidAst,
+        emit(
+            std.testing.allocator,
+            try conflict_context.sources.get(conflict[0]),
+            &transformed,
+            .{ .mode = .minified },
+        ),
     );
 }
 

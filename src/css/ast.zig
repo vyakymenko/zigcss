@@ -595,12 +595,36 @@ pub const Declaration = struct {
 
 pub const GeneratedDeclarationKind = enum {
     margin,
+    compatibility,
 
     pub fn inputCount(self: GeneratedDeclarationKind) usize {
         return switch (self) {
             .margin => 4,
+            .compatibility => 1,
         };
     }
+};
+
+/// Closed vendor families admitted by generated compatibility proofs. Raw
+/// prefix bytes never enter the AST or emitter.
+pub const CompatibilityForm = enum {
+    khtml,
+    webkit,
+    moz,
+    ms,
+};
+
+pub const CompatibilityDeclarationFeature = enum {
+    appearance,
+    user_select,
+    backdrop_filter,
+    position_sticky,
+    display_flex,
+};
+
+pub const GeneratedCompatibilityDeclaration = struct {
+    feature: CompatibilityDeclarationFeature,
+    forms: []const CompatibilityForm,
 };
 
 /// Proof metadata for replacing a contiguous authored declaration group with
@@ -610,6 +634,18 @@ pub const GeneratedDeclaration = struct {
     kind: GeneratedDeclarationKind,
     first_declaration: usize,
     source_span: source.Span,
+    compatibility: ?GeneratedCompatibilityDeclaration = null,
+
+    pub fn outputCount(self: GeneratedDeclaration) AstError!usize {
+        return switch (self.kind) {
+            .margin => if (self.compatibility == null) 1 else error.InvalidDeclaration,
+            .compatibility => blk: {
+                const compatibility = self.compatibility orelse return error.InvalidDeclaration;
+                try validateCompatibilityDeclarationForms(compatibility);
+                break :blk compatibility.forms.len + 1;
+            },
+        };
+    }
 };
 
 /// Ordered storage intentionally preserves duplicate/fallback declarations.
@@ -652,7 +688,7 @@ pub const DeclarationList = struct {
             {
                 return error.InvalidDeclaration;
             }
-            try validateGeneratedDeclarationStructure(generated.kind, inputs);
+            try validateGeneratedDeclarationStructure(generated, inputs);
             previous_generated_end = end;
         }
         return .{
@@ -672,27 +708,104 @@ pub const DeclarationList = struct {
 };
 
 fn validateGeneratedDeclarationStructure(
-    kind: GeneratedDeclarationKind,
+    generated: GeneratedDeclaration,
     inputs: []const Declaration,
 ) AstError!void {
-    const expected = switch (kind) {
-        .margin => [_][]const u8{
-            "margin-top",
-            "margin-right",
-            "margin-bottom",
-            "margin-left",
+    if (inputs.len != generated.kind.inputCount()) return error.InvalidDeclaration;
+    switch (generated.kind) {
+        .margin => {
+            if (generated.compatibility != null) return error.InvalidDeclaration;
+            const expected = [_][]const u8{
+                "margin-top",
+                "margin-right",
+                "margin-bottom",
+                "margin-left",
+            };
+            const important = inputs[0].important != null;
+            for (inputs, expected) |declaration, name| {
+                if (!std.ascii.eqlIgnoreCase(declaration.name.value, name) or
+                    (declaration.important != null) != important or
+                    declaration.generated_value != null)
+                {
+                    return error.InvalidDeclaration;
+                }
+            }
         },
-    };
-    if (inputs.len != expected.len) return error.InvalidDeclaration;
-    const important = inputs[0].important != null;
-    for (inputs, expected) |declaration, name| {
-        if (!std.ascii.eqlIgnoreCase(declaration.name.value, name) or
-            (declaration.important != null) != important or
-            declaration.generated_value != null)
-        {
+        .compatibility => {
+            const compatibility = generated.compatibility orelse return error.InvalidDeclaration;
+            try validateCompatibilityDeclarationForms(compatibility);
+            if (!compatibilityDeclarationMatchesStructure(inputs[0], compatibility.feature)) {
+                return error.InvalidDeclaration;
+            }
+        },
+    }
+}
+
+fn validateCompatibilityDeclarationForms(
+    compatibility: GeneratedCompatibilityDeclaration,
+) AstError!void {
+    if (compatibility.forms.len == 0 or
+        compatibility.forms.len > std.meta.fields(CompatibilityForm).len)
+    {
+        return error.InvalidDeclaration;
+    }
+    var seen = [_]bool{false} ** std.meta.fields(CompatibilityForm).len;
+    for (compatibility.forms) |form| {
+        const index = @intFromEnum(form);
+        if (seen[index] or !compatibilityDeclarationFormAllowed(compatibility.feature, form)) {
             return error.InvalidDeclaration;
         }
+        seen[index] = true;
     }
+}
+
+pub fn compatibilityDeclarationFormAllowed(
+    feature: CompatibilityDeclarationFeature,
+    form: CompatibilityForm,
+) bool {
+    return switch (feature) {
+        .appearance => form == .webkit or form == .moz,
+        .user_select => form == .khtml or form == .webkit or form == .moz or form == .ms,
+        .backdrop_filter, .position_sticky => form == .webkit,
+        .display_flex => form == .webkit or form == .ms,
+    };
+}
+
+pub fn compatibilityDeclarationMatchesStructure(
+    declaration: Declaration,
+    feature: CompatibilityDeclarationFeature,
+) bool {
+    const expected_name: []const u8 = switch (feature) {
+        .appearance => "appearance",
+        .user_select => "user-select",
+        .backdrop_filter => "backdrop-filter",
+        .position_sticky => "position",
+        .display_flex => "display",
+    };
+    if (!std.ascii.eqlIgnoreCase(declaration.name.value, expected_name) or
+        declaration.name.isCustomProperty())
+    {
+        return false;
+    }
+    return switch (feature) {
+        .appearance, .user_select, .backdrop_filter => hasSemanticValue(declaration),
+        .position_sticky, .display_flex => declaration.generated_value == null and
+            hasSingleIdentValue(declaration),
+    };
+}
+
+fn hasSemanticValue(declaration: Declaration) bool {
+    for (declaration.valueWithoutImportance()) |value| if (!isTrivia(value)) return true;
+    return false;
+}
+
+fn hasSingleIdentValue(declaration: Declaration) bool {
+    const values = declaration.valueWithoutImportance();
+    var first: usize = 0;
+    while (first < values.len and isTrivia(values[first])) : (first += 1) {}
+    var end = values.len;
+    while (end > first and isTrivia(values[end - 1])) : (end -= 1) {}
+    return end - first == 1 and values[first] == .token and values[first].token.kind == .ident;
 }
 
 /// Exact brace and content boundaries for a block. A missing closing span is a
@@ -826,12 +939,25 @@ pub const Rule = union(enum) {
 pub const GeneratedRuleKind = enum {
     selector_list_merge,
     group_at_rule_merge,
+    compatibility,
 
     pub fn inputCount(self: GeneratedRuleKind) usize {
         return switch (self) {
             .selector_list_merge, .group_at_rule_merge => 2,
+            .compatibility => 1,
         };
     }
+};
+
+pub const CompatibilityRuleFeature = enum {
+    placeholder,
+    fullscreen,
+    keyframes,
+};
+
+pub const GeneratedCompatibilityRule = struct {
+    feature: CompatibilityRuleFeature,
+    forms: []const CompatibilityForm,
 };
 
 /// Proof metadata for replacing adjacent authored rules with one structured
@@ -841,6 +967,21 @@ pub const GeneratedRule = struct {
     kind: GeneratedRuleKind,
     first_rule: usize,
     source_span: source.Span,
+    compatibility: ?GeneratedCompatibilityRule = null,
+
+    pub fn outputCount(self: GeneratedRule) AstError!usize {
+        return switch (self.kind) {
+            .selector_list_merge, .group_at_rule_merge => if (self.compatibility == null)
+                1
+            else
+                error.InvalidRule,
+            .compatibility => blk: {
+                const compatibility = self.compatibility orelse return error.InvalidRule;
+                try validateCompatibilityRuleForms(compatibility);
+                break :blk compatibility.forms.len + 1;
+            },
+        };
+    }
 };
 
 /// Ordered rule storage prevents non-adjacent rules or at-rules from merging.
@@ -893,7 +1034,6 @@ pub const RuleList = struct {
                 omission_index += 1;
             }
         }
-        if (generated_rules.len != 0 and omitted_rules.len != 0) return error.InvalidRule;
         var previous_generated_end: usize = 0;
         for (generated_rules) |generated| {
             try validateChild(span, generated.source_span);
@@ -910,7 +1050,15 @@ pub const RuleList = struct {
             {
                 return error.InvalidRule;
             }
-            try validateGeneratedRuleStructure(generated.kind, inputs);
+            for (omitted_rules) |omitted| {
+                const omitted_span = omitted.span();
+                if (omitted_span.start >= generated.source_span.start and
+                    omitted_span.end <= generated.source_span.end)
+                {
+                    return error.InvalidRule;
+                }
+            }
+            try validateGeneratedRuleStructure(generated, inputs);
             previous_generated_end = end;
         }
         return .{
@@ -932,12 +1080,13 @@ pub const RuleList = struct {
 };
 
 fn validateGeneratedRuleStructure(
-    kind: GeneratedRuleKind,
+    generated: GeneratedRule,
     inputs: []const Rule,
 ) AstError!void {
-    if (inputs.len != kind.inputCount()) return error.InvalidRule;
-    switch (kind) {
+    if (inputs.len != generated.kind.inputCount()) return error.InvalidRule;
+    switch (generated.kind) {
         .selector_list_merge => {
+            if (generated.compatibility != null) return error.InvalidRule;
             if (inputs[0] != .style_rule or inputs[1] != .style_rule) return error.InvalidRule;
             const first = inputs[0].style_rule;
             const second = inputs[1].style_rule;
@@ -956,6 +1105,7 @@ fn validateGeneratedRuleStructure(
             ) catch return error.InvalidRule;
         },
         .group_at_rule_merge => {
+            if (generated.compatibility != null) return error.InvalidRule;
             if (inputs[0] != .at_rule or inputs[1] != .at_rule) return error.InvalidRule;
             const first = inputs[0].at_rule;
             const second = inputs[1].at_rule;
@@ -965,7 +1115,124 @@ fn validateGeneratedRuleStructure(
             const second_block = generatedAtRuleMergeBlock(second) orelse return error.InvalidRule;
             if (first_block.nested != second_block.nested) return error.InvalidRule;
         },
+        .compatibility => {
+            const compatibility = generated.compatibility orelse return error.InvalidRule;
+            try validateCompatibilityRuleForms(compatibility);
+            if (!compatibilityRuleMatchesStructure(inputs[0], compatibility.feature)) {
+                return error.InvalidRule;
+            }
+        },
     }
+}
+
+fn validateCompatibilityRuleForms(compatibility: GeneratedCompatibilityRule) AstError!void {
+    if (compatibility.forms.len == 0 or
+        compatibility.forms.len > std.meta.fields(CompatibilityForm).len)
+    {
+        return error.InvalidRule;
+    }
+    var seen = [_]bool{false} ** std.meta.fields(CompatibilityForm).len;
+    for (compatibility.forms) |form| {
+        const index = @intFromEnum(form);
+        if (seen[index] or !compatibilityRuleFormAllowed(compatibility.feature, form)) {
+            return error.InvalidRule;
+        }
+        seen[index] = true;
+    }
+}
+
+pub fn compatibilityRuleFormAllowed(feature: CompatibilityRuleFeature, form: CompatibilityForm) bool {
+    return switch (feature) {
+        .placeholder, .fullscreen => form == .webkit or form == .moz or form == .ms,
+        .keyframes => form == .webkit or form == .moz,
+    };
+}
+
+pub fn compatibilityRuleMatchesStructure(rule: Rule, feature: CompatibilityRuleFeature) bool {
+    return switch (feature) {
+        .placeholder, .fullscreen => switch (rule) {
+            .style_rule => |style| selectorListMatchesCompatibilityFeature(
+                &style.selectors,
+                feature,
+            ),
+            else => false,
+        },
+        .keyframes => switch (rule) {
+            .at_rule => |at_rule| blk: {
+                if (!std.ascii.eqlIgnoreCase(at_rule.name.value, "keyframes")) break :blk false;
+                const block = switch (at_rule.block) {
+                    .keyframes => |value| value,
+                    else => break :blk false,
+                };
+                if (!block.envelope.terminated()) break :blk false;
+                const details = at_rule.details orelse break :blk false;
+                break :blk switch (details) {
+                    .keyframes => |value| value.block == block,
+                    else => false,
+                };
+            },
+            else => false,
+        },
+    };
+}
+
+fn selectorListMatchesCompatibilityFeature(
+    selectors: *const SelectorList,
+    feature: CompatibilityRuleFeature,
+) bool {
+    if (selectors.selectors.len == 0) return false;
+    for (selectors.selectors) |selector| {
+        var matches: usize = 0;
+        if (!compoundMatchesCompatibilityFeature(selector.head, feature, &matches)) return false;
+        for (selector.tails) |tail| {
+            if (!compoundMatchesCompatibilityFeature(tail.compound, feature, &matches)) return false;
+        }
+        if (matches != 1) return false;
+    }
+    return true;
+}
+
+fn compoundMatchesCompatibilityFeature(
+    compound: CompoundSelector,
+    feature: CompatibilityRuleFeature,
+    matches: *usize,
+) bool {
+    for (compound.simple_selectors) |simple| switch (simple) {
+        .pseudo_class => |pseudo| {
+            if (pseudo.arguments != null) return false;
+            if (compatibilityPseudoFeature(pseudo.name.value, false)) |found| {
+                if (found != feature) return false;
+                matches.* += 1;
+            }
+        },
+        .pseudo_element => |pseudo| {
+            if (pseudo.arguments != null) return false;
+            if (compatibilityPseudoFeature(pseudo.name.value, true)) |found| {
+                if (found != feature) return false;
+                matches.* += 1;
+            }
+        },
+        else => {},
+    };
+    return true;
+}
+
+fn compatibilityPseudoFeature(name: []const u8, element: bool) ?CompatibilityRuleFeature {
+    if (element and std.ascii.eqlIgnoreCase(name, "placeholder")) return .placeholder;
+    if (!element and std.ascii.eqlIgnoreCase(name, "fullscreen")) return .fullscreen;
+    if (std.ascii.eqlIgnoreCase(name, "-webkit-input-placeholder") or
+        std.ascii.eqlIgnoreCase(name, "-moz-placeholder") or
+        std.ascii.eqlIgnoreCase(name, "-ms-input-placeholder"))
+    {
+        return .placeholder;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "-webkit-full-screen") or
+        std.ascii.eqlIgnoreCase(name, "-moz-full-screen") or
+        std.ascii.eqlIgnoreCase(name, "-ms-fullscreen"))
+    {
+        return .fullscreen;
+    }
+    return null;
 }
 
 fn generatedAtRuleMergeBlock(rule: *const AtRule) ?*const RulesBlock {

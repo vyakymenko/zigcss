@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const emitter = @import("emitter.zig");
+const compatibility_analysis = @import("../prefixing/rewrite_analysis.zig");
 const rule_merge = @import("rule_merge.zig");
 const rule_parser = @import("rule_parser.zig");
 const shorthand = @import("shorthand.zig");
@@ -97,6 +98,15 @@ const Comparator = struct {
                 generated,
                 generated_is_left,
             ),
+            .compatibility => blk: {
+                if (!try self.validGeneratedCompatibilityRule(generated, generated_is_left)) {
+                    break :blk false;
+                }
+                break :blk if (generated_is_left)
+                    try self.rules(generated.inputs[0], authored)
+                else
+                    try self.rules(authored, generated.inputs[0]);
+            },
         };
     }
 
@@ -190,6 +200,11 @@ const Comparator = struct {
         return switch (left.proof.kind) {
             .selector_list_merge => self.generatedSelectorRules(left, right),
             .group_at_rule_merge => self.generatedAtRules(left, right),
+            .compatibility => if (try self.validGeneratedCompatibilityRule(left, true) and
+                try self.validGeneratedCompatibilityRule(right, false))
+                self.rules(left.inputs[0], right.inputs[0])
+            else
+                false,
         };
     }
 
@@ -278,6 +293,19 @@ const Comparator = struct {
                 error.InvalidSpan => return error.InvalidSpan,
                 error.InvalidAst, error.InvalidToken => null,
             }) |value| GeneratedRuleProof{ .group_at_rule_merge = value } else null,
+            .compatibility => blk: {
+                compatibility_analysis.validateRuleExpansion(
+                    file,
+                    generated.list,
+                    generated.proof,
+                ) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.SourceMismatch => return error.SourceMismatch,
+                    error.InvalidSpan => return error.InvalidSpan,
+                    else => break :blk null,
+                };
+                break :blk GeneratedRuleProof{ .compatibility = generated.proof.source_span };
+            },
         } orelse return null;
         const source_span = proof.sourceSpan();
         if (!source_span.source.eql(generated.proof.source_span.source) or
@@ -287,6 +315,15 @@ const Comparator = struct {
             return null;
         }
         return proof;
+    }
+
+    fn validGeneratedCompatibilityRule(
+        self: *Comparator,
+        generated: LogicalGeneratedRule,
+        generated_is_left: bool,
+    ) Error!bool {
+        const file = if (generated_is_left) self.left_file else self.right_file;
+        return (try self.generatedRuleProof(generated, file)) != null;
     }
 
     fn ruleListMatchesConcatenated(
@@ -504,12 +541,10 @@ const Comparator = struct {
     ) Error!bool {
         return switch (left) {
             .authored => |left_declaration| switch (right) {
-                .authored => |right_declaration| identifiersEqual(
-                    left_declaration.name,
-                    right_declaration.name,
-                ) and
-                    (left_declaration.important == null) == (right_declaration.important == null) and
-                    try self.declarationValues(left_declaration, right_declaration),
+                .authored => |right_declaration| try self.authoredDeclarations(
+                    left_declaration,
+                    right_declaration,
+                ),
                 .generated => |right_generated| try self.authoredMatchesGenerated(
                     left_declaration,
                     right_generated,
@@ -537,16 +572,29 @@ const Comparator = struct {
         generated_is_left: bool,
     ) Error!bool {
         const file = if (generated_is_left) self.left_file else self.right_file;
-        const proof = try self.generatedProof(generated, file) orelse return false;
-        if (!std.ascii.eqlIgnoreCase(authored.name.value, "margin") or
-            (authored.important != null) != proof.important)
-        {
-            return false;
-        }
-        return if (generated_is_left)
-            self.declarationValues(generated.inputs[0], authored)
-        else
-            self.declarationValues(authored, generated.inputs[0]);
+        return switch (generated.proof.kind) {
+            .margin => blk: {
+                const proof = try self.generatedMarginProof(generated, file) orelse break :blk false;
+                if (!std.ascii.eqlIgnoreCase(authored.name.value, "margin") or
+                    (authored.important != null) != proof.important)
+                {
+                    break :blk false;
+                }
+                break :blk if (generated_is_left)
+                    try self.declarationValues(generated.inputs[0], authored)
+                else
+                    try self.declarationValues(authored, generated.inputs[0]);
+            },
+            .compatibility => blk: {
+                if (!try self.validGeneratedCompatibilityDeclaration(generated, generated_is_left)) {
+                    break :blk false;
+                }
+                break :blk if (generated_is_left)
+                    try self.authoredDeclarations(generated.inputs[0], authored)
+                else
+                    try self.authoredDeclarations(authored, generated.inputs[0]);
+            },
+        };
     }
 
     fn generatedDeclarations(
@@ -555,24 +603,32 @@ const Comparator = struct {
         right: LogicalGeneratedDeclaration,
     ) Error!bool {
         if (left.proof.kind != right.proof.kind) return false;
-        const left_proof = try self.generatedProof(left, self.left_file) orelse return false;
-        const right_proof = try self.generatedProof(right, self.right_file) orelse return false;
-        return left_proof.important == right_proof.important and
-            try self.declarationValues(left.inputs[0], right.inputs[0]);
+        return switch (left.proof.kind) {
+            .margin => blk: {
+                const left_proof = try self.generatedMarginProof(left, self.left_file) orelse break :blk false;
+                const right_proof = try self.generatedMarginProof(right, self.right_file) orelse break :blk false;
+                break :blk left_proof.important == right_proof.important and
+                    try self.declarationValues(left.inputs[0], right.inputs[0]);
+            },
+            .compatibility => if (try self.validGeneratedCompatibilityDeclaration(left, true) and
+                try self.validGeneratedCompatibilityDeclaration(right, false))
+                self.authoredDeclarations(left.inputs[0], right.inputs[0])
+            else
+                false,
+        };
     }
 
-    fn generatedProof(
+    fn generatedMarginProof(
         self: *Comparator,
         generated: LogicalGeneratedDeclaration,
         file: *const source.SourceFile,
     ) Error!?shorthand.MarginProof {
-        const proof = switch (generated.proof.kind) {
-            .margin => shorthand.analyzeMargin(self.allocator, file, generated.inputs) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.SourceMismatch => return error.SourceMismatch,
-                error.InvalidSpan => return error.InvalidSpan,
-                error.InvalidAst => null,
-            },
+        if (generated.proof.kind != .margin) return null;
+        const proof = shorthand.analyzeMargin(self.allocator, file, generated.inputs) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.SourceMismatch => return error.SourceMismatch,
+            error.InvalidSpan => return error.InvalidSpan,
+            error.InvalidAst => null,
         } orelse return null;
         if (!proof.source_span.source.eql(generated.proof.source_span.source) or
             proof.source_span.start != generated.proof.source_span.start or
@@ -581,6 +637,36 @@ const Comparator = struct {
             return null;
         }
         return proof;
+    }
+
+    fn validGeneratedCompatibilityDeclaration(
+        self: *Comparator,
+        generated: LogicalGeneratedDeclaration,
+        generated_is_left: bool,
+    ) Error!bool {
+        const file = if (generated_is_left) self.left_file else self.right_file;
+        compatibility_analysis.validateDeclarationExpansion(
+            self.allocator,
+            file,
+            generated.list,
+            generated.proof,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.SourceMismatch => return error.SourceMismatch,
+            error.InvalidSpan => return error.InvalidSpan,
+            else => return false,
+        };
+        return true;
+    }
+
+    fn authoredDeclarations(
+        self: *Comparator,
+        left: ast.Declaration,
+        right: ast.Declaration,
+    ) Error!bool {
+        return identifiersEqual(left.name, right.name) and
+            (left.important == null) == (right.important == null) and
+            try self.declarationValues(left, right);
     }
 
     fn declarationValues(
@@ -794,16 +880,19 @@ const Comparator = struct {
 const LogicalGeneratedRule = struct {
     proof: ast.GeneratedRule,
     inputs: []const ast.Rule,
+    list: *const ast.RuleList,
 };
 
 const GeneratedRuleProof = union(enum) {
     selector_list_merge: rule_merge.SelectorMergeProof,
     group_at_rule_merge: rule_merge.AtRuleMergeProof,
+    compatibility: source.Span,
 
     fn sourceSpan(self: GeneratedRuleProof) source.Span {
         return switch (self) {
             .selector_list_merge => |value| value.source_span,
             .group_at_rule_merge => |value| value.source_span,
+            .compatibility => |value| value,
         };
     }
 };
@@ -847,6 +936,7 @@ const LogicalRuleIterator = struct {
                 const result = LogicalRule{ .generated = .{
                     .proof = generated,
                     .inputs = self.list.rules[self.rule_index..end],
+                    .list = self.list,
                 } };
                 self.rule_index = end;
                 self.generated_index += 1;
@@ -902,6 +992,7 @@ fn generatedSelectorAt(generated: LogicalGeneratedRule, index: usize) ast.Comple
 const LogicalGeneratedDeclaration = struct {
     proof: ast.GeneratedDeclaration,
     inputs: []const ast.Declaration,
+    list: *const ast.DeclarationList,
 };
 
 const LogicalDeclaration = union(enum) {
@@ -943,6 +1034,7 @@ const LogicalDeclarationIterator = struct {
                 const result = LogicalDeclaration{ .generated = .{
                     .proof = generated,
                     .inputs = self.list.declarations[self.declaration_index..end],
+                    .list = self.list,
                 } };
                 self.declaration_index = end;
                 self.generated_index += 1;
@@ -1317,6 +1409,89 @@ test "semantic equivalence validates each AST source binding" {
         error.SourceMismatch,
         comparator.declarationValues(first_declaration, second_declaration),
     );
+}
+
+test "compatibility expansion proofs retain the authored standard semantics" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "compatibility-equivalence.css",
+        ".a::placeholder{appearance:none}@keyframes spin{from{opacity:0}to{opacity:1}}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const arena = context.arenaAllocator();
+    const old_style = parsed[1].rules[0].style_rule;
+    const declaration_forms = [_]ast.CompatibilityForm{ .webkit, .moz };
+    const generated_declarations = [_]ast.GeneratedDeclaration{.{
+        .kind = .compatibility,
+        .first_declaration = 0,
+        .source_span = old_style.block.declarations.declarations[0].span,
+        .compatibility = .{
+            .feature = .appearance,
+            .forms = &declaration_forms,
+        },
+    }};
+    const declarations = try ast.DeclarationList.initWithGenerated(
+        old_style.block.declarations.span,
+        old_style.block.declarations.declarations,
+        &generated_declarations,
+    );
+    const style = try arena.create(ast.StyleRule);
+    style.* = try ast.StyleRule.init(.{
+        .selectors = old_style.selectors,
+        .block = try ast.StyleBlock.init(
+            old_style.block.envelope,
+            declarations,
+            old_style.block.rules,
+        ),
+        .span = old_style.span,
+    });
+    const rules = try arena.dupe(ast.Rule, parsed[1].rules);
+    rules[0] = .{ .style_rule = style };
+
+    const selector_forms = [_]ast.CompatibilityForm{ .webkit, .moz, .ms };
+    const keyframes_forms = [_]ast.CompatibilityForm{ .webkit, .moz };
+    const generated_rules = [_]ast.GeneratedRule{
+        .{
+            .kind = .compatibility,
+            .first_rule = 0,
+            .source_span = rules[0].span(),
+            .compatibility = .{
+                .feature = .placeholder,
+                .forms = &selector_forms,
+            },
+        },
+        .{
+            .kind = .compatibility,
+            .first_rule = 1,
+            .source_span = rules[1].span(),
+            .compatibility = .{
+                .feature = .keyframes,
+                .forms = &keyframes_forms,
+            },
+        },
+    };
+    const transformed = try ast.RuleList.initWithGeneratedRules(
+        parsed[1].span,
+        rules,
+        parsed[1].omitted_rules,
+        &generated_rules,
+    );
+    try std.testing.expect(try equivalent(
+        std.testing.allocator,
+        file,
+        parsed[1],
+        file,
+        &transformed,
+    ));
+    try std.testing.expect(try equivalent(
+        std.testing.allocator,
+        file,
+        &transformed,
+        file,
+        parsed[1],
+    ));
 }
 
 fn exerciseRoundTripAllocationFailures(allocator: std.mem.Allocator) !void {

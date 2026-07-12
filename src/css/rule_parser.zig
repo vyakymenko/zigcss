@@ -484,7 +484,8 @@ fn classifyAtRule(name: []const u8) AtRuleClass {
         "view-transition",
     })) return .declarations;
     if (std.ascii.eqlIgnoreCase(name, "keyframes") or
-        std.ascii.eqlIgnoreCase(name, "-webkit-keyframes")) return .keyframes;
+        std.ascii.eqlIgnoreCase(name, "-webkit-keyframes") or
+        std.ascii.eqlIgnoreCase(name, "-moz-keyframes")) return .keyframes;
     return .raw;
 }
 
@@ -1008,6 +1009,26 @@ test "keyframes parse names frame selectors percentages and declarations" {
     try std.testing.expectEqual(@as(f64, 100), keyframes.block.frames[1].selectors[0].percentage.value);
     try std.testing.expectEqual(@as(usize, 1), keyframes.block.frames[0].block.declarations.declarations.len);
     try std.testing.expect(context.diagnostics.items().len > 0);
+}
+
+test "legacy prefixed keyframes retain typed frames and details" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "prefixed-keyframes.css",
+        "@-webkit-keyframes webkit{from{opacity:0}}@-moz-keyframes moz{to{opacity:1}}",
+    );
+
+    try std.testing.expectEqual(@as(usize, 2), parsed[1].rules.len);
+    for (parsed[1].rules, 0..) |rule, index| {
+        const at_rule = rule.at_rule;
+        try std.testing.expect(at_rule.block == .keyframes);
+        try std.testing.expect(at_rule.details != null and at_rule.details.? == .keyframes);
+        try std.testing.expectEqual(@as(usize, 1), at_rule.details.?.keyframes.block.frames.len);
+        try std.testing.expectEqualStrings(if (index == 0) "webkit" else "moz", at_rule.details.?.keyframes.name.value);
+    }
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
 }
 
 test "page rules retain page selectors declarations and margin boxes" {

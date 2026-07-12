@@ -38,7 +38,8 @@ pub fn specialize(
     } else if (std.ascii.eqlIgnoreCase(at_rule.name.value, "font-face")) {
         at_rule.details = if (try parser.parseFontFace(at_rule)) |details| .{ .font_face = details } else null;
     } else if (std.ascii.eqlIgnoreCase(at_rule.name.value, "keyframes") or
-        std.ascii.eqlIgnoreCase(at_rule.name.value, "-webkit-keyframes"))
+        std.ascii.eqlIgnoreCase(at_rule.name.value, "-webkit-keyframes") or
+        std.ascii.eqlIgnoreCase(at_rule.name.value, "-moz-keyframes"))
     {
         at_rule.details = if (try parser.parseKeyframes(at_rule)) |details| .{ .keyframes = details } else null;
     } else if (std.ascii.eqlIgnoreCase(at_rule.name.value, "page")) {

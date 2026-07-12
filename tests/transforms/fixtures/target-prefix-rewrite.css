@@ -1,0 +1,58 @@
+@layer base {
+  .control {
+    appearance: var(--appearance);
+    user-select: none !important;
+    user-select: text;
+    backdrop-filter: blur(4px);
+    position: sticky;
+    display: flex;
+    margin-inline-start: 1px;
+    --appearance: none;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    appearance: auto;
+    color: gray;
+  }
+
+  :fullscreen {
+    user-select: none;
+  }
+
+  @media (width > 20rem) {
+    .nested::placeholder {
+      position: sticky;
+    }
+  }
+
+  @supports (appearance: none) {
+    .supported {
+      appearance: none;
+    }
+  }
+}
+
+@keyframes pulse {
+  from {
+    user-select: none;
+    position: sticky;
+  }
+  to {
+    display: flex;
+  }
+}
+
+.manual {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.plain,
+.mixed::placeholder {
+  color: red;
+}
+
+@font-face {
+  appearance: none;
+}
