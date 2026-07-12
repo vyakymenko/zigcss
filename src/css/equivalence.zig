@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const emitter = @import("emitter.zig");
+const rule_merge = @import("rule_merge.zig");
 const rule_parser = @import("rule_parser.zig");
 const shorthand = @import("shorthand.zig");
 const source = @import("../source.zig");
@@ -42,11 +43,125 @@ const Comparator = struct {
     right_file: *const source.SourceFile,
 
     fn ruleLists(self: *Comparator, left: *const ast.RuleList, right: *const ast.RuleList) Error!bool {
-        if (left.rules.len != right.rules.len) return false;
-        for (left.rules, right.rules) |left_rule, right_rule| {
-            if (!try self.rules(left_rule, right_rule)) return false;
+        var left_iterator = LogicalRuleIterator{ .list = left };
+        var right_iterator = LogicalRuleIterator{ .list = right };
+        while (true) {
+            const left_rule = left_iterator.next();
+            const right_rule = right_iterator.next();
+            if (left_rule == null or right_rule == null) {
+                return left_rule == null and right_rule == null and
+                    !left_iterator.invalid and !right_iterator.invalid;
+            }
+            if (!try self.logicalRules(left_rule.?, right_rule.?)) return false;
         }
-        return true;
+    }
+
+    fn logicalRules(self: *Comparator, left: LogicalRule, right: LogicalRule) Error!bool {
+        return switch (left) {
+            .authored => |left_rule| switch (right) {
+                .authored => |right_rule| try self.rules(left_rule, right_rule),
+                .generated => |right_generated| try self.authoredMatchesGeneratedRule(
+                    left_rule,
+                    right_generated,
+                    false,
+                ),
+            },
+            .generated => |left_generated| switch (right) {
+                .authored => |right_rule| try self.authoredMatchesGeneratedRule(
+                    right_rule,
+                    left_generated,
+                    true,
+                ),
+                .generated => |right_generated| try self.generatedRules(
+                    left_generated,
+                    right_generated,
+                ),
+            },
+        };
+    }
+
+    fn authoredMatchesGeneratedRule(
+        self: *Comparator,
+        authored: ast.Rule,
+        generated: LogicalGeneratedRule,
+        generated_is_left: bool,
+    ) Error!bool {
+        const style = switch (authored) {
+            .style_rule => |value| value,
+            else => return false,
+        };
+        const file = if (generated_is_left) self.left_file else self.right_file;
+        _ = try self.generatedRuleProof(generated, file) orelse return false;
+        const selector_count = generatedSelectorCount(generated);
+        if (style.selectors.selectors.len != selector_count) return false;
+        for (0..selector_count) |index| {
+            const generated_selector = generatedSelectorAt(generated, index);
+            const authored_selector = style.selectors.selectors[index];
+            const matches = if (generated_is_left)
+                try self.complexSelectors(generated_selector, authored_selector)
+            else
+                try self.complexSelectors(authored_selector, generated_selector);
+            if (!matches) return false;
+        }
+        const proof_style = generated.inputs[0].style_rule;
+        return if (generated_is_left)
+            try self.declarationLists(
+                &proof_style.block.declarations,
+                &style.block.declarations,
+            ) and try self.ruleLists(&proof_style.block.rules, &style.block.rules)
+        else
+            try self.declarationLists(
+                &style.block.declarations,
+                &proof_style.block.declarations,
+            ) and try self.ruleLists(&style.block.rules, &proof_style.block.rules);
+    }
+
+    fn generatedRules(
+        self: *Comparator,
+        left: LogicalGeneratedRule,
+        right: LogicalGeneratedRule,
+    ) Error!bool {
+        if (left.proof.kind != right.proof.kind) return false;
+        _ = try self.generatedRuleProof(left, self.left_file) orelse return false;
+        _ = try self.generatedRuleProof(right, self.right_file) orelse return false;
+        const selector_count = generatedSelectorCount(left);
+        if (selector_count != generatedSelectorCount(right)) return false;
+        for (0..selector_count) |index| {
+            if (!try self.complexSelectors(
+                generatedSelectorAt(left, index),
+                generatedSelectorAt(right, index),
+            )) return false;
+        }
+        return try self.declarationLists(
+            &left.inputs[0].style_rule.block.declarations,
+            &right.inputs[0].style_rule.block.declarations,
+        );
+    }
+
+    fn generatedRuleProof(
+        self: *Comparator,
+        generated: LogicalGeneratedRule,
+        file: *const source.SourceFile,
+    ) Error!?rule_merge.SelectorMergeProof {
+        const proof = switch (generated.proof.kind) {
+            .selector_list_merge => rule_merge.analyzeSelectorMerge(
+                self.allocator,
+                file,
+                generated.inputs,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.SourceMismatch => return error.SourceMismatch,
+                error.InvalidSpan => return error.InvalidSpan,
+                error.InvalidAst, error.InvalidToken => null,
+            },
+        } orelse return null;
+        if (!proof.source_span.source.eql(generated.proof.source_span.source) or
+            proof.source_span.start != generated.proof.source_span.start or
+            proof.source_span.end != generated.proof.source_span.end)
+        {
+            return null;
+        }
+        return proof;
     }
 
     fn rules(self: *Comparator, left: ast.Rule, right: ast.Rule) Error!bool {
@@ -498,6 +613,73 @@ const Comparator = struct {
         return std.mem.eql(u8, left_text, right_text);
     }
 };
+
+const LogicalGeneratedRule = struct {
+    proof: ast.GeneratedRule,
+    inputs: []const ast.Rule,
+};
+
+const LogicalRule = union(enum) {
+    authored: ast.Rule,
+    generated: LogicalGeneratedRule,
+};
+
+const LogicalRuleIterator = struct {
+    list: *const ast.RuleList,
+    rule_index: usize = 0,
+    generated_index: usize = 0,
+    invalid: bool = false,
+
+    fn next(self: *LogicalRuleIterator) ?LogicalRule {
+        if (self.invalid) return null;
+        if (self.rule_index == self.list.rules.len) {
+            if (self.generated_index != self.list.generated_rules.len) self.invalid = true;
+            return null;
+        }
+        if (self.generated_index < self.list.generated_rules.len) {
+            const generated = self.list.generated_rules[self.generated_index];
+            if (generated.first_rule < self.rule_index) {
+                self.invalid = true;
+                return null;
+            }
+            if (generated.first_rule == self.rule_index) {
+                const end = std.math.add(
+                    usize,
+                    self.rule_index,
+                    generated.kind.inputCount(),
+                ) catch {
+                    self.invalid = true;
+                    return null;
+                };
+                if (end > self.list.rules.len) {
+                    self.invalid = true;
+                    return null;
+                }
+                const result = LogicalRule{ .generated = .{
+                    .proof = generated,
+                    .inputs = self.list.rules[self.rule_index..end],
+                } };
+                self.rule_index = end;
+                self.generated_index += 1;
+                return result;
+            }
+        }
+        const result = LogicalRule{ .authored = self.list.rules[self.rule_index] };
+        self.rule_index += 1;
+        return result;
+    }
+};
+
+fn generatedSelectorCount(generated: LogicalGeneratedRule) usize {
+    return generated.inputs[0].style_rule.selectors.selectors.len +
+        generated.inputs[1].style_rule.selectors.selectors.len;
+}
+
+fn generatedSelectorAt(generated: LogicalGeneratedRule, index: usize) ast.ComplexSelector {
+    const first = generated.inputs[0].style_rule.selectors.selectors;
+    if (index < first.len) return first[index];
+    return generated.inputs[1].style_rule.selectors.selectors[index - first.len];
+}
 
 const LogicalGeneratedDeclaration = struct {
     proof: ast.GeneratedDeclaration,

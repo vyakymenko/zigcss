@@ -12,6 +12,7 @@ const RequestedPass = enum {
     color_zero_shortening,
     math_folding,
     shorthand_synthesis,
+    selector_rule_merge,
 };
 
 pub fn main() !void {
@@ -50,7 +51,7 @@ pub fn main() !void {
         input_path = argument;
     }
     const input = input_path orelse return invalidArguments(
-        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis>] [--minify]",
+        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis|adjacent-selector-rule-merge>] [--minify]",
         .{},
     );
 
@@ -71,6 +72,7 @@ pub fn main() !void {
         zigcss.transform.math_folding.definition(),
         zigcss.transform.duplicate_declarations.definition(),
         zigcss.transform.shorthand_synthesis.definition(),
+        zigcss.transform.selector_rule_merge.definition(),
     };
     if (requested_pass != .none) {
         const requested_ids = [_][]const u8{switch (requested_pass) {
@@ -79,6 +81,7 @@ pub fn main() !void {
             .color_zero_shortening => zigcss.transform.color_zero_shortening.id,
             .math_folding => zigcss.transform.math_folding.id,
             .shorthand_synthesis => zigcss.transform.shorthand_synthesis.id,
+            .selector_rule_merge => zigcss.transform.selector_rule_merge.id,
         }};
         const policy: zigcss.transform.pass_manager.Policy = switch (requested_pass) {
             .none => unreachable,
@@ -86,6 +89,7 @@ pub fn main() !void {
             .color_zero_shortening => .{ .allow_semantic_rewrite = true },
             .math_folding => .{ .allow_semantic_rewrite = true },
             .shorthand_synthesis => .{ .allow_semantic_rewrite = true },
+            .selector_rule_merge => .{ .allow_semantic_rewrite = true },
         };
         var plan = try zigcss.transform.pass_manager.buildPlan(
             allocator,
@@ -114,6 +118,7 @@ fn parsePass(value: []const u8) ?RequestedPass {
     if (std.mem.eql(u8, value, zigcss.transform.color_zero_shortening.id)) return .color_zero_shortening;
     if (std.mem.eql(u8, value, zigcss.transform.math_folding.id)) return .math_folding;
     if (std.mem.eql(u8, value, zigcss.transform.shorthand_synthesis.id)) return .shorthand_synthesis;
+    if (std.mem.eql(u8, value, zigcss.transform.selector_rule_merge.id)) return .selector_rule_merge;
     return null;
 }
 

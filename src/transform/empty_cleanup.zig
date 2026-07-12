@@ -59,6 +59,7 @@ fn cleanRuleList(
     context: *pass_manager.Context,
     input: *const ast.RuleList,
 ) pass_manager.Error!CleanList {
+    if (input.generated_rules.len != 0) return .{ .rules = input, .changed = false };
     if (!listNeedsCleanup(input)) return .{ .rules = input, .changed = false };
 
     const scratch = context.scratchAllocator();
@@ -292,6 +293,7 @@ fn detailsBlockMatches(details: ?ast.AtRuleDetails, block: *const ast.RulesBlock
 }
 
 fn listNeedsCleanup(rules: *const ast.RuleList) bool {
+    if (rules.generated_rules.len != 0) return false;
     for (rules.rules) |rule| {
         if (isEffectivelyRemovable(rule)) return true;
         switch (rule) {

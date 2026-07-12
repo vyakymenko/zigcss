@@ -424,6 +424,7 @@ fn walkRuleList(
 ) Error!void {
     if (depth >= max_depth) return error.AnalysisLimit;
     rules.validate() catch return error.InvalidAst;
+    if (rules.generated_rules.len != 0) return;
     for (rules.rules) |rule| switch (rule) {
         .style_rule => |style| {
             _ = ast.StyleRule.init(style.*) catch return error.InvalidAst;

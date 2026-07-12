@@ -53,6 +53,16 @@ const fixtures = [
     },
     warningExpectation: 'none',
   },
+  {
+    label: 'adjacent-selector-rule-merge',
+    passId: 'adjacent-selector-rule-merge',
+    input: path.join(scriptDirectory, 'fixtures', 'selector-rule-merge.css'),
+    expected: {
+      pretty: path.join(scriptDirectory, 'fixtures', 'selector-rule-merge.expected.css'),
+      minified: path.join(scriptDirectory, 'fixtures', 'selector-rule-merge.expected.min.css'),
+    },
+    warningExpectation: 'none',
+  },
 ]
 const validatorOptions = {
   errorRecovery: false,

@@ -102,6 +102,7 @@ fn foldRuleList(
     try budget.checkDepth(depth);
     input.validate() catch return error.InvalidAst;
     if (input.rules.len == 0) return .{ .value = input, .changed = false };
+    if (input.generated_rules.len != 0) return .{ .value = input, .changed = false };
 
     const scratch = context.scratchAllocator();
     const candidates = try scratch.alloc(ast.Rule, input.rules.len);

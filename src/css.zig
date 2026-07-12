@@ -12,6 +12,7 @@ pub const color_value = @import("css/color_value.zig");
 pub const numeric_unit = @import("css/numeric_unit.zig");
 pub const numeric_value = @import("css/numeric_value.zig");
 pub const shorthand = @import("css/shorthand.zig");
+pub const rule_merge = @import("css/rule_merge.zig");
 
 test {
     _ = ast;
@@ -28,4 +29,5 @@ test {
     _ = numeric_unit;
     _ = numeric_value;
     _ = shorthand;
+    _ = rule_merge;
 }

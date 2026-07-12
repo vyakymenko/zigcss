@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const rule_parser = @import("rule_parser.zig");
+const rule_merge = @import("rule_merge.zig");
 const shorthand = @import("shorthand.zig");
 const source = @import("../source.zig");
 const sourcemap = @import("../sourcemap.zig");
@@ -126,10 +127,72 @@ const Emitter = struct {
         allow_nested_declarations: bool,
     ) Error!void {
         try self.validateRuleCoverage(rules, top_level, allow_nested_declarations);
-        for (rules.rules, 0..) |rule, index| {
-            if (index > 0 and self.pretty()) try self.appendByte('\n');
-            if (self.pretty() and rule != .nested_declarations) try self.writeIndent(depth);
-            try self.writeRule(rule, depth, index + 1 < rules.rules.len);
+        const output_count = try logicalRuleCount(rules);
+        var rule_index: usize = 0;
+        var generated_index: usize = 0;
+        var output_index: usize = 0;
+        while (rule_index < rules.rules.len) {
+            if (output_index > 0 and self.pretty()) try self.appendByte('\n');
+            if (generated_index < rules.generated_rules.len and
+                rules.generated_rules[generated_index].first_rule == rule_index)
+            {
+                if (self.pretty()) try self.writeIndent(depth);
+                const generated = rules.generated_rules[generated_index];
+                try self.writeGeneratedRule(rules, generated, depth);
+                rule_index += generated.kind.inputCount();
+                generated_index += 1;
+            } else {
+                if (generated_index < rules.generated_rules.len and
+                    rules.generated_rules[generated_index].first_rule < rule_index)
+                {
+                    return error.InvalidAst;
+                }
+                const rule = rules.rules[rule_index];
+                if (self.pretty() and rule != .nested_declarations) try self.writeIndent(depth);
+                try self.writeRule(rule, depth, output_index + 1 < output_count);
+                rule_index += 1;
+            }
+            output_index += 1;
+        }
+        if (generated_index != rules.generated_rules.len or output_index != output_count) {
+            return error.InvalidAst;
+        }
+    }
+
+    fn writeGeneratedRule(
+        self: *Emitter,
+        rules: *const ast.RuleList,
+        generated: ast.GeneratedRule,
+        depth: usize,
+    ) Error!void {
+        const count = generated.kind.inputCount();
+        const end = std.math.add(usize, generated.first_rule, count) catch return error.InvalidAst;
+        if (end > rules.rules.len) return error.InvalidAst;
+        const inputs = rules.rules[generated.first_rule..end];
+        switch (generated.kind) {
+            .selector_list_merge => {
+                const proof = rule_merge.analyzeSelectorMerge(self.allocator, self.file, inputs) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.SourceMismatch => return error.SourceMismatch,
+                    error.InvalidSpan => return error.InvalidSpan,
+                    error.InvalidAst, error.InvalidToken => return error.InvalidAst,
+                } orelse return error.InvalidAst;
+                if (!spansEqual(proof.source_span, generated.source_span)) return error.InvalidAst;
+                const first = inputs[0].style_rule;
+                const second = inputs[1].style_rule;
+                try self.mark(first.span);
+                try self.writeSelectorList(&first.selectors);
+                _ = ast.SelectorList.init(
+                    second.selectors.span,
+                    second.selectors.selectors,
+                ) catch return error.InvalidAst;
+                for (second.selectors.selectors) |selector| {
+                    try self.appendSlice(if (self.pretty()) ", " else ",");
+                    try self.writeComplexSelector(selector);
+                }
+                try self.writePrettySpace();
+                try self.writeStyleBlock(&first.block, depth);
+            },
         }
     }
 
@@ -931,6 +994,17 @@ fn logicalDeclarationCount(declarations: *const ast.DeclarationList) Error!usize
     return count;
 }
 
+fn logicalRuleCount(rules: *const ast.RuleList) Error!usize {
+    rules.validate() catch return error.InvalidAst;
+    var count = rules.rules.len;
+    for (rules.generated_rules) |generated| {
+        const removed = generated.kind.inputCount() - 1;
+        if (removed > count) return error.InvalidAst;
+        count -= removed;
+    }
+    return count;
+}
+
 fn pageDetails(details: ?ast.AtRuleDetails) ?*const ast.PageRule {
     const value = details orelse return null;
     return switch (value) {
@@ -1376,6 +1450,109 @@ test "margin shorthand emission rejects a structurally plausible forged proof" {
     try std.testing.expectError(
         error.InvalidAst,
         emit(std.testing.allocator, file, root, .{ .mode = .minified }),
+    );
+}
+
+test "proof-carrying selector merge emits authored mappings and one declaration block" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "generated-selector-merge.css",
+        ".a{x:1;color:red!important}/*gap*/.b,.c{x:1;color:red!important}.d{y:2}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const generated = [_]ast.GeneratedRule{.{
+        .kind = .selector_list_merge,
+        .first_rule = 0,
+        .source_span = .{
+            .source = file.id,
+            .start = parsed[1].rules[0].span().start,
+            .end = parsed[1].rules[1].span().end,
+        },
+    }};
+    const transformed = try ast.RuleList.initWithGeneratedRules(
+        parsed[1].span,
+        parsed[1].rules,
+        parsed[1].omitted_rules,
+        &generated,
+    );
+
+    const pretty_output = try emit(std.testing.allocator, file, &transformed, .{});
+    defer std.testing.allocator.free(pretty_output);
+    try std.testing.expectEqualStrings(
+        ".a, .b, .c {\n  x: 1;\n  color: red !important;\n}\n.d {\n  y: 2;\n}\n",
+        pretty_output,
+    );
+
+    var mapped = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        &transformed,
+        .{ .mode = .minified },
+        .{},
+    );
+    defer mapped.deinit();
+    try std.testing.expectEqualStrings(
+        ".a,.b,.c{x:1;color:red!important}.d{y:2}",
+        mapped.css,
+    );
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, mapped.source_map, .{});
+    defer json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const first = parsed[1].rules[0].style_rule;
+    const second = parsed[1].rules[1].style_rule;
+    const sibling = parsed[1].rules[2].style_rule;
+    const second_selector_output = std.mem.indexOf(u8, mapped.css, ".b").?;
+    const declaration_output = std.mem.indexOf(u8, mapped.css, "x:1").?;
+    const sibling_output = std.mem.indexOf(u8, mapped.css, ".d").?;
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(second_selector_output),
+        .original_line = 0,
+        .original_column = @intCast(second.selectors.selectors[0].span.start),
+    }));
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(declaration_output),
+        .original_line = 0,
+        .original_column = @intCast(first.block.declarations.declarations[0].span.start),
+    }));
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(sibling_output),
+        .original_line = 0,
+        .original_column = @intCast(sibling.selectors.selectors[0].span.start),
+    }));
+    for (mappings) |mapping| {
+        try std.testing.expect(mapping.original_column !=
+            second.block.declarations.declarations[0].span.start);
+    }
+}
+
+test "selector merge emission rejects semantically different declaration blocks" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(&context, "forged-selector-merge.css", ".a{x:1}.b{x:2}");
+    const file = try context.sources.get(parsed[0]);
+    const generated = [_]ast.GeneratedRule{.{
+        .kind = .selector_list_merge,
+        .first_rule = 0,
+        .source_span = file.fullSpan(),
+    }};
+    const forged = try ast.RuleList.initWithGeneratedRules(
+        parsed[1].span,
+        parsed[1].rules,
+        parsed[1].omitted_rules,
+        &generated,
+    );
+    try std.testing.expectError(
+        error.InvalidAst,
+        emit(std.testing.allocator, file, &forged, .{ .mode = .minified }),
     );
 }
 

@@ -823,6 +823,25 @@ pub const Rule = union(enum) {
     }
 };
 
+pub const GeneratedRuleKind = enum {
+    selector_list_merge,
+
+    pub fn inputCount(self: GeneratedRuleKind) usize {
+        return switch (self) {
+            .selector_list_merge => 2,
+        };
+    }
+};
+
+/// Proof metadata for replacing adjacent authored rules with one structured
+/// logical rule. Input rules remain in source order so the emitter and pass
+/// validators can independently re-check every merge precondition.
+pub const GeneratedRule = struct {
+    kind: GeneratedRuleKind,
+    first_rule: usize,
+    source_span: source.Span,
+};
+
 /// Ordered rule storage prevents non-adjacent rules or at-rules from merging.
 pub const RuleList = struct {
     rules: []const Rule,
@@ -830,16 +849,26 @@ pub const RuleList = struct {
     /// transform. Keeping the proof AST lets validation and emission reject an
     /// arbitrary source-range deletion. Parser-produced lists leave this empty.
     omitted_rules: []const Rule = &.{},
+    generated_rules: []const GeneratedRule = &.{},
     span: source.Span,
 
     pub fn init(span: source.Span, rules: []const Rule) AstError!RuleList {
-        return initWithOmissions(span, rules, &.{});
+        return initWithGeneratedRules(span, rules, &.{}, &.{});
     }
 
     pub fn initWithOmissions(
         span: source.Span,
         rules: []const Rule,
         omitted_rules: []const Rule,
+    ) AstError!RuleList {
+        return initWithGeneratedRules(span, rules, omitted_rules, &.{});
+    }
+
+    pub fn initWithGeneratedRules(
+        span: source.Span,
+        rules: []const Rule,
+        omitted_rules: []const Rule,
+        generated_rules: []const GeneratedRule,
     ) AstError!RuleList {
         try validateSpan(span);
         var rule_index: usize = 0;
@@ -863,13 +892,87 @@ pub const RuleList = struct {
                 omission_index += 1;
             }
         }
-        return .{ .rules = rules, .omitted_rules = omitted_rules, .span = span };
+        if (generated_rules.len != 0 and omitted_rules.len != 0) return error.InvalidRule;
+        var previous_generated_end: usize = 0;
+        for (generated_rules) |generated| {
+            try validateChild(span, generated.source_span);
+            const count = generated.kind.inputCount();
+            const end = std.math.add(usize, generated.first_rule, count) catch {
+                return error.InvalidRule;
+            };
+            if (generated.first_rule < previous_generated_end or end > rules.len) {
+                return error.InvalidRule;
+            }
+            const inputs = rules[generated.first_rule..end];
+            if (generated.source_span.start != inputs[0].span().start or
+                generated.source_span.end != inputs[inputs.len - 1].span().end)
+            {
+                return error.InvalidRule;
+            }
+            try validateGeneratedRuleStructure(generated.kind, inputs);
+            previous_generated_end = end;
+        }
+        return .{
+            .rules = rules,
+            .omitted_rules = omitted_rules,
+            .generated_rules = generated_rules,
+            .span = span,
+        };
     }
 
     pub fn validate(self: RuleList) AstError!void {
-        _ = try initWithOmissions(self.span, self.rules, self.omitted_rules);
+        _ = try initWithGeneratedRules(
+            self.span,
+            self.rules,
+            self.omitted_rules,
+            self.generated_rules,
+        );
     }
 };
+
+fn validateGeneratedRuleStructure(
+    kind: GeneratedRuleKind,
+    inputs: []const Rule,
+) AstError!void {
+    if (inputs.len != kind.inputCount()) return error.InvalidRule;
+    switch (kind) {
+        .selector_list_merge => {
+            if (inputs[0] != .style_rule or inputs[1] != .style_rule) return error.InvalidRule;
+            const first = inputs[0].style_rule;
+            const second = inputs[1].style_rule;
+            _ = try StyleRule.init(first.*);
+            _ = try StyleRule.init(second.*);
+            if (!generatedSelectorMergeBlockEligible(&first.block) or
+                !generatedSelectorMergeBlockEligible(&second.block) or
+                first.block.declarations.declarations.len != second.block.declarations.declarations.len)
+            {
+                return error.InvalidRule;
+            }
+            _ = std.math.add(
+                usize,
+                first.selectors.selectors.len,
+                second.selectors.selectors.len,
+            ) catch return error.InvalidRule;
+        },
+    }
+}
+
+fn generatedSelectorMergeBlockEligible(block: *const StyleBlock) bool {
+    if (!block.envelope.terminated() or
+        !spansEqual(block.envelope.content, block.declarations.span) or
+        block.declarations.declarations.len == 0 or
+        block.declarations.generated_declarations.len != 0 or
+        block.rules.rules.len != 0 or
+        block.rules.omitted_rules.len != 0 or
+        block.rules.generated_rules.len != 0)
+    {
+        return false;
+    }
+    for (block.declarations.declarations) |declaration| {
+        if (declaration.generated_value != null) return false;
+    }
+    return true;
+}
 
 /// The stable omission capability is intentionally narrower than the set of
 /// rule-list blocks understood by the parser. Empty layers and scopes can

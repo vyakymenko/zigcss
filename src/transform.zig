@@ -5,6 +5,8 @@ pub const color_zero_shortening = @import("transform/color_zero_shortening.zig")
 pub const math_folding = @import("transform/math_folding.zig");
 pub const shorthand_synthesis = @import("transform/shorthand_synthesis.zig");
 pub const value_rewrite = @import("transform/value_rewrite.zig");
+pub const rule_rewrite = @import("transform/rule_rewrite.zig");
+pub const selector_rule_merge = @import("transform/selector_rule_merge.zig");
 
 test {
     _ = pass_manager;
@@ -14,4 +16,6 @@ test {
     _ = math_folding;
     _ = shorthand_synthesis;
     _ = value_rewrite;
+    _ = rule_rewrite;
+    _ = selector_rule_merge;
 }

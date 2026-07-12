@@ -33,11 +33,13 @@ For a rewritten declaration value, the declaration-name mapping remains at the d
 
 For one declaration synthesized from multiple adjacent declarations, the generated property name receives the segment's sole mapping at the start of the validated multi-input causal span. Even when the generated declaration reuses one authored value token verbatim, it receives no inner mapping: the retained authored declarations and transform proof establish provenance, while a second mapping would falsely imply that the generated shorthand structure existed in the source.
 
+A logical rule assembled from authored segments is compositional rather than one opaque generated payload. For an adjacent selector-list merge, the output-start mapping anchors the validated multi-input causal span, each verbatim authored selector list and the surviving declaration block retain their own mappings, and the omitted duplicate declaration block receives none. Structural separators inserted between authored selector lists receive no mapping because no individual authored byte caused them. This exception does not permit arbitrary generated rule text: the AST retains both complete input rules, and the emitter must independently re-prove adjacency, declaration equivalence, and source containment before composing their typed selectors and authored block.
+
 Mappings remain ordered four-field Source Map v3 segments with original and generated columns measured in zero-based UTF-16 code units. `sources`, optional `sourcesContent`, and source identity continue to describe the original file only; transforms do not synthesize source content or implicit source-map comments.
 
 ### Validation obligations
 
-Each generated-output pass must test decoded mappings in pretty and minified modes, deterministic repeated emission, generated-segment anchoring, source bounds, and mappings for surviving siblings. Source-map tests accompany but do not replace semantic equivalence, idempotence, order, allocation-failure, and independent-output validation.
+Each generated-output pass must test decoded mappings in pretty and minified modes, deterministic repeated emission, generated-segment anchoring, source bounds, and mappings for surviving siblings. Compositional-rule tests must additionally prove that every retained authored segment keeps its own mapping, inserted separators have none, and omitted duplicate payloads cannot appear as original positions. Source-map tests accompany but do not replace semantic equivalence, idempotence, order, allocation-failure, and independent-output validation.
 
 ## Consequences
 

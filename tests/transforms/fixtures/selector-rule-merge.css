@@ -1,0 +1,67 @@
+/* only authored-adjacent rules with structurally equivalent declaration blocks merge */
+.alpha, .beta {
+  color: red;
+  --fallback: a/**/b;
+  margin: 0;
+}
+.gamma {
+  color: red;
+  --fallback: a/**/b;
+  margin: 0;
+}
+.keep {
+  color: blue;
+}
+@layer components {
+  .card {
+    display: grid;
+  }
+  .panel, .tile {
+    display: grid;
+  }
+}
+@media (width > 40rem) {
+  .wide {
+    inline-size: 100%;
+  }
+  .full {
+    inline-size: 100%;
+  }
+}
+.host {
+  .child-one {
+    padding: 1px;
+  }
+  #child-two {
+    padding: 1px;
+  }
+}
+.representation-one {
+  color: red;
+}
+.representation-two {
+ color: red;
+}
+.nested-a {
+  color: red;
+  .child {
+    color: blue;
+  }
+}
+.nested-b {
+  color: red;
+  .child {
+    color: blue;
+  }
+}
+.boundary-a {
+  z-index: 1;
+}
+@supports (display: grid) {
+  .inside {
+    display: grid;
+  }
+}
+.boundary-b {
+  z-index: 1;
+}

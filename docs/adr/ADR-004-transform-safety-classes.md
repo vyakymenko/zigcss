@@ -73,6 +73,14 @@ CSS Values Level 4 permits a zero `<length>` to omit its unit, but a zero that c
 
 Numeric and color output are variants of one structured generated-value union. A shared bounded immutable traversal covers style/nested declarations, group rules, keyframes, pages, and margin boxes while deliberately skipping declaration-backed descriptors. `OPT-012` requires strict byte reduction, recomputed output/source-map validation, idempotence, allocation-failure coverage, and independent canonical equivalence. Like `MATH-001`, it is exposed only through explicit semantic-rewrite policy and the test driver, not the stable CLI.
 
+### Adjacent selector-rule merge
+
+`OPT-014` implements only the reverse of expanding one selector list into adjacent style rules with equivalent declaration blocks. [Selectors Level 4](https://drafts.csswg.org/selectors/) assigns a selector list the specificity of its most specific matching selector, so concatenating the two selector lists retains the winning specificity when an element matches one or both alternatives. Because the rules are adjacent in the same rule list, every outside declaration remains before both or after both; layers, scopes, queries, importance, fallback order, and declaration order are unchanged.
+
+Nested style rules are eligible only when both blocks contain declarations and no child rules. This is required by [CSS Nesting Level 1](https://drafts.csswg.org/css-nesting/): a descendant nesting selector derives specificity from its parent rule's selector list, so changing a parent list that owns child rules would require a separate proof. Declaration-only nested siblings keep the same parent selector context and may merge after the same declaration-equivalence check as top-level siblings.
+
+The AST retains both complete authored rules plus ordered non-overlapping proof metadata. Property identity, importance, numeric token type/sign, decoded token text, nested component structure, meaningful whitespace, custom-property token boundaries, and authored value comments are compared before eligibility. The emitter independently repeats that proof before composing typed selectors with the first authored block, and `ADR-007` defines mappings for the retained authored segments and unmapped structural separator. The pass remains available only through explicit semantic-rewrite policy and the test driver.
+
 ### Deterministic planning
 
 - Requested passes include their transitive dependencies.
