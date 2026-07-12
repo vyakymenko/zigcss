@@ -17,6 +17,7 @@ describe('foundational architecture decisions', () => {
     'ADR-002-tokenizer-and-syntax-tree.md',
     'ADR-003-memory-and-result-ownership.md',
     'ADR-004-transform-safety-classes.md',
+    'ADR-006-browser-target-query-language.md',
     'ADR-007-source-map-policy-for-generated-nodes.md',
     'ADR-010-autonomous-model-requirement.md',
   ]
@@ -88,6 +89,18 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('does not emit fabricated per-token or per-character mappings')
     expect(adr).toContain('receives no mapping')
     expect(adr).toContain('structured AST data, not trusted raw CSS byte strings')
+  })
+
+  test('defines deterministic explicit targets and pinned generated compatibility data', () => {
+    const adr = read('ADR-006-browser-target-query-language.md')
+
+    expect(adr).toContain('chrome')
+    expect(adr).toContain('optional-whitespace ">="')
+    expect(adr).toContain('not Browserslist syntax')
+    expect(adr).toContain('@mdn/browser-compat-data` 8.0.0')
+    expect(adr).toContain('manifest and normalized-data SHA-256')
+    expect(adr).toContain('annotated result remains explicit')
+    expect(adr).toContain('library only')
   })
 
   test('makes the approved model and single-agent rule a hard autonomous gate', () => {

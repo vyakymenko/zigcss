@@ -18,6 +18,9 @@
     "dev": "node dev.js",
     "dev:docker": "docker compose -f docker-compose.dev.yml up --build",
     "build:website": "cd docs && npm ci --ignore-scripts && npm run build",
+    "generate:prefix-data": "node scripts/generate-prefix-data.mjs --write",
+    "check:prefix-data": "node scripts/generate-prefix-data.mjs --check",
+    "test:prefix-data": "node --test scripts/generate-prefix-data.test.mjs",
     "test:compat": "node tests/compatibility/validate.mjs",
     "test:transforms": "node tests/transforms/validate.mjs"
   },
@@ -51,6 +54,7 @@
     "arm64"
   ],
   "devDependencies": {
+    "@mdn/browser-compat-data": "8.0.0",
     "lightningcss": "1.30.1"
   }
 }

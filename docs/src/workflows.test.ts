@@ -42,6 +42,17 @@ describe('native artifact workflows', () => {
     expect(upload).toBeGreaterThan(inspection)
   })
 
+  test('verifies pinned generated prefix data before the main test suite', () => {
+    const install = buildWorkflow.indexOf('npm ci --ignore-scripts')
+    const generatorTests = buildWorkflow.indexOf('npm run test:prefix-data')
+    const prefixData = buildWorkflow.indexOf('npm run check:prefix-data')
+    const tests = buildWorkflow.indexOf('zig build test --summary all', prefixData)
+    expect(install).toBeGreaterThan(-1)
+    expect(generatorTests).toBeGreaterThan(install)
+    expect(prefixData).toBeGreaterThan(generatorTests)
+    expect(tests).toBeGreaterThan(prefixData)
+  })
+
   test('passes every release matrix target to Zig and verifies the result', () => {
     expect(releaseWorkflow).toContain('zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}')
     expect(releaseWorkflow).toContain('node scripts/verify-artifact-target.mjs')

@@ -88,6 +88,12 @@ jobs:
       - name: Install independent validator
         run: npm ci --ignore-scripts
 
+      - name: Test prefix compatibility data generator
+        run: npm run test:prefix-data
+
+      - name: Verify generated prefix compatibility data
+        run: npm run check:prefix-data
+
       - name: Run Tests
         run: zig build test --summary all
 

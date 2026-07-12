@@ -6,6 +6,7 @@ pub const syntax = @import("syntax.zig");
 pub const css = @import("css.zig");
 pub const sourcemap = @import("sourcemap.zig");
 pub const transform = @import("transform.zig");
+pub const prefixing = @import("prefixing.zig");
 
 pub const SourceId = source.SourceId;
 pub const Span = source.Span;
@@ -31,6 +32,7 @@ test "public foundation types compose through the library root" {
     _ = css;
     _ = sourcemap;
     _ = transform;
+    _ = prefixing;
     var context = try Compilation.init(std.testing.allocator);
     defer context.deinit();
 

@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "package": "@mdn/browser-compat-data",
+    "version": "8.0.0",
+    "gitCommit": "d256a4fd553dbc52d651d49d8b2eb660b027efe3",
+    "releasedAt": "2026-05-22T15:22:43.751Z",
+    "tarballSha1": "af766e2af1c846a94d58d5931b15c37a914200a3",
+    "tarballIntegrity": "sha512-VS5jxDp3MxneNPtrueJhktBn+iB5ZlSLYZyAVZPXDYjhTrD/o8cGtRiuEdQoNZidUiUBh6K87wRTbWe2164iag==",
+    "license": "CC0-1.0",
+    "repository": "https://github.com/mdn/browser-compat-data"
+  },
+  "browsers": [
+    { "id": "chrome", "bcd": "chrome" },
+    { "id": "edge", "bcd": "edge" },
+    { "id": "firefox", "bcd": "firefox" },
+    { "id": "safari", "bcd": "safari" },
+    { "id": "ios_safari", "bcd": "safari_ios" },
+    { "id": "ie", "bcd": "ie" }
+  ],
+  "features": [
+    {
+      "id": "property.user-select",
+      "kind": "property",
+      "bcdPath": ["css", "properties", "user-select"]
+    },
+    {
+      "id": "property.appearance",
+      "kind": "property",
+      "bcdPath": ["css", "properties", "appearance"]
+    },
+    {
+      "id": "property.backdrop-filter",
+      "kind": "property",
+      "bcdPath": ["css", "properties", "backdrop-filter"]
+    },
+    {
+      "id": "value.position.sticky",
+      "kind": "value",
+      "bcdPath": ["css", "properties", "position", "sticky"]
+    },
+    {
+      "id": "value.display.flex",
+      "kind": "value",
+      "bcdPath": ["css", "properties", "display", "flex"]
+    },
+    {
+      "id": "selector.placeholder",
+      "kind": "selector",
+      "bcdPath": ["css", "selectors", "placeholder"]
+    },
+    {
+      "id": "selector.fullscreen",
+      "kind": "selector",
+      "bcdPath": ["css", "selectors", "fullscreen"]
+    },
+    {
+      "id": "at-rule.keyframes",
+      "kind": "at_rule",
+      "bcdPath": ["css", "at-rules", "keyframes"]
+    }
+  ]
+}
