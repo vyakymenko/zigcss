@@ -157,15 +157,13 @@ fn writeOutputFile(path: []const u8, bytes: []const u8) !void {
     };
 }
 
-fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
+fn compileLoadedFile(
+    allocator: std.mem.Allocator,
+    config: CompileConfig,
+    input: []const u8,
+) !zigcss.CompileResult {
     var perf_profiler = try profiler.Profiler.init(allocator, config.profile);
     defer perf_profiler.deinit();
-
-    const input = readInput(allocator, config.input_file) catch |err| {
-        std.debug.print("Error: failed to read {s}: {s}\n", .{ inputDisplayName(config.input_file), @errorName(err) });
-        return err;
-    };
-    defer allocator.free(input);
 
     var compile_timing = try perf_profiler.startTiming("compile");
     defer compile_timing.end() catch {};
@@ -180,7 +178,7 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
         std.debug.print("Error: CSS compilation failed: {s}\n", .{@errorName(err)});
         return err;
     };
-    defer result.deinit();
+    errdefer result.deinit();
     try compile_timing.end();
 
     if (hasErrorDiagnostics(result.diagnostics)) {
@@ -208,6 +206,19 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     if (config.profile) {
         perf_profiler.printReport();
     }
+
+    return result.take();
+}
+
+fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
+    const input = readInput(allocator, config.input_file) catch |err| {
+        std.debug.print("Error: failed to read {s}: {s}\n", .{ inputDisplayName(config.input_file), @errorName(err) });
+        return err;
+    };
+    defer allocator.free(input);
+
+    var result = try compileLoadedFile(allocator, config, input);
+    defer result.deinit();
 }
 
 fn computeFileHash(content: []const u8) u64 {
@@ -216,48 +227,259 @@ fn computeFileHash(content: []const u8) u64 {
     return hasher.final();
 }
 
+const WatchFingerprint = union(enum) {
+    contents: u64,
+    unavailable: anyerror,
+
+    fn eql(left: WatchFingerprint, right: WatchFingerprint) bool {
+        return switch (left) {
+            .contents => |left_hash| switch (right) {
+                .contents => |right_hash| left_hash == right_hash,
+                .unavailable => false,
+            },
+            .unavailable => |left_error| switch (right) {
+                .contents => false,
+                .unavailable => |right_error| @intFromError(left_error) == @intFromError(right_error),
+            },
+        };
+    }
+};
+
+const WatchTracker = struct {
+    last_source: ?WatchFingerprint = null,
+
+    fn observeSource(self: *WatchTracker, current: WatchFingerprint) bool {
+        const changed = if (self.last_source) |previous| !previous.eql(current) else true;
+        self.last_source = current;
+        return changed;
+    }
+
+    fn shouldCompile(
+        self: *WatchTracker,
+        current: WatchFingerprint,
+        dependency_changed: bool,
+    ) bool {
+        return self.observeSource(current) or dependency_changed;
+    }
+};
+
+const WatchPathContext = struct {
+    pub fn hash(_: WatchPathContext, path: []const u8) u64 {
+        return switch (builtin.os.tag) {
+            .windows, .macos, .ios, .tvos, .watchos => blk: {
+                var hasher = std.hash.Wyhash.init(0);
+                var normalized: [128]u8 = undefined;
+                var start: usize = 0;
+                while (start < path.len) {
+                    const end = @min(start + normalized.len, path.len);
+                    for (path[start..end], 0..) |byte, index| {
+                        normalized[index] = std.ascii.toLower(byte);
+                    }
+                    hasher.update(normalized[0 .. end - start]);
+                    start = end;
+                }
+                break :blk hasher.final();
+            },
+            else => std.hash.Wyhash.hash(0, path),
+        };
+    }
+
+    pub fn eql(_: WatchPathContext, left: []const u8, right: []const u8) bool {
+        return switch (builtin.os.tag) {
+            .windows, .macos, .ios, .tvos, .watchos => std.ascii.eqlIgnoreCase(left, right),
+            else => std.mem.eql(u8, left, right),
+        };
+    }
+};
+
+const WatchPathMap = std.HashMapUnmanaged(
+    []const u8,
+    usize,
+    WatchPathContext,
+    80,
+);
+
+const WatchDependency = struct {
+    path: []u8,
+    fingerprint: WatchFingerprint,
+};
+
+const WatchDependencies = struct {
+    allocator: std.mem.Allocator,
+    items: []WatchDependency,
+
+    fn init(allocator: std.mem.Allocator) WatchDependencies {
+        return .{ .allocator = allocator, .items = &.{} };
+    }
+
+    fn deinit(self: *WatchDependencies) void {
+        for (self.items) |item| self.allocator.free(item.path);
+        if (self.items.len > 0) self.allocator.free(self.items);
+        self.items = &.{};
+    }
+
+    fn poll(self: *WatchDependencies) !bool {
+        var changed = false;
+        for (self.items) |*item| {
+            const next = try watchFileFingerprint(self.allocator, item.path);
+            if (!item.fingerprint.eql(next)) {
+                item.fingerprint = next;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+};
+
+fn watchFileFingerprint(allocator: std.mem.Allocator, path: []const u8) !WatchFingerprint {
+    const content = std.fs.cwd().readFileAlloc(allocator, path, max_input_bytes) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return .{ .unavailable = err },
+    };
+    defer allocator.free(content);
+    return .{ .contents = computeFileHash(content) };
+}
+
+fn hasUrlScheme(specifier: []const u8) bool {
+    if (specifier.len < 2 or !std.ascii.isAlphabetic(specifier[0])) return false;
+    for (specifier[1..]) |byte| {
+        if (byte == ':') return true;
+        if (!std.ascii.isAlphanumeric(byte) and byte != '+' and byte != '-' and byte != '.') return false;
+    }
+    return false;
+}
+
+fn localDependencyPath(
+    allocator: std.mem.Allocator,
+    source_path: []const u8,
+    specifier: []const u8,
+) !?[]u8 {
+    var path_end = specifier.len;
+    if (std.mem.indexOfScalar(u8, specifier, '?')) |query| path_end = @min(path_end, query);
+    if (std.mem.indexOfScalar(u8, specifier, '#')) |fragment| path_end = @min(path_end, fragment);
+    const path = specifier[0..path_end];
+    if (path.len == 0 or
+        path[0] == '/' or
+        path[0] == '\\' or
+        hasUrlScheme(path) or
+        std.fs.path.isAbsolute(path))
+    {
+        return null;
+    }
+
+    const source_dir = std.fs.path.dirname(source_path) orelse ".";
+    return try std.fs.path.resolve(allocator, &.{ source_dir, path });
+}
+
+fn buildWatchDependencies(
+    allocator: std.mem.Allocator,
+    source_path: []const u8,
+    dependencies: []const zigcss.Dependency,
+    previous: *const WatchDependencies,
+) !WatchDependencies {
+    const source_absolute = try std.fs.path.resolve(allocator, &.{source_path});
+    defer allocator.free(source_absolute);
+
+    var previous_paths = WatchPathMap.empty;
+    defer previous_paths.deinit(allocator);
+    for (previous.items, 0..) |item, index| {
+        try previous_paths.putContext(allocator, item.path, index, .{});
+    }
+
+    var seen = WatchPathMap.empty;
+    defer seen.deinit(allocator);
+    var items = try std.ArrayList(WatchDependency).initCapacity(allocator, 0);
+    defer items.deinit(allocator);
+    errdefer for (items.items) |item| allocator.free(item.path);
+
+    for (dependencies) |dependency| {
+        const resolved = try localDependencyPath(
+            allocator,
+            source_path,
+            dependency.specifier,
+        ) orelse continue;
+        if (WatchPathContext.eql(.{}, source_absolute, resolved)) {
+            allocator.free(resolved);
+            continue;
+        }
+
+        const seen_entry = seen.getOrPutContext(allocator, resolved, .{}) catch |err| {
+            allocator.free(resolved);
+            return err;
+        };
+        if (seen_entry.found_existing) {
+            allocator.free(resolved);
+            continue;
+        }
+        seen_entry.value_ptr.* = items.items.len;
+
+        const fingerprint = if (previous_paths.getContext(resolved, .{})) |previous_index|
+            previous.items[previous_index].fingerprint
+        else
+            watchFileFingerprint(allocator, resolved) catch |err| {
+                allocator.free(resolved);
+                return err;
+            };
+        items.append(allocator, .{
+            .path = resolved,
+            .fingerprint = fingerprint,
+        }) catch |err| {
+            allocator.free(resolved);
+            return err;
+        };
+    }
+
+    return .{
+        .allocator = allocator,
+        .items = try items.toOwnedSlice(allocator),
+    };
+}
+
 fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     std.debug.print("Watching {s} for changes... (Press Ctrl+C to stop)\n", .{config.input_file});
-    
-    const cwd = std.fs.cwd();
-    
-    var last_hash: ?u64 = null;
-    var first_compile = true;
-    
+
+    var tracker = WatchTracker{};
+    var watched_dependencies = WatchDependencies.init(allocator);
+    defer watched_dependencies.deinit();
+
     while (true) {
-        const input = cwd.readFileAlloc(allocator, config.input_file, max_input_bytes) catch |err| {
-            std.debug.print("Error reading file: {}\n", .{err});
+        const input = readInput(allocator, config.input_file) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            const source_changed = tracker.observeSource(.{ .unavailable = err });
+            _ = try watched_dependencies.poll();
+            if (source_changed) {
+                std.debug.print("Error: failed to read {s}: {s}\n", .{ config.input_file, @errorName(err) });
+            }
             std.Thread.sleep(500 * std.time.ns_per_ms);
             continue;
         };
         defer allocator.free(input);
-        
-        const current_hash = computeFileHash(input);
-        
-        if (first_compile or last_hash == null or current_hash != last_hash.?) {
-            if (!first_compile) {
-                std.debug.print("File changed, recompiling...\n", .{});
-            }
-            
-            const temp_config = CompileConfig{
-                .input_file = config.input_file,
-                .output_file = config.output_file,
-                .syntax = config.syntax,
-                .optimize = config.optimize,
-                .minify = config.minify,
-                .profile = config.profile,
-            };
-            
-            compileFile(allocator, temp_config) catch |err| {
-                std.debug.print("Compilation error: {}\n", .{err});
+
+        const first_attempt = tracker.last_source == null;
+        const dependency_changed = try watched_dependencies.poll();
+        if (tracker.shouldCompile(
+            .{ .contents = computeFileHash(input) },
+            dependency_changed,
+        )) {
+            if (!first_attempt) std.debug.print("Source or dependency changed, recompiling...\n", .{});
+
+            var result = compileLoadedFile(allocator, config, input) catch |err| {
+                if (err == error.OutOfMemory) return err;
                 std.Thread.sleep(500 * std.time.ns_per_ms);
                 continue;
             };
-            
-            last_hash = current_hash;
-            first_compile = false;
+            defer result.deinit();
+
+            const next_dependencies = try buildWatchDependencies(
+                allocator,
+                config.input_file,
+                result.dependencies,
+                &watched_dependencies,
+            );
+            watched_dependencies.deinit();
+            watched_dependencies = next_dependencies;
         }
-        
+
         std.Thread.sleep(500 * std.time.ns_per_ms);
     }
 }
@@ -605,7 +827,7 @@ fn printUsage() !void {
             "  --syntax <css>           Select CSS input syntax (default: css)\n" ++
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
-            "  --watch                  Watch one input file\n" ++
+            "  --watch                  Watch one input and its local CSS imports\n" ++
             "  --profile                Time the end-to-end public compile call\n" ++
             "  --lsp                    Start the experimental LSP server\n" ++
             "  -V, --version            Show the package version\n" ++
@@ -987,6 +1209,102 @@ test "batch output names are normalized deterministic and allocation-safe" {
         exerciseBatchNamingAllocationFailures,
         .{},
     );
+}
+
+fn exerciseWatchDependencyAllocationFailures(allocator: std.mem.Allocator) !void {
+    const dependencies = [_]zigcss.Dependency{
+        .{ .kind = .import, .specifier = "theme.css?cache=1", .source_name = "", .span = undefined },
+        .{ .kind = .import, .specifier = "./theme.css#section", .source_name = "", .span = undefined },
+        .{ .kind = .import, .specifier = "nested/extra.css", .source_name = "", .span = undefined },
+        .{ .kind = .import, .specifier = "main.css", .source_name = "", .span = undefined },
+        .{ .kind = .import, .specifier = "https://example.test/remote.css", .source_name = "", .span = undefined },
+        .{ .kind = .import, .specifier = "//example.test/protocol-relative.css", .source_name = "", .span = undefined },
+        .{ .kind = .import, .specifier = "/origin-relative.css", .source_name = "", .span = undefined },
+        .{ .kind = .import, .specifier = "data:text/css,.remote{}", .source_name = "", .span = undefined },
+    };
+    var previous = WatchDependencies.init(allocator);
+    defer previous.deinit();
+    var watched = try buildWatchDependencies(
+        allocator,
+        "fixtures/main.css",
+        &dependencies,
+        &previous,
+    );
+    defer watched.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), watched.items.len);
+    const expected_theme = try std.fs.path.resolve(allocator, &.{ "fixtures", "theme.css" });
+    defer allocator.free(expected_theme);
+    const expected_extra = try std.fs.path.resolve(allocator, &.{ "fixtures", "nested", "extra.css" });
+    defer allocator.free(expected_extra);
+    try std.testing.expectEqualStrings(expected_theme, watched.items[0].path);
+    try std.testing.expectEqualStrings(expected_extra, watched.items[1].path);
+
+    var rebuilt = try buildWatchDependencies(
+        allocator,
+        "fixtures/main.css",
+        &dependencies,
+        &watched,
+    );
+    defer rebuilt.deinit();
+    try std.testing.expectEqual(@as(usize, 2), rebuilt.items.len);
+    try std.testing.expect(watched.items[0].fingerprint.eql(rebuilt.items[0].fingerprint));
+    try std.testing.expect(watched.items[1].fingerprint.eql(rebuilt.items[1].fingerprint));
+}
+
+test "watch dependencies are local deduplicated ordered and allocation-safe" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseWatchDependencyAllocationFailures,
+        .{},
+    );
+}
+
+test "watch dependency fingerprints detect one transition without looping" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "dependency.css", .data = ".one{}" });
+    const directory = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(directory);
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ directory, "main.css" });
+    defer std.testing.allocator.free(source_path);
+    const dependencies = [_]zigcss.Dependency{
+        .{ .kind = .import, .specifier = "dependency.css?version=1", .source_name = "", .span = undefined },
+    };
+    var previous = WatchDependencies.init(std.testing.allocator);
+    defer previous.deinit();
+    var watched = try buildWatchDependencies(
+        std.testing.allocator,
+        source_path,
+        &dependencies,
+        &previous,
+    );
+    defer watched.deinit();
+
+    try std.testing.expect(!(try watched.poll()));
+    try tmp.dir.writeFile(.{ .sub_path = "dependency.css", .data = ".two{}" });
+    try std.testing.expect(try watched.poll());
+    try std.testing.expect(!(try watched.poll()));
+    try tmp.dir.deleteFile("dependency.css");
+    try std.testing.expect(try watched.poll());
+    try std.testing.expect(!(try watched.poll()));
+    try tmp.dir.writeFile(.{ .sub_path = "dependency.css", .data = ".three{}" });
+    try std.testing.expect(try watched.poll());
+    try std.testing.expect(!(try watched.poll()));
+}
+
+test "watch tracker records source state before a failed compile attempt" {
+    var tracker = WatchTracker{};
+    const invalid_source = WatchFingerprint{ .contents = computeFileHash(".broken{") };
+    try std.testing.expect(tracker.shouldCompile(invalid_source, false));
+    // A compile failure does not roll back the observed state, so an unchanged
+    // source waits for a real source/dependency transition instead of looping.
+    try std.testing.expect(!tracker.shouldCompile(invalid_source, false));
+    try std.testing.expect(tracker.shouldCompile(invalid_source, true));
+    try std.testing.expect(!tracker.shouldCompile(invalid_source, false));
+    const unavailable = WatchFingerprint{ .unavailable = error.FileNotFound };
+    try std.testing.expect(tracker.observeSource(unavailable));
+    try std.testing.expect(!tracker.observeSource(unavailable));
 }
 
 test "legacy compiler imports remain test-only" {

@@ -23,6 +23,7 @@ The legacy code-generator transform fields remain active containment assertions 
 | Typed math precedence and units | Verified through the stable optimizer preset | `VAL-001`, `MATH-001`, Milestone 3 exit |
 | Selector simplification crash | Verified as an unchanged no-pass boundary through the stable optimizer preset | A future selector simplification pass still requires a new package and acceptance suite. |
 | Profiling lifecycle crash | Verified by `PROF-001` | `PROF-010` owns real allocator-backed metrics. |
+| Watch duplicate reads, ignored imports, and unchanged-error loops | Verified by `WATCH-001`; the root snapshot is compiled directly, local imports are deduplicated, and unchanged failures wait for a real state transition | `WATCH-001` |
 | Source-map no-op behavior | Explicitly unavailable via `CLI-002` | `MAP-001` |
 | Browser-target prefix behavior | Verified at the library/test-driver boundary by `PREFIX-001` and `PREFIX-002`; stable target flags remain explicitly unavailable via `CLI-002` and are not part of `--optimize` | Later public API/CLI wiring |
 | Dead-code and critical-CSS selector filtering | Verified as two bounded experimental library/test-driver modes by `TREE-001`; extraction flags remain unavailable via `CLI-002` and are not part of `--optimize` | Later public API/CLI wiring and matrix expansion |

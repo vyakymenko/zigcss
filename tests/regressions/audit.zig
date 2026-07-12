@@ -107,6 +107,58 @@ fn expectExitCode(result: Child.RunResult, expected: u8) !void {
     }
 }
 
+fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
+    var count: usize = 0;
+    var offset: usize = 0;
+    while (std.mem.indexOfPos(u8, haystack, offset, needle)) |index| {
+        count += 1;
+        offset = index + needle.len;
+    }
+    return count;
+}
+
+const OutputStamp = struct {
+    inode: std.fs.File.INode,
+    mtime: i128,
+    ctime: i128,
+
+    fn eql(left: OutputStamp, right: OutputStamp) bool {
+        return left.inode == right.inode and left.mtime == right.mtime and left.ctime == right.ctime;
+    }
+};
+
+fn waitForOutputStamp(
+    dir: std.fs.Dir,
+    path: []const u8,
+    previous: ?OutputStamp,
+) !OutputStamp {
+    for (0..100) |_| {
+        const stat = dir.statFile(path) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.Thread.sleep(50 * std.time.ns_per_ms);
+                continue;
+            },
+            else => return err,
+        };
+        const current = OutputStamp{
+            .inode = stat.inode,
+            .mtime = stat.mtime,
+            .ctime = stat.ctime,
+        };
+        if (previous == null or !previous.?.eql(current)) return current;
+        std.Thread.sleep(50 * std.time.ns_per_ms);
+    }
+    return error.WatchTimeout;
+}
+
+fn replaceFileAtomically(dir: std.fs.Dir, path: []const u8, bytes: []const u8) !void {
+    var buffer: [4096]u8 = undefined;
+    var atomic_file = try dir.atomicFile(path, .{ .write_buffer = &buffer });
+    defer atomic_file.deinit();
+    try atomic_file.file_writer.interface.writeAll(bytes);
+    try atomic_file.finish();
+}
+
 fn expectNonVerifiedTransformsDisabled(result: Child.RunResult) !void {
     try std.testing.expect(!succeeded(result.term));
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
@@ -573,6 +625,101 @@ test "CLI stream diagnostics and incompatible modes fail without output (CLI-011
     defer deinitRun(&batch_profile);
     try expectExitCode(batch_profile, 2);
     try std.testing.expect(std.mem.indexOf(u8, batch_profile.stderr, "--profile supports exactly one input") != null);
+}
+
+test "CLI watch recompiles once when a local imported dependency changes (WATCH-001)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{
+        .sub_path = "input.css",
+        .data = "@import \"dependency.css?version=1\";.watched { color: red; }",
+    });
+    try tmp.dir.writeFile(.{ .sub_path = "dependency.css", .data = ".one{}" });
+
+    const argv = [_][]const u8{
+        audit_options.compiler_path,
+        "input.css",
+        "-o",
+        "output.css",
+        "--watch",
+        "--minify",
+    };
+    var child = Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+    child.cwd_dir = tmp.dir;
+    try child.spawn();
+    var running = true;
+    defer if (running) {
+        _ = child.kill() catch {};
+    };
+
+    const initial = try waitForOutputStamp(tmp.dir, "output.css", null);
+    std.Thread.sleep(250 * std.time.ns_per_ms);
+    try replaceFileAtomically(tmp.dir, "dependency.css", ".two{}");
+    const recompiled = try waitForOutputStamp(tmp.dir, "output.css", initial);
+    std.Thread.sleep(1200 * std.time.ns_per_ms);
+    const stable_stat = try tmp.dir.statFile("output.css");
+    const stable = OutputStamp{
+        .inode = stable_stat.inode,
+        .mtime = stable_stat.mtime,
+        .ctime = stable_stat.ctime,
+    };
+    try std.testing.expect(recompiled.eql(stable));
+    const output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(output);
+    try std.testing.expectEqualStrings(
+        "@import \"dependency.css?version=1\";.watched{color:red}",
+        output,
+    );
+
+    _ = try child.kill();
+    running = false;
+}
+
+test "CLI watch reports unchanged invalid CSS once instead of looping (WATCH-001)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "invalid.css", .data = ".broken { color }" });
+
+    const argv = [_][]const u8{
+        audit_options.compiler_path,
+        "invalid.css",
+        "-o",
+        "output.css",
+        "--watch",
+        "--minify",
+    };
+    var child = Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Pipe;
+    child.cwd_dir = tmp.dir;
+    try child.spawn();
+    var running = true;
+    defer if (running) {
+        _ = child.kill() catch {};
+    };
+
+    const captured_handle = try std.posix.dup(child.stderr.?.handle);
+    var captured = std.fs.File{ .handle = captured_handle };
+    defer captured.close();
+    std.Thread.sleep(1600 * std.time.ns_per_ms);
+    try replaceFileAtomically(tmp.dir, "invalid.css", ".fixed { color: red; }");
+    _ = try waitForOutputStamp(tmp.dir, "output.css", null);
+    _ = try child.kill();
+    running = false;
+
+    const stderr = try captured.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(stderr, "error CSS0007"));
+    try std.testing.expect(std.mem.indexOf(u8, stderr, "Compilation error:") == null);
+    const output = try tmp.dir.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(output);
+    try std.testing.expectEqualStrings(".fixed{color:red}", output);
 }
 
 test "target prefix CLI remains separate from the verified optimizer preset" {

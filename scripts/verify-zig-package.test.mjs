@@ -122,6 +122,7 @@ test('the installed executable delegates CSS compilation to the public facade', 
   const build = read('build.zig')
   const main = read('src/main.zig')
   const runtime = main.split('\ntest "')[0]
+  const watch = runtime.match(/fn watchFile\([\s\S]*?\n}\n\nconst CompileError/)
 
   assert.match(runtime, /const zigcss = @import\("zigcss"\)/)
   assert.equal([...runtime.matchAll(/zigcss\.compile\(/g)].length, 1)
@@ -132,6 +133,10 @@ test('the installed executable delegates CSS compilation to the public facade', 
   assert.match(build, /executable_module\.addImport\("zigcss", library_module\)/)
   assert.match(build, /test_module\.addImport\("zigcss", library_module\)/)
   assert.match(build, /audit_test_module\.addImport\("zigcss", library_module\)/)
+  assert.ok(watch, 'missing watch implementation boundary')
+  assert.match(watch[0], /const input = readInput\(allocator, config\.input_file\)/)
+  assert.match(watch[0], /compileLoadedFile\(allocator, config, input\)/)
+  assert.doesNotMatch(watch[0], /compileFile\(/)
   assert.match(read('.github/workflows/build.yml'), /npm run test:node-wrapper/)
 })
 

@@ -14,7 +14,7 @@ All supported CSS modes delegate to one public `zigcss.compile` call site. The C
 | `--syntax css` | Select the only supported stable syntax explicitly; CSS is also the default. Other values fail as usage errors. |
 | `--minify` | Emit compact whitespace; this is independent of `--optimize`. |
 | `--optimize` | Run the closed verified cleanup/semantic preset to a bounded byte-stable fixed point. |
-| `--watch` | Recompile one input when its content changes. |
+| `--watch` | Recompile one input when its content or a direct local relative CSS import changes. |
 | `--profile` | Print one end-to-end public compile-call timing; accurate internal stage and allocator metrics belong to `PROF-010`. |
 | `--lsp` | Start the experimental language server. |
 | `-V`, `--version` | Print the package-synchronized version to stdout. |
@@ -37,6 +37,12 @@ The library has a verified target-prefix pass for a pinned eight-feature subset,
 The library also has two experimental conservative extraction passes over complete class/ID inventories. They require explicit experimental and extraction policy grants, and are not wired to `--optimize` or `--critical-*`; rejected CLI requests cannot reach the inherited or rebuilt implementations.
 
 The recovery CLI also rejects legacy preprocessor and alternate-format extensions. Those adapters are experimental internals until each language has a compatibility decision, strict unsupported-syntax diagnostics, and dedicated evidence.
+
+## Watch behavior
+
+The watcher reads and hashes the root file once per poll and passes those exact bytes into the public compile facade; it does not reopen the source during the same attempt. After a successful parse, owned dependency evidence supplies an ordered set of direct `@import` specifiers. Unique local relative paths are resolved from the root stylesheet directory and content-hashed. Query and fragment suffixes are excluded from the filesystem path. Scheme-bearing, remote, protocol-relative, origin-absolute, and filesystem-absolute URLs are not opened by watch mode. Imports are reported facts rather than inlined compilation inputs, so dependency changes trigger a root recompilation without changing CSS semantics.
+
+The root fingerprint is recorded before every compile attempt. An unchanged read error, parser/transform diagnostic, or output failure is therefore reported once and waits for a real root/dependency transition instead of looping twice per second. A failed parse cannot produce new dependency evidence, so the watcher conservatively retains the last successfully parsed dependency set. Duplicate imports resolving to the same platform path are polled once; missing or temporarily unreadable dependencies remain tracked and their creation or recovery counts as a change.
 
 ## Output safety
 
