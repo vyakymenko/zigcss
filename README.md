@@ -22,6 +22,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 |---|---|---|
 | `.css` parsing and emission | Experimental, matrix-tested | Stable CLI input uses the rebuilt parser/emitter; the tested grammar boundary is published below. |
 | Zig compile API | Experimental, consumer-tested | The `zigcss` module exposes owned compile options/results, located structured diagnostics, ordered `@import` dependencies, maps, accepted transforms, and target queries. |
+| Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed Zig callbacks through deterministic, transactional pass plans; there is no stable or cross-language plugin ABI. |
 | `--minify` | Experimental | Compacts emitted whitespace without enabling AST transforms. |
 | Output planning | Verified safety boundary | Rejects input/output aliases and duplicate batch destinations before writes. |
 | Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs a closed seven-pass cleanup/semantic plan to a bounded byte-stable fixed point; legacy, experimental, compatibility, extraction, custom-resolution, logical-conversion, and reorder paths are excluded. |
@@ -37,7 +38,9 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 
 `build.zig` registers one external module named `zigcss` at `src/lib.zig`. `zigcss.compile` accepts `CompileOptions` for CSS output format, separate source maps, the verified optimizer, verified target prefixing, a borrowed canonical target query, and bounded dependency reporting. Its move-only-by-convention `CompileResult` owns CSS, optional map bytes, located structured diagnostics, ordered decoded top-level `@import` dependencies, and optional module-export state through one idempotent `deinit` path.
 
-The stable CSS path returns `module_exports = null`; CSS Modules remain experimental. Fixed-point optimization and source maps cannot be combined until intermediate maps can be composed, and incoherent options return owned `API0001` diagnostics without CSS. Plugin ordering/stability belongs to `API-003`; dependency metadata and installed external-package consumption belong to `BUILD-001` and later packages.
+The stable CSS path returns `module_exports = null`; CSS Modules remain experimental. Fixed-point optimization and source maps cannot be combined until intermediate maps can be composed, and incoherent options return owned `API0001` diagnostics without CSS. Dependency metadata and installed external-package consumption belong to `BUILD-001` and later packages.
+
+Native plugins are a separate trusted-only experiment. `PluginOptions.experimental` borrows `plugin.`-namespaced pass definitions, requests, callbacks, and user state only until `compile` returns. The pass manager closes dependencies and orders execution by phase, priority, and stable ID independent of registration order. Exact safety/maturity permissions remain deny-by-default. Invalid configuration returns `API0002`; callback or validator failure transactionally returns `API0003` without CSS; successful warnings remain owned diagnostics. Active plugins cannot request source maps, do not enter the CLI or HTTP service, and are not a stable ABI or sandbox.
 
 A minimal repository consumer uses the owned high-level result:
 

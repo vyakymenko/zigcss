@@ -19,7 +19,7 @@ zig build test-public-api --summary all
 
 The executable is written to `zig-out/bin/zigcss`.
 
-`test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the owned high-level compile facade and result cleanup without claiming package-manager integration, plugin stability, or CSS Modules, which remain later Milestone 4 work.
+`test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the owned high-level compile facade, result cleanup, and an explicitly experimental borrowed native-plugin callback without claiming package-manager integration, a stable plugin ABI, or CSS Modules.
 
 ## Zig library example
 

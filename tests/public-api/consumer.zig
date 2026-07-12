@@ -11,6 +11,7 @@ comptime {
     _ = zigcss.sourcemap;
     _ = zigcss.transform;
     _ = zigcss.prefixing;
+    _ = zigcss.plugins;
 
     _ = zigcss.SourceId;
     _ = zigcss.Span;
@@ -28,6 +29,11 @@ comptime {
     _ = zigcss.OutputFormat;
     _ = zigcss.SourceMapOptions;
     _ = zigcss.TransformOptions;
+    _ = zigcss.PluginOptions;
+    _ = zigcss.ExperimentalPluginOptions;
+    _ = zigcss.PluginDefinition;
+    _ = zigcss.PluginPolicy;
+    _ = zigcss.PluginStability;
     _ = zigcss.Syntax;
     _ = zigcss.TargetQuery;
     _ = zigcss.Dependency;
@@ -41,6 +47,24 @@ comptime {
     _ = zigcss.ComponentValue;
     _ = zigcss.ComponentValueDocument;
 }
+
+fn externalPluginRun(
+    user_data: ?*anyopaque,
+    _: *zigcss.transform.pass_manager.Context,
+    input: *const zigcss.css.ast.RuleList,
+) zigcss.transform.pass_manager.Error!*const zigcss.css.ast.RuleList {
+    const ran: *bool = @ptrCast(@alignCast(user_data orelse return error.PassFailed));
+    ran.* = true;
+    return input;
+}
+
+fn externalPluginValidate(
+    _: ?*anyopaque,
+    _: zigcss.transform.pass_manager.ValidationPhase,
+    _: *zigcss.transform.pass_manager.Context,
+    _: *const zigcss.css.ast.RuleList,
+    _: *const zigcss.css.ast.RuleList,
+) zigcss.transform.pass_manager.Error!void {}
 
 test "external consumer imports the public root and owns CSS maps and diagnostics" {
     var result: zigcss.CompileResult = try zigcss.compile(
@@ -104,4 +128,40 @@ test "external consumer reaches only explicit transform and target modules" {
         @as(u16, 120),
         query.minimum(.chrome).?.major,
     );
+}
+
+test "external consumer opts into the borrowed experimental plugin contract" {
+    var ran = false;
+    const definitions = [_]zigcss.PluginDefinition{.{
+        .metadata = .{
+            .id = "plugin.external-analysis",
+            .revision = 1,
+            .phase = .analysis,
+            .safety = .analysis,
+            .maturity = .experimental,
+            .precondition = "the parsed CSS is valid",
+            .postcondition = "the callback observes the AST without changing it",
+            .no_op_conditions = "analysis always retains the input root",
+            .supports_nested_rules = true,
+        },
+        .run = externalPluginRun,
+        .validate = externalPluginValidate,
+        .user_data = &ran,
+    }};
+    var result = try zigcss.compile(
+        std.testing.allocator,
+        "consumer-plugin.css",
+        ".consumer{x:1}",
+        .{ .plugins = .{ .experimental = .{
+            .definitions = &definitions,
+            .requested = &.{"plugin.external-analysis"},
+            .policy = .{ .allow_experimental = true },
+        } } },
+    );
+    defer result.deinit();
+
+    try std.testing.expect(ran);
+    try std.testing.expectEqualStrings(".consumer {\n  x: 1;\n}\n", result.css);
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    try std.testing.expectEqual(zigcss.PluginStability.experimental, zigcss.plugins.stability);
 }

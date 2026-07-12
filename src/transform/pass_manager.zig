@@ -259,6 +259,7 @@ pub fn buildPlan(
     policy: Policy,
 ) Error!Plan {
     try validateRegistry(allocator, registry);
+    if (requested.len > max_passes) return error.TooManyPasses;
 
     for (requested, 0..) |id, index| {
         if (findPassIndex(registry, id) == null) return error.UnknownRequestedPass;
@@ -325,6 +326,7 @@ fn validateRegistry(allocator: std.mem.Allocator, registry: []const Pass) Error!
     if (registry.len > max_passes) return error.TooManyPasses;
     for (registry, 0..) |*pass, index| {
         try validateMetadata(pass);
+        if (pass.metadata.dependencies.len > max_passes) return error.TooManyPasses;
         for (registry[0..index]) |previous| {
             if (std.mem.eql(u8, previous.metadata.id, pass.metadata.id)) return error.DuplicatePass;
         }
@@ -673,6 +675,23 @@ test "registry validation rejects ambiguous invalid and cyclic pass graphs" {
     try std.testing.expectError(
         error.DuplicateRequest,
         buildPlan(std.testing.allocator, &valid, &.{ "valid", "valid" }, .{}),
+    );
+
+    var too_many_requests: [max_passes + 1][]const u8 = undefined;
+    @memset(&too_many_requests, "same");
+    try std.testing.expectError(
+        error.TooManyPasses,
+        buildPlan(std.testing.allocator, &valid, &too_many_requests, .{}),
+    );
+
+    var too_many_dependencies: [max_passes + 1][]const u8 = undefined;
+    @memset(&too_many_dependencies, "same");
+    var dependency_metadata = acceptedMetadata("dependency-limit", .analysis, .analysis);
+    dependency_metadata.dependencies = &too_many_dependencies;
+    const dependency_limit = [_]Pass{testPass(dependency_metadata, &state)};
+    try std.testing.expectError(
+        error.TooManyPasses,
+        buildPlan(std.testing.allocator, &dependency_limit, &.{}, .{}),
     );
 }
 

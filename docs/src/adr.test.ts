@@ -17,6 +17,7 @@ describe('foundational architecture decisions', () => {
     'ADR-002-tokenizer-and-syntax-tree.md',
     'ADR-003-memory-and-result-ownership.md',
     'ADR-004-transform-safety-classes.md',
+    'ADR-005-native-plugin-contract.md',
     'ADR-006-browser-target-query-language.md',
     'ADR-007-source-map-policy-for-generated-nodes.md',
     'ADR-010-autonomous-model-requirement.md',
@@ -101,6 +102,19 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('does not emit fabricated per-token or per-character mappings')
     expect(adr).toContain('receives no mapping')
     expect(adr).toContain('structured AST data, not trusted raw CSS byte strings')
+  })
+
+  test('keeps native plugins deterministic borrowed transactional and experimental', () => {
+    const adr = read('ADR-005-native-plugin-contract.md')
+
+    expect(adr).toContain('trusted, Zig-only, in-process callback contract')
+    expect(adr).toContain('must begin with `plugin.`')
+    expect(adr).toContain('phase, then ascending numeric priority, then bytewise stable ID')
+    expect(adr).toContain('borrowed only for synchronous `compile`')
+    expect(adr).toContain('API0002')
+    expect(adr).toContain('API0003')
+    expect(adr).toContain('publishes no candidate root')
+    expect(adr).toContain('not a stable plugin ABI')
   })
 
   test('defines deterministic explicit targets and pinned generated compatibility data', () => {

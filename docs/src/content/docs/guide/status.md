@@ -8,6 +8,7 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 |---|---|---|
 | CSS CLI parsing and emission | Experimental, matrix-tested | The stable CLI uses the new source/token/syntax/typed-parser pipeline; its current grammar boundary is published and independently parsed. |
 | Zig compile API | Experimental, consumer-tested | `zigcss.compile` returns owned CSS/maps, located diagnostics, ordered decoded imports, and optional module-export state; accepted transforms and borrowed canonical targets are explicit options. |
+| Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed `plugin.`-namespaced Zig callbacks through bounded deterministic pass plans; there is no stable ABI, sandbox, CLI, or HTTP path. |
 | `--minify` | Experimental | Changes whitespace during emission only; it is independent of `--optimize`. |
 | Output planning | Safety boundary verified | Input/output aliases and multi-file destination collisions are rejected before writes. |
 | `--profile` | Experimental | Reports parse, optimizer-stage, and emission timings without the former lifecycle crash. |
@@ -26,7 +27,15 @@ The stable CLI no longer consumes the inherited byte parser. Its typed and lossl
 
 The build registers `src/lib.zig` as the external `zigcss` module. A separate consumer test imports that name rather than testing from inside the root, then calls the owned high-level compile facade. Results retain CSS, optional map bytes, source names and line/column locations for diagnostics, ordered decoded top-level `@import` dependencies, and optional module-export state after compilation cleanup. Duplicate imports remain ordered; malformed or dynamic import preludes do not become guessed dependencies; count/owned-byte limits fail with a structured resource diagnostic and no partial facts.
 
-`CompileOptions` currently admits only CSS, pretty/minified output, separate maps, the closed optimizer preset, and the verified target-prefix pass with a borrowed canonical query. Targets without prefixing, prefixing without targets, forged queries, and optimized source maps return `API0001` diagnostics without CSS. Stable CSS returns no module exports. Plugin behavior, package metadata, installed-consumer integration, and CSS Modules remain later packages.
+`CompileOptions` currently admits only CSS, pretty/minified output, separate maps, the closed optimizer preset, the verified target-prefix pass with a borrowed canonical query, and explicitly experimental trusted native plugins. Targets without prefixing, prefixing without targets, forged queries, optimized source maps, and active plugin source maps return `API0001` diagnostics without CSS. Stable CSS returns no module exports. Package metadata, installed-consumer integration, and CSS Modules remain later packages.
+
+## Experimental native plugin boundary
+
+Native plugins reuse the immutable pass contract; the inherited mutable `PluginRegistry` is not public. Definitions, metadata strings, request/dependency slices, callbacks, and `user_data` are borrowed only during synchronous `compile`, while all AST output stays in the compilation arena and no plugin pointer enters `CompileResult`. IDs must use the isolated `plugin.` namespace. Only requested IDs and their plugin dependencies execute, after the optional optimizer fixed point; a target prefix pass joins the same final plan. Dependencies take precedence, then ready passes are ordered by phase, ascending priority, and bytewise stable ID.
+
+The outer `.experimental` tag does not grant transform authority by itself. `PluginPolicy` still defaults to verified analysis only; experimental maturity and each output-changing safety class require their own exact booleans. Invalid registries or policy return owned `API0002` diagnostics before callbacks or dependency collection. Callback/validator failure rolls back the compiler root and plan diagnostics, returns owned `API0003` without CSS, and retains already discovered import facts. Caller-owned `user_data` side effects are not reversible. Warnings survive only when the whole plan succeeds.
+
+This is trusted in-process Zig code, not a sandbox or stable ABI. A panic, nontermination, process exit, undefined behavior, or malicious mutation cannot be recovered. Plugins remain unavailable from the recovery CLI and disabled public compiler routes. The complete source contract is recorded in `docs/adr/ADR-005-native-plugin-contract.md`.
 
 Property-specific values are generally preserved as component trees rather than fully validated semantic values. Browser computed-style validation, broader target data and stable CLI prefix exposure, optimized source-map composition, CLI source-map output, the LSP migration, alternate formats, and public untrusted compilation remain later gates. Independent syntax acceptance is evidence, not a complete browser-semantics guarantee.
 

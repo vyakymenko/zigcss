@@ -17,6 +17,8 @@ pub const Code = enum {
     unexpected_token,
     resource_limit,
     invalid_option,
+    invalid_plugin,
+    plugin_failed,
     internal,
 
     pub fn label(self: Code) []const u8 {
@@ -30,6 +32,8 @@ pub const Code = enum {
             .unexpected_token => "CSS0007",
             .resource_limit => "CSS0008",
             .invalid_option => "API0001",
+            .invalid_plugin => "API0002",
+            .plugin_failed => "API0003",
             .internal => "CSS9999",
         };
     }

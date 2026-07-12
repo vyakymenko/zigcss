@@ -13,6 +13,11 @@ const capabilities = [
     detail: "A separate consumer verifies owned CSS/maps, located diagnostics, ordered imports, accepted transforms, borrowed canonical targets, and one result cleanup path.",
   },
   {
+    surface: "Native plugins",
+    status: "Experimental / trusted library-only",
+    detail: "Borrowed plugin.-namespaced Zig callbacks use deterministic transactional pass plans; there is no stable ABI, sandbox, CLI, or HTTP path.",
+  },
+  {
     surface: "Compact emission (--minify)",
     status: "Experimental",
     detail: "Whitespace-only emission mode; it remains independent of the explicit --optimize preset.",
