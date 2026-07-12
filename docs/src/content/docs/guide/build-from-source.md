@@ -98,12 +98,17 @@ npm run test:prefix-data
 npm run check:prefix-data
 NVIM=/absolute/path/to/nvim npm run test:documentation
 npm run check:documentation
+npm run test:dependencies
+npm run check:dependencies
+npm run audit:production
 npm run test:zig-package
 npm run test:compat
 npm run test:transforms
 ```
 
 The documentation gate syntax-checks every tracked shell, JSON, Lua, and Vim fence, compiles every CSS fence, runs the canonical Zig examples through the build graph, and resolves every tracked internal Markdown/site link. Set `NVIM` to a Neovim 0.11.7-or-later executable so the checked Lua and Ex-command examples use the real editor parser without loading user configuration.
+
+The dependency gate inventories the root, documentation, and VS Code npm manifests and version-3 lockfiles, requires exact direct dependency versions, and audits each production lock graph from the lockfile with high/critical findings as failures. The reviewed `.github/dependabot.yml` opens only bounded weekly version-update pull requests for those npm directories, GitHub Actions, and the root Docker ecosystem; it grants no automerge, registry credentials, publishing, or deployment authority.
 
 ## Characterization example
 

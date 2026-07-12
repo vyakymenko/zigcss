@@ -168,6 +168,19 @@
           "contains": ["test-documentation-examples", "examples/css_modules.zig"]
         }
       ]
+    },
+    "dependencies": {
+      "command": "npm run audit:production",
+      "anchors": [
+        {
+          "path": "scripts/audit-production-dependencies.mjs",
+          "contains": ["--package-lock-only", "high/critical", "renderDependabotConfig"]
+        },
+        {
+          "path": ".github/dependabot.yml",
+          "contains": ["package-ecosystem: \"npm\"", "package-ecosystem: \"github-actions\"", "open-pull-requests-limit"]
+        }
+      ]
     }
   },
   "capabilities": [
@@ -305,7 +318,7 @@
       "status": "Experimental, package-tested",
       "statusKind": "experimental",
       "behavior": "Version 0.3.0 has an exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and a verified five-file pre-release VSIX; no binary is bundled or published.",
-      "evidence": ["vscode", "lsp"]
+      "evidence": ["vscode", "lsp", "dependencies"]
     },
     {
       "id": "neovim",
@@ -321,7 +334,7 @@
       "status": "Disabled",
       "statusKind": "disabled",
       "behavior": "Public compile routes return HTTP 503 until bounded process and request isolation is implemented.",
-      "evidence": ["docs-server"]
+      "evidence": ["docs-server", "dependencies"]
     }
   ]
 }

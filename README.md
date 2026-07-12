@@ -135,6 +135,9 @@ npm run test:capability-status
 npm run check:capability-status
 NVIM=/absolute/path/to/nvim npm run test:documentation
 npm run check:documentation
+npm run test:dependencies
+npm run check:dependencies
+npm run audit:production
 npm run test:zig-package
 npm run test:vscode
 NVIM=/absolute/path/to/nvim npm run test:neovim

@@ -29,6 +29,7 @@ describe('documentation workflow', () => {
 describe('native artifact workflows', () => {
   const buildWorkflow = fs.readFileSync(path.join(workflowsDir, 'build.yml'), 'utf8')
   const releaseWorkflow = fs.readFileSync(path.join(workflowsDir, 'release.yml'), 'utf8')
+  const dependabot = fs.readFileSync(path.resolve(workflowsDir, '..', 'dependabot.yml'), 'utf8')
 
   test('passes every build matrix target to Zig after native tests', () => {
     const nativeTests = buildWorkflow.indexOf('zig build test --summary all')
@@ -51,6 +52,21 @@ describe('native artifact workflows', () => {
     expect(generatorTests).toBeGreaterThan(install)
     expect(prefixData).toBeGreaterThan(generatorTests)
     expect(tests).toBeGreaterThan(prefixData)
+  })
+
+  test('audits every locked production graph under bounded update-only automation', () => {
+    const extensionInstall = buildWorkflow.indexOf('Install VS Code extension dependencies')
+    const policy = buildWorkflow.indexOf('npm run test:dependencies', extensionInstall)
+    const audit = buildWorkflow.indexOf('npm run audit:production', policy)
+    const extensionPackage = buildWorkflow.indexOf('Test and package VS Code extension', audit)
+
+    expect(policy).toBeGreaterThan(extensionInstall)
+    expect(audit).toBeGreaterThan(policy)
+    expect(extensionPackage).toBeGreaterThan(audit)
+    expect(dependabot.match(/package-ecosystem:/g)).toHaveLength(3)
+    expect(dependabot).toContain('- "/vscode-extension"')
+    expect(dependabot).toContain('open-pull-requests-limit: 1')
+    expect(dependabot).not.toMatch(/automerge|registries|target-branch|reviewers|assignees/i)
   })
 
   test('validates every documentation link and example after compiler and editor setup', () => {

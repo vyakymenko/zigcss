@@ -95,6 +95,9 @@ jobs:
         working-directory: vscode-extension
         run: npm ci --ignore-scripts
 
+      - name: Verify dependency policy and production audits
+        run: npm run test:dependencies && npm run audit:production
+
       - name: Test and package VS Code extension
         working-directory: vscode-extension
         run: npm test && npm run package:check
