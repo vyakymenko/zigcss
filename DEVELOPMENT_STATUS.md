@@ -15,10 +15,10 @@ Last updated: 2026-07-12
 ## Current work
 
 - Milestone: Milestone 7 — documentation, packaging, and release integrity
-- Work package: `DOC-001` generate capability/status tables from tested feature metadata
+- Work package: `DOC-002` compile and test all code examples and internal links
 - State: `IN_PROGRESS`
-- Active phase: inventory duplicated capability/status claims and define one generated, test-owned metadata source without weakening current boundaries
-- Next eligible package: `DOC-001`
+- Active phase: inventory every published code example and repository-internal link, then establish deterministic red baselines for any uncompiled or unresolved surface
+- Next eligible package: `DOC-002`
 
 ## Milestone 0 package ledger
 
@@ -291,6 +291,12 @@ Completed on recovery commit `0f31340`.
 
 Milestone 6 exit criteria pass: protocol composition, body sizing, UTF-16 coordinates, capability truthfulness, syntax-aware bounded workspace operations, and both local editor integrations have executable evidence.
 
+## Milestone 7 package ledger
+
+| Package | State | Evidence / decision | Commit |
+|---|---|---|---|
+| `DOC-001` | `VERIFIED` | Red baselines proved there was no capability-status generator or gate and the site still claimed LSP parser migration and editor features were future work after both editor packages had passed. Added one schema-versioned `docs/src/data/capabilities.json` authority with a closed four-kind status vocabulary, 19 unique public surfaces, and 13 referenced executable evidence gates. Each gate must resolve to a real root/docs npm script or real Zig build step and every content anchor must be a regular file whose canonical path remains inside the repository; duplicate rows/evidence, unknown or contradictory status, malformed inline code, unused gates, symlink escapes, missing/duplicate generation markers, and stale tables fail closed. One deterministic generator owns byte-identical marked tables in README and the status guide, while the React feature page consumes the same metadata directly and renders validated inline code without literal Markdown. Seven generator tests, four docs metadata tests, six feature-page tests, and a CI drift gate prevent divergence. Debug and ReleaseSafe remain 489/489 across 30/30; docs pass 121/121 and build; VS Code remains 13/13 with a five-file/120,473-byte VSIX and both real Neovim versions pass four static gates plus integration. Prefix generation, seven package tests, two wrapper tests, eight-format, 21-feature/18-output/four-rejection CSS, ten transform, benchmark, syntax, diff, and all three production-audit gates pass. Root npm remains five files/25,939 unpacked bytes. Isolated package `zigcss-0.3.0-Bz3pcW8tGwBkfoEoLEjkUVh-xoK142KGmr0MldSKGVOM` contains 75 allowlisted files/1,933,312 disk bytes, builds 3/3, and its external dependency consumer passes 6/6 steps with 2/2 tests in Debug and ReleaseSafe. Formatting debt remains exactly 12 inherited files. | `8317d09` |
+
 ## Completed work packages
 
 - `SEC-001`: static serving is contained within the configured real root and malformed URL encoding is handled without a process crash. Focused result: 7/7 security tests; integration result: 44/44 docs tests plus successful Vite build.
@@ -355,6 +361,8 @@ Milestone 6 exit criteria pass: protocol composition, body sizing, UTF-16 coordi
 - `VSCODE-001`: the editor artifact is a reproducible client package, not an implicit binary distribution channel. Its empty-path lookup cannot execute from the workspace/current directory, explicit invalid configuration fails rather than silently changing authority, runtime checks mirror manifest limits, and the temporary packaging gate admits an exact reviewed file inventory before cleanup. Publication and native-binary bundling remain unauthorized.
 
 - `NEOVIM-001`: the plugin-framework prototype is replaced by a CSS-only built-in configuration whose minimum/current Neovim clients launch the real absolute command, prove exact advertised/absent methods and compiler-backed requests, and cleanly stop without touching user editor state.
+
+- `DOC-001`: one evidence-linked metadata source now drives the repository README, published status guide, and site feature table; validation and CI reject unsupported status claims, missing or escaping evidence, invented commands, malformed presentation markup, and generated-table drift.
 
 ## Active blockers
 
@@ -463,7 +471,13 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 - `NEOVIM-001` treats editor configuration as process-launch authority. Explicit paths are absolute verified executables and never fall back; automatic lookup ignores relative/empty `PATH` entries and is bounded on both directories and Windows extensions. The workspace root controls client grouping only, not file discovery. Configuration publishes no mapping for an unadvertised method, and pinned real clients—not Lua text alone—are the graduation gate.
 
+- `DOC-001` treats public capability status as generated test evidence rather than prose copied across surfaces. Metadata may cite only a closed status kind and executable gate with repository-confined content anchors; Markdown tables are generated views, and the site consumes the same rows directly. Unknown, contradictory, stale, or unanchored claims are build failures.
+
 ## Last full validation
+
+Milestones 0, 1, 2, 3, 4, 5, and 6 are `PASS`; Milestone 7 is active and `DOC-001` is checkpointed at `8317d09`. Canonical capability metadata contains 19 unique rows backed by all 13 executable evidence gates; seven generator tests prove schema closure, real npm/Zig commands, repository-confined canonical anchors including symlink rejection, deterministic replacement, marker authority, current editor/LSP boundaries, and exact two-table generation. Four docs-level metadata tests and six feature-page tests prove the same rows drive both published Markdown surfaces and the React UI with rendered inline code; docs pass 121/121 and build. Debug and ReleaseSafe remain 489/489 across 30/30 because production Zig is unchanged. VS Code passes 13/13 and produces its exact five-file/120,473-byte temporary VSIX; Neovim passes four static gates and real 0.11.7/0.12.4 smokes. Exact BCD generation, seven package tests, two wrapper tests, the eight-format matrix, 21-feature/18-output/four-rejection CSS gate, ten transform differentials, benchmark smoke, workflow/JSON/JavaScript syntax, and root/docs/extension production audits pass. Root npm is five files/25,939 unpacked bytes. Fresh isolated package `zigcss-0.3.0-Bz3pcW8tGwBkfoEoLEjkUVh-xoK142KGmr0MldSKGVOM` remains 75 files/1,933,312 disk bytes after validation, builds 3/3 in both modes, and its dependency consumer passes 6/6 steps with 2/2 tests in Debug and ReleaseSafe. Generated-state and diff checks pass; repository formatting debt remains exactly 12 inherited files. `DOC-002` is active next.
+
+## NEOVIM-001 validation snapshot
 
 Milestones 0, 1, 2, 3, 4, 5, and 6 are `PASS`; Milestone 7 is active with `DOC-001` next. Debug and ReleaseSafe each pass 489/489 tests across 30/30 steps. The final LSP composition covers bounded sequential framing, malformed-request recovery, lifecycle/version/cancellation rules, >1 MiB synchronized Unicode CSS, exact UTF-16 diagnostics/navigation, syntax-aware deterministic open-document indexes, resource budgets, and repeated allocator-clean state. The VS Code package passes 13/13 tests and produces an exact five-file/120,473-byte temporary VSIX with no binary or residue. The built-in CSS-only Neovim config passes four static gates and real isolated smokes on exact 0.11.7 and current 0.12.4: relative command rejection, one `[absolute zigcss, --lsp]` client, UTF-16/full sync, pull diagnostics plus seven editor methods, six absent methods, an empty compiler-backed full report, exact property hover, and clean shutdown. Docs pass 115/115 and build. Exact BCD generation, seven package tests, two wrapper tests, the eight-format matrix, 21-feature/18-output/four-rejection CSS gate, ten transform differentials, benchmark smoke, workflow/script syntax, and root/docs/extension production audits pass. Root npm is five files/25,652 bytes. Fresh package `zigcss-0.3.0-Bz3pcVgtGwC43k52obcDIv9gmTtqNfcInX351qH46Vq1` contains 75 files/1,933,312 disk bytes, builds 3/3 in both modes, and its dependency consumer passes 6/6 steps with 2/2 tests in Debug and ReleaseSafe. The unchanged production implementation retains the five-target artifact inspection evidence. Generated-state, diff, and focused formatting gates pass; repository formatting debt remains exactly 12 inherited files.
 
