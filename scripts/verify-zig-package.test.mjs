@@ -31,6 +31,7 @@ function filesRecursive(directory) {
 test('Zig package identity version and minimum toolchain are pinned', () => {
   const manifest = read('build.zig.zon')
   const npmManifest = JSON.parse(read('package.json'))
+  const vscodeManifest = JSON.parse(read('vscode-extension/package.json'))
   const main = read('src/main.zig')
 
   assert.match(manifest, /\.name\s*=\s*\.zigcss,/)
@@ -39,6 +40,7 @@ test('Zig package identity version and minimum toolchain are pinned', () => {
     /\.fingerprint\s*=\s*0xae272a4871e93d07,\s*\/\/ Changing this has security and trust implications\./,
   )
   assert.equal(field(manifest, 'version'), npmManifest.version)
+  assert.equal(vscodeManifest.version, npmManifest.version)
   assert.equal(field(manifest, 'minimum_zig_version'), '0.15.2')
   assert.match(manifest, /\.dependencies\s*=\s*\.\{\},/)
   assert.match(main, new RegExp(`const version = "${npmManifest.version.replaceAll('.', '\\.')}";`))

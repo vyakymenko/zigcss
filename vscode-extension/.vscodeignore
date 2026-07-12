@@ -1,8 +1,13 @@
 .vscode/**
 .vscode-test/**
 src/**
-.gitignore
+test/**
+scripts/**
+out/**
+node_modules/**
+package-lock.json
 tsconfig.json
 **/*.map
 **/*.ts
-!out/**/*.js
+dist/**
+!dist/extension.js

@@ -2,78 +2,91 @@
   "name": "zigcss-language-server",
   "displayName": "zigcss Language Server",
   "description": "Experimental Language Server Protocol client for the ZigCSS recovery prototype",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "zigcss",
+  "private": true,
+  "preview": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vyakymenko/zigcss.git",
+    "directory": "vscode-extension"
+  },
+  "homepage": "https://github.com/vyakymenko/zigcss#readme",
+  "bugs": {
+    "url": "https://github.com/vyakymenko/zigcss/issues"
+  },
+  "keywords": [
+    "css",
+    "zig",
+    "language-server",
+    "lsp"
+  ],
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.82.0"
+  },
+  "extensionKind": ["workspace"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "The extension launches a local ZigCSS executable. Trust the workspace and configure a trusted binary before activation."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "ZigCSS currently synchronizes file-backed CSS documents through a local process."
+    }
   },
   "categories": [
     "Programming Languages",
     "Linters"
   ],
   "activationEvents": [
-    "onLanguage:css",
-    "onLanguage:scss",
-    "onLanguage:sass",
-    "onLanguage:less",
-    "onLanguage:stylus"
+    "onLanguage:css"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
-    "languages": [
-      {
-        "id": "css",
-        "extensions": [".css"],
-        "aliases": ["CSS", "css"]
-      },
-      {
-        "id": "scss",
-        "extensions": [".scss"],
-        "aliases": ["SCSS", "scss"]
-      },
-      {
-        "id": "sass",
-        "extensions": [".sass"],
-        "aliases": ["SASS", "sass"]
-      },
-      {
-        "id": "less",
-        "extensions": [".less"],
-        "aliases": ["LESS", "less"]
-      },
-      {
-        "id": "stylus",
-        "extensions": [".styl"],
-        "aliases": ["Stylus", "stylus"]
-      }
-    ],
     "configuration": {
       "title": "zigcss",
       "properties": {
         "zigcss.languageServerPath": {
           "type": "string",
-          "default": "zigcss",
-          "description": "Path to the zigcss binary. Use 'zigcss' if it's in your PATH, or provide the full path."
+          "default": "",
+          "maxLength": 65536,
+          "scope": "machine-overridable",
+          "description": "Absolute path or bare command name for a trusted ZigCSS binary. Empty searches an extension-local bin directory, then absolute PATH entries; it never executes a workspace-relative path."
         },
         "zigcss.languageServerArgs": {
           "type": "array",
           "default": ["--lsp"],
-          "description": "Arguments to pass to the zigcss language server"
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "scope": "machine-overridable",
+          "description": "Arguments passed directly to the ZigCSS language server process."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run build",
+    "clean": "node scripts/clean.mjs",
     "compile": "tsc -p ./",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
+    "build": "npm run clean && npm run compile && npm run bundle",
+    "test": "npm run clean && npm run compile && node --test test/*.test.cjs",
+    "package:check": "npm run build && node scripts/verify-package.mjs",
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/vscode": "^1.74.0",
-    "typescript": "^5.0.0"
+    "@types/node": "18.19.130",
+    "@types/vscode": "1.82.0",
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "0.28.1",
+    "typescript": "5.9.3"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.0"
+    "vscode-languageclient": "9.0.1"
   }
 }
