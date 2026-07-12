@@ -23,16 +23,18 @@ test "path package exposes the native CSS Modules result contract" {
     var result = try zigcss.compile(
         std.testing.allocator,
         "package/card.module.css",
-        ".card,.icon{color:red}",
+        "@value tone:red;.card,.icon{color:tone}",
         .{ .syntax = .css_modules, .format = .minified },
     );
     defer result.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
     const exports = result.module_exports orelse return error.MissingModuleExports;
-    try std.testing.expectEqual(@as(usize, 2), exports.entries.len);
-    try std.testing.expectEqualStrings("card", exports.entries[0].name);
-    try std.testing.expectEqualStrings("icon", exports.entries[1].name);
-    try std.testing.expect(std.mem.indexOf(u8, result.css, exports.entries[0].value) != null);
+    try std.testing.expectEqual(@as(usize, 3), exports.entries.len);
+    try std.testing.expectEqualStrings("tone", exports.entries[0].name);
+    try std.testing.expectEqualStrings("red", exports.entries[0].value);
+    try std.testing.expectEqualStrings("card", exports.entries[1].name);
+    try std.testing.expectEqualStrings("icon", exports.entries[2].name);
     try std.testing.expect(std.mem.indexOf(u8, result.css, exports.entries[1].value) != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, exports.entries[2].value) != null);
 }

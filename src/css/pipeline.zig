@@ -19,6 +19,8 @@ pub const Options = struct {
     class_rewrites: ?[]const module_names.Occurrence = null,
     scope_rewrites: ?[]const module_names.Scope = null,
     omit_declarations: ?[]const source.Span = null,
+    value_rewrites: ?[]const module_names.Replacement = null,
+    omit_rules: ?[]const source.Span = null,
 };
 
 /// Owns compilation-lifetime syntax and typed AST data. Emitted results are
@@ -65,6 +67,8 @@ pub const ParsedStylesheet = struct {
                     .class_rewrites = options.class_rewrites,
                     .scope_rewrites = options.scope_rewrites,
                     .omit_declarations = options.omit_declarations,
+                    .value_rewrites = options.value_rewrites,
+                    .omit_rules = options.omit_rules,
                 },
                 source_map_options,
             );
@@ -87,6 +91,8 @@ pub const ParsedStylesheet = struct {
                 .class_rewrites = options.class_rewrites,
                 .scope_rewrites = options.scope_rewrites,
                 .omit_declarations = options.omit_declarations,
+                .value_rewrites = options.value_rewrites,
+                .omit_rules = options.omit_rules,
             },
         );
         defer if (css.len > 0) result_allocator.free(css);

@@ -177,6 +177,46 @@ function validateSuccess(result, sourceName, mode) {
   return payload
 }
 
+function validateValueSuccess(result, sourceName, mode) {
+  if (result.status !== 0) fail(`CSS Modules values ${mode} exited ${result.status}\n${result.stderr}`)
+  if (result.stderr.length !== 0) fail(`CSS Modules values ${mode} emitted stderr`)
+  const payload = JSON.parse(result.stdout)
+  const expected = [
+    { name: 'primary', value: '#bf4040' },
+    { name: 'alias', value: '#bf4040' },
+    { name: 'selector', value: 'card' },
+    { name: 'bp', value: '(min-width: 30em)' },
+    { name: 'card', value: expectedName(sourceName, 'card') },
+  ]
+  const actual = payload.exports.map(entry => ({ name: entry.name, value: entry.value }))
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    fail(`CSS Modules values ${mode} exports differ: ${JSON.stringify(actual)}`)
+  }
+  if (payload.exports.some(entry => entry.composes.length !== 0)) {
+    fail(`CSS Modules values ${mode} unexpectedly composed an export`)
+  }
+  if (payload.dependencies.length !== 0) fail(`CSS Modules values ${mode} added a dependency`)
+  if (payload.css.includes('@value') || payload.css.includes('.selector')) {
+    fail(`CSS Modules values ${mode} leaked adapter syntax`)
+  }
+  const generated = expected[4].value
+  const expectedCss =
+    `.${generated}{color:#bf4040}` +
+    `@media (min-width:30em){.${generated}{border-color:#bf4040}}`
+  const actualCanonical = canonicalize(payload.css, `css-modules-values-${mode}-actual`)
+  const expectedCanonical = canonicalize(expectedCss, `css-modules-values-${mode}-expected`)
+  if (actualCanonical !== expectedCanonical) {
+    fail(`CSS Modules values ${mode} semantic projection differs`)
+  }
+  return payload
+}
+
+function validateRejection(result, label) {
+  if (result.status === 0) fail(`${label} compiled successfully`)
+  if (result.stdout.length !== 0) fail(`${label} emitted partial output`)
+  if (!result.stderr.includes('CSS0009')) fail(`${label} omitted CSS0009\n${result.stderr}`)
+}
+
 export function validateCssModules(driver) {
   try {
     fs.accessSync(driver, fs.constants.F_OK)
@@ -186,7 +226,9 @@ export function validateCssModules(driver) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-css-modules-'))
   const sourceName = 'src/components/card.module.css'
   const input = path.join(temporary, 'fixture.css')
+  const values = path.join(temporary, 'values.css')
   const invalid = path.join(temporary, 'invalid.css')
+  const invalidValue = path.join(temporary, 'invalid-value.css')
   fs.writeFileSync(
     input,
     '@import "theme.css";:global(.card),:local(.card):hover{color:red}' +
@@ -194,7 +236,14 @@ export function validateCssModules(driver) {
       '.base{color:black}.item{composes:base;composes:global-reset from global;' +
       'composes:external from "./external.module.css";display:grid}',
   )
+  fs.writeFileSync(
+    values,
+    '@value primary: #bf4040;@value alias: primary;@value selector: card;' +
+      '@value bp: (min-width: 30em);.selector{color:alias}' +
+      '@media bp{.selector{border-color:primary}}',
+  )
   fs.writeFileSync(invalid, ':local .card{color:red}')
+  fs.writeFileSync(invalidValue, '@value primary from "./tokens.css";.card{color:primary}')
 
   try {
     validateCompositionOracle(fs.readFileSync(input), sourceName)
@@ -221,20 +270,32 @@ export function validateCssModules(driver) {
       fail('CSS Modules names are not source-specific')
     }
 
-    const rejected = runDriver(driver, invalid, sourceName, true)
-    if (rejected.status === 0) fail('CSS Modules deferred syntax compiled successfully')
-    if (rejected.stdout.length !== 0) fail('CSS Modules deferred syntax emitted partial output')
-    if (!rejected.stderr.includes('CSS0009')) {
-      fail(`CSS Modules deferred syntax omitted CSS0009\n${rejected.stderr}`)
+    const valueSource = 'src/components/values.module.css'
+    const valuePretty = validateValueSuccess(
+      runDriver(driver, values, valueSource, false),
+      valueSource,
+      'pretty',
+    )
+    const valueMinified = validateValueSuccess(
+      runDriver(driver, values, valueSource, true),
+      valueSource,
+      'minified',
+    )
+    if (JSON.stringify(valuePretty.exports) !== JSON.stringify(valueMinified.exports)) {
+      fail('CSS Modules value exports vary by output format')
     }
+
+    validateRejection(runDriver(driver, invalid, sourceName, true), 'ambiguous scope')
+    validateRejection(runDriver(driver, invalidValue, sourceName, true), 'imported @value')
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
   }
 
   return {
-    outputs: 3,
-    rejections: 1,
+    outputs: 5,
+    rejections: 2,
     compositionDifferentials: 1,
+    valueFixtures: 2,
     validatorVersion: validatorPackage.version,
   }
 }

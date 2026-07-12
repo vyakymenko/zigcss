@@ -16,6 +16,8 @@ pub const Occurrence = struct {
     value: []const u8,
 };
 
+pub const Replacement = Occurrence;
+
 /// One functional `:local(...)` or `:global(...)` wrapper to remove. The
 /// replacement compound remains compilation-arena-owned through emission.
 pub const Scope = struct {
@@ -75,6 +77,28 @@ pub fn findOccurrence(entries: []const Occurrence, span: source.Span) ?[]const u
         }
     }
     return null;
+}
+
+pub fn hasOccurrenceWithin(entries: []const Occurrence, parent: source.Span) bool {
+    var low: usize = 0;
+    var high = entries.len;
+    while (low < high) {
+        const middle = low + (high - low) / 2;
+        const entry = entries[middle].span;
+        if (entry.source.value < parent.source.value or
+            (entry.source.value == parent.source.value and entry.start < parent.start))
+        {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    while (low < entries.len) : (low += 1) {
+        const span = entries[low].span;
+        if (!span.source.eql(parent.source) or span.start >= parent.end) return false;
+        if (span.end <= parent.end) return true;
+    }
+    return false;
 }
 
 pub fn validateScopes(entries: []const Scope) Error!void {

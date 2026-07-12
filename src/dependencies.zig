@@ -19,9 +19,9 @@ pub const Candidate = struct {
     span: source.Span,
 };
 
-/// Result-owned dependency evidence. Entries retain authored order and
-/// duplicates because repeated CSS imports remain observable. The source name
-/// and decoded specifier remain valid after compilation cleanup.
+/// Result-owned dependency evidence. Entries retain authored span order and
+/// duplicates because repeated CSS imports/module references remain observable.
+/// The source name and decoded specifier remain valid after compilation cleanup.
 pub const Dependency = struct {
     kind: Kind,
     specifier: []const u8,

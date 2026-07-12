@@ -86,7 +86,7 @@ pub const Diagnostic = struct {
 };
 
 pub const CssModuleLimits = css_modules.Limits;
-/// Result-owned decoded authored name and generated CSS identifier.
+/// Result-owned decoded export name plus generated class or local value.
 pub const ModuleExport = css_modules.Export;
 pub const ModuleReference = css_modules.Reference;
 pub const ModuleDependencyReference = css_modules.DependencyReference;
@@ -483,6 +483,14 @@ fn pipelineOptions(
         .omit_declarations = switch (options.syntax) {
             .css => null,
             .css_modules => prepared_modules.declarationsToOmit(),
+        },
+        .value_rewrites = switch (options.syntax) {
+            .css => null,
+            .css_modules => prepared_modules.values(),
+        },
+        .omit_rules = switch (options.syntax) {
+            .css => null,
+            .css_modules => prepared_modules.rulesToOmit(),
         },
     };
 }
@@ -1486,6 +1494,215 @@ test "CSS Modules rejects malformed unsafe and cyclic composition" {
     }
 }
 
+test "CSS Modules local values export and replace token-aware contexts" {
+    const input =
+        "@value primary: #bf4040;" ++
+        "@value spacing: calc(2px + 2px);" ++
+        "@value alias: primary;" ++
+        "@value selector: card;" ++
+        "@value breakpoint: (min-width: 30em);" ++
+        ".selector{color:alias;margin:spacing}" ++
+        "@media breakpoint{.selector{border-color:primary}}";
+    var result = try compile(
+        std.testing.allocator,
+        "values.module.css",
+        input,
+        .{
+            .syntax = .css_modules,
+            .format = .minified,
+            .source_map = .{ .external = .{} },
+        },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    const entries = result.module_exports.?.entries;
+    const expected_names = [_][]const u8{
+        "primary",
+        "spacing",
+        "alias",
+        "selector",
+        "breakpoint",
+        "card",
+    };
+    const expected_values = [_][]const u8{
+        "#bf4040",
+        "calc(2px + 2px)",
+        "#bf4040",
+        "card",
+        "(min-width: 30em)",
+    };
+    try std.testing.expectEqual(expected_names.len, entries.len);
+    for (entries, expected_names) |entry, name| try std.testing.expectEqualStrings(name, entry.name);
+    for (entries[0..expected_values.len], expected_values) |entry, value| {
+        try std.testing.expectEqualStrings(value, entry.value);
+        try std.testing.expectEqual(@as(usize, 0), entry.composes.len);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, result.css, entries[5].value) != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "@value") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ".selector") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "color:#bf4040") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "margin:calc(2px + 2px)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "@media (min-width: 30em)") != null);
+
+    var map_json = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        result.source_map.?,
+        .{},
+    );
+    defer map_json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        map_json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const alias_use = std.mem.indexOf(u8, input, "color:alias").? + "color:".len;
+    var mapped_alias_use = false;
+    var mapped_omitted_value_rule = false;
+    for (mappings) |mapping| {
+        if (mapping.original_line != 0) continue;
+        mapped_alias_use = mapped_alias_use or mapping.original_column == alias_use;
+        mapped_omitted_value_rule = mapped_omitted_value_rule or mapping.original_column == 0;
+    }
+    try std.testing.expect(mapped_alias_use);
+    try std.testing.expect(!mapped_omitted_value_rule);
+
+    var reparsed = try pipeline.parse(std.testing.allocator, "values-output.css", result.css);
+    defer reparsed.deinit();
+    try std.testing.expect(!reparsed.hasErrors());
+}
+
+test "CSS Modules values preserve strings normalize comments and feed composition aliases" {
+    const input =
+        ".before{color:later;content:\"later\";background:url(\"later\")}" ++
+        "@value later: red;" ++
+        "@value gap: calc(1px/**/+/**/2px);" ++
+        "@value path: \"./theme.module.css\";" ++
+        "@value classAlias: target;" ++
+        ".classAlias{color:later}" ++
+        ".item{composes:classAlias;composes:external from path;margin:gap}";
+    var result = try compile(
+        std.testing.allocator,
+        "value-integration.module.css",
+        input,
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    const entries = result.module_exports.?.entries;
+    const expected_names = [_][]const u8{
+        "before",
+        "later",
+        "gap",
+        "path",
+        "classAlias",
+        "target",
+        "item",
+    };
+    try std.testing.expectEqual(expected_names.len, entries.len);
+    for (entries, expected_names) |entry, name| try std.testing.expectEqualStrings(name, entry.name);
+    try std.testing.expectEqualStrings("red", entries[1].value);
+    try std.testing.expectEqualStrings("calc(1px + 2px)", entries[2].value);
+    try std.testing.expectEqualStrings("\"./theme.module.css\"", entries[3].value);
+    try std.testing.expectEqualStrings("target", entries[4].value);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "content:\"later\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "url(\"later\")") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "color:red") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "margin:calc(1px + 2px)") != null);
+    try std.testing.expectEqual(@as(usize, 2), entries[6].composes.len);
+    switch (entries[6].composes[0]) {
+        .local => |name| try std.testing.expectEqualStrings(entries[5].value, name),
+        else => return error.UnexpectedModuleReference,
+    }
+    switch (entries[6].composes[1]) {
+        .dependency => |reference| {
+            try std.testing.expectEqualStrings("external", reference.name);
+            try std.testing.expectEqualStrings("./theme.module.css", reference.specifier);
+        },
+        else => return error.UnexpectedModuleReference,
+    }
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies.len);
+    try std.testing.expectEqualStrings("./theme.module.css", result.dependencies[0].specifier);
+}
+
+test "CSS Modules value definitions resolve sequentially while uses see the full table" {
+    var result = try compile(
+        std.testing.allocator,
+        "value-order.module.css",
+        ".before{color:later}@value first:later;@value later:red;.after{color:first}",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    const entries = result.module_exports.?.entries;
+    const expected = [_][]const u8{ "before", "first", "later", "after" };
+    try std.testing.expectEqual(expected.len, entries.len);
+    for (entries, expected) |entry, name| try std.testing.expectEqualStrings(name, entry.name);
+    try std.testing.expectEqualStrings("later", entries[1].value);
+    try std.testing.expectEqualStrings("red", entries[2].value);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "color:red") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "color:later") != null);
+}
+
+test "CSS Modules value names and uses share decoded CSS identifier identity" {
+    var result = try compile(
+        std.testing.allocator,
+        "escaped-values.module.css",
+        "@value t\\6f ne:red;.x{color:\\74 one}",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    try std.testing.expectEqualStrings("tone", result.module_exports.?.entries[0].name);
+    try std.testing.expectEqualStrings("red", result.module_exports.?.entries[0].value);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, "color:red") != null);
+}
+
+test "CSS Modules rejects unsupported and ambiguous local value behavior" {
+    const cases = [_][]const u8{
+        "@value primary from \"./tokens.css\";.x{color:primary}",
+        "@value x:;.x{color:red}",
+        "@value x:/**/;.x{color:red}",
+        "@value x:red",
+        "@value x:red;@value x:blue;.x{color:red}",
+        "@media all{@value x:red;}.x{color:red}",
+        "@value selector:a b;.selector{color:red}",
+        "@value token:card;#token{color:red}",
+        "@value token:card;token{color:red}",
+        "@value token:card;.x[token=token]{color:red}",
+        "@value x:!important;.a{color:x}",
+        "@value alias:card;@value card:#fff;.alias{color:red}",
+        "@value path:red;.item{composes:external from path}",
+    };
+    for (cases) |input| {
+        var result = try compile(
+            std.testing.allocator,
+            "bad-values.module.css",
+            input,
+            .{ .syntax = .css_modules, .format = .minified },
+        );
+        defer result.deinit();
+        if (result.css.len != 0) {
+            std.debug.print("unexpected CSS Modules value success for {s}: {s}\n", .{
+                input,
+                result.css,
+            });
+            return error.UnexpectedModuleSuccess;
+        }
+        try std.testing.expectEqual(@as(usize, 0), result.dependencies.len);
+        try std.testing.expect(result.module_exports == null);
+        try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
+        try std.testing.expectEqual(
+            diagnostics.Code.unsupported_syntax,
+            result.diagnostics[0].code,
+        );
+    }
+}
+
 test "CSS Modules exports survive explicit moves and repeated cleanup" {
     var original = try compile(
         std.testing.allocator,
@@ -1523,7 +1740,7 @@ test "CSS Modules rejects deferred semantics and unsafe scope containers" {
         "::global(.card){x:1}",
         ":export{token:red}",
         ".card{composes:base}",
-        "@value color:red;.card{x:1}",
+        "@value color from \"./tokens.css\";.card{x:1}",
         ".card:nth-child(2n of .item){x:1}",
         "@supports selector(.card){.card{x:1}}",
         "@unknown{.card{x:1}}",
@@ -1645,6 +1862,40 @@ test "CSS Modules validates identity limits and incompatible transforms" {
         reference_limited.diagnostics[0].code,
     );
 
+    var value_rewrite_limited = try compile(
+        std.testing.allocator,
+        "value-rewrite-limited.module.css",
+        "@value tone:red;.a{color:tone}",
+        .{
+            .syntax = .css_modules,
+            .module_limits = .{ .max_rewrites = 2 },
+        },
+    );
+    defer value_rewrite_limited.deinit();
+    try std.testing.expectEqual(@as(usize, 0), value_rewrite_limited.css.len);
+    try std.testing.expect(value_rewrite_limited.module_exports == null);
+    try std.testing.expectEqual(
+        diagnostics.Code.resource_limit,
+        value_rewrite_limited.diagnostics[0].code,
+    );
+
+    var combined_export_limited = try compile(
+        std.testing.allocator,
+        "combined-export-limited.module.css",
+        "@value tone:red;.a{color:tone}",
+        .{
+            .syntax = .css_modules,
+            .module_limits = .{ .max_exports = 1 },
+        },
+    );
+    defer combined_export_limited.deinit();
+    try std.testing.expectEqual(@as(usize, 0), combined_export_limited.css.len);
+    try std.testing.expect(combined_export_limited.module_exports == null);
+    try std.testing.expectEqual(
+        diagnostics.Code.resource_limit,
+        combined_export_limited.diagnostics[0].code,
+    );
+
     var dependency_limited = try compile(
         std.testing.allocator,
         "dependency-limited.module.css",
@@ -1696,9 +1947,11 @@ fn exerciseCssModulesAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
         "oom/components.module.css",
-        "@import \"theme.css\";.base{x:0}.card{composes:base;" ++
-            "composes:reset from global;composes:external from \"./external.module.css\";" ++
-            "color:red}.scope:is(:local(.icon),:global(.reset)){x:1}",
+        "@value tone:red;@value alias:tone;@value local-scope:scope;" ++
+            "@value external-path:\"./external.module.css\";@import \"theme.css\";" ++
+            ".base{x:0}.card{composes:base;composes:reset from global;" ++
+            "composes:external from external-path;color:alias}" ++
+            ".local-scope:is(:local(.icon),:global(.reset)){x:1}",
         .{
             .syntax = .css_modules,
             .format = .minified,
@@ -1707,8 +1960,8 @@ fn exerciseCssModulesAllocationFailures(allocator: std.mem.Allocator) !void {
         },
     );
     defer result.deinit();
-    try std.testing.expectEqual(@as(usize, 4), result.module_exports.?.entries.len);
-    try std.testing.expectEqual(@as(usize, 3), result.module_exports.?.entries[1].composes.len);
+    try std.testing.expectEqual(@as(usize, 8), result.module_exports.?.entries.len);
+    try std.testing.expectEqual(@as(usize, 3), result.module_exports.?.entries[5].composes.len);
     try std.testing.expectEqual(@as(usize, 2), result.dependencies.len);
     try std.testing.expect(result.source_map != null);
     try std.testing.expect(result.metrics != null);

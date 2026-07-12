@@ -358,5 +358,5 @@ const moduleEvidence = validateCssModules(moduleDriver)
 const removedCount = matrix.adapters.filter(adapter => adapter.implementation === 'Removed').length
 const nativeCount = matrix.adapters.filter(adapter => adapter.implementation === 'LimitedNative').length
 console.log(
-  `Format matrix verified: ${matrix.adapters.length} adapters, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs, ${moduleEvidence.compositionDifferentials} composition differential, ${moduleEvidence.rejections} strict module rejection (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
+  `Format matrix verified: ${matrix.adapters.length} adapters, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs (${moduleEvidence.valueFixtures} local-value fixture outputs), ${moduleEvidence.compositionDifferentials} composition differential, ${moduleEvidence.rejections} strict module rejections (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
 )

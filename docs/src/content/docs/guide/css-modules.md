@@ -19,13 +19,13 @@ defer result.deinit();
 if (result.diagnostics.len != 0) return error.InvalidModule;
 const exports = result.module_exports orelse return error.MissingModuleExports;
 for (exports.entries) |entry| {
-    // entry.name is the decoded authored class; entry.value is emitted CSS.
+    // entry.value is a generated class name or serialized local @value.
     try useExport(entry.name, entry.value);
     // entry.composes owns ordered local, global, or dependency references.
 }
 ```
 
-A successful CSS Modules compile always returns non-null `module_exports`, including an owned empty entry slice when no classes exist. Entries are unique by decoded authored class name and retain first occurrence order across top-level rules, nested rules, selector lists, and typed selector pseudos. Repeated classes reuse one generated value. Ordinary CSS continues to return `module_exports = null`.
+A successful CSS Modules compile always returns non-null `module_exports`, including an owned empty entry slice when no classes or values exist. Class and local-value exports share one unique decoded-name namespace and retain first authored occurrence order across value rules, top-level/nested rules, selector lists, and typed selector pseudos. Repeated classes reuse one generated value; a class/value name collision is a strict error. Ordinary CSS continues to return `module_exports = null`.
 
 Every export name/value and the entry slice belong to `CompileResult`. They remain valid after parser cleanup and explicit `take()`, and one idempotent `CompileResult.deinit()` path releases them with CSS, maps, diagnostics, dependencies, and metrics.
 
@@ -48,6 +48,28 @@ One declaration may contain multiple decoded identifier names:
 The `button` export keeps its generated `value` and owns ordered `composes` references. A local reference contains the referenced generated class name; a global reference contains the authored global name; a dependency reference contains the requested export name and decoded quoted module specifier. ZigCSS does not read the filesystem, resolve packages, flatten imported exports, or execute a loader.
 
 Each external composition declaration also adds one result-owned `DependencyKind.css_module` fact, regardless of how many names it references. These facts share the existing dependency count/owned-byte limits with top-level CSS `@import` facts and are sorted by authored span. Repeated declarations remain repeated facts. A combined limit failure discards all dependency facts, exports, and CSS.
+
+## Local values
+
+ZigCSS supports one top-level local definition per rule: `@value <ident>: <component-values>;`. The rule is removed from CSS and contributes an export whose `name` is the decoded identifier and whose `value` is a deterministic component serialization. Outer whitespace is trimmed, whitespace runs collapse to one space, and comments act as safe token separators. Strings and URLs remain opaque; identifiers inside them are never replaced.
+
+Definitions may reference earlier local definitions by an exact decoded identifier token. Definition resolution is intentionally sequential, matching the canonical values pass: a definition does not retroactively resolve a later definition. CSS uses are analyzed after the complete table is collected, so a declaration or supported at-rule prelude may use a value defined later in the file. Exact identifier tokens are replaced recursively inside functions and blocks; property names, function names, strings, URLs, and comments are not scanned.
+
+A local value may stand in for a class selector only when its resolved value is exactly one identifier; hashing and export collection use that resolved class name. Other selector positions are rejected rather than partially substituted. A local value resolving to exactly one string may be used as an external `composes ... from <alias>` path; the dependency and reference store the decoded string. Example:
+
+```css
+@value primary: #bf4040;
+@value alias: primary;
+@value modulePath: "./theme.module.css";
+@value selectorName: card;
+
+.selectorName { color: alias; }
+.button {
+  composes: external from modulePath;
+}
+```
+
+Imported `@value ... from ...` forms are not accepted because a single-file compile has no owned external value to substitute. Raw ICSS `:import`/`:export` is also outside this subset. Neither form becomes an unresolved token or triggers implicit filesystem/package loading.
 
 ## Accepted selector scope
 
@@ -86,17 +108,17 @@ The following deferred semantics return one structured `CSS0009` diagnostic and 
 
 - `:import` and `:export`;
 - `composes-with` and any `composes` form outside the composition grammar above;
-- `@value`;
+- imported, duplicate, empty, nested, importance-bearing, or otherwise invalid `@value` forms;
 - untyped functional pseudos such as `:nth-child(...)`, `:lang(...)`, and functional pseudo-elements;
 - any at-rule outside the allowlist or any raw at-rule block.
 
-Value and raw module-import/export behavior remain owned by the later slices of `MODULE-002`; ZigCSS does not delete, guess, or treat them as ordinary CSS. Invalid composition or explicit-scope forms fail under the same no-partial-output rule. Parser errors similarly produce no CSS. An empty module identity returns `API0001`.
+Imported-value resolution and raw module-import/export behavior remain outside the chosen `MODULE-002` scope; ZigCSS does not delete, guess, or treat them as ordinary CSS. Invalid values, composition, or explicit-scope forms fail under the same no-partial-output rule. Parser errors similarly produce no CSS. An empty module identity returns `API0001`.
 
 `CssModuleLimits` defaults to 100,000 unique exports, 100,000 composition references, 64 MiB of owned export/reference bytes, a 64 KiB source identity, and 1,000,000 combined class/scope rewrite records. Limit exhaustion returns `CSS0008`, discards all prepared exports, and emits no CSS. Export lookup is hash-based during collection; emission uses source-span-sorted occurrence, wrapper, and declaration-omission arrays with bounded binary lookup.
 
 ## Compatible result features
 
-Pretty and minified output, separate source maps, decoded top-level CSS `@import` dependency facts, and measured profiling are supported. Generated and preserved selector mappings are anchored at the authored class selector span, including classes inside functional scope wrappers; no fabricated per-character source positions are emitted. Generated CSS is reparsed by the stable pipeline and independently canonicalized with recovery-disabled Lightning CSS 1.30.1 in both modes. The format oracle separately recomputes version-1 names with Node's SHA-256 implementation and exercises one decoded name in both global and local occurrences.
+Pretty and minified output, separate source maps, decoded top-level CSS `@import` dependency facts, and measured profiling are supported. Generated and preserved selector mappings are anchored at authored class spans, including classes inside functional scope wrappers. A substituted value maps once to its authored use token; omitted `@value`/`composes` syntax has no fabricated mapping. Generated CSS is reparsed by the stable pipeline and independently canonicalized with recovery-disabled Lightning CSS 1.30.1 in both modes. The format oracle separately recomputes version-1 names, exercises one decoded name in both global and local occurrences, validates composition references against Lightning CSS, and checks local-value fixture projections.
 
 Optimizer, target-prefix, and native-plugin composition are intentionally rejected with `API0001` for this initial subset. Those features can alter or inspect selectors and require their own CSS Modules semantic-composition evidence before admission.
 

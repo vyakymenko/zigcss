@@ -33,6 +33,11 @@ pub const Options = struct {
     /// Adapter-owned declarations that have semantic result behavior but no
     /// CSS representation, such as validated `composes` declarations.
     omit_declarations: ?[]const source.Span = null,
+    /// Token-spanned local value substitutions. Replacement bytes are already
+    /// validated component-value serializations.
+    value_rewrites: ?[]const module_names.Replacement = null,
+    /// Adapter-owned top-level rules such as local `@value` definitions.
+    omit_rules: ?[]const source.Span = null,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -107,6 +112,12 @@ fn emitInternal(
     if (options.omit_declarations) |spans| {
         module_names.validateSpans(spans) catch return error.InvalidMappings;
     }
+    if (options.value_rewrites) |entries| {
+        module_names.validateOccurrences(entries) catch return error.InvalidMappings;
+    }
+    if (options.omit_rules) |spans| {
+        module_names.validateSpans(spans) catch return error.InvalidMappings;
+    }
     rules.validate() catch return error.InvalidAst;
     if (!rules.span.source.eql(file.id)) return error.SourceMismatch;
 
@@ -158,7 +169,7 @@ const Emitter = struct {
         external_following_rule: bool,
     ) Error!void {
         try self.validateRuleCoverage(rules, top_level, allow_nested_declarations);
-        const output_count = try logicalRuleCount(rules);
+        const output_count = try self.ruleOutputCount(rules);
         var rule_index: usize = 0;
         var generated_index: usize = 0;
         var output_index: usize = 0;
@@ -185,6 +196,8 @@ const Emitter = struct {
                     return error.InvalidAst;
                 }
                 const rule = rules.rules[rule_index];
+                rule_index += 1;
+                if (self.omitRule(rule.span())) continue;
                 if (self.pretty()) {
                     if (output_index > 0) try self.appendByte('\n');
                     if (rule != .nested_declarations) try self.writeIndent(depth);
@@ -194,7 +207,6 @@ const Emitter = struct {
                     depth,
                     output_index + 1 < output_count or external_following_rule,
                 );
-                rule_index += 1;
                 output_index += 1;
             }
         }
@@ -691,7 +703,7 @@ const Emitter = struct {
             ast.RulesBlock.init(block.envelope, block.rules)) catch return error.InvalidAst;
         if (!block.envelope.terminated()) return error.UnterminatedSyntax;
         try self.appendByte('{');
-        if (block.rules.rules.len == 0) {
+        if (try self.ruleOutputCount(&block.rules) == 0) {
             try self.validateRuleCoverage(&block.rules, false, block.nested);
             try self.appendByte('}');
             return;
@@ -713,7 +725,7 @@ const Emitter = struct {
 
         try self.appendByte('{');
         const has_declarations = try self.declarationOutputCount(&block.declarations) > 0;
-        const has_rules = block.rules.rules.len > 0;
+        const has_rules = try self.ruleOutputCount(&block.rules) > 0;
         if (!has_declarations and !has_rules) {
             try self.appendByte('}');
             return;
@@ -842,6 +854,21 @@ const Emitter = struct {
 
     fn omitDeclaration(self: *const Emitter, span: source.Span) bool {
         const spans = self.options.omit_declarations orelse return false;
+        return module_names.containsSpan(spans, span);
+    }
+
+    fn ruleOutputCount(self: *const Emitter, rules: *const ast.RuleList) Error!usize {
+        if (self.options.omit_rules == null) return logicalRuleCount(rules);
+        if (rules.generated_rules.len != 0) return error.InvalidMappings;
+        var count: usize = 0;
+        for (rules.rules) |rule| {
+            if (!self.omitRule(rule.span())) count += 1;
+        }
+        return count;
+    }
+
+    fn omitRule(self: *const Emitter, span: source.Span) bool {
+        const spans = self.options.omit_rules orelse return false;
         return module_names.containsSpan(spans, span);
     }
 
@@ -1085,18 +1112,27 @@ const Emitter = struct {
             }
             if (pending_space) try self.appendByte(' ');
             try self.mark(value.span());
-            if (self.pretty()) {
-                try self.appendSlice(try self.raw(value.span()));
-            } else {
-                try self.writeMinifiedComponent(value);
-            }
+            try self.writeComponentValue(value);
             wrote_significant = true;
             pending_space = false;
         }
         if (pending_space and !trim_edges) try self.appendByte(' ');
     }
 
-    fn writeMinifiedComponent(self: *Emitter, value: syntax.ComponentValue) Error!void {
+    fn writeComponentValue(self: *Emitter, value: syntax.ComponentValue) Error!void {
+        if (self.options.value_rewrites) |entries| {
+            if (module_names.findOccurrence(entries, value.span())) |replacement| {
+                try self.appendSlice(replacement);
+                return;
+            }
+            if (self.pretty() and !module_names.hasOccurrenceWithin(entries, value.span())) {
+                try self.appendSlice(try self.raw(value.span()));
+                return;
+            }
+        } else if (self.pretty()) {
+            try self.appendSlice(try self.raw(value.span()));
+            return;
+        }
         switch (value) {
             .token => |token| try self.appendSlice(try self.raw(token.span)),
             .simple_block => |block| {

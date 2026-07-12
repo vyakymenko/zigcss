@@ -6,6 +6,7 @@ const module_names = @import("css/module_names.zig");
 const pipeline = @import("css/pipeline.zig");
 const selector_parser = @import("css/selector_parser.zig");
 const source = @import("source.zig");
+const syntax = @import("syntax.zig");
 const tokenizer = @import("tokenizer.zig");
 
 pub const DependencyReference = struct {
@@ -43,6 +44,8 @@ pub const Prepared = struct {
     scope_rewrites: []module_names.Scope,
     dependency_candidates: []dependencies.Candidate,
     omitted_declarations: []source.Span,
+    value_rewrites: []module_names.Replacement,
+    omitted_rules: []source.Span,
 
     pub fn init(allocator: std.mem.Allocator) Prepared {
         return .{
@@ -52,6 +55,8 @@ pub const Prepared = struct {
             .scope_rewrites = &.{},
             .dependency_candidates = &.{},
             .omitted_declarations = &.{},
+            .value_rewrites = &.{},
+            .omitted_rules = &.{},
         };
     }
 
@@ -61,6 +66,8 @@ pub const Prepared = struct {
         if (self.scope_rewrites.len > 0) allocator.free(self.scope_rewrites);
         if (self.dependency_candidates.len > 0) allocator.free(self.dependency_candidates);
         if (self.omitted_declarations.len > 0) allocator.free(self.omitted_declarations);
+        if (self.value_rewrites.len > 0) allocator.free(self.value_rewrites);
+        if (self.omitted_rules.len > 0) allocator.free(self.omitted_rules);
         release(allocator, self.exports);
         self.* = init(allocator);
     }
@@ -81,15 +88,27 @@ pub const Prepared = struct {
         return self.omitted_declarations;
     }
 
+    pub fn values(self: *const Prepared) []const module_names.Replacement {
+        return self.value_rewrites;
+    }
+
+    pub fn rulesToOmit(self: *const Prepared) []const source.Span {
+        return self.omitted_rules;
+    }
+
     pub fn takeExports(self: *Prepared) []Export {
         if (self.class_rewrites.len > 0) self.allocator.free(self.class_rewrites);
         if (self.scope_rewrites.len > 0) self.allocator.free(self.scope_rewrites);
         if (self.dependency_candidates.len > 0) self.allocator.free(self.dependency_candidates);
         if (self.omitted_declarations.len > 0) self.allocator.free(self.omitted_declarations);
+        if (self.value_rewrites.len > 0) self.allocator.free(self.value_rewrites);
+        if (self.omitted_rules.len > 0) self.allocator.free(self.omitted_rules);
         self.class_rewrites = &.{};
         self.scope_rewrites = &.{};
         self.dependency_candidates = &.{};
         self.omitted_declarations = &.{};
+        self.value_rewrites = &.{};
+        self.omitted_rules = &.{};
         const exports = self.exports;
         self.exports = &.{};
         return exports;
@@ -146,7 +165,11 @@ pub fn prepare(
     var builder = try Builder.init(allocator, file.name, limits);
     defer builder.deinit();
     var walker = Walker{ .parsed = parsed, .builder = &builder };
-    walker.ruleList(parsed.rules) catch |err| switch (err) {
+    walker.collectValueDefinitions(parsed.rules) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Rejected => return Prepared.init(allocator),
+    };
+    walker.ruleList(parsed.rules, true) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.Rejected => return Prepared.init(allocator),
     };
@@ -191,6 +214,21 @@ const LocalEdge = struct {
     span: source.Span,
 };
 
+const ValueDefinition = struct {
+    name: []const u8,
+    name_span: source.Span,
+    value: []u8,
+    single_identifier: ?[]const u8,
+    single_string: ?[]const u8,
+    rule_span: source.Span,
+    published: bool = false,
+};
+
+const ValueMetadata = struct {
+    single_identifier: ?[]const u8 = null,
+    single_string: ?[]const u8 = null,
+};
+
 const Builder = struct {
     allocator: std.mem.Allocator,
     limits: Limits,
@@ -200,10 +238,16 @@ const Builder = struct {
     composition_specs: std.ArrayList(CompositionSpec),
     dependency_candidates: std.ArrayList(dependencies.Candidate),
     omitted_declarations: std.ArrayList(source.Span),
+    definitions: std.ArrayList(ValueDefinition),
+    definition_names: std.StringHashMapUnmanaged(usize),
+    export_names: std.StringHashMapUnmanaged(usize),
+    value_rewrites: std.ArrayList(module_names.Replacement),
+    omitted_rules: std.ArrayList(source.Span),
     digests: std.AutoHashMapUnmanaged([std.crypto.hash.sha2.Sha256.digest_length]u8, usize),
     module_hasher: std.crypto.hash.sha2.Sha256,
     owned_bytes: usize = 0,
     reference_count: usize = 0,
+    next_definition_to_publish: usize = 0,
 
     fn init(allocator: std.mem.Allocator, source_name: []const u8, limits: Limits) !Builder {
         var hasher = std.crypto.hash.sha2.Sha256.init(.{});
@@ -219,6 +263,11 @@ const Builder = struct {
             .composition_specs = try std.ArrayList(CompositionSpec).initCapacity(allocator, 0),
             .dependency_candidates = try std.ArrayList(dependencies.Candidate).initCapacity(allocator, 0),
             .omitted_declarations = try std.ArrayList(source.Span).initCapacity(allocator, 0),
+            .definitions = try std.ArrayList(ValueDefinition).initCapacity(allocator, 0),
+            .definition_names = .empty,
+            .export_names = .empty,
+            .value_rewrites = try std.ArrayList(module_names.Replacement).initCapacity(allocator, 0),
+            .omitted_rules = try std.ArrayList(source.Span).initCapacity(allocator, 0),
             .digests = .empty,
             .module_hasher = hasher,
         };
@@ -239,6 +288,16 @@ const Builder = struct {
         self.composition_specs.deinit(self.allocator);
         self.dependency_candidates.deinit(self.allocator);
         self.omitted_declarations.deinit(self.allocator);
+        for (self.definitions.items) |definition| {
+            if (!definition.published and definition.value.len > 0) {
+                self.allocator.free(definition.value);
+            }
+        }
+        self.definitions.deinit(self.allocator);
+        self.definition_names.deinit(self.allocator);
+        self.export_names.deinit(self.allocator);
+        self.value_rewrites.deinit(self.allocator);
+        self.omitted_rules.deinit(self.allocator);
         self.digests.deinit(self.allocator);
     }
 
@@ -250,6 +309,7 @@ const Builder = struct {
     ) (std.mem.Allocator.Error || error{
         LimitExceeded,
         NameCollision,
+        DuplicateExport,
     })!void {
         if (self.rewriteCount() >= self.limits.max_rewrites) return error.LimitExceeded;
         const replacement = switch (scope_mode) {
@@ -275,11 +335,23 @@ const Builder = struct {
     }
 
     fn rewriteCount(self: *const Builder) usize {
-        return std.math.add(
+        const selector_rewrites = std.math.add(
             usize,
             self.class_rewrites.items.len,
             self.scope_rewrites.items.len,
         ) catch std.math.maxInt(usize);
+        const value_rewrites = std.math.add(
+            usize,
+            self.value_rewrites.items.len,
+            self.omitted_rules.items.len,
+        ) catch std.math.maxInt(usize);
+        const semantic_omissions = std.math.add(
+            usize,
+            self.omitted_declarations.items.len,
+            value_rewrites,
+        ) catch std.math.maxInt(usize);
+        return std.math.add(usize, selector_rewrites, semantic_omissions) catch
+            std.math.maxInt(usize);
     }
 
     fn addComposition(
@@ -287,6 +359,7 @@ const Builder = struct {
         spec: CompositionSpec,
     ) (std.mem.Allocator.Error || error{LimitExceeded})!void {
         errdefer if (spec.names.len > 0) self.allocator.free(spec.names);
+        if (self.rewriteCount() >= self.limits.max_rewrites) return error.LimitExceeded;
         const next_references = std.math.add(
             usize,
             self.reference_count,
@@ -312,9 +385,99 @@ const Builder = struct {
         self.reference_count = next_references;
     }
 
+    fn addDefinition(
+        self: *Builder,
+        definition: ValueDefinition,
+    ) (std.mem.Allocator.Error || error{ LimitExceeded, DuplicateValue })!void {
+        errdefer if (definition.value.len > 0) self.allocator.free(definition.value);
+        if (self.definitions.items.len >= self.limits.max_exports) {
+            return error.LimitExceeded;
+        }
+        if (self.definition_names.contains(definition.name)) return error.DuplicateValue;
+        try self.definitions.append(self.allocator, definition);
+        errdefer _ = self.definitions.pop();
+        try self.definition_names.put(
+            self.allocator,
+            definition.name,
+            self.definitions.items.len - 1,
+        );
+    }
+
+    fn findDefinition(self: *const Builder, name: []const u8) ?*const ValueDefinition {
+        const index = self.definition_names.get(name) orelse return null;
+        return &self.definitions.items[index];
+    }
+
+    fn publishNextDefinition(
+        self: *Builder,
+        span: source.Span,
+    ) (std.mem.Allocator.Error || error{
+        LimitExceeded,
+        DuplicateExport,
+        InvalidDefinitionOrder,
+    })!void {
+        if (self.next_definition_to_publish >= self.definitions.items.len) {
+            return error.InvalidDefinitionOrder;
+        }
+        const definition = &self.definitions.items[self.next_definition_to_publish];
+        if (!spansEqual(definition.rule_span, span) or definition.published) {
+            return error.InvalidDefinitionOrder;
+        }
+        if (self.rewriteCount() >= self.limits.max_rewrites) return error.LimitExceeded;
+        if (self.export_names.contains(definition.name)) return error.DuplicateExport;
+        const entry_bytes = std.math.add(
+            usize,
+            definition.name.len,
+            definition.value.len,
+        ) catch return error.LimitExceeded;
+        const next_owned = std.math.add(
+            usize,
+            self.owned_bytes,
+            entry_bytes,
+        ) catch return error.LimitExceeded;
+        if (self.items.items.len >= self.limits.max_exports or
+            next_owned > self.limits.max_owned_bytes)
+        {
+            return error.LimitExceeded;
+        }
+
+        try self.omitted_rules.append(self.allocator, span);
+        errdefer _ = self.omitted_rules.pop();
+        const owned_name = try self.allocator.dupe(u8, definition.name);
+        self.items.append(self.allocator, .{
+            .name = owned_name,
+            .value = definition.value,
+        }) catch |err| {
+            if (owned_name.len > 0) self.allocator.free(owned_name);
+            return err;
+        };
+        errdefer {
+            _ = self.items.pop();
+            if (owned_name.len > 0) self.allocator.free(owned_name);
+        }
+        try self.export_names.put(
+            self.allocator,
+            owned_name,
+            self.items.items.len - 1,
+        );
+        definition.published = true;
+        self.next_definition_to_publish += 1;
+        self.owned_bytes = next_owned;
+    }
+
+    fn addValueRewrite(
+        self: *Builder,
+        span: source.Span,
+        value: []const u8,
+    ) (std.mem.Allocator.Error || error{LimitExceeded})!void {
+        if (self.rewriteCount() >= self.limits.max_rewrites) return error.LimitExceeded;
+        try self.value_rewrites.append(self.allocator, .{ .span = span, .value = value });
+    }
+
     fn localName(self: *Builder, name: []const u8) (std.mem.Allocator.Error || error{
         LimitExceeded,
         NameCollision,
+        DuplicateExport,
     })![]const u8 {
         const digest = classDigest(self.module_hasher, name);
         if (self.digests.get(digest)) |index| {
@@ -323,6 +486,7 @@ const Builder = struct {
             }
             return error.NameCollision;
         }
+        if (self.export_names.contains(name)) return error.DuplicateExport;
         const generated_len = generatedNameLength(name);
         const entry_bytes = std.math.add(usize, name.len, generated_len) catch return error.LimitExceeded;
         const next_owned = std.math.add(usize, self.owned_bytes, entry_bytes) catch return error.LimitExceeded;
@@ -350,6 +514,17 @@ const Builder = struct {
             if (removed.name.len > 0) self.allocator.free(removed.name);
             if (removed.value.len > 0) self.allocator.free(removed.value);
             releaseReferences(self.allocator, removed.composes);
+            return err;
+        };
+        self.export_names.put(
+            self.allocator,
+            owned_name,
+            self.items.items.len - 1,
+        ) catch |err| {
+            _ = self.digests.remove(digest);
+            const removed = self.items.pop().?;
+            if (removed.name.len > 0) self.allocator.free(removed.name);
+            if (removed.value.len > 0) self.allocator.free(removed.value);
             return err;
         };
         self.owned_bytes = next_owned;
@@ -547,6 +722,9 @@ const Builder = struct {
     }
 
     fn finish(self: *Builder) !Prepared {
+        if (self.next_definition_to_publish != self.definitions.items.len) {
+            return error.InvalidDefinitionOrder;
+        }
         const exports = try self.items.toOwnedSlice(self.allocator);
         errdefer release(self.allocator, exports);
         const class_rewrites = try self.class_rewrites.toOwnedSlice(self.allocator);
@@ -557,12 +735,20 @@ const Builder = struct {
         errdefer if (dependency_candidates.len > 0) self.allocator.free(dependency_candidates);
         const omitted_declarations = try self.omitted_declarations.toOwnedSlice(self.allocator);
         errdefer if (omitted_declarations.len > 0) self.allocator.free(omitted_declarations);
+        const value_rewrites = try self.value_rewrites.toOwnedSlice(self.allocator);
+        errdefer if (value_rewrites.len > 0) self.allocator.free(value_rewrites);
+        const omitted_rules = try self.omitted_rules.toOwnedSlice(self.allocator);
+        errdefer if (omitted_rules.len > 0) self.allocator.free(omitted_rules);
         std.mem.sort(module_names.Occurrence, class_rewrites, {}, module_names.lessThanOccurrence);
         std.mem.sort(module_names.Scope, scope_rewrites, {}, module_names.lessThanScope);
         std.mem.sort(source.Span, omitted_declarations, {}, module_names.lessThanSpan);
+        std.mem.sort(module_names.Replacement, value_rewrites, {}, module_names.lessThanOccurrence);
+        std.mem.sort(source.Span, omitted_rules, {}, module_names.lessThanSpan);
         try module_names.validateOccurrences(class_rewrites);
         try module_names.validateScopes(scope_rewrites);
         try module_names.validateSpans(omitted_declarations);
+        try module_names.validateOccurrences(value_rewrites);
+        try module_names.validateSpans(omitted_rules);
         return .{
             .allocator = self.allocator,
             .exports = exports,
@@ -570,6 +756,8 @@ const Builder = struct {
             .scope_rewrites = scope_rewrites,
             .dependency_candidates = dependency_candidates,
             .omitted_declarations = omitted_declarations,
+            .value_rewrites = value_rewrites,
+            .omitted_rules = omitted_rules,
         };
     }
 };
@@ -590,17 +778,210 @@ const Walker = struct {
     parsed: *pipeline.ParsedStylesheet,
     builder: *Builder,
 
-    fn ruleList(self: *Walker, list: *const ast.RuleList) WalkError!void {
+    fn collectValueDefinitions(
+        self: *Walker,
+        list: *const ast.RuleList,
+    ) WalkError!void {
+        for (list.rules) |rule| {
+            const at_rule = switch (rule) {
+                .at_rule => |value| value,
+                else => continue,
+            };
+            if (!std.ascii.eqlIgnoreCase(at_rule.name.value, "value")) continue;
+            if (!isTerminatedValueRule(at_rule)) {
+                return self.reject(
+                    at_rule.span,
+                    "CSS Modules @value definitions must be top-level semicolon rules",
+                );
+            }
+            const definition = try self.parseValueDefinition(at_rule);
+            self.builder.addDefinition(definition) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.LimitExceeded => return self.rejectLimit(at_rule.span),
+                error.DuplicateValue => return self.reject(
+                    definition.name_span,
+                    "CSS Modules value names must be unique",
+                ),
+            };
+        }
+    }
+
+    fn parseValueDefinition(
+        self: *Walker,
+        at_rule: *const ast.AtRule,
+    ) WalkError!ValueDefinition {
+        const values = at_rule.prelude.values;
+        const name_index = nextSignificantValue(values, 0) orelse return self.reject(
+            at_rule.span,
+            "CSS Modules @value requires a local name and ':'",
+        );
+        const name_token = tokenAtValue(values[name_index]) orelse return self.reject(
+            values[name_index].span(),
+            "CSS Modules @value name must be an identifier",
+        );
+        if (name_token.kind != .ident) {
+            return self.reject(name_token.span, "CSS Modules @value name must be an identifier");
+        }
+        const colon_index = nextSignificantValue(values, name_index + 1) orelse return self.reject(
+            at_rule.span,
+            "imported CSS Modules @value forms are outside the native subset",
+        );
+        const colon = tokenAtValue(values[colon_index]) orelse return self.reject(
+            values[colon_index].span(),
+            "CSS Modules @value requires ':' after its local name",
+        );
+        if (colon.kind != .colon) {
+            return self.reject(
+                colon.span,
+                "imported CSS Modules @value forms are outside the native subset",
+            );
+        }
+        const value_start = colon_index + 1;
+        if (nextSignificantValue(values, value_start) == null) {
+            return self.reject(at_rule.span, "CSS Modules @value definition is empty");
+        }
+        for (values[value_start..]) |value| {
+            const token = tokenAtValue(value) orelse continue;
+            if (tokenDelimiter(token, '!')) {
+                return self.reject(
+                    token.span,
+                    "CSS Modules @value cannot inject a top-level importance marker",
+                );
+            }
+        }
+
+        const name = try self.decodeToken(name_token);
+        const metadata = try self.valueMetadata(values[value_start..]);
+        return .{
+            .name = name,
+            .name_span = name_token.valueSpan() orelse name_token.span,
+            .value = try self.serializeValue(values[value_start..]),
+            .single_identifier = metadata.single_identifier,
+            .single_string = metadata.single_string,
+            .rule_span = at_rule.span,
+        };
+    }
+
+    fn valueMetadata(
+        self: *Walker,
+        values: []const syntax.ComponentValue,
+    ) WalkError!ValueMetadata {
+        const first = nextSignificantValue(values, 0) orelse return .{};
+        if (nextSignificantValue(values, first + 1) != null) return .{};
+        const token = tokenAtValue(values[first]) orelse return .{};
+        if (token.kind == .ident) {
+            const decoded = try self.decodeToken(token);
+            if (self.builder.findDefinition(decoded)) |definition| {
+                return .{
+                    .single_identifier = definition.single_identifier,
+                    .single_string = definition.single_string,
+                };
+            }
+            return .{ .single_identifier = decoded };
+        }
+        if (token.kind == .string and token.isTerminated()) {
+            return .{ .single_string = try self.decodeToken(token) };
+        }
+        return .{};
+    }
+
+    fn serializeValue(
+        self: *Walker,
+        values: []const syntax.ComponentValue,
+    ) WalkError![]u8 {
+        var output = try std.ArrayList(u8).initCapacity(self.builder.allocator, 0);
+        errdefer output.deinit(self.builder.allocator);
+        try self.appendValueComponents(&output, values, true);
+        if (output.items.len == 0) {
+            return self.reject(
+                values[0].span(),
+                "CSS Modules @value definition is empty after normalization",
+            );
+        }
+        return output.toOwnedSlice(self.builder.allocator);
+    }
+
+    fn appendValueComponents(
+        self: *Walker,
+        output: *std.ArrayList(u8),
+        values: []const syntax.ComponentValue,
+        trim_edges: bool,
+    ) WalkError!void {
+        var wrote_significant = false;
+        var pending_space = false;
+        for (values) |value| {
+            if (isValueTrivia(value)) {
+                if (wrote_significant or !trim_edges) pending_space = true;
+                continue;
+            }
+            if (pending_space) try output.append(self.builder.allocator, ' ');
+            try self.appendValueComponent(output, value);
+            wrote_significant = true;
+            pending_space = false;
+        }
+        if (pending_space and !trim_edges) try output.append(self.builder.allocator, ' ');
+    }
+
+    fn appendValueComponent(
+        self: *Walker,
+        output: *std.ArrayList(u8),
+        value: syntax.ComponentValue,
+    ) WalkError!void {
+        switch (value) {
+            .token => |token| {
+                if (token.kind == .ident) {
+                    const decoded = try self.decodeToken(token);
+                    if (self.builder.findDefinition(decoded)) |definition| {
+                        try output.appendSlice(self.builder.allocator, definition.value);
+                        return;
+                    }
+                }
+                try output.appendSlice(self.builder.allocator, self.raw(token.span));
+            },
+            .simple_block => |block| {
+                const closing = block.closing orelse return self.reject(
+                    block.span,
+                    "unterminated CSS Modules @value block",
+                );
+                try output.appendSlice(self.builder.allocator, self.raw(block.opening.span));
+                try self.appendValueComponents(output, block.values, false);
+                try output.appendSlice(self.builder.allocator, self.raw(closing.span));
+            },
+            .function => |function| {
+                const closing = function.closing orelse return self.reject(
+                    function.span,
+                    "unterminated CSS Modules @value function",
+                );
+                try output.appendSlice(self.builder.allocator, self.raw(function.opening.span));
+                try self.appendValueComponents(output, function.values, false);
+                try output.appendSlice(self.builder.allocator, self.raw(closing.span));
+            },
+        }
+    }
+
+    fn raw(self: *Walker, span: source.Span) []const u8 {
+        return self.parsed.file().slice(span) catch unreachable;
+    }
+
+    fn ruleList(
+        self: *Walker,
+        list: *const ast.RuleList,
+        top_level: bool,
+    ) WalkError!void {
         for (list.rules) |rule| switch (rule) {
             .style_rule => |style| {
                 try self.selectorList(&style.selectors, .local, false);
+                var composition_target = compositionTarget(&style.selectors);
+                if (composition_target) |*target| {
+                    target.name = try self.resolveClassIdentifier(target.name, target.span);
+                }
                 try self.declarationList(
                     &style.block.declarations,
-                    compositionTarget(&style.selectors),
+                    composition_target,
                 );
-                try self.ruleList(&style.block.rules);
+                try self.ruleList(&style.block.rules, false);
             },
-            .at_rule => |at_rule| try self.atRule(at_rule),
+            .at_rule => |at_rule| try self.atRule(at_rule, top_level),
             .nested_declarations => |nested| try self.declarationList(
                 &nested.declarations,
                 null,
@@ -608,12 +989,28 @@ const Walker = struct {
         };
     }
 
-    fn atRule(self: *Walker, at_rule: *const ast.AtRule) WalkError!void {
+    fn atRule(
+        self: *Walker,
+        at_rule: *const ast.AtRule,
+        top_level: bool,
+    ) WalkError!void {
         if (std.ascii.eqlIgnoreCase(at_rule.name.value, "value")) {
-            return self.reject(
-                at_rule.span,
-                "CSS Modules @value semantics are deferred to MODULE-002",
-            );
+            if (!top_level or !isTerminatedValueRule(at_rule)) {
+                return self.reject(
+                    at_rule.span,
+                    "CSS Modules @value definitions must be top-level semicolon rules",
+                );
+            }
+            self.builder.publishNextDefinition(at_rule.span) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.LimitExceeded => return self.rejectLimit(at_rule.span),
+                error.DuplicateExport => return self.reject(
+                    at_rule.span,
+                    "CSS Modules value and class exports share one unique namespace",
+                ),
+                error.InvalidDefinitionOrder => return self.rejectCollision(at_rule.span),
+            };
+            return;
         }
         if (!isAllowedAtRule(at_rule.name.value)) {
             return self.reject(
@@ -621,10 +1018,11 @@ const Walker = struct {
                 "at-rule is outside the CSS Modules native subset",
             );
         }
+        try self.scanValues(at_rule.prelude.values);
         switch (at_rule.block) {
             .none => {},
             .declarations => |block| try self.declarationList(&block.declarations, null),
-            .rules => |block| try self.ruleList(&block.rules),
+            .rules => |block| try self.ruleList(&block.rules, false),
             .keyframes => |block| for (block.frames) |frame| {
                 try self.declarationList(&frame.block.declarations, null);
             },
@@ -650,6 +1048,7 @@ const Walker = struct {
             }
             if (!std.ascii.eqlIgnoreCase(declaration.name.value, "composes")) {
                 saw_ordinary = true;
+                try self.scanValues(declaration.valueWithoutImportance());
                 continue;
             }
             if (saw_ordinary) {
@@ -724,9 +1123,13 @@ const Walker = struct {
             if (token.kind != .ident) {
                 return self.reject(token.span, "CSS Modules composed names must be identifiers");
             }
+            const name_span = token.valueSpan() orelse token.span;
             try names.append(self.builder.allocator, .{
-                .value = try self.decodeToken(token),
-                .span = token.valueSpan() orelse token.span,
+                .value = try self.resolveClassIdentifier(
+                    try self.decodeToken(token),
+                    name_span,
+                ),
+                .span = name_span,
             });
         }
 
@@ -741,13 +1144,29 @@ const Walker = struct {
             const operand = tokens.items[index + 1];
             if (operand.kind == .ident) {
                 const decoded = try self.decodeToken(operand);
-                if (!std.ascii.eqlIgnoreCase(decoded, "global")) {
+                if (std.ascii.eqlIgnoreCase(decoded, "global")) {
+                    source_kind = .global;
+                } else if (self.builder.findDefinition(decoded)) |definition| {
+                    const specifier = definition.single_string orelse return self.reject(
+                        operand.span,
+                        "CSS Modules composition path aliases must resolve to one string",
+                    );
+                    if (specifier.len == 0) {
+                        return self.reject(
+                            operand.span,
+                            "CSS Modules dependency specifier is empty",
+                        );
+                    }
+                    source_kind = .{ .dependency = .{
+                        .specifier = specifier,
+                        .span = operand.valueSpan() orelse operand.span,
+                    } };
+                } else {
                     return self.reject(
                         operand.span,
-                        "CSS Modules composes source must be global or a quoted module specifier",
+                        "CSS Modules composes source must be global, a quoted specifier, or a local string value",
                     );
                 }
-                source_kind = .global;
             } else if (operand.kind == .string and operand.isTerminated()) {
                 const specifier = try self.decodeToken(operand);
                 if (specifier.len == 0) {
@@ -784,6 +1203,25 @@ const Walker = struct {
         };
     }
 
+    fn scanValues(
+        self: *Walker,
+        values: []const syntax.ComponentValue,
+    ) WalkError!void {
+        for (values) |value| switch (value) {
+            .token => |token| {
+                if (token.kind != .ident) continue;
+                const decoded = try self.decodeToken(token);
+                const definition = self.builder.findDefinition(decoded) orelse continue;
+                self.builder.addValueRewrite(token.span, definition.value) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.LimitExceeded => return self.rejectLimit(token.span),
+                };
+            },
+            .simple_block => |block| try self.scanValues(block.values),
+            .function => |function| try self.scanValues(function.values),
+        };
+    }
+
     fn resolveCompositions(self: *Walker) WalkError!void {
         const failure = try self.builder.applyCompositions() orelse return;
         return switch (failure.kind) {
@@ -813,21 +1251,40 @@ const Walker = struct {
         inside_scope: bool,
     ) WalkError!void {
         for (value.simple_selectors) |simple| switch (simple) {
-            .class => |class| self.builder.addClass(
-                class.name.value,
-                class.span,
-                scope_mode,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.LimitExceeded => return self.rejectLimit(class.span),
-                error.NameCollision => return self.rejectCollision(class.span),
+            .type_selector => |selector| {
+                try self.ensureNoValueSelectorUse(selector.name);
+                try self.ensureNoValueNamespaceUse(selector.namespace);
             },
-            .id => |selector| if (inside_scope) {
-                return self.reject(
-                    selector.span,
-                    "explicit CSS Modules scope currently accepts class identifiers only",
+            .universal => |selector| try self.ensureNoValueNamespaceUse(selector.namespace),
+            .id => |selector| {
+                try self.ensureNoValueSelectorUse(selector.name);
+                if (inside_scope) {
+                    return self.reject(
+                        selector.span,
+                        "explicit CSS Modules scope currently accepts class identifiers only",
+                    );
+                }
+            },
+            .class => |class| {
+                const resolved = try self.resolveClassIdentifier(
+                    class.name.value,
+                    class.name.span,
                 );
+                self.builder.addClass(
+                    resolved,
+                    class.span,
+                    scope_mode,
+                ) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.LimitExceeded => return self.rejectLimit(class.span),
+                    error.NameCollision => return self.rejectCollision(class.span),
+                    error.DuplicateExport => return self.reject(
+                        class.span,
+                        "CSS Modules value and class exports share one unique namespace",
+                    ),
+                };
             },
+            .attribute => |selector| try self.ensureNoValueAttributeUse(selector),
             .pseudo_class => |selector| try self.pseudo(
                 selector.name,
                 selector.arguments,
@@ -844,6 +1301,57 @@ const Walker = struct {
                 scope_mode,
                 inside_scope,
             ),
+            .nesting => {},
+        };
+    }
+
+    fn resolveClassIdentifier(
+        self: *Walker,
+        name: []const u8,
+        span: source.Span,
+    ) WalkError![]const u8 {
+        const definition = self.builder.findDefinition(name) orelse return name;
+        if (definition.single_identifier) |identifier| return identifier;
+        return self.reject(
+            span,
+            "CSS Modules value used as a class must resolve to one identifier",
+        );
+    }
+
+    fn ensureNoValueSelectorUse(
+        self: *Walker,
+        identifier: ast.Identifier,
+    ) WalkError!void {
+        if (self.builder.findDefinition(identifier.value) != null) {
+            return self.reject(
+                identifier.span,
+                "CSS Modules local values are supported in class selectors only",
+            );
+        }
+    }
+
+    fn ensureNoValueNamespaceUse(
+        self: *Walker,
+        namespace: ast.Namespace,
+    ) WalkError!void {
+        switch (namespace) {
+            .named => |identifier| try self.ensureNoValueSelectorUse(identifier),
+            else => {},
+        }
+    }
+
+    fn ensureNoValueAttributeUse(
+        self: *Walker,
+        selector: *const ast.AttributeSelector,
+    ) WalkError!void {
+        try self.ensureNoValueNamespaceUse(selector.namespace);
+        try self.ensureNoValueSelectorUse(selector.name);
+        if (selector.value) |value| switch (value) {
+            .identifier => |identifier| try self.ensureNoValueSelectorUse(identifier),
+            .string => {},
+        };
+        if (selector.modifier) |modifier| switch (modifier) {
+            .unknown => |identifier| try self.ensureNoValueSelectorUse(identifier),
             else => {},
         };
     }
@@ -919,6 +1427,7 @@ const Walker = struct {
                 "CSS Modules import and export pseudos are outside the native subset",
             );
         }
+        try self.ensureNoValueSelectorUse(name);
         const args = arguments orelse return;
         const parsed = args.parsed orelse return self.reject(
             span,
@@ -1024,6 +1533,50 @@ fn lessThanLocalEdge(_: void, left: LocalEdge, right: LocalEdge) bool {
     if (left.to != right.to) return left.to < right.to;
     if (left.span.start != right.span.start) return left.span.start < right.span.start;
     return left.span.end < right.span.end;
+}
+
+fn tokenAtValue(value: syntax.ComponentValue) ?tokenizer.Token {
+    return switch (value) {
+        .token => |token| token,
+        else => null,
+    };
+}
+
+fn isValueTrivia(value: syntax.ComponentValue) bool {
+    const token = tokenAtValue(value) orelse return false;
+    return token.isTrivia();
+}
+
+fn nextSignificantValue(
+    values: []const syntax.ComponentValue,
+    start: usize,
+) ?usize {
+    var index = start;
+    while (index < values.len) : (index += 1) {
+        if (!isValueTrivia(values[index])) return index;
+    }
+    return null;
+}
+
+fn tokenDelimiter(token: tokenizer.Token, expected: u21) bool {
+    if (token.kind != .delim) return false;
+    return switch (token.data) {
+        .delim => |delimiter| delimiter == expected,
+        else => false,
+    };
+}
+
+fn spansEqual(left: source.Span, right: source.Span) bool {
+    return left.source.eql(right.source) and
+        left.start == right.start and
+        left.end == right.end;
+}
+
+fn isTerminatedValueRule(at_rule: *const ast.AtRule) bool {
+    return switch (at_rule.block) {
+        .none => |no_block| no_block.terminator != null,
+        else => false,
+    };
 }
 
 fn isAllowedAtRule(name: []const u8) bool {

@@ -61,7 +61,7 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('CompileResult.deinit')
     expect(adr).toContain('Public compile facade')
     expect(adr).toContain('borrowed canonical target query')
-    expect(adr).toContain('retain authored order and duplicates')
+    expect(adr).toContain('retain authored span order and duplicates')
     expect(adr).toContain('module_exports = null')
     expect(adr).toContain('allocator-failure')
   })
