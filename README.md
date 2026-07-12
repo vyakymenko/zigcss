@@ -33,7 +33,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | Source maps | Experimental, library-only | Deterministic maps are available from the library pipeline; CLI output policy remains undefined. |
 | Browser target queries | Experimental, library-only | A strict explicit-minimum grammar and pinned BCD 8.0.0 subset deterministically configure the verified rewrite; `--browsers` and `--autoprefix` remain unavailable pending later public CLI wiring. |
 | CSS Modules | Experimental, Zig-library-only native subset | Explicit `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references/dependencies, and local values with owned results. The CLI/LSP still reject `.module.css`; imported values, raw ICSS, and ambiguous forms are strict errors. |
-| SCSS, SASS, LESS, Stylus, PostCSS, CSS-in-JS, Tailwind-like `@apply` | Unavailable | The executable rejects every alternate extension before output. SCSS/SASS, LESS, and Stylus parser sources are removed; the [format matrix](docs/src/content/docs/guide/format-compatibility.md) distinguishes removed and characterized implementations. |
+| SCSS, SASS, LESS, Stylus, PostCSS, CSS-in-JS, Tailwind-like `@apply` | Unavailable | The executable rejects every alternate extension before output. SCSS/SASS, LESS, Stylus, and CSS-in-JS parser sources are removed; the [format matrix](docs/src/content/docs/guide/format-compatibility.md) distinguishes removed and characterized implementations. |
 | LSP | Experimental | Still consumes the legacy parser. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 pending bounded isolation. |
 

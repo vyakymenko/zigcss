@@ -158,24 +158,26 @@
       "id": "css-in-js",
       "displayName": "CSS-in-JS",
       "cliDisplayName": "CSS-in-JS",
-      "formatTag": "css_in_js",
+      "formatTag": null,
       "extensions": [".css.js", ".css.ts"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
-      "implementation": "LegacyCharacterized",
+      "implementation": "Removed",
       "strategy": "remove-until-funded",
       "ownerPackages": ["JS-001"],
-      "sourceFiles": ["src/formats/css_in_js.zig"],
-      "currentBoundary": "Byte-scans backtick regions and object-like braces, deletes interpolation expressions, and sends the remaining bytes to the inherited CSS parser.",
+      "removedBy": "JS-001",
+      "removedSourceFiles": ["src/formats/css_in_js.zig"],
+      "sourceFiles": [],
+      "currentBoundary": "No CSS-in-JS parser implementation remains; .css.js and .css.ts are classified only for explicit CLI rejection and a null legacy detector result.",
       "knownRisks": [
-        "JavaScript and TypeScript lexical states, tagged-template identity, escapes, comments, regex literals, and nested expressions are not parsed.",
-        "Dynamic expressions are removed rather than represented or rejected."
+        "Reintroducing byte scanning without a version-pinned JavaScript/TypeScript parser, explicit tagged-template scope, non-executing static semantics, and strict dynamic-expression behavior would recreate the removed deletion boundary."
       ],
       "probe": "const styles = `\n.card { color: ${theme.color}; }\n`;\n",
-      "sourceEvidence": [
-        { "file": "src/formats/css_in_js.zig", "contains": "fn extractCSS" },
-        { "file": "src/formats/css_in_js.zig", "contains": "var expr_depth: usize = 1;" },
-        { "file": "src/formats/css_in_js.zig", "contains": "in_template_string = !in_template_string" }
+      "containmentEvidence": [
+        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".css.js\")" },
+        { "file": "src/main.zig", "contains": "return \"CSS-in-JS\";" },
+        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".css.js\")" },
+        { "file": "src/lsp.zig", "contains": "file:///removed.css.js" }
       ]
     },
     {
