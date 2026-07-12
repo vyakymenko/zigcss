@@ -279,6 +279,7 @@ test "stable batch CLI writes no outputs when one input has parser errors" {
     try expectFailureContaining(result, "broken.css:1:11: error CSS0007");
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("out/valid.css", .{}));
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("out/broken.css", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("out", .{}));
 }
 
 test "verified optimizer CLI reaches the reviewed byte-stable fixed point" {
@@ -623,20 +624,169 @@ test "CLI path safety: symlink and hard-link output aliases are rejected (CLI-00
     try std.testing.expectEqualStrings(original, preserved);
 }
 
-test "CLI path safety: batch basename collisions are rejected before writing (CLI-001)" {
+test "CLI batch naming disambiguates collisions independently of input order (CLI-012)" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makePath("one");
     try tmp.dir.makePath("two");
-    try tmp.dir.makePath("out");
     try tmp.dir.writeFile(.{ .sub_path = "one/shared.css", .data = ".one { color: red; }" });
     try tmp.dir.writeFile(.{ .sub_path = "two/shared.css", .data = ".two { color: blue; }" });
 
-    var result = try runInDir(tmp.dir, &.{ "one/shared.css", "two/shared.css", "-o", "out", "--output-dir", "--minify" });
-    defer deinitRun(&result);
-    try expectFailureContaining(result, "multiple inputs resolve to the same output");
+    var forward = try runInDir(tmp.dir, &.{ "one/shared.css", "two/shared.css", "-o", "forward", "--output-dir", "--minify" });
+    defer deinitRun(&forward);
+    try expectSuccess(forward);
+    var reverse = try runInDir(tmp.dir, &.{ "two/shared.css", "one/shared.css", "-o", "reverse", "--output-dir", "--minify" });
+    defer deinitRun(&reverse);
+    try expectSuccess(reverse);
 
-    try std.testing.expectError(error.FileNotFound, tmp.dir.access("out/shared.css", .{}));
+    var forward_dir = try tmp.dir.openDir("forward", .{ .iterate = true });
+    defer forward_dir.close();
+    var reverse_dir = try tmp.dir.openDir("reverse", .{});
+    defer reverse_dir.close();
+    var iterator = forward_dir.iterate();
+    var count: usize = 0;
+    while (try iterator.next()) |entry| {
+        try std.testing.expect(entry.kind == .file);
+        try std.testing.expect(std.mem.startsWith(u8, entry.name, "shared-"));
+        try std.testing.expect(std.mem.endsWith(u8, entry.name, ".css"));
+        const forward_css = try forward_dir.readFileAlloc(allocator, entry.name, 1024);
+        defer allocator.free(forward_css);
+        const reverse_css = try reverse_dir.readFileAlloc(allocator, entry.name, 1024);
+        defer allocator.free(reverse_css);
+        try std.testing.expectEqualStrings(forward_css, reverse_css);
+        count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectError(error.FileNotFound, forward_dir.access("shared.css", .{}));
+    try std.testing.expectError(error.FileNotFound, reverse_dir.access("shared.css", .{}));
+}
+
+test "CLI atomic output creates parents and replaces one destination completely (CLI-012)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = ".fresh { color: red; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "existing.css", .data = "old-output" });
+    if (builtin.os.tag != .windows) {
+        const existing = try tmp.dir.openFile("existing.css", .{ .mode = .read_write });
+        defer existing.close();
+        try std.posix.fchmod(existing.handle, 0o600);
+    }
+
+    var nested = try runInDir(tmp.dir, &.{ "input.css", "-o", "new/deep/output.css", "--minify" });
+    defer deinitRun(&nested);
+    try expectSuccess(nested);
+    const nested_css = try tmp.dir.readFileAlloc(allocator, "new/deep/output.css", 1024);
+    defer allocator.free(nested_css);
+    try std.testing.expectEqualStrings(".fresh{color:red}", nested_css);
+
+    var replaced = try runInDir(tmp.dir, &.{ "input.css", "-o", "existing.css", "--minify" });
+    defer deinitRun(&replaced);
+    try expectSuccess(replaced);
+    const replaced_css = try tmp.dir.readFileAlloc(allocator, "existing.css", 1024);
+    defer allocator.free(replaced_css);
+    try std.testing.expectEqualStrings(".fresh{color:red}", replaced_css);
+    if (builtin.os.tag != .windows) {
+        const replaced_stat = try tmp.dir.statFile("existing.css");
+        try std.testing.expectEqual(@as(u32, 0o600), replaced_stat.mode & 0o777);
+    }
+
+    var output_dir = try tmp.dir.openDir("new/deep", .{ .iterate = true });
+    defer output_dir.close();
+    var iterator = output_dir.iterate();
+    var entries: usize = 0;
+    while (try iterator.next()) |entry| {
+        try std.testing.expectEqualStrings("output.css", entry.name);
+        entries += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), entries);
+}
+
+test "CLI atomic replacement never follows unrelated output links (CLI-012)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = ".fresh { color: red; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "symlink-target.txt", .data = "preserve-symlink-target" });
+    try tmp.dir.symLink("symlink-target.txt", "symlink-output.css", .{});
+
+    var symlink_result = try runInDir(tmp.dir, &.{ "input.css", "-o", "symlink-output.css", "--minify" });
+    defer deinitRun(&symlink_result);
+    try expectSuccess(symlink_result);
+    const symlink_target = try tmp.dir.readFileAlloc(allocator, "symlink-target.txt", 1024);
+    defer allocator.free(symlink_target);
+    const symlink_output = try tmp.dir.readFileAlloc(allocator, "symlink-output.css", 1024);
+    defer allocator.free(symlink_output);
+    try std.testing.expectEqualStrings("preserve-symlink-target", symlink_target);
+    try std.testing.expectEqualStrings(".fresh{color:red}", symlink_output);
+
+    try tmp.dir.writeFile(.{ .sub_path = "hard-target.txt", .data = "preserve-hard-target" });
+    try std.posix.linkat(tmp.dir.fd, "hard-target.txt", tmp.dir.fd, "hard-output.css", 0);
+    var hard_result = try runInDir(tmp.dir, &.{ "input.css", "-o", "hard-output.css", "--minify" });
+    defer deinitRun(&hard_result);
+    try expectSuccess(hard_result);
+    const hard_target = try tmp.dir.readFileAlloc(allocator, "hard-target.txt", 1024);
+    defer allocator.free(hard_target);
+    const hard_output = try tmp.dir.readFileAlloc(allocator, "hard-output.css", 1024);
+    defer allocator.free(hard_output);
+    try std.testing.expectEqualStrings("preserve-hard-target", hard_target);
+    try std.testing.expectEqualStrings(".fresh{color:red}", hard_output);
+}
+
+test "CLI atomic failure preserves old bytes and removes temporary files (CLI-012)" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = ".fresh { color: red; }" });
+    try tmp.dir.makeDir("locked");
+    var locked = try tmp.dir.openDir("locked", .{ .iterate = true });
+    defer locked.close();
+    try locked.writeFile(.{ .sub_path = "output.css", .data = "old-output" });
+    try std.posix.fchmod(locked.fd, 0o555);
+    defer std.posix.fchmod(locked.fd, 0o755) catch {};
+
+    var result = try runInDir(tmp.dir, &.{ "input.css", "-o", "locked/output.css", "--minify" });
+    defer deinitRun(&result);
+    try expectFailureContaining(result, "failed to write locked/output.css atomically");
+    const preserved = try locked.readFileAlloc(allocator, "output.css", 1024);
+    defer allocator.free(preserved);
+    try std.testing.expectEqualStrings("old-output", preserved);
+
+    var iterator = locked.iterate();
+    var entries: usize = 0;
+    while (try iterator.next()) |entry| {
+        try std.testing.expectEqualStrings("output.css", entry.name);
+        entries += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), entries);
+}
+
+test "CLI atomic rename failure removes its temporary file (CLI-012)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = ".fresh { color: red; }" });
+    try tmp.dir.makeDir("destination.css");
+
+    var result = try runInDir(tmp.dir, &.{ "input.css", "-o", "destination.css", "--minify" });
+    defer deinitRun(&result);
+    try expectFailureContaining(result, "failed to write destination.css atomically");
+
+    var root = try tmp.dir.openDir(".", .{ .iterate = true });
+    defer root.close();
+    var iterator = root.iterate();
+    var entries: usize = 0;
+    while (try iterator.next()) |entry| {
+        if (std.mem.eql(u8, entry.name, "input.css")) {
+            try std.testing.expectEqual(std.fs.File.Kind.file, entry.kind);
+        } else if (std.mem.eql(u8, entry.name, "destination.css")) {
+            try std.testing.expectEqual(std.fs.File.Kind.directory, entry.kind);
+        } else {
+            return error.UnexpectedOutputEntry;
+        }
+        entries += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), entries);
 }
 
 test "CLI path safety: default batch naming cannot overwrite CSS inputs (CLI-001)" {

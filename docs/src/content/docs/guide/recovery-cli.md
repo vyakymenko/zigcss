@@ -40,7 +40,11 @@ The recovery CLI also rejects legacy preprocessor and alternate-format extension
 
 ## Output safety
 
-Before reading and compiling inputs, the CLI plans file destinations and rejects paths that resolve to an input, including relative aliases, symlinks, and hard links. It also rejects duplicate batch destinations. The `-` stream sentinel is never treated as a filesystem path.
+Before reading and compiling inputs, the CLI plans file destinations and rejects paths that resolve to an input, including relative aliases, symlinks, and hard links. It also rejects duplicate final destinations. The `-` stream sentinel is never treated as a filesystem path.
+
+Every file destination is written through a temporary file in its parent directory and atomically replaced only after the complete CSS result is ready. Missing parents are created at that commit point; a failed parse or transform therefore creates no output directory. Existing destination symlinks and hard links are replaced rather than followed, and a failed write or rename removes its temporary file while preserving the old destination. Existing regular-file permissions are retained.
+
+Batch naming is deterministic and independent of argument order. A unique input stem becomes `<stem>.css`; colliding stems receive a 16-digit lowercase hash of the normalized working-directory-relative input path. Final basenames are limited to 128 bytes, with `zigcss-<hash>.css` used when a stem would exceed the bound. The final canonical/inode collision check remains authoritative, including the unlikely case of a hash collision. Each destination is atomic, but the batch is not a multi-file transaction: an operational failure while committing a later file can leave earlier files committed.
 
 Valid inputs are parsed completely before emission. Structured parser diagnostics include the input name, line, column, and code; failed single or batch compilation writes no partial CSS. Optimized fixed-point rounds are reparsed without recovery before any final write.
 

@@ -8,6 +8,7 @@ const version = "0.3.0";
 const experimental_notice = "Warning: ZigCSS 0.3 is an experimental recovery build; do not use it for production CSS.\n";
 const unsafe_transforms_message = "legacy and non-verified transform paths are disabled pending safety validation";
 const max_input_bytes = 10 * 1024 * 1024;
+const max_batch_output_basename_bytes = 128;
 const stdin_source_name = "<stdin>";
 const stdio_path = "-";
 const exit_compile_failure: u8 = 1;
@@ -122,8 +123,36 @@ fn writeStdout(bytes: []const u8) !void {
 }
 
 fn writeOutputFile(path: []const u8, bytes: []const u8) !void {
-    std.fs.cwd().writeFile(.{ .sub_path = path, .data = bytes }) catch |err| {
-        std.debug.print("Error: failed to write {s}: {s}\n", .{ path, @errorName(err) });
+    const cwd = std.fs.cwd();
+    const mode = blk: {
+        const stat = cwd.statFile(path) catch |err| switch (err) {
+            error.FileNotFound => break :blk std.fs.File.default_mode,
+            else => {
+                std.debug.print("Error: failed to inspect output {s}: {s}\n", .{ path, @errorName(err) });
+                return err;
+            },
+        };
+        break :blk if (stat.kind == .file) stat.mode else std.fs.File.default_mode;
+    };
+
+    var buffer: [4096]u8 = undefined;
+    var atomic_file = cwd.atomicFile(path, .{
+        .mode = mode,
+        .make_path = true,
+        .write_buffer = &buffer,
+    }) catch |err| {
+        std.debug.print("Error: failed to write {s} atomically: {s}\n", .{ path, @errorName(err) });
+        return err;
+    };
+    defer atomic_file.deinit();
+
+    atomic_file.file_writer.interface.writeAll(bytes) catch {
+        const err = atomic_file.file_writer.err orelse error.Unexpected;
+        std.debug.print("Error: failed to write {s} atomically: {s}\n", .{ path, @errorName(err) });
+        return err;
+    };
+    atomic_file.finish() catch |err| {
+        std.debug.print("Error: failed to write {s} atomically: {s}\n", .{ path, @errorName(err) });
         return err;
     };
 }
@@ -593,31 +622,72 @@ fn printVersion() !void {
     try writeStdout(rendered);
 }
 
-fn determineOutputFile(allocator: std.mem.Allocator, input_file: []const u8, output_dir: ?[]const u8, output_file: ?[]const u8) ![]const u8 {
-    if (output_file) |out| {
-        return try allocator.dupe(u8, out);
+fn batchOutputStem(input_file: []const u8) []const u8 {
+    const basename = std.fs.path.basename(input_file);
+    const extension = std.fs.path.extension(basename);
+    if (extension.len == 0 or extension.len == basename.len) return basename;
+    return basename[0 .. basename.len - extension.len];
+}
+
+fn outputNameEqual(left: []const u8, right: []const u8) bool {
+    return switch (builtin.os.tag) {
+        .windows, .macos, .ios, .tvos, .watchos => std.ascii.eqlIgnoreCase(left, right),
+        else => std.mem.eql(u8, left, right),
+    };
+}
+
+fn batchNameNeedsDisambiguation(input_files: []const []const u8, index: usize) bool {
+    const stem = batchOutputStem(input_files[index]);
+    for (input_files, 0..) |other, other_index| {
+        if (other_index != index and outputNameEqual(stem, batchOutputStem(other))) return true;
     }
-    
-    if (output_dir) |dir| {
-        const basename = std.fs.path.basename(input_file);
-        const ext = std.fs.path.extension(basename);
-        const name_without_ext = basename[0..basename.len - ext.len];
-        const output_ext = if (std.mem.eql(u8, ext, ".scss") or std.mem.eql(u8, ext, ".sass")) ".css"
-            else if (std.mem.eql(u8, ext, ".less")) ".css"
-            else if (std.mem.eql(u8, ext, ".styl")) ".css"
-            else if (std.mem.eql(u8, ext, ".postcss")) ".css"
-            else ext;
-        return try std.fmt.allocPrint(allocator, "{s}/{s}{s}", .{ dir, name_without_ext, output_ext });
+    return false;
+}
+
+fn normalizedInputHash(allocator: std.mem.Allocator, input_file: []const u8) !u64 {
+    const cwd_path = try std.fs.path.resolve(allocator, &.{"."});
+    defer allocator.free(cwd_path);
+    const absolute_path = try std.fs.path.resolve(allocator, &.{input_file});
+    defer allocator.free(absolute_path);
+    const relative_path = try std.fs.path.relative(allocator, cwd_path, absolute_path);
+    defer allocator.free(relative_path);
+    const key = relative_path;
+
+    var hasher = std.hash.XxHash64.init(0);
+    switch (builtin.os.tag) {
+        .windows, .macos, .ios, .tvos, .watchos => {
+            for (key) |byte| {
+                const normalized = [_]u8{std.ascii.toLower(byte)};
+                hasher.update(&normalized);
+            }
+        },
+        else => hasher.update(key),
     }
-    
-    const ext = std.fs.path.extension(input_file);
-    const name_without_ext = input_file[0..input_file.len - ext.len];
-    const output_ext = if (std.mem.eql(u8, ext, ".scss") or std.mem.eql(u8, ext, ".sass")) ".css"
-        else if (std.mem.eql(u8, ext, ".less")) ".css"
-        else if (std.mem.eql(u8, ext, ".styl")) ".css"
-        else if (std.mem.eql(u8, ext, ".postcss")) ".css"
-        else ext;
-    return try std.fmt.allocPrint(allocator, "{s}{s}", .{ name_without_ext, output_ext });
+    return hasher.final();
+}
+
+fn determineBatchOutputFile(
+    allocator: std.mem.Allocator,
+    input_files: []const []const u8,
+    index: usize,
+    output_dir: []const u8,
+) ![]u8 {
+    const raw_stem = batchOutputStem(input_files[index]);
+    const stem = if (raw_stem.len == 0) "output" else raw_stem;
+    const needs_disambiguation = batchNameNeedsDisambiguation(input_files, index);
+    const plain_name_len = std.math.add(usize, stem.len, ".css".len) catch std.math.maxInt(usize);
+    const output_basename = if (!needs_disambiguation and plain_name_len <= max_batch_output_basename_bytes)
+        try std.fmt.allocPrint(allocator, "{s}.css", .{stem})
+    else blk: {
+        const path_hash = try normalizedInputHash(allocator, input_files[index]);
+        const suffixed_name_len = std.math.add(usize, stem.len, "-0000000000000000.css".len) catch std.math.maxInt(usize);
+        if (suffixed_name_len <= max_batch_output_basename_bytes) {
+            break :blk try std.fmt.allocPrint(allocator, "{s}-{x:0>16}.css", .{ stem, path_hash });
+        }
+        break :blk try std.fmt.allocPrint(allocator, "zigcss-{x:0>16}.css", .{path_hash});
+    };
+    defer allocator.free(output_basename);
+    return std.fs.path.join(allocator, &.{ output_dir, output_basename });
 }
 
 fn experimentalFormatName(filename: []const u8) ?[]const u8 {
@@ -820,7 +890,7 @@ pub fn main() !void {
             std.process.exit(exit_compile_failure);
         };
     } else {
-        const output_dir: ?[]const u8 = if (output_dir_flag or output_file != null) output_file else null;
+        const output_dir = output_file.?;
 
         var tasks = try std.ArrayList(CompileTask).initCapacity(allocator, input_files.items.len);
         defer {
@@ -832,8 +902,13 @@ pub fn main() !void {
             tasks.deinit(allocator);
         }
         
-        for (input_files.items) |input| {
-            const out_file = try determineOutputFile(allocator, input, output_dir, null);
+        for (input_files.items, 0..) |input, input_index| {
+            const out_file = try determineBatchOutputFile(
+                allocator,
+                input_files.items,
+                input_index,
+                output_dir,
+            );
             try tasks.append(allocator, CompileTask{
                 .input_file = input,
                 .output_file = out_file,
@@ -852,10 +927,6 @@ pub fn main() !void {
             rejectOutputCollision(collision);
         }
 
-        if (output_dir) |dir| {
-            try std.fs.cwd().makePath(dir);
-        }
-        
         compileFilesParallel(allocator, tasks.items) catch {
             std.process.exit(exit_compile_failure);
         };
@@ -878,6 +949,44 @@ test "CLI format boundary rejects every experimental extension without importing
     }
     try std.testing.expect(experimentalFormatName("input.css") == null);
     try std.testing.expect(experimentalFormatName("input.unknown") == null);
+}
+
+fn exerciseBatchNamingAllocationFailures(allocator: std.mem.Allocator) !void {
+    const forward = [_][]const u8{ "one/shared.css", "two/shared.input", "unique.raw" };
+    const reverse = [_][]const u8{ "unique.raw", "two/shared.input", "one/shared.css" };
+    const forward_one = try determineBatchOutputFile(allocator, &forward, 0, "out");
+    defer allocator.free(forward_one);
+    const forward_two = try determineBatchOutputFile(allocator, &forward, 1, "out");
+    defer allocator.free(forward_two);
+    const forward_unique = try determineBatchOutputFile(allocator, &forward, 2, "out");
+    defer allocator.free(forward_unique);
+    const reverse_one = try determineBatchOutputFile(allocator, &reverse, 2, "out");
+    defer allocator.free(reverse_one);
+    const reverse_two = try determineBatchOutputFile(allocator, &reverse, 1, "out");
+    defer allocator.free(reverse_two);
+    const long_inputs = [_][]const u8{"dir/" ++ ("a" ** 140) ++ ".raw"};
+    const long_output = try determineBatchOutputFile(allocator, &long_inputs, 0, "out");
+    defer allocator.free(long_output);
+
+    try std.testing.expect(!std.mem.eql(u8, forward_one, forward_two));
+    try std.testing.expectEqualStrings(forward_one, reverse_one);
+    try std.testing.expectEqualStrings(forward_two, reverse_two);
+    try std.testing.expect(std.mem.endsWith(u8, forward_one, ".css"));
+    try std.testing.expect(std.mem.endsWith(u8, forward_two, ".css"));
+    const expected_unique = try std.fs.path.join(allocator, &.{ "out", "unique.css" });
+    defer allocator.free(expected_unique);
+    try std.testing.expectEqualStrings(expected_unique, forward_unique);
+    const long_basename = std.fs.path.basename(long_output);
+    try std.testing.expect(long_basename.len <= max_batch_output_basename_bytes);
+    try std.testing.expect(std.mem.startsWith(u8, long_basename, "zigcss-"));
+}
+
+test "batch output names are normalized deterministic and allocation-safe" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseBatchNamingAllocationFailures,
+        .{},
+    );
 }
 
 test "legacy compiler imports remain test-only" {

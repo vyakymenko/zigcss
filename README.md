@@ -26,7 +26,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` declares one `LazyPath` input and generated CSS output per cached host-tool run; only minification and the verified optimizer are exposed. |
 | Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed Zig callbacks through deterministic, transactional pass plans; there is no stable or cross-language plugin ABI. |
 | `--minify` | Experimental | Compacts emitted whitespace without enabling AST transforms. |
-| Output planning | Verified safety boundary | Rejects input/output aliases and duplicate batch destinations before writes. |
+| Output planning | Verified safety boundary | Rejects input/output aliases before writes, deterministically disambiguates batch basenames, and atomically replaces each destination. |
 | Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs a closed seven-pass cleanup/semantic plan to a bounded byte-stable fixed point; legacy, experimental, compatibility, extraction, custom-resolution, logical-conversion, and reorder paths are excluded. |
 | Dead-code and critical-CSS extraction | Experimental, library/test-only | Two bounded passes accept complete class/ID inventories and emit only rules proven possible in a closed selector domain; both require experimental plus extraction authority. |
 | Target prefix rewrite | Experimental, library-only | One verified pass adds closed forms for eight pinned property/value/selector/at-rule features; it is exercised through the pass manager and test driver, not the recovery CLI. |
@@ -134,6 +134,8 @@ Available recovery options include file or bounded stdin input (`-`), file or st
 Single-file, watch, and batch CSS compilation all construct public `CompileOptions` and consume owned `CompileResult` values from one `zigcss.compile` call site. The executable retains argument parsing, path planning, file I/O, diagnostic rendering, and writes; it has no runtime import or parallel implementation of the parser, emitter, optimizer, alternate-format adapters, or autoprefixer.
 
 Informational commands and successful compilation exit `0`. CSS diagnostics and operational I/O failures exit `1`; invalid, duplicate, missing, unavailable, or incoherent arguments exit `2`. Help and version text use stdout, while diagnostics, warnings, and usage errors use stderr. Stdin is single-input only and cannot be watched or mixed into batch mode; batch output cannot target stdout. The npm launcher inherits stdin/stdout/stderr, preserves all native exit codes, and re-raises POSIX termination signals instead of reporting false success.
+
+File output creates missing parent directories only when committing a successful compilation, writes through a same-directory temporary file, and atomically replaces the destination without following a destination symlink or hard link. Batch outputs use `<stem>.css` when unique, add a deterministic normalized-path hash when stems collide, and fall back to a bounded hash name for long basenames. Compilation failure creates no output directory; after all inputs compile, each batch destination is committed atomically but the set of files is not a multi-file transaction if a later write or rename fails.
 
 Unavailable options—`--source-map`, `--autoprefix`, `--browsers`, and `--critical-*`—are rejected with an explanation. Unknown and malformed arguments are also rejected.
 
