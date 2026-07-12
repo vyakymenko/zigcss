@@ -83,4 +83,22 @@ describe('native artifact workflows', () => {
     expect(consumerTests).toBeGreaterThan(packageConsumer)
     expect(compatibility).toBeGreaterThan(consumerTests)
   })
+
+  test('compiles the complete build integration example in both safe modes', () => {
+    const exampleDirectory = 'working-directory: examples/build-integration'
+    const firstDirectory = buildWorkflow.indexOf(exampleDirectory)
+    const debug = buildWorkflow.indexOf('zig build test --summary all', firstDirectory)
+    const secondDirectory = buildWorkflow.indexOf(exampleDirectory, debug)
+    const releaseSafe = buildWorkflow.indexOf(
+      'zig build test -Doptimize=ReleaseSafe --summary all',
+      secondDirectory,
+    )
+    const compatibility = buildWorkflow.indexOf('npm run test:compat', releaseSafe)
+
+    expect(firstDirectory).toBeGreaterThan(-1)
+    expect(debug).toBeGreaterThan(firstDirectory)
+    expect(secondDirectory).toBeGreaterThan(debug)
+    expect(releaseSafe).toBeGreaterThan(secondDirectory)
+    expect(compatibility).toBeGreaterThan(releaseSafe)
+  })
 })

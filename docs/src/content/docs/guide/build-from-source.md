@@ -72,6 +72,19 @@ Each call declares one CSS input as `std.Build.LazyPath` and one generated outpu
 
 The executable passed to the helper must run on the build host. A cross-target project must obtain a separate host-target ZigCSS artifact for this run step instead of attempting to execute its application-target binary. The helper's file/output arguments make unchanged builds cacheable; the package fixture proves a second run is cached and a source-byte change reruns compilation while preserving exact output.
 
+## Complete build integration example
+
+`examples/build-integration` is a self-contained path-dependency project. Its build script creates separate application-target and host-tool ZigCSS dependencies, imports the library module, compiles and exact-checks a generated stylesheet through `helpers.addCssCompile`, installs that stylesheet, builds an executable, and runs the embedded API test.
+
+```bash
+cd examples/build-integration
+zig build test --summary all
+zig build test -Doptimize=ReleaseSafe --summary all
+zig build
+```
+
+CI runs both test modes. A static enumeration gate requires every `.zig` file under `examples` to appear in either this project or the root compiled public-API example, preventing unbuilt snippets from accumulating.
+
 The independent parser gate additionally requires Node.js. After the Zig build has produced the executable, run:
 
 ```bash

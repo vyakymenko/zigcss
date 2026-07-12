@@ -16,6 +16,18 @@ function field(manifest, name) {
   return match[1]
 }
 
+function filesRecursive(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    if (entry.isDirectory() && (
+      entry.name.startsWith('.') ||
+      entry.name === 'zig-out' ||
+      entry.name === 'node_modules'
+    )) return []
+    const entryPath = path.join(directory, entry.name)
+    return entry.isDirectory() ? filesRecursive(entryPath) : [entryPath]
+  })
+}
+
 test('Zig package identity version and minimum toolchain are pinned', () => {
   const manifest = read('build.zig.zon')
   const npmManifest = JSON.parse(read('package.json'))
@@ -77,6 +89,31 @@ test('the committed consumer uses the package manager rather than a relative sou
   assert.match(build, /zigcss_build\.helpers\.addCssCompile/)
   assert.match(consumer, /@import\("zigcss"\)/)
   assert.doesNotMatch(consumer, /@import\("\.\.\//)
+})
+
+test('every Zig example has an executable build gate', () => {
+  const examples = filesRecursive(path.join(repositoryRoot, 'examples'))
+    .filter(file => file.endsWith('.zig'))
+    .map(file => path.relative(repositoryRoot, file))
+    .sort()
+  assert.deepEqual(examples, [
+    'examples/build-integration/build.zig',
+    'examples/build-integration/main.zig',
+    'examples/public_api.zig',
+  ])
+
+  const rootBuild = read('build.zig')
+  const integrationBuild = read('examples/build-integration/build.zig')
+  const integrationManifest = read('examples/build-integration/build.zig.zon')
+  const workflow = read('.github/workflows/build.yml')
+  assert.match(rootBuild, /examples\/public_api\.zig/)
+  assert.match(integrationManifest, /\.zigcss\s*=\s*\.\{\s*\.path\s*=\s*"\.\.\/\.\."\s*\}/)
+  assert.match(integrationBuild, /const zigcss_build = @import\("zigcss"\)/)
+  assert.match(integrationBuild, /\.target = b\.graph\.host/)
+  assert.match(integrationBuild, /zigcss_build\.helpers\.addCssCompile/)
+  assert.match(integrationBuild, /b\.addCheckFile\(css\.getOutput\(\)/)
+  assert.match(workflow, /working-directory: examples\/build-integration/)
+  assert.match(workflow, /zig build test -Doptimize=ReleaseSafe --summary all/)
 })
 
 test('active source and CI surfaces agree on the Zig 0.15.2 baseline', () => {

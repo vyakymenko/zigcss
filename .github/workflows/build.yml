@@ -104,6 +104,14 @@ jobs:
         working-directory: tests/package-consumer
         run: zig build test --summary all
 
+      - name: Test build integration example
+        working-directory: examples/build-integration
+        run: zig build test --summary all
+
+      - name: Test build integration example (ReleaseSafe)
+        working-directory: examples/build-integration
+        run: zig build test -Doptimize=ReleaseSafe --summary all
+
       - name: Validate emitted CSS independently
         run: npm run test:compat
 

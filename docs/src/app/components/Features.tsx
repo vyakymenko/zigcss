@@ -20,7 +20,7 @@ const capabilities = [
   {
     surface: "Zig build helper",
     status: "Experimental / consumer-tested",
-    detail: "The dependency build module creates cached host-tool runs with declared LazyPath inputs and generated CSS outputs; unavailable CLI options are excluded.",
+    detail: "The dependency build module creates cached host-tool runs with declared LazyPath inputs and generated CSS outputs; a complete integration example builds in Debug and ReleaseSafe CI.",
   },
   {
     surface: "Native plugins",
