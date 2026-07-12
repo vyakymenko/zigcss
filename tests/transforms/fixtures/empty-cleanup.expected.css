@@ -1,0 +1,19 @@
+.keep-first {
+  --joined: a/**/b;
+  color: red;
+  color: blue !important;
+}
+@media screen {
+  .media-keep {
+    display: grid;
+  }
+}
+@layer reset {}
+@scope (.root) {}
+@keyframes pulse {}
+@font-face {}
+@page {}
+@unknown foo { a/**/b }
+.keep-last {
+  width: 1/**/%;
+}

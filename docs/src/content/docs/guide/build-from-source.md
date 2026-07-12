@@ -23,6 +23,7 @@ The independent parser gate additionally requires Node.js. After the Zig build h
 ```bash
 npm ci --ignore-scripts
 npm run test:compat
+npm run test:transforms
 ```
 
 ## Characterization example

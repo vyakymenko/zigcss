@@ -52,9 +52,11 @@ describe('native artifact workflows', () => {
     const install = buildWorkflow.lastIndexOf('npm ci --ignore-scripts')
     const nativeTests = buildWorkflow.lastIndexOf('zig build test --summary all')
     const compatibility = buildWorkflow.lastIndexOf('npm run test:compat')
+    const transforms = buildWorkflow.lastIndexOf('npm run test:transforms')
 
     expect(install).toBeGreaterThan(-1)
     expect(nativeTests).toBeGreaterThan(install)
     expect(compatibility).toBeGreaterThan(nativeTests)
+    expect(transforms).toBeGreaterThan(compatibility)
   })
 })

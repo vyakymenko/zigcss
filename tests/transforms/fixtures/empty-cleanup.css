@@ -1,0 +1,28 @@
+/* structural trivia is not emitted */
+.drop-before {}
+.keep-first {
+  --joined: a/**/b;
+  color: red;
+  color: blue !important;
+}
+.comment-only { /* comment */ }
+.outer-empty {
+  .nested-empty {}
+  @media all { .deeper-empty {} }
+}
+@media screen {
+  .media-empty {}
+  .media-keep { display: grid; }
+  @supports (display: grid) { .supports-empty {} }
+}
+@media print { .only-empty {} }
+@supports (display: grid) { .only-empty {} }
+@container card (width > 1px) { .only-empty {} }
+@starting-style { .only-empty {} }
+@layer reset {}
+@scope (.root) { .scope-empty {} }
+@keyframes pulse {}
+@font-face {}
+@page {}
+@unknown foo { a/**/b }
+.keep-last { width: 1/**/%; }

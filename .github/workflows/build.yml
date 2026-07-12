@@ -94,5 +94,8 @@ jobs:
       - name: Validate emitted CSS independently
         run: npm run test:compat
 
+      - name: Validate transforms independently
+        run: npm run test:transforms
+
       - name: Run Benchmarks
         run: zig build bench

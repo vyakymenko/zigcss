@@ -19,6 +19,7 @@ The rebuilt CSS AST is compilation-owned and intentionally exposed through const
 - In-place mutation, including mutation through `@constCast`, is outside the pass contract. A plan publishes only the final root after every selected pass and validator succeeds.
 - Failed candidates may remain arena-allocated until compilation cleanup, but no failed root is returned or installed. This provides a transaction boundary without unsafe partial rollback.
 - Persistent AST allocations use the compilation arena. Temporary comparison and validation work uses an explicit caller-provided scratch allocator.
+- A deleted rule remains represented as a proof-carrying `omitted_rules` entry on its source `RuleList`. AST validation and emission independently accept only structurally empty style rules and the explicitly authorized empty conditional groups; an arbitrary omitted source range is invalid.
 
 ### Safety classes
 
@@ -72,6 +73,7 @@ Positive consequences:
 Costs and constraints:
 
 - Reconstructing changed paths uses more temporary arena memory than unrestricted in-place mutation.
+- Proof-carrying omissions retain small unreachable-rule paths until compilation cleanup instead of reducing the AST to unauditable deleted byte ranges.
 - Each pass needs dedicated recursive traversal and validation rather than access to a monolithic optimizer.
 - Constness is a contract rather than a language-enforced guarantee against malicious `@constCast`; code review and tests must reject such implementations.
 - Structural equivalence alone is insufficient for every cleanup or rewrite, so some validators require browser computed-style or domain-specific cascade proofs.

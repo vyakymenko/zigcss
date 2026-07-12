@@ -75,7 +75,7 @@ fn emitInternal(
     options: Options,
     source_map_builder: ?*sourcemap.Builder,
 ) Error![]u8 {
-    _ = ast.RuleList.init(rules.span, rules.rules) catch return error.InvalidAst;
+    rules.validate() catch return error.InvalidAst;
     if (!rules.span.source.eql(file.id)) return error.SourceMismatch;
 
     var emitter = Emitter{
@@ -618,20 +618,58 @@ const Emitter = struct {
         top_level: bool,
         allow_nested_declarations: bool,
     ) Error!void {
+        rules.validate() catch return error.InvalidAst;
         _ = try self.raw(rules.span);
         var cursor = rules.span.start;
-        for (rules.rules) |rule| {
-            if (rule == .nested_declarations and !allow_nested_declarations) return error.InvalidAst;
-            const span = rule.span();
-            try validateChildSpan(rules.span, span);
-            if (span.start < cursor) return error.InvalidAst;
+        var rule_index: usize = 0;
+        var omission_index: usize = 0;
+        while (rule_index < rules.rules.len or omission_index < rules.omitted_rules.len) {
+            const take_rule = omission_index == rules.omitted_rules.len or
+                (rule_index < rules.rules.len and
+                    rules.rules[rule_index].span().start <= rules.omitted_rules[omission_index].span().start);
+            const span = if (take_rule)
+                rules.rules[rule_index].span()
+            else
+                rules.omitted_rules[omission_index].span();
             if (!try self.gapAllowed(cursor, span.start, allow_nested_declarations, top_level)) {
                 return error.UnrepresentableRecovery;
             }
             cursor = span.end;
+            if (take_rule) {
+                if (rules.rules[rule_index] == .nested_declarations and !allow_nested_declarations) {
+                    return error.InvalidAst;
+                }
+                rule_index += 1;
+            } else {
+                try self.validateOmittedRule(rules.omitted_rules[omission_index]);
+                omission_index += 1;
+            }
         }
         if (!try self.gapAllowed(cursor, rules.span.end, allow_nested_declarations, top_level)) {
             return error.UnrepresentableRecovery;
+        }
+    }
+
+    fn validateOmittedRule(self: *Emitter, rule: ast.Rule) Error!void {
+        if (!ast.isOmittableRule(rule)) return error.InvalidAst;
+        switch (rule) {
+            .style_rule => |style| {
+                _ = ast.StyleRule.init(style.*) catch return error.InvalidAst;
+                if (!style.block.envelope.terminated()) return error.UnterminatedSyntax;
+                try self.validateDeclarationCoverage(&style.block.declarations);
+                try self.validateRuleCoverage(&style.block.rules, false, true);
+            },
+            .at_rule => |at_rule| {
+                _ = ast.AtRule.init(at_rule.*) catch return error.InvalidAst;
+                if (!structuredDetailsMatch(at_rule)) return error.UnrepresentableRecovery;
+                const block = switch (at_rule.block) {
+                    .rules => |value| value,
+                    else => return error.InvalidAst,
+                };
+                if (!block.envelope.terminated()) return error.UnterminatedSyntax;
+                try self.validateRuleCoverage(&block.rules, false, block.nested);
+            },
+            .nested_declarations => return error.InvalidAst,
         }
     }
 
@@ -1248,6 +1286,55 @@ test "statements empty blocks and formatting options remain deterministic" {
     );
     defer std.testing.allocator.free(empty_output);
     try std.testing.expectEqual(@as(usize, 0), empty_output.len);
+}
+
+test "verified rule omissions emit surviving syntax without treating deletion as recovery" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(&context, "omissions.css", ".empty{} /*between*/ .keep{x:1}");
+    const omission = [_]ast.Rule{parsed[1].rules[0]};
+    const transformed = try ast.RuleList.initWithOmissions(
+        parsed[1].span,
+        parsed[1].rules[1..],
+        &omission,
+    );
+
+    const pretty = try emit(
+        std.testing.allocator,
+        try context.sources.get(parsed[0]),
+        &transformed,
+        .{},
+    );
+    defer std.testing.allocator.free(pretty);
+    const minified = try emit(
+        std.testing.allocator,
+        try context.sources.get(parsed[0]),
+        &transformed,
+        .{ .mode = .minified },
+    );
+    defer std.testing.allocator.free(minified);
+    try std.testing.expectEqualStrings(".keep {\n  x: 1;\n}\n", pretty);
+    try std.testing.expectEqualStrings(".keep{x:1}", minified);
+}
+
+test "rule omission proof cannot hide a nonempty rule" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(&context, "forged-omission.css", ".keep{x:1}");
+    const forged = ast.RuleList{
+        .rules = &.{},
+        .omitted_rules = parsed[1].rules,
+        .span = parsed[1].span,
+    };
+    try std.testing.expectError(
+        error.InvalidAst,
+        emit(
+            std.testing.allocator,
+            try context.sources.get(parsed[0]),
+            &forged,
+            .{ .mode = .minified },
+        ),
+    );
 }
 
 test "minified emission removes only grammar-safe structural whitespace" {

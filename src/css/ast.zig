@@ -553,7 +553,7 @@ pub const StyleBlock = struct {
     ) AstError!StyleBlock {
         _ = try BlockSpan.init(envelope);
         _ = try DeclarationList.init(declarations.span, declarations.declarations);
-        _ = try RuleList.init(rules.span, rules.rules);
+        try rules.validate();
         if (!envelope.content.source.eql(declarations.span.source) or
             !envelope.content.source.eql(rules.span.source) or
             declarations.span.start != envelope.content.start or
@@ -619,21 +619,81 @@ pub const Rule = union(enum) {
 /// Ordered rule storage prevents non-adjacent rules or at-rules from merging.
 pub const RuleList = struct {
     rules: []const Rule,
+    /// Original, structurally empty rules intentionally omitted by a verified
+    /// transform. Keeping the proof AST lets validation and emission reject an
+    /// arbitrary source-range deletion. Parser-produced lists leave this empty.
+    omitted_rules: []const Rule = &.{},
     span: source.Span,
 
     pub fn init(span: source.Span, rules: []const Rule) AstError!RuleList {
+        return initWithOmissions(span, rules, &.{});
+    }
+
+    pub fn initWithOmissions(
+        span: source.Span,
+        rules: []const Rule,
+        omitted_rules: []const Rule,
+    ) AstError!RuleList {
         try validateSpan(span);
+        var rule_index: usize = 0;
+        var omission_index: usize = 0;
         var previous_end = span.start;
-        for (rules) |rule| {
-            const rule_span = rule.span();
-            try validateChild(span, rule_span);
-            if (rule == .nested_declarations) _ = try NestedDeclarationsRule.init(rule.nested_declarations.*);
-            if (rule_span.start < previous_end) return error.InvalidRule;
-            previous_end = rule_span.end;
+        while (rule_index < rules.len or omission_index < omitted_rules.len) {
+            const take_rule = omission_index == omitted_rules.len or
+                (rule_index < rules.len and rules[rule_index].span().start <= omitted_rules[omission_index].span().start);
+            const item_span = if (take_rule) rules[rule_index].span() else omitted_rules[omission_index].span();
+            try validateChild(span, item_span);
+            if (item_span.start < previous_end) return error.InvalidRule;
+            previous_end = item_span.end;
+
+            if (take_rule) {
+                if (rules[rule_index] == .nested_declarations) {
+                    _ = try NestedDeclarationsRule.init(rules[rule_index].nested_declarations.*);
+                }
+                rule_index += 1;
+            } else {
+                try validateOmittedRule(omitted_rules[omission_index]);
+                omission_index += 1;
+            }
         }
-        return .{ .rules = rules, .span = span };
+        return .{ .rules = rules, .omitted_rules = omitted_rules, .span = span };
+    }
+
+    pub fn validate(self: RuleList) AstError!void {
+        _ = try initWithOmissions(self.span, self.rules, self.omitted_rules);
     }
 };
+
+/// The stable omission capability is intentionally narrower than the set of
+/// rule-list blocks understood by the parser. Empty layers and scopes can
+/// carry ordering or future-facing semantics and therefore remain observable.
+pub fn isOmittableRule(rule: Rule) bool {
+    return switch (rule) {
+        .style_rule => |style| style.block.declarations.declarations.len == 0 and
+            style.block.rules.rules.len == 0,
+        .at_rule => |at_rule| isOmittableConditionalName(at_rule.name.value) and switch (at_rule.block) {
+            .rules => |block| block.rules.rules.len == 0,
+            else => false,
+        },
+        .nested_declarations => false,
+    };
+}
+
+fn validateOmittedRule(rule: Rule) AstError!void {
+    if (!isOmittableRule(rule)) return error.InvalidRule;
+    switch (rule) {
+        .style_rule => |style| _ = try StyleRule.init(style.*),
+        .at_rule => |at_rule| _ = try AtRule.init(at_rule.*),
+        .nested_declarations => unreachable,
+    }
+}
+
+pub fn isOmittableConditionalName(name: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(name, "media") or
+        std.ascii.eqlIgnoreCase(name, "supports") or
+        std.ascii.eqlIgnoreCase(name, "container") or
+        std.ascii.eqlIgnoreCase(name, "starting-style");
+}
 
 pub const RulesBlock = struct {
     envelope: BlockSpan,
@@ -653,7 +713,7 @@ pub const RulesBlock = struct {
     fn initMode(envelope: BlockSpan, rules: RuleList, nested: bool) AstError!RulesBlock {
         _ = try BlockSpan.init(envelope);
         if (!spansEqual(envelope.content, rules.span)) return error.InvalidRuleBlock;
-        _ = try RuleList.init(rules.span, rules.rules);
+        try rules.validate();
         if (!nested) for (rules.rules) |rule| {
             if (rule == .nested_declarations) return error.InvalidRuleBlock;
         };
@@ -1413,6 +1473,56 @@ test "rule lists retain style and at-rule order" {
 
     try std.testing.expectEqualStrings("x", rules.rules[0].at_rule.name.value);
     try std.testing.expectEqualStrings("y", rules.rules[1].at_rule.name.value);
+}
+
+test "rule lists validate explicit transform omissions without weakening source order" {
+    const id = source.SourceId{ .value = 42 };
+    const child_rules = try RuleList.init(testSpan(id, 7, 7), &.{});
+    const envelope = try BlockSpan.init(.{
+        .opening = testSpan(id, 6, 7),
+        .content = testSpan(id, 7, 7),
+        .closing = testSpan(id, 7, 8),
+        .span = testSpan(id, 6, 8),
+    });
+    const block = try RulesBlock.init(envelope, child_rules);
+    const prelude = try ComponentValueList.init(testSpan(id, 6, 6), &.{});
+    const media = try AtRule.init(.{
+        .at_sign = testSpan(id, 0, 1),
+        .name = .{ .value = "media", .span = testSpan(id, 1, 6) },
+        .prelude = prelude,
+        .block = .{ .rules = &block },
+        .span = testSpan(id, 0, 8),
+    });
+    const omission = Rule{ .at_rule = &media };
+    const list = try RuleList.initWithOmissions(testSpan(id, 0, 8), &.{}, &.{omission});
+    try list.validate();
+    try std.testing.expectEqual(@as(usize, 1), list.omitted_rules.len);
+    try std.testing.expect(isOmittableRule(list.omitted_rules[0]));
+
+    try std.testing.expectError(
+        error.InvalidRule,
+        RuleList.initWithOmissions(testSpan(id, 0, 8), &.{omission}, &.{omission}),
+    );
+
+    const layer = try AtRule.init(.{
+        .at_sign = media.at_sign,
+        .name = .{ .value = "layer", .span = media.name.span },
+        .prelude = media.prelude,
+        .block = media.block,
+        .span = media.span,
+    });
+    try std.testing.expectError(
+        error.InvalidRule,
+        RuleList.initWithOmissions(testSpan(id, 0, 8), &.{}, &.{.{ .at_rule = &layer }}),
+    );
+    try std.testing.expectError(
+        error.SourceMismatch,
+        RuleList.initWithOmissions(
+            testSpan(.{ .value = 43 }, 0, 8),
+            &.{},
+            &.{omission},
+        ),
+    );
 }
 
 test "block envelopes support bounded EOF recovery and reject gaps" {

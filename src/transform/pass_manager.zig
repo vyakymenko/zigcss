@@ -446,7 +446,7 @@ fn emptyDocumentation(value: []const u8) bool {
 
 fn validateRoot(context: *Context, rules: *const ast.RuleList) Error!void {
     if (!rules.span.source.eql(context.source_id)) return error.InvalidAst;
-    _ = ast.RuleList.init(rules.span, rules.rules) catch return error.InvalidAst;
+    rules.validate() catch return error.InvalidAst;
 }
 
 fn hasErrors(context: *Context) bool {

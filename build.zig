@@ -64,10 +64,25 @@ pub fn build(b: *std.Build) void {
     const run_audit_tests = b.addRunArtifact(audit_tests);
     run_audit_tests.step.dependOn(b.getInstallStep());
 
+    // This executable exposes verified transforms only to differential tests.
+    // It is installed by `zig build test`, never by the normal install step.
+    const transform_driver_module = b.createModule(.{
+        .root_source_file = b.path("tests/transforms/driver.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    transform_driver_module.addImport("zigcss", library_module);
+    const transform_driver = b.addExecutable(.{
+        .name = "zigcss-transform-test-driver",
+        .root_module = transform_driver_module,
+    });
+    const install_transform_driver = b.addInstallArtifact(transform_driver, .{});
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_audit_tests.step);
+    test_step.dependOn(&install_transform_driver.step);
 
     const bench_module = b.addModule("zigcss-bench", .{
         .root_source_file = b.path("src/benchmarks.zig"),
