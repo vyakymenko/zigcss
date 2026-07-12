@@ -4,13 +4,19 @@ const zigcss = @import("zigcss");
 const profiler = @import("profiler.zig");
 const lsp = @import("lsp.zig");
 
+const version = "0.3.0";
 const experimental_notice = "Warning: ZigCSS 0.3 is an experimental recovery build; do not use it for production CSS.\n";
 const unsafe_transforms_message = "legacy and non-verified transform paths are disabled pending safety validation";
 const max_input_bytes = 10 * 1024 * 1024;
+const stdin_source_name = "<stdin>";
+const stdio_path = "-";
+const exit_compile_failure: u8 = 1;
+const exit_usage: u8 = 2;
 
 const CompileConfig = struct {
     input_file: []const u8,
     output_file: ?[]const u8,
+    syntax: zigcss.Syntax,
     optimize: bool,
     minify: bool,
     profile: bool = false,
@@ -19,6 +25,7 @@ const CompileConfig = struct {
 const CompileTask = struct {
     input_file: []const u8,
     output_file: []const u8,
+    syntax: zigcss.Syntax,
     optimize: bool,
     minify: bool,
     result: ?zigcss.CompileResult = null,
@@ -45,6 +52,7 @@ fn compileCss(
     allocator: std.mem.Allocator,
     source_name: []const u8,
     input: []const u8,
+    syntax: zigcss.Syntax,
     optimize: bool,
     minify: bool,
 ) zigcss.CompileError!zigcss.CompileResult {
@@ -53,7 +61,7 @@ fn compileCss(
         source_name,
         input,
         .{
-            .syntax = .css,
+            .syntax = syntax,
             .format = if (minify) .minified else .pretty,
             .transforms = .{ .optimize = optimize },
         },
@@ -91,19 +99,52 @@ fn printDiagnostics(diagnostics: []const zigcss.Diagnostic) void {
     }
 }
 
+fn isStdioPath(path: []const u8) bool {
+    return std.mem.eql(u8, path, stdio_path);
+}
+
+fn inputDisplayName(path: []const u8) []const u8 {
+    return if (isStdioPath(path)) stdin_source_name else path;
+}
+
+fn readInput(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    if (isStdioPath(path)) {
+        return std.fs.File.stdin().readToEndAlloc(allocator, max_input_bytes);
+    }
+    return std.fs.cwd().readFileAlloc(allocator, path, max_input_bytes);
+}
+
+fn writeStdout(bytes: []const u8) !void {
+    var buffer: [4096]u8 = undefined;
+    var writer = std.fs.File.stdout().writer(&buffer);
+    try writer.interface.writeAll(bytes);
+    try writer.interface.flush();
+}
+
+fn writeOutputFile(path: []const u8, bytes: []const u8) !void {
+    std.fs.cwd().writeFile(.{ .sub_path = path, .data = bytes }) catch |err| {
+        std.debug.print("Error: failed to write {s}: {s}\n", .{ path, @errorName(err) });
+        return err;
+    };
+}
+
 fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     var perf_profiler = try profiler.Profiler.init(allocator, config.profile);
     defer perf_profiler.deinit();
 
-    const input = try std.fs.cwd().readFileAlloc(allocator, config.input_file, max_input_bytes);
+    const input = readInput(allocator, config.input_file) catch |err| {
+        std.debug.print("Error: failed to read {s}: {s}\n", .{ inputDisplayName(config.input_file), @errorName(err) });
+        return err;
+    };
     defer allocator.free(input);
 
     var compile_timing = try perf_profiler.startTiming("compile");
     defer compile_timing.end() catch {};
     var result = compileCss(
         allocator,
-        config.input_file,
+        inputDisplayName(config.input_file),
         input,
+        config.syntax,
         config.optimize,
         config.minify,
     ) catch |err| {
@@ -119,15 +160,20 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     }
 
     if (config.output_file) |out| {
-        try std.fs.cwd().writeFile(.{ .sub_path = out, .data = result.css });
-        std.debug.print("Compiled: {s} -> {s}\n", .{ config.input_file, out });
+        if (isStdioPath(out)) {
+            writeStdout(result.css) catch |err| {
+                std.debug.print("Error: failed to write stdout: {s}\n", .{@errorName(err)});
+                return err;
+            };
+        } else {
+            try writeOutputFile(out, result.css);
+            std.debug.print("Compiled: {s} -> {s}\n", .{ config.input_file, out });
+        }
     } else {
-        const stdout_file = std.fs.File.stdout();
-        var stdout_buffer: [1024]u8 = undefined;
-        var stdout_writer = stdout_file.writer(&stdout_buffer);
-        const stdout = &stdout_writer.interface;
-        try stdout.writeAll(result.css);
-        try stdout.flush();
+        writeStdout(result.css) catch |err| {
+            std.debug.print("Error: failed to write stdout: {s}\n", .{@errorName(err)});
+            return err;
+        };
     }
 
     if (config.profile) {
@@ -167,6 +213,7 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
             const temp_config = CompileConfig{
                 .input_file = config.input_file,
                 .output_file = config.output_file,
+                .syntax = config.syntax,
                 .optimize = config.optimize,
                 .minify = config.minify,
                 .profile = config.profile,
@@ -197,6 +244,7 @@ fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
         allocator,
         task.input_file,
         input,
+        task.syntax,
         task.optimize,
         task.minify,
     ) catch |err| {
@@ -231,7 +279,7 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
             printTaskFailure(&tasks[0]);
             return error.CompileError;
         }
-        try std.fs.cwd().writeFile(.{ .sub_path = tasks[0].output_file, .data = tasks[0].result.?.css });
+        try writeOutputFile(tasks[0].output_file, tasks[0].result.?.css);
         std.debug.print("Compiled: {s} -> {s}\n", .{ tasks[0].input_file, tasks[0].output_file });
         return;
     }
@@ -280,7 +328,7 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
     }
 
     for (tasks) |*task| {
-        try std.fs.cwd().writeFile(.{ .sub_path = task.output_file, .data = task.result.?.css });
+        try writeOutputFile(task.output_file, task.result.?.css);
         std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
     }
 }
@@ -499,37 +547,50 @@ fn rejectOutputCollision(collision: OutputCollision) noreturn {
         .output_is_input => std.debug.print("Error: output path resolves to an input: {s}\n", .{collision.path}),
         .duplicate_output => std.debug.print("Error: multiple inputs resolve to the same output: {s}\n", .{collision.path}),
     }
-    std.process.exit(2);
+    std.process.exit(exit_usage);
 }
 
 fn exitWithCliError(comptime format: []const u8, values: anytype) noreturn {
     std.debug.print("Error: " ++ format ++ "\n", values);
-    std.process.exit(2);
+    std.process.exit(exit_usage);
 }
 
 fn requireOptionValue(args: []const []const u8, index: usize, option: []const u8) []const u8 {
-    if (index + 1 >= args.len or args[index + 1].len == 0 or args[index + 1][0] == '-') {
+    if (index + 1 >= args.len) exitWithCliError("{s} requires a value", .{option});
+    const value = args[index + 1];
+    if (value.len == 0 or (value[0] == '-' and !isStdioPath(value))) {
         exitWithCliError("{s} requires a value", .{option});
     }
-    return args[index + 1];
+    return value;
 }
 
-fn printUsage() void {
-    std.debug.print("ZigCSS 0.3 recovery CLI — EXPERIMENTAL, not production-ready\n\n", .{});
-    std.debug.print("Usage: zigcss <input.css> [-o output.css] [options]\n", .{});
-    std.debug.print("       zigcss <input1.css> <input2.css> ... -o <output-dir> --output-dir [options]\n", .{});
-    std.debug.print("       zigcss --lsp          Start experimental Language Server Protocol server\n", .{});
-    std.debug.print("\nAvailable options:\n", .{});
-    std.debug.print("  -o, --output <path>      Output file, or directory with --output-dir\n", .{});
-    std.debug.print("  --output-dir             Require batch output under the -o directory\n", .{});
-    std.debug.print("  --minify                 Emit compact whitespace (independent of --optimize)\n", .{});
-    std.debug.print("  --optimize               Run the closed verified optimizer preset\n", .{});
-    std.debug.print("  --watch                  Watch one input file\n", .{});
-    std.debug.print("  --profile                Time the end-to-end public compile call\n", .{});
-    std.debug.print("  --lsp                    Start the experimental LSP server\n", .{});
-    std.debug.print("  -h, --help               Show this help\n", .{});
-    std.debug.print("\nUnavailable and rejected during recovery:\n", .{});
-    std.debug.print("  --source-map, --autoprefix, --browsers, --critical-*\n", .{});
+fn printUsage() !void {
+    try writeStdout(
+        "ZigCSS 0.3 recovery CLI — EXPERIMENTAL, not production-ready\n\n" ++
+            "Usage: zigcss <input.css|-> [-o <output.css|->] [options]\n" ++
+            "       zigcss <input1.css> <input2.css> ... -o <output-dir> --output-dir [options]\n" ++
+            "       zigcss --lsp          Start experimental Language Server Protocol server\n" ++
+            "\nAvailable options:\n" ++
+            "  -o, --output <path|->    Output file/stdout, or directory with --output-dir\n" ++
+            "  --output-dir             Require batch output under the -o directory\n" ++
+            "  --syntax <css>           Select CSS input syntax (default: css)\n" ++
+            "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
+            "  --optimize               Run the closed verified optimizer preset\n" ++
+            "  --watch                  Watch one input file\n" ++
+            "  --profile                Time the end-to-end public compile call\n" ++
+            "  --lsp                    Start the experimental LSP server\n" ++
+            "  -V, --version            Show the package version\n" ++
+            "  -h, --help               Show this help\n" ++
+            "\nExit status: 0 success/info, 1 compilation or I/O failure, 2 usage error.\n" ++
+            "\nUnavailable and rejected during recovery:\n" ++
+            "  --source-map, --autoprefix, --browsers, --critical-*\n",
+    );
+}
+
+fn printVersion() !void {
+    var buffer: [64]u8 = undefined;
+    const rendered = try std.fmt.bufPrint(&buffer, "zigcss {s}\n", .{version});
+    try writeStdout(rendered);
 }
 
 fn determineOutputFile(allocator: std.mem.Allocator, input_file: []const u8, output_dir: ?[]const u8, output_file: ?[]const u8) ![]const u8 {
@@ -579,15 +640,22 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
+    if (args.len < 2) exitWithCliError("no input files specified; use --help for usage", .{});
+
+    if (std.mem.eql(u8, args[1], "-h") or std.mem.eql(u8, args[1], "--help")) {
+        if (args.len != 2) exitWithCliError("--help does not accept additional arguments", .{});
+        try printUsage();
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "-V") or std.mem.eql(u8, args[1], "--version")) {
+        if (args.len != 2) exitWithCliError("--version does not accept additional arguments", .{});
+        try printVersion();
+        return;
+    }
     if (args.len >= 2 and (std.mem.eql(u8, args[1], "--lsp") or std.mem.eql(u8, args[1], "-lsp"))) {
         if (args.len != 2) exitWithCliError("--lsp does not accept additional arguments", .{});
         std.debug.print("{s}", .{experimental_notice});
         try runLspServer(allocator);
-        return;
-    }
-
-    if (args.len < 2) {
-        printUsage();
         return;
     }
 
@@ -601,6 +669,8 @@ pub fn main() !void {
     
     var output_file: ?[]const u8 = null;
     var output_dir_flag = false;
+    var syntax: zigcss.Syntax = .css;
+    var syntax_flag_set = false;
     var optimize_flag = false;
     var minify_flag = false;
     var watch_flag = false;
@@ -615,18 +685,28 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, args[i], "--output-dir")) {
             if (output_dir_flag) exitWithCliError("--output-dir may only be specified once", .{});
             output_dir_flag = true;
+        } else if (std.mem.eql(u8, args[i], "--syntax")) {
+            if (syntax_flag_set) exitWithCliError("--syntax may only be specified once", .{});
+            const value = requireOptionValue(args, i, args[i]);
+            if (!std.mem.eql(u8, value, "css")) exitWithCliError("unsupported syntax: {s}", .{value});
+            syntax = .css;
+            syntax_flag_set = true;
+            i += 1;
         } else if (std.mem.eql(u8, args[i], "--optimize")) {
             if (optimize_flag) exitWithCliError("--optimize may only be specified once", .{});
             optimize_flag = true;
         } else if (std.mem.eql(u8, args[i], "--minify")) {
+            if (minify_flag) exitWithCliError("--minify may only be specified once", .{});
             minify_flag = true;
         } else if (std.mem.eql(u8, args[i], "--source-map")) {
             exitWithCliError("--source-map is unavailable until the CLI output policy is defined", .{});
         } else if (std.mem.eql(u8, args[i], "--watch")) {
+            if (watch_flag) exitWithCliError("--watch may only be specified once", .{});
             watch_flag = true;
         } else if (std.mem.eql(u8, args[i], "--autoprefix")) {
             exitWithCliError("--autoprefix is unavailable: {s}", .{unsafe_transforms_message});
         } else if (std.mem.eql(u8, args[i], "--profile")) {
+            if (profile_flag) exitWithCliError("--profile may only be specified once", .{});
             profile_flag = true;
         } else if (std.mem.eql(u8, args[i], "--browsers")) {
             _ = requireOptionValue(args, i, args[i]);
@@ -638,8 +718,12 @@ pub fn main() !void {
             _ = requireOptionValue(args, i, args[i]);
             exitWithCliError("{s} is unavailable in the recovery CLI; conservative extraction remains library/test-driver only", .{args[i]});
         } else if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
-            printUsage();
-            return;
+            exitWithCliError("--help must be used alone", .{});
+        } else if (std.mem.eql(u8, args[i], "-V") or std.mem.eql(u8, args[i], "--version")) {
+            exitWithCliError("--version must be used alone", .{});
+        } else if (isStdioPath(args[i])) {
+            const path_copy = try allocator.dupe(u8, args[i]);
+            try input_files.append(allocator, path_copy);
         } else if (args[i].len == 0) {
             exitWithCliError("empty arguments are not valid input paths", .{});
         } else if (args[i][0] != '-') {
@@ -659,9 +743,22 @@ pub fn main() !void {
         }
     }
 
-    if (input_files.items.len == 0) {
-        std.debug.print("Error: No input files specified\n", .{});
-        std.process.exit(1);
+    if (input_files.items.len == 0) exitWithCliError("no input files specified", .{});
+
+    var stdin_inputs: usize = 0;
+    for (input_files.items) |input_file| {
+        if (isStdioPath(input_file)) stdin_inputs += 1;
+    }
+    if (stdin_inputs > 1) exitWithCliError("stdin may only be specified once", .{});
+    if (stdin_inputs == 1 and input_files.items.len != 1) {
+        exitWithCliError("stdin cannot be combined with file or batch inputs", .{});
+    }
+    if (stdin_inputs == 1 and watch_flag) exitWithCliError("--watch requires a file input", .{});
+    if (watch_flag and input_files.items.len != 1) {
+        exitWithCliError("--watch supports exactly one file", .{});
+    }
+    if (profile_flag and input_files.items.len > 1) {
+        exitWithCliError("--profile supports exactly one input", .{});
     }
 
     if (output_dir_flag and input_files.items.len < 2) {
@@ -673,8 +770,12 @@ pub fn main() !void {
     if (output_dir_flag and output_file == null) {
         exitWithCliError("--output-dir requires -o or --output", .{});
     }
+    if (output_dir_flag and isStdioPath(output_file.?)) {
+        exitWithCliError("--output-dir cannot write to stdout", .{});
+    }
 
     for (input_files.items) |input_file| {
+        if (isStdioPath(input_file)) continue;
         if (experimentalFormatName(input_file)) |format_name| {
             exitWithCliError(
                 "{s} format adapter is experimental and unavailable in the recovery CLI",
@@ -687,21 +788,20 @@ pub fn main() !void {
 
     if (input_files.items.len == 1) {
         if (output_file) |out| {
-            const planned_outputs = [_][]const u8{out};
-            if (try findOutputCollision(allocator, input_files.items, &planned_outputs)) |collision| {
-                rejectOutputCollision(collision);
+            if (!isStdioPath(input_files.items[0]) and !isStdioPath(out)) {
+                const planned_outputs = [_][]const u8{out};
+                if (try findOutputCollision(allocator, input_files.items, &planned_outputs)) |collision| {
+                    rejectOutputCollision(collision);
+                }
             }
         }
     }
 
     if (watch_flag) {
-        if (input_files.items.len > 1) {
-            std.debug.print("Error: Watch mode only supports single file\n", .{});
-            std.process.exit(1);
-        }
         const config = CompileConfig{
             .input_file = input_files.items[0],
             .output_file = output_file,
+            .syntax = syntax,
             .optimize = optimize_flag,
             .minify = minify_flag,
             .profile = profile_flag,
@@ -711,12 +811,13 @@ pub fn main() !void {
         const config = CompileConfig{
             .input_file = input_files.items[0],
             .output_file = output_file,
+            .syntax = syntax,
             .optimize = optimize_flag,
             .minify = minify_flag,
             .profile = profile_flag,
         };
         compileFile(allocator, config) catch {
-            std.process.exit(1);
+            std.process.exit(exit_compile_failure);
         };
     } else {
         const output_dir: ?[]const u8 = if (output_dir_flag or output_file != null) output_file else null;
@@ -736,6 +837,7 @@ pub fn main() !void {
             try tasks.append(allocator, CompileTask{
                 .input_file = input,
                 .output_file = out_file,
+                .syntax = syntax,
                 .optimize = optimize_flag,
                 .minify = minify_flag,
             });
@@ -755,7 +857,7 @@ pub fn main() !void {
         }
         
         compileFilesParallel(allocator, tasks.items) catch {
-            std.process.exit(1);
+            std.process.exit(exit_compile_failure);
         };
     }
 }

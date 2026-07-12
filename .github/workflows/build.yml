@@ -100,6 +100,9 @@ jobs:
       - name: Verify Zig package metadata
         run: npm run test:zig-package
 
+      - name: Verify npm CLI wrapper
+        run: npm run test:node-wrapper
+
       - name: Test Zig package consumer
         working-directory: tests/package-consumer
         run: zig build test --summary all

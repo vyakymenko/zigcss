@@ -8,14 +8,23 @@ All supported CSS modes delegate to one public `zigcss.compile` call site. The C
 
 | Option | Behavior |
 |---|---|
-| `-o`, `--output <path>` | Write one output file, or name the destination directory with `--output-dir`. |
+| input `-` | Read one bounded CSS input from stdin and report its source as `<stdin>`. It cannot participate in batch or watch mode. |
+| `-o`, `--output <path or ->` | Write one output file, select stdout with `-`, or name the destination directory with `--output-dir`. |
 | `--output-dir` | Enable explicit multi-input output planning. It requires multiple inputs and `-o`. |
+| `--syntax css` | Select the only supported stable syntax explicitly; CSS is also the default. Other values fail as usage errors. |
 | `--minify` | Emit compact whitespace; this is independent of `--optimize`. |
 | `--optimize` | Run the closed verified cleanup/semantic preset to a bounded byte-stable fixed point. |
 | `--watch` | Recompile one input when its content changes. |
 | `--profile` | Print one end-to-end public compile-call timing; accurate internal stage and allocator metrics belong to `PROF-010`. |
 | `--lsp` | Start the experimental language server. |
+| `-V`, `--version` | Print the package-synchronized version to stdout. |
 | `-h`, `--help` | Print the current contract. |
+
+Every boolean or valued option may appear at most once. Help and version must be used alone. Stdin may appear once and only as the sole input; `--watch` requires a file, `--profile` requires one input, and batch output cannot be stdout. No option is silently ignored.
+
+## Streams and exit status
+
+With no `-o`, one file or stdin emits CSS to stdout. `-o -` requests stdout explicitly; `-o <path>` writes a file. Help/version and successful compilation exit `0`. Parser/transform diagnostics and operational read/write failures exit `1`. Missing input or values, unknown/duplicate/unavailable flags, unsupported syntax, and incoherent stream/batch/watch combinations exit `2`. Informational text and CSS use stdout; warnings, diagnostics, and usage errors use stderr. The npm launcher inherits all three streams, propagates exact native exit codes, and re-raises POSIX termination signals.
 
 ## Explicitly unavailable
 
@@ -31,7 +40,7 @@ The recovery CLI also rejects legacy preprocessor and alternate-format extension
 
 ## Output safety
 
-Before reading and compiling inputs, the CLI plans destinations and rejects paths that resolve to an input, including relative aliases, symlinks, and hard links. It also rejects duplicate batch destinations.
+Before reading and compiling inputs, the CLI plans file destinations and rejects paths that resolve to an input, including relative aliases, symlinks, and hard links. It also rejects duplicate batch destinations. The `-` stream sentinel is never treated as a filesystem path.
 
 Valid inputs are parsed completely before emission. Structured parser diagnostics include the input name, line, column, and code; failed single or batch compilation writes no partial CSS. Optimized fixed-point rounds are reparsed without recovery before any final write.
 

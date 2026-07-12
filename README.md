@@ -129,9 +129,11 @@ npm run test:transforms
 
 Run `zig-out/bin/zigcss --help` for the authoritative option list.
 
-Available recovery options include output selection, explicit batch output planning, whitespace-only `--minify`, the closed verified `--optimize` preset, single-file `--watch`, and `--profile`. The experimental `--lsp` server is separately labeled.
+Available recovery options include file or bounded stdin input (`-`), file or stdout output (`-`), explicit `--syntax css`, output selection, explicit batch output planning, whitespace-only `--minify`, the closed verified `--optimize` preset, single-file `--watch`, `--profile`, and synchronized `--version`. The experimental `--lsp` server is separately labeled.
 
 Single-file, watch, and batch CSS compilation all construct public `CompileOptions` and consume owned `CompileResult` values from one `zigcss.compile` call site. The executable retains argument parsing, path planning, file I/O, diagnostic rendering, and writes; it has no runtime import or parallel implementation of the parser, emitter, optimizer, alternate-format adapters, or autoprefixer.
+
+Informational commands and successful compilation exit `0`. CSS diagnostics and operational I/O failures exit `1`; invalid, duplicate, missing, unavailable, or incoherent arguments exit `2`. Help and version text use stdout, while diagnostics, warnings, and usage errors use stderr. Stdin is single-input only and cannot be watched or mixed into batch mode; batch output cannot target stdout. The npm launcher inherits stdin/stdout/stderr, preserves all native exit codes, and re-raises POSIX termination signals instead of reporting false success.
 
 Unavailable options—`--source-map`, `--autoprefix`, `--browsers`, and `--critical-*`—are rejected with an explanation. Unknown and malformed arguments are also rejected.
 

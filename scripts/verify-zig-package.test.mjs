@@ -31,6 +31,7 @@ function filesRecursive(directory) {
 test('Zig package identity version and minimum toolchain are pinned', () => {
   const manifest = read('build.zig.zon')
   const npmManifest = JSON.parse(read('package.json'))
+  const main = read('src/main.zig')
 
   assert.match(manifest, /\.name\s*=\s*\.zigcss,/)
   assert.match(
@@ -40,6 +41,7 @@ test('Zig package identity version and minimum toolchain are pinned', () => {
   assert.equal(field(manifest, 'version'), npmManifest.version)
   assert.equal(field(manifest, 'minimum_zig_version'), '0.15.2')
   assert.match(manifest, /\.dependencies\s*=\s*\.\{\},/)
+  assert.match(main, new RegExp(`const version = "${npmManifest.version.replaceAll('.', '\\.')}";`))
 })
 
 test('Zig package contents are an explicit minimal allowlist', () => {
@@ -130,6 +132,7 @@ test('the installed executable delegates CSS compilation to the public facade', 
   assert.match(build, /executable_module\.addImport\("zigcss", library_module\)/)
   assert.match(build, /test_module\.addImport\("zigcss", library_module\)/)
   assert.match(build, /audit_test_module\.addImport\("zigcss", library_module\)/)
+  assert.match(read('.github/workflows/build.yml'), /npm run test:node-wrapper/)
 })
 
 test('active source and CI surfaces agree on the Zig 0.15.2 baseline', () => {

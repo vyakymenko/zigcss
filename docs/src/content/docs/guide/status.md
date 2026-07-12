@@ -6,7 +6,7 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 
 | Surface | Status | Current behavior |
 |---|---|---|
-| CSS CLI parsing and emission | Experimental, matrix-tested | The stable CLI delegates to `zigcss.compile` over the new source/token/syntax/typed-parser pipeline; its grammar boundary is published and independently parsed. |
+| CSS CLI parsing and emission | Experimental, matrix-tested | Strict file/stdin and file/stdout modes delegate to `zigcss.compile`; version/syntax/options and 0/1/2 exit statuses are executable contracts. |
 | Zig compile API | Experimental, consumer-tested | `zigcss.compile` returns owned CSS/maps, located diagnostics, ordered decoded imports, and optional module-export state; accepted transforms and borrowed canonical targets are explicit options. |
 | Zig package metadata | Experimental, consumer-tested | Package `zigcss` 0.3.0 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`. |
 | Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` uses declared lazy file inputs/outputs and a host compiler artifact; unavailable CLI features are not represented. |
@@ -25,7 +25,7 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 
 ## Current boundaries
 
-The stable CLI no longer consumes the inherited byte parser or duplicates the rebuilt pipeline. Single-file, watch, and batch compilation construct public options and consume owned results through one `zigcss.compile` call site; runtime code retains only argument parsing, path planning, file I/O, diagnostic rendering, and writes. Its typed and lossless grammar boundary is listed in the [CSS compatibility matrix](/guide/css-compatibility), and every emitting fixture is checked in pretty and minified modes by an independent parser with recovery disabled.
+The stable CLI no longer consumes the inherited byte parser or duplicates the rebuilt pipeline. Single-file, watch, and batch compilation construct public options and consume owned results through one `zigcss.compile` call site; runtime code retains only argument parsing, path planning, file I/O, diagnostic rendering, and writes. File or bounded stdin input and file or stdout output are explicit; stdin cannot be watched or batched. `--syntax` currently accepts only CSS, `--version` is synchronized to package metadata, every option is non-repeatable, and exit statuses distinguish success/info (`0`), compilation/I/O failure (`1`), and usage/configuration failure (`2`). Its typed and lossless grammar boundary is listed in the [CSS compatibility matrix](/guide/css-compatibility), and every emitting fixture is checked in pretty and minified modes by an independent parser with recovery disabled.
 
 The build registers `src/lib.zig` as the external `zigcss` module. A separate consumer test imports that name rather than testing from inside the root, then calls the owned high-level compile facade. Results retain CSS, optional map bytes, source names and line/column locations for diagnostics, ordered decoded top-level `@import` dependencies, and optional module-export state after compilation cleanup. Duplicate imports remain ordered; malformed or dynamic import preludes do not become guessed dependencies; count/owned-byte limits fail with a structured resource diagnostic and no partial facts.
 

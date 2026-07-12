@@ -20,6 +20,46 @@ fn runInDir(dir: std.fs.Dir, argv_tail: []const []const u8) !Child.RunResult {
     });
 }
 
+fn runWithStdinInDir(
+    cwd_dir: ?std.fs.Dir,
+    argv_tail: []const []const u8,
+    input: []const u8,
+) !Child.RunResult {
+    const argv = try allocator.alloc([]const u8, argv_tail.len + 1);
+    defer allocator.free(argv);
+    argv[0] = audit_options.compiler_path;
+    @memcpy(argv[1..], argv_tail);
+
+    var child = Child.init(argv, allocator);
+    child.stdin_behavior = .Pipe;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    child.cwd_dir = cwd_dir;
+    try child.spawn();
+    errdefer _ = child.kill() catch {};
+
+    try child.stdin.?.writeAll(input);
+    child.stdin.?.close();
+    child.stdin = null;
+
+    var stdout: std.ArrayList(u8) = .empty;
+    defer stdout.deinit(allocator);
+    var stderr: std.ArrayList(u8) = .empty;
+    defer stderr.deinit(allocator);
+    try child.collectOutput(allocator, &stdout, &stderr, 1024 * 1024);
+    const term = try child.wait();
+
+    return .{
+        .term = term,
+        .stdout = try stdout.toOwnedSlice(allocator),
+        .stderr = try stderr.toOwnedSlice(allocator),
+    };
+}
+
+fn runWithStdin(argv_tail: []const []const u8, input: []const u8) !Child.RunResult {
+    return runWithStdinInDir(null, argv_tail, input);
+}
+
 fn runCompilerNamed(filename: []const u8, input: []const u8, extra_args: []const []const u8) !Child.RunResult {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -58,6 +98,13 @@ fn expectSuccess(result: Child.RunResult) !void {
 fn expectFailureContaining(result: Child.RunResult, expected: []const u8) !void {
     try std.testing.expect(!succeeded(result.term));
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, expected) != null);
+}
+
+fn expectExitCode(result: Child.RunResult, expected: u8) !void {
+    switch (result.term) {
+        .Exited => |actual| try std.testing.expectEqual(expected, actual),
+        else => try std.testing.expect(false),
+    }
 }
 
 fn expectNonVerifiedTransformsDisabled(result: Child.RunResult) !void {
@@ -199,6 +246,7 @@ test "stable CLI reports structured parser diagnostics without partial CSS" {
     defer deinitRun(&result);
 
     try expectFailureContaining(result, "broken.css:1:4: error CSS0007");
+    try expectExitCode(result, 1);
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
 }
 
@@ -379,7 +427,151 @@ test "CLI strictness: unavailable source maps are rejected explicitly (CLI-002)"
     defer deinitRun(&result);
 
     try expectFailureContaining(result, "--source-map is unavailable");
+    try expectExitCode(result, 2);
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
+}
+
+test "CLI informational and failure modes have stable streams and exit codes (CLI-011)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var help = try runInDir(tmp.dir, &.{"--help"});
+    defer deinitRun(&help);
+    try expectExitCode(help, 0);
+    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "Usage: zigcss") != null);
+    try std.testing.expectEqual(@as(usize, 0), help.stderr.len);
+
+    var version = try runInDir(tmp.dir, &.{"--version"});
+    defer deinitRun(&version);
+    try expectExitCode(version, 0);
+    try std.testing.expectEqualStrings("zigcss 0.3.0\n", version.stdout);
+    try std.testing.expectEqual(@as(usize, 0), version.stderr.len);
+
+    var no_input = try runInDir(tmp.dir, &.{});
+    defer deinitRun(&no_input);
+    try expectExitCode(no_input, 2);
+    try std.testing.expectEqual(@as(usize, 0), no_input.stdout.len);
+    try std.testing.expect(std.mem.indexOf(u8, no_input.stderr, "no input") != null);
+
+    var mixed_version = try runInDir(tmp.dir, &.{ "--version", "input.css" });
+    defer deinitRun(&mixed_version);
+    try expectExitCode(mixed_version, 2);
+    try std.testing.expectEqual(@as(usize, 0), mixed_version.stdout.len);
+
+    var missing_file = try runInDir(tmp.dir, &.{"missing.css"});
+    defer deinitRun(&missing_file);
+    try expectExitCode(missing_file, 1);
+    try std.testing.expect(std.mem.indexOf(u8, missing_file.stderr, "failed to read missing.css") != null);
+
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = ".a{x:1}" });
+    try tmp.dir.makeDir("blocked-output");
+    var write_failure = try runInDir(tmp.dir, &.{ "input.css", "-o", "blocked-output" });
+    defer deinitRun(&write_failure);
+    try expectExitCode(write_failure, 1);
+    try std.testing.expect(std.mem.indexOf(u8, write_failure.stderr, "failed to write blocked-output") != null);
+}
+
+test "CLI syntax selection is explicit bounded and non-repeatable (CLI-011)" {
+    const input = @embedFile("fixtures/simple.css");
+    var css = try runCompiler(input, &.{ "--syntax", "css", "--minify" });
+    defer deinitRun(&css);
+    try expectSuccess(css);
+    try std.testing.expectEqualStrings(".simple{color:red}", css.stdout);
+
+    var missing = try runCompiler(input, &.{"--syntax"});
+    defer deinitRun(&missing);
+    try expectExitCode(missing, 2);
+    try std.testing.expect(std.mem.indexOf(u8, missing.stderr, "--syntax requires a value") != null);
+
+    var unsupported = try runCompiler(input, &.{ "--syntax", "scss" });
+    defer deinitRun(&unsupported);
+    try expectExitCode(unsupported, 2);
+    try std.testing.expect(std.mem.indexOf(u8, unsupported.stderr, "unsupported syntax: scss") != null);
+    try std.testing.expectEqual(@as(usize, 0), unsupported.stdout.len);
+
+    var duplicate = try runCompiler(input, &.{ "--syntax", "css", "--syntax", "css" });
+    defer deinitRun(&duplicate);
+    try expectExitCode(duplicate, 2);
+    try std.testing.expect(std.mem.indexOf(u8, duplicate.stderr, "--syntax may only be specified once") != null);
+
+    var duplicate_minify = try runCompiler(input, &.{ "--minify", "--minify" });
+    defer deinitRun(&duplicate_minify);
+    try expectExitCode(duplicate_minify, 2);
+    try std.testing.expect(std.mem.indexOf(u8, duplicate_minify.stderr, "--minify may only be specified once") != null);
+
+    var duplicate_watch = try runCompiler(input, &.{ "--watch", "--watch" });
+    defer deinitRun(&duplicate_watch);
+    try expectExitCode(duplicate_watch, 2);
+    try std.testing.expect(std.mem.indexOf(u8, duplicate_watch.stderr, "--watch may only be specified once") != null);
+
+    var duplicate_profile = try runCompiler(input, &.{ "--profile", "--profile" });
+    defer deinitRun(&duplicate_profile);
+    try expectExitCode(duplicate_profile, 2);
+    try std.testing.expect(std.mem.indexOf(u8, duplicate_profile.stderr, "--profile may only be specified once") != null);
+}
+
+test "CLI stdin and explicit stdout share the public compile contract (CLI-011)" {
+    const input = ".stream { width: calc(1px + 2px); color: #ffffff; }";
+    var stream = try runWithStdin(&.{ "-", "--syntax", "css", "--optimize", "--minify" }, input);
+    defer deinitRun(&stream);
+    try expectExitCode(stream, 0);
+    try std.testing.expectEqualStrings(".stream{width:3px;color:#fff}", stream.stdout);
+    try std.testing.expect(std.mem.indexOf(u8, stream.stderr, "experimental recovery build") != null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "input.css", .data = input });
+    var explicit_stdout = try runInDir(tmp.dir, &.{ "input.css", "-o", "-", "--minify" });
+    defer deinitRun(&explicit_stdout);
+    try expectExitCode(explicit_stdout, 0);
+    try std.testing.expectEqualStrings(".stream{width:calc(1px + 2px);color:#ffffff}", explicit_stdout.stdout);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("-", .{}));
+
+    var to_file = try runWithStdinInDir(tmp.dir, &.{ "-", "-o", "stream.css", "--minify" }, input);
+    defer deinitRun(&to_file);
+    try expectExitCode(to_file, 0);
+    try std.testing.expectEqual(@as(usize, 0), to_file.stdout.len);
+    const written = try tmp.dir.readFileAlloc(allocator, "stream.css", 1024);
+    defer allocator.free(written);
+    try std.testing.expectEqualStrings(".stream{width:calc(1px + 2px);color:#ffffff}", written);
+}
+
+test "CLI stream diagnostics and incompatible modes fail without output (CLI-011)" {
+    var broken = try runWithStdin(&.{ "-", "--minify" }, ".a{broken;color:red}");
+    defer deinitRun(&broken);
+    try expectExitCode(broken, 1);
+    try std.testing.expectEqual(@as(usize, 0), broken.stdout.len);
+    try std.testing.expect(std.mem.indexOf(u8, broken.stderr, "<stdin>:1:4: error CSS0007") != null);
+
+    var mixed = try runWithStdin(&.{ "-", "input.css", "-o", "out", "--output-dir" }, ".a{x:1}");
+    defer deinitRun(&mixed);
+    try expectExitCode(mixed, 2);
+    try std.testing.expectEqual(@as(usize, 0), mixed.stdout.len);
+
+    var watched = try runWithStdin(&.{ "-", "--watch" }, ".a{x:1}");
+    defer deinitRun(&watched);
+    try expectExitCode(watched, 2);
+    try std.testing.expectEqual(@as(usize, 0), watched.stdout.len);
+
+    var duplicate_stdin = try runWithStdin(&.{ "-", "-", "-o", "out", "--output-dir" }, ".a{x:1}");
+    defer deinitRun(&duplicate_stdin);
+    try expectExitCode(duplicate_stdin, 2);
+    try std.testing.expect(std.mem.indexOf(u8, duplicate_stdin.stderr, "stdin may only be specified once") != null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "one.css", .data = ".one{x:1}" });
+    try tmp.dir.writeFile(.{ .sub_path = "two.css", .data = ".two{x:2}" });
+    var batch_stdout = try runInDir(tmp.dir, &.{ "one.css", "two.css", "-o", "-", "--output-dir" });
+    defer deinitRun(&batch_stdout);
+    try expectExitCode(batch_stdout, 2);
+    try std.testing.expect(std.mem.indexOf(u8, batch_stdout.stderr, "--output-dir cannot write to stdout") != null);
+    try std.testing.expectEqual(@as(usize, 0), batch_stdout.stdout.len);
+
+    var batch_profile = try runInDir(tmp.dir, &.{ "one.css", "two.css", "-o", "out", "--output-dir", "--profile" });
+    defer deinitRun(&batch_profile);
+    try expectExitCode(batch_profile, 2);
+    try std.testing.expect(std.mem.indexOf(u8, batch_profile.stderr, "--profile supports exactly one input") != null);
 }
 
 test "target prefix CLI remains separate from the verified optimizer preset" {
@@ -479,6 +671,9 @@ test "CLI strictness: unknown flags and missing values are rejected (CLI-002)" {
     try expectFailureContaining(unknown, "unknown option: --definitely-unknown");
     try expectFailureContaining(missing, "-o requires a value");
     try expectFailureContaining(duplicate_optimize, "--optimize may only be specified once");
+    try expectExitCode(unknown, 2);
+    try expectExitCode(missing, 2);
+    try expectExitCode(duplicate_optimize, 2);
     try std.testing.expectEqual(@as(usize, 0), unknown.stdout.len);
     try std.testing.expectEqual(@as(usize, 0), missing.stdout.len);
     try std.testing.expectEqual(@as(usize, 0), duplicate_optimize.stdout.len);
@@ -521,8 +716,9 @@ test "recovery CLI identifies the current compiler as experimental (SAFE-001)" {
     var help = try runInDir(tmp.dir, &.{"--help"});
     defer deinitRun(&help);
     try expectSuccess(help);
-    try std.testing.expect(std.mem.indexOf(u8, help.stderr, "EXPERIMENTAL") != null);
-    try std.testing.expect(std.mem.indexOf(u8, help.stderr, "--optimize               Run the closed verified optimizer preset") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "EXPERIMENTAL") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "--optimize               Run the closed verified optimizer preset") != null);
+    try std.testing.expectEqual(@as(usize, 0), help.stderr.len);
 
     var compile = try runCompiler(@embedFile("fixtures/simple.css"), &.{"--minify"});
     defer deinitRun(&compile);

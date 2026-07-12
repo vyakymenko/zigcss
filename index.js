@@ -17,8 +17,16 @@ const child = spawn(binPath, args, {
   cwd: process.cwd()
 });
 
-child.on('exit', (code) => {
-  process.exit(code || 0);
+child.on('exit', (code, signal) => {
+  if (signal) {
+    try {
+      process.kill(process.pid, signal);
+    } catch {
+      process.exit(1);
+    }
+    return;
+  }
+  process.exit(code ?? 1);
 });
 
 child.on('error', (err) => {

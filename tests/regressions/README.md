@@ -27,6 +27,6 @@ The legacy code-generator transform fields remain active containment assertions 
 | Browser-target prefix behavior | Verified at the library/test-driver boundary by `PREFIX-001` and `PREFIX-002`; stable target flags remain explicitly unavailable via `CLI-002` and are not part of `--optimize` | Later public API/CLI wiring |
 | Dead-code and critical-CSS selector filtering | Verified as two bounded experimental library/test-driver modes by `TREE-001`; extraction flags remain unavailable via `CLI-002` and are not part of `--optimize` | Later public API/CLI wiring and matrix expansion |
 | Input overwrite and batch output collision | Verified by `CLI-001` | `CLI-012` later adds atomic writes and final naming policy. |
-| Unknown flags and missing flag values | Verified by `CLI-002` | `CLI-011` later owns the final public option contract. |
+| Unknown flags and missing flag values | Verified by `CLI-002`; strict duplicate/syntax/stream/version/exit contracts are finalized by `CLI-011` | `CLI-011` |
 
 Static traversal, malformed URL handling, and compile-service containment are active passing assertions in `docs/src/server.test.ts` because `SEC-001` is verified and the public compile service is disabled pending `SEC-002`.
