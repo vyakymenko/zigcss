@@ -52,6 +52,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    lsp_test_module.addImport("zigcss", library_module);
     const lsp_tests = b.addTest(.{ .root_module = lsp_test_module });
     const run_lsp_tests = b.addRunArtifact(lsp_tests);
 

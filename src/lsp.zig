@@ -1,7 +1,6 @@
 const std = @import("std");
-const parser = @import("parser.zig");
+const compiler = @import("zigcss");
 const formats = @import("formats.zig");
-const error_module = @import("error.zig");
 const lsp_position = @import("lsp_position.zig");
 
 const unsupported_format_message = "Unsupported or removed stylesheet format";
@@ -184,6 +183,10 @@ pub const LspServer = struct {
                 success = false;
                 try writeErrorField(&json, -32602, "Invalid params");
             },
+            error.RequestFailed => {
+                success = false;
+                try writeErrorField(&json, -32803, "Request failed");
+            },
             else => return err,
         };
         try json.endObject();
@@ -198,8 +201,8 @@ pub const LspServer = struct {
     ) !void {
         if (std.mem.eql(u8, method, "initialize")) {
             try self.handleInitialize(json, root);
-        } else if (std.mem.eql(u8, method, "textDocument/diagnostics")) {
-            try self.handleDiagnostics(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/diagnostic")) {
+            try self.handleDocumentDiagnostic(json, root);
         } else if (std.mem.eql(u8, method, "textDocument/hover")) {
             try self.handleHover(json, root);
         } else if (std.mem.eql(u8, method, "textDocument/completion")) {
@@ -299,14 +302,25 @@ pub const LspServer = struct {
     fn writeDiagnostic(
         json: *JsonWriter,
         range: PositionRange,
+        severity: compiler.DiagnosticSeverity,
+        code: []const u8,
         message: []const u8,
     ) !void {
         try json.write(.{
             .range = range,
-            .severity = @as(i32, 1),
+            .severity = diagnosticSeverity(severity),
+            .code = code,
             .message = message,
             .source = "zigcss",
         });
+    }
+
+    fn diagnosticSeverity(severity: compiler.DiagnosticSeverity) i32 {
+        return switch (severity) {
+            .err => 1,
+            .warning => 2,
+            .note => 3,
+        };
     }
 
     fn isValidRequestId(value: std.json.Value) bool {
@@ -336,6 +350,14 @@ pub const LspServer = struct {
         const value = object.get(name) orelse return error.InvalidParams;
         return switch (value) {
             .integer => |result| result,
+            else => error.InvalidParams,
+        };
+    }
+
+    fn optionalStringField(object: JsonObject, name: []const u8) !?[]const u8 {
+        const value = object.get(name) orelse return null;
+        return switch (value) {
+            .string => |result| result,
             else => error.InvalidParams,
         };
     }
@@ -386,27 +408,16 @@ pub const LspServer = struct {
         };
     }
 
-    fn legacyDiagnosticRange(
-        text: []const u8,
-        one_based_line: usize,
-        one_based_byte_column: usize,
-    ) !PositionRange {
-        if (one_based_line == 0 or one_based_byte_column == 0) return error.InvalidParams;
-        const start = lsp_position.byteOffsetAtUtf8Position(
-            text,
-            one_based_line - 1,
-            one_based_byte_column - 1,
-        ) catch return error.InvalidParams;
-        var end = start;
-        if (start < text.len and text[start] != '\r' and text[start] != '\n') {
-            const length: usize = std.unicode.utf8ByteSequenceLength(text[start]) catch
+    fn firstScalarRange(text: []const u8) !PositionRange {
+        var end: usize = 0;
+        if (text.len > 0 and text[0] != '\r' and text[0] != '\n') {
+            end = std.unicode.utf8ByteSequenceLength(text[0]) catch
                 return error.InvalidParams;
-            if (start + length > text.len) return error.InvalidParams;
-            _ = std.unicode.utf8Decode(text[start .. start + length]) catch
+            if (end > text.len) return error.InvalidParams;
+            _ = std.unicode.utf8Decode(text[0..end]) catch
                 return error.InvalidParams;
-            end += length;
         }
-        return utf16Range(text, start, end);
+        return utf16Range(text, 0, end);
     }
 
     fn lineStartAtByteOffset(text: []const u8, offset: usize) usize {
@@ -447,6 +458,15 @@ pub const LspServer = struct {
         try json.write(true);
         try json.objectField("change");
         try json.write(@as(i32, 1));
+        try json.endObject();
+        try json.objectField("diagnosticProvider");
+        try json.beginObject();
+        try json.objectField("identifier");
+        try json.write("zigcss");
+        try json.objectField("interFileDependencies");
+        try json.write(false);
+        try json.objectField("workspaceDiagnostics");
+        try json.write(false);
         try json.endObject();
         try json.endObject();
         try json.endObject();
@@ -500,50 +520,70 @@ pub const LspServer = struct {
         self.allocator.free(removed.value.text);
     }
     
-    fn handleDiagnostics(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+    fn handleDocumentDiagnostic(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
+        if (try optionalStringField(params, "identifier")) |identifier| {
+            if (!std.mem.eql(u8, identifier, "zigcss")) return error.InvalidParams;
+        }
+        _ = try optionalStringField(params, "previousResultId");
+
+        const doc = self.documents.get(uri) orelse return error.InvalidParams;
+
+        const format = formats.detectFormat(uri);
+        var compile_result: ?compiler.CompileResult = null;
+        defer if (compile_result) |*result| result.deinit();
+        if (format != null) {
+            compile_result = compiler.compile(self.allocator, uri, doc.text, .{}) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.SourceTooLarge,
+                error.CompilationFailed,
+                error.ProfilingUnavailable,
+                => return error.RequestFailed,
+            };
+        }
+        const unsupported_range = if (format == null)
+            try firstScalarRange(doc.text)
+        else
+            null;
+        if (compile_result) |*result| {
+            for (result.diagnostics) |diagnostic| {
+                _ = try utf16Range(
+                    doc.text,
+                    diagnostic.span.start,
+                    diagnostic.span.end,
+                );
+            }
+        }
 
         try json.objectField("result");
         try json.beginObject();
+        try json.objectField("kind");
+        try json.write("full");
         try json.objectField("items");
         try json.beginArray();
-        const doc = self.documents.get(uri) orelse {
-            try json.endArray();
-            try json.endObject();
-            return;
-        };
-
-        const format = formats.detectFormat(uri);
         if (format == null) {
             try writeDiagnostic(
                 json,
-                try legacyDiagnosticRange(doc.text, 1, 1),
+                unsupported_range.?,
+                .err,
+                compiler.DiagnosticCode.unsupported_syntax.label(),
                 unsupported_format_message,
             );
-        } else if (format.? == .css) {
-            var css_parser = parser.Parser.init(self.allocator, doc.text);
-            defer if (css_parser.owns_pool) {
-                css_parser.string_pool.deinit();
-                self.allocator.destroy(css_parser.string_pool);
-            };
-            
-            var result = css_parser.parseWithErrorInfo();
-            switch (result) {
-                .success => |*stylesheet| stylesheet.deinit(),
-                .parse_error => |parse_error| {
-                    const message = error_module.ParseError.getMessage(parse_error.kind);
-                    try writeDiagnostic(
-                        json,
-                        try legacyDiagnosticRange(
-                            doc.text,
-                            parse_error.line,
-                            parse_error.column,
-                        ),
-                        message,
-                    );
-                },
+        } else {
+            for (compile_result.?.diagnostics) |diagnostic| {
+                try writeDiagnostic(
+                    json,
+                    utf16Range(
+                        doc.text,
+                        diagnostic.span.start,
+                        diagnostic.span.end,
+                    ) catch unreachable,
+                    diagnostic.severity,
+                    diagnostic.code.label(),
+                    diagnostic.message,
+                );
             }
         }
 
@@ -950,7 +990,13 @@ test "LSP handle initialize request" {
     try std.testing.expectEqual(@as(i64, 1), synchronization.get("change").?.integer);
     try std.testing.expect(capabilities.get("hoverProvider") == null);
     try std.testing.expect(capabilities.get("completionProvider") == null);
-    try std.testing.expect(capabilities.get("diagnosticProvider") == null);
+    const diagnostic_provider = capabilities.get("diagnosticProvider").?.object;
+    try std.testing.expectEqualStrings(
+        "zigcss",
+        diagnostic_provider.get("identifier").?.string,
+    );
+    try std.testing.expect(!diagnostic_provider.get("interFileDependencies").?.bool);
+    try std.testing.expect(!diagnostic_provider.get("workspaceDiagnostics").?.bool);
 }
 
 test "LSP returns structured JSON-RPC envelope errors" {
@@ -1150,7 +1196,7 @@ test "LSP positions use UTF-16 across non-BMP text and CRLF" {
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.scss\",\"languageId\":\"scss\",\"version\":1,\"text\":\"😀$x: red;\"}}}",
     );
     const diagnostics_response = try server.handleRequest(
-        "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/diagnostics\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.scss\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.scss\"}}}",
     );
     defer allocator.free(diagnostics_response);
     var parsed_diagnostics = try std.json.parseFromSlice(
@@ -1164,7 +1210,157 @@ test "LSP positions use UTF-16 across non-BMP text and CRLF" {
         .get("result").?.object
         .get("items").?.array.items;
     try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqualStrings(
+        "CSS0009",
+        diagnostics[0].object.get("code").?.string,
+    );
     try expectJsonRange(diagnostics[0].object.get("range").?, 0, 0, 0, 2);
+}
+
+test "LSP pull diagnostics expose recoverable compiler diagnostics" {
+    const allocator = std.testing.allocator;
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    try initializeTestServer(&server);
+    const open =
+        \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///recover.css","languageId":"css","version":1,"text":".a{broken; color:\"oops\n} .b{also}"}}}
+    ;
+    try expectNoResponse(&server, open);
+
+    const request =
+        \\{"jsonrpc":"2.0","id":8,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///recover.css"},"identifier":"zigcss","previousResultId":"old"}}
+    ;
+    const response = try server.handleRequest(request);
+    defer allocator.free(response);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
+    defer parsed.deinit();
+    const result = parsed.value.object.get("result").?.object;
+    try std.testing.expectEqualStrings("full", result.get("kind").?.string);
+    const items = result.get("items").?.array.items;
+    try std.testing.expectEqual(@as(usize, 3), items.len);
+
+    const expected = [_]struct {
+        code: []const u8,
+        message: []const u8,
+        start_line: i64,
+        start_character: i64,
+        end_line: i64,
+        end_character: i64,
+    }{
+        .{
+            .code = "CSS0005",
+            .message = "unescaped newline terminated the CSS string",
+            .start_line = 0,
+            .start_character = 17,
+            .end_line = 0,
+            .end_character = 22,
+        },
+        .{
+            .code = "CSS0007",
+            .message = "declaration is missing ':'",
+            .start_line = 0,
+            .start_character = 3,
+            .end_line = 0,
+            .end_character = 9,
+        },
+        .{
+            .code = "CSS0007",
+            .message = "declaration is missing ':'",
+            .start_line = 1,
+            .start_character = 5,
+            .end_line = 1,
+            .end_character = 9,
+        },
+    };
+    for (items, expected) |item_value, target| {
+        const item = item_value.object;
+        try std.testing.expectEqualStrings(target.code, item.get("code").?.string);
+        try std.testing.expectEqualStrings(target.message, item.get("message").?.string);
+        try std.testing.expectEqualStrings("zigcss", item.get("source").?.string);
+        try std.testing.expectEqual(@as(i64, 1), item.get("severity").?.integer);
+        try expectJsonRange(
+            item.get("range").?,
+            target.start_line,
+            target.start_character,
+            target.end_line,
+            target.end_character,
+        );
+    }
+
+    const legacy_request =
+        \\{"jsonrpc":"2.0","id":9,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///recover.css"}}}
+    ;
+    const legacy_response = try server.handleRequest(legacy_request);
+    defer allocator.free(legacy_response);
+    var legacy = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        legacy_response,
+        .{},
+    );
+    defer legacy.deinit();
+    try std.testing.expectEqual(
+        @as(i64, -32601),
+        legacy.value.object.get("error").?.object.get("code").?.integer,
+    );
+
+    try std.testing.expectEqual(@as(i32, 1), LspServer.diagnosticSeverity(.err));
+    try std.testing.expectEqual(@as(i32, 2), LspServer.diagnosticSeverity(.warning));
+    try std.testing.expectEqual(@as(i32, 3), LspServer.diagnosticSeverity(.note));
+    for ([_][]const u8{ "", "\r\n" }) |text| {
+        try std.testing.expectEqual(
+            LspServer.PositionRange{
+                .start = .{ .line = 0, .character = 0 },
+                .end = .{ .line = 0, .character = 0 },
+            },
+            try LspServer.firstScalarRange(text),
+        );
+    }
+
+    const invalid_requests = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///missing.css\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///recover.css\"},\"identifier\":1}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///recover.css\"},\"identifier\":\"other\"}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///recover.css\"},\"previousResultId\":1}}",
+    };
+    for (invalid_requests) |invalid_request| {
+        const invalid_response = try server.handleRequest(invalid_request);
+        defer allocator.free(invalid_response);
+        var invalid = try std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
+            invalid_response,
+            .{},
+        );
+        defer invalid.deinit();
+        try std.testing.expectEqual(
+            @as(i64, -32602),
+            invalid.value.object.get("error").?.object.get("code").?.integer,
+        );
+    }
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///valid.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".valid{color:red}\"}}}",
+    );
+    const valid_response = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///valid.css\"}}}",
+    );
+    defer allocator.free(valid_response);
+    var valid = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        valid_response,
+        .{},
+    );
+    defer valid.deinit();
+    const valid_report = valid.value.object.get("result").?.object;
+    try std.testing.expectEqualStrings("full", valid_report.get("kind").?.string);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        valid_report.get("items").?.array.items.len,
+    );
 }
 
 test "LSP serializes every handler response as complete JSON" {
@@ -1187,7 +1383,7 @@ test "LSP serializes every handler response as complete JSON" {
     );
 
     const requests = [_][]const u8{
-        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/diagnostics\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":6}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":0}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2}}}",
@@ -1354,7 +1550,7 @@ test "LSP JSON parsing and responses handle every allocation failure" {
     );
 }
 
-test "LSP diagnostics reject unavailable formats without CSS fallback" {
+test "LSP pull diagnostics reject unavailable formats without CSS fallback" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -1372,7 +1568,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.scss","languageId":"scss","version":1,"text":"$color: red;"}}}
             ,
             .diagnostics =
-            \\{"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.scss"}}}
+            \\{"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///removed.scss"}}}
             ,
         },
         .{
@@ -1380,7 +1576,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.sass","languageId":"sass","version":1,"text":"$color: red"}}}
             ,
             .diagnostics =
-            \\{"jsonrpc":"2.0","id":4,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.sass"}}}
+            \\{"jsonrpc":"2.0","id":4,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///removed.sass"}}}
             ,
         },
         .{
@@ -1388,7 +1584,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.less","languageId":"less","version":1,"text":"@color: red;"}}}
             ,
             .diagnostics =
-            \\{"jsonrpc":"2.0","id":6,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.less"}}}
+            \\{"jsonrpc":"2.0","id":6,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///removed.less"}}}
             ,
         },
         .{
@@ -1396,7 +1592,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.styl","languageId":"stylus","version":1,"text":"$color = red"}}}
             ,
             .diagnostics =
-            \\{"jsonrpc":"2.0","id":8,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.styl"}}}
+            \\{"jsonrpc":"2.0","id":8,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///removed.styl"}}}
             ,
         },
         .{
@@ -1404,7 +1600,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///library-only.module.css","languageId":"css","version":1,"text":".card{x:1}"}}}
             ,
             .diagnostics =
-            \\{"jsonrpc":"2.0","id":10,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///library-only.module.css"}}}
+            \\{"jsonrpc":"2.0","id":10,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///library-only.module.css"}}}
             ,
         },
         .{
@@ -1412,7 +1608,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.css.js","languageId":"javascript","version":1,"text":"const styles = `\\n.card { color: ${theme.color}; }\\n`;"}}}
             ,
             .diagnostics =
-            \\{"jsonrpc":"2.0","id":12,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.css.js"}}}
+            \\{"jsonrpc":"2.0","id":12,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///removed.css.js"}}}
             ,
         },
         .{
@@ -1420,7 +1616,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.css.ts","languageId":"typescript","version":1,"text":"const styles = `\\n.card { color: red; }\\n`;"}}}
             ,
             .diagnostics =
-            \\{"jsonrpc":"2.0","id":14,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.css.ts"}}}
+            \\{"jsonrpc":"2.0","id":14,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///removed.css.ts"}}}
             ,
         },
         .{
@@ -1428,20 +1624,28 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.postcss","languageId":"postcss","version":1,"text":"@custom-media --narrow (width < 40rem); .card { color: red; }"}}}
             ,
             .diagnostics =
-            \\{"jsonrpc":"2.0","id":16,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.postcss"}}}
+            \\{"jsonrpc":"2.0","id":16,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///removed.postcss"}}}
             ,
         },
     };
 
     for (cases) |case| {
         try expectNoResponse(&server, case.open);
-        const diagnostics = try server.handleRequest(case.diagnostics);
-        defer allocator.free(diagnostics);
-        try std.testing.expect(std.mem.containsAtLeast(
-            u8,
-            diagnostics,
-            1,
+        const response = try server.handleRequest(case.diagnostics);
+        defer allocator.free(response);
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
+        defer parsed.deinit();
+        const report = parsed.value.object.get("result").?.object;
+        try std.testing.expectEqualStrings("full", report.get("kind").?.string);
+        const items = report.get("items").?.array.items;
+        try std.testing.expectEqual(@as(usize, 1), items.len);
+        const diagnostic = items[0].object;
+        try std.testing.expectEqualStrings(
             unsupported_format_message,
-        ));
+            diagnostic.get("message").?.string,
+        );
+        try std.testing.expectEqualStrings("CSS0009", diagnostic.get("code").?.string);
+        try std.testing.expectEqualStrings("zigcss", diagnostic.get("source").?.string);
+        try std.testing.expectEqual(@as(i64, 1), diagnostic.get("severity").?.integer);
     }
 }

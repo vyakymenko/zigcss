@@ -35,7 +35,7 @@ describe('experimental LSP transport', () => {
     expect(status).toContain('unknown method returns `-32601`')
     expect(status).toContain('invalid method parameters return `-32602`')
     expect(status).toContain('next frame is processed normally')
-    expect(status).toContain('LSP-005` through `LSP-007')
+    expect(status).toContain('LSP-006` through `LSP-007')
   })
 
   test('uses standard JSON parsing and serialization with transcript regressions', () => {
@@ -91,5 +91,27 @@ describe('experimental LSP transport', () => {
     expect(audit).toContain('LSP executable converts non-BMP byte spans to UTF-16 positions (LSP-004)')
     expect(status).toContain('Initialization explicitly advertises `positionEncoding: utf-16`')
     expect(status).toContain('LF, CRLF, and lone CR')
+  })
+
+  test('uses standard pull diagnostics from the public compiler facade', () => {
+    const lsp = read('src/lsp.zig')
+    const build = read('build.zig')
+    const audit = read('tests/regressions/audit.zig')
+    const status = read('docs/src/content/docs/guide/status.md')
+    const extension = read('vscode-extension/README.md')
+
+    expect(lsp).toContain('const compiler = @import("zigcss")')
+    expect(lsp).not.toContain('const parser = @import("parser.zig")')
+    expect(lsp).not.toContain('const error_module = @import("error.zig")')
+    expect(lsp).toContain('std.mem.eql(u8, method, "textDocument/diagnostic")')
+    expect(lsp).not.toContain('std.mem.eql(u8, method, "textDocument/diagnostics")')
+    expect(lsp).toContain('compiler.compile(self.allocator, uri, doc.text, .{})')
+    expect(lsp).toContain('try json.write("full")')
+    expect(lsp).toContain('diagnostic.code.label()')
+    expect(build).toContain('lsp_test_module.addImport("zigcss", library_module)')
+    expect(audit).toContain('LSP executable returns full recoverable compiler diagnostics (LSP-005)')
+    expect(status).toContain('The standard singular')
+    expect(status).toContain('Removed, library-only, and unknown formats never fall back to CSS')
+    expect(extension).toContain('Compiler-backed diagnostics')
   })
 })

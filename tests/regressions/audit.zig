@@ -469,6 +469,79 @@ test "LSP executable converts non-BMP byte spans to UTF-16 positions (LSP-004)" 
     try std.testing.expect(shutdown.value.object.get("result").? == .null);
 }
 
+test "LSP executable returns full recoverable compiler diagnostics (LSP-005)" {
+    const messages = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///recover.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".a{broken; color:\\\"oops\\n} .b{also}\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///recover.css\"},\"identifier\":\"zigcss\",\"previousResultId\":\"old\"}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"shutdown\"}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}",
+    };
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    for (messages) |message| try appendLspFrame(&transcript, message);
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectExitCode(result, 0);
+
+    var offset: usize = 0;
+    const initialize_body = try nextLspFrame(result.stdout, &offset);
+    const diagnostic_body = try nextLspFrame(result.stdout, &offset);
+    const shutdown_body = try nextLspFrame(result.stdout, &offset);
+    try std.testing.expectEqual(result.stdout.len, offset);
+
+    var initialized = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        initialize_body,
+        .{},
+    );
+    defer initialized.deinit();
+    const provider = initialized.value.object
+        .get("result").?.object
+        .get("capabilities").?.object
+        .get("diagnosticProvider").?.object;
+    try std.testing.expectEqualStrings("zigcss", provider.get("identifier").?.string);
+    try std.testing.expect(!provider.get("interFileDependencies").?.bool);
+    try std.testing.expect(!provider.get("workspaceDiagnostics").?.bool);
+
+    var diagnostics = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        diagnostic_body,
+        .{},
+    );
+    defer diagnostics.deinit();
+    const report = diagnostics.value.object.get("result").?.object;
+    try std.testing.expectEqualStrings("full", report.get("kind").?.string);
+    const items = report.get("items").?.array.items;
+    try std.testing.expectEqual(@as(usize, 3), items.len);
+    const expected_codes = [_][]const u8{ "CSS0005", "CSS0007", "CSS0007" };
+    for (items, expected_codes) |item_value, expected_code| {
+        const item = item_value.object;
+        try std.testing.expectEqualStrings(expected_code, item.get("code").?.string);
+        try std.testing.expectEqualStrings("zigcss", item.get("source").?.string);
+        try std.testing.expectEqual(@as(i64, 1), item.get("severity").?.integer);
+    }
+    const first_range = items[0].object.get("range").?.object;
+    const first_start = first_range.get("start").?.object;
+    const first_end = first_range.get("end").?.object;
+    try std.testing.expectEqual(@as(i64, 0), first_start.get("line").?.integer);
+    try std.testing.expectEqual(@as(i64, 17), first_start.get("character").?.integer);
+    try std.testing.expectEqual(@as(i64, 0), first_end.get("line").?.integer);
+    try std.testing.expectEqual(@as(i64, 22), first_end.get("character").?.integer);
+
+    var shutdown = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        shutdown_body,
+        .{},
+    );
+    defer shutdown.deinit();
+    try std.testing.expect(shutdown.value.object.get("result").? == .null);
+}
+
 test "stable CLI emits functional and attribute selectors" {
     var result = try runCompiler(@embedFile("fixtures/functional-attribute.css"), &.{"--minify"});
     defer deinitRun(&result);
