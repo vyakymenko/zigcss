@@ -45,6 +45,8 @@ A pass marked `verified` is invalid unless it has a validator and evidence for p
 
 These metadata flags record completed evidence. They do not replace the executable fixtures, allocation tests, independent parsing, computed-style checks, or pass-specific proof required by the development plan.
 
+Analysis results are facts rather than latent mutation authority. Duplicate-declaration analysis groups only within one ordered declaration-list segment, matches standard property names ASCII case-insensitively and custom properties case-sensitively, records every importance transition, and treats same-importance chains as potential compatibility fallbacks. It does not nominate a declaration for deletion without later typed property/value evidence.
+
 ### Deterministic planning
 
 - Requested passes include their transitive dependencies.
