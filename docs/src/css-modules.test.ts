@@ -69,4 +69,10 @@ describe('published native CSS Modules subset', () => {
     expect(oracle).toContain("require('lightningcss')")
     expect(guide).toContain('Lightning CSS 1.30.1')
   })
+
+  test('publishes the exact compiled and executed CSS Modules example', () => {
+    const match = guide.match(/## Library use\s+```zig\n([\s\S]*?)\n```/)
+    expect(match?.[1]).toBe(read('examples/css_modules.zig').trim())
+    expect(read('build.zig')).toContain('test-documentation-examples')
+  })
 })

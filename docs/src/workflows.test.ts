@@ -53,6 +53,23 @@ describe('native artifact workflows', () => {
     expect(tests).toBeGreaterThan(prefixData)
   })
 
+  test('validates every documentation link and example after compiler and editor setup', () => {
+    const mainTestStep = buildWorkflow.indexOf('- name: Run Tests')
+    const nativeTests = buildWorkflow.indexOf('zig build test --summary all', mainTestStep)
+    const neovim = buildWorkflow.indexOf('npm run test:neovim', nativeTests)
+    const documentation = buildWorkflow.indexOf('npm run test:documentation', neovim)
+    const drift = buildWorkflow.indexOf('npm run check:documentation', documentation)
+    const metadata = buildWorkflow.indexOf('npm run test:zig-package', drift)
+
+    expect(mainTestStep).toBeGreaterThan(-1)
+    expect(nativeTests).toBeGreaterThan(mainTestStep)
+    expect(neovim).toBeGreaterThan(nativeTests)
+    expect(documentation).toBeGreaterThan(neovim)
+    expect(drift).toBeGreaterThan(documentation)
+    expect(metadata).toBeGreaterThan(drift)
+    expect(buildWorkflow).toContain('NVIM: ${{ runner.temp }}/nvim-0.11.7/bin/nvim')
+  })
+
   test('passes every release matrix target to Zig and verifies the result', () => {
     expect(releaseWorkflow).toContain('zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}')
     expect(releaseWorkflow).toContain('node scripts/verify-artifact-target.mjs')

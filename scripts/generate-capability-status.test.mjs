@@ -20,7 +20,7 @@ test('capability metadata is closed, unique, and anchored to executable evidence
   const metadata = validateMetadata(loadMetadata())
 
   assert.equal(metadata.capabilities.length, 19)
-  assert.equal(Object.keys(metadata.gates).length, 13)
+  assert.equal(Object.keys(metadata.gates).length, 14)
   assert.deepEqual(metadata.statusKinds, ['experimental', 'verified', 'unavailable', 'disabled'])
   assert.equal(new Set(metadata.capabilities.map(capability => capability.id)).size, 19)
   assert.ok(metadata.capabilities.every(capability => capability.evidence.length > 0))
@@ -100,7 +100,7 @@ test('generator check is deterministic and the site consumes metadata directly',
     encoding: 'utf8',
   })
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /19 rows, 13 executable evidence gates, 2 Markdown tables/)
+  assert.match(result.stdout, /19 rows, 14 executable evidence gates, 2 Markdown tables/)
 
   const features = fs.readFileSync(path.join(repositoryRoot, 'docs/src/app/components/Features.tsx'), 'utf8')
   assert.match(features, /data\/capabilities\.json/)

@@ -132,6 +132,11 @@ jobs:
           NVIM="$RUNNER_TEMP/nvim-0.11.7/bin/nvim" NEOVIM_TEST_VERSION=0.11.7 npm run test:neovim
           NVIM="$RUNNER_TEMP/nvim-0.12.4/bin/nvim" NEOVIM_TEST_VERSION=0.12.4 npm run test:neovim
 
+      - name: Validate documentation links and examples
+        env:
+          NVIM: ${{ runner.temp }}/nvim-0.11.7/bin/nvim
+        run: npm run test:documentation && npm run check:documentation
+
       - name: Verify Zig package metadata
         run: npm run test:zig-package
 

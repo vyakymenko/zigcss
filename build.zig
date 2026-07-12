@@ -106,9 +106,32 @@ pub fn build(b: *std.Build) void {
         .name = "zigcss-public-api-example",
         .root_module = public_api_example_module,
     });
+    const run_public_api_example = b.addRunArtifact(public_api_example);
+    run_public_api_example.expectStdOutEqual(".notice{color:red}");
+
+    const css_modules_example_module = b.createModule(.{
+        .root_source_file = b.path("examples/css_modules.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    css_modules_example_module.addImport("zigcss", library_module);
+    const css_modules_example = b.addExecutable(.{
+        .name = "zigcss-css-modules-example",
+        .root_module = css_modules_example_module,
+    });
+    const run_css_modules_example = b.addRunArtifact(css_modules_example);
+    run_css_modules_example.expectStdOutEqual("");
+
+    const documentation_examples_step = b.step(
+        "test-documentation-examples",
+        "Compile and run published Zig documentation examples",
+    );
+    documentation_examples_step.dependOn(&run_public_api_example.step);
+    documentation_examples_step.dependOn(&run_css_modules_example.step);
+
     const public_api_step = b.step("test-public-api", "Test the external Zig library surface");
     public_api_step.dependOn(&run_public_api_tests.step);
-    public_api_step.dependOn(&public_api_example.step);
+    public_api_step.dependOn(documentation_examples_step);
 
     const audit_test_module = b.addModule("zigcss-audit-regressions", .{
         .root_source_file = b.path("tests/regressions/audit.zig"),
@@ -163,7 +186,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lsp_index_tests.step);
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
-    test_step.dependOn(&public_api_example.step);
+    test_step.dependOn(documentation_examples_step);
     test_step.dependOn(&run_audit_tests.step);
     test_step.dependOn(&install_transform_driver.step);
     test_step.dependOn(&install_css_modules_driver.step);

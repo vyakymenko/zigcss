@@ -24,6 +24,8 @@
     "generate:capability-status": "node scripts/generate-capability-status.mjs --write",
     "check:capability-status": "node scripts/generate-capability-status.mjs --check",
     "test:capability-status": "node --test scripts/generate-capability-status.test.mjs",
+    "check:documentation": "node scripts/validate-documentation.mjs --check",
+    "test:documentation": "node --test scripts/validate-documentation.test.mjs",
     "test:zig-package": "node --test scripts/verify-zig-package.test.mjs",
     "test:node-wrapper": "node --test scripts/verify-node-wrapper.test.mjs",
     "test:vscode": "npm --prefix vscode-extension test && npm --prefix vscode-extension run package:check",

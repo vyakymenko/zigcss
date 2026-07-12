@@ -15,6 +15,7 @@ cd zigcss
 zig build
 zig build test --summary all
 zig build test-public-api --summary all
+zig build test-documentation-examples --summary all
 ```
 
 The executable is written to `zig-out/bin/zigcss`.
@@ -95,10 +96,14 @@ The independent parser gate additionally requires Node.js. After the Zig build h
 npm ci --ignore-scripts
 npm run test:prefix-data
 npm run check:prefix-data
+NVIM=/absolute/path/to/nvim npm run test:documentation
+npm run check:documentation
 npm run test:zig-package
 npm run test:compat
 npm run test:transforms
 ```
+
+The documentation gate syntax-checks every tracked shell, JSON, Lua, and Vim fence, compiles every CSS fence, runs the canonical Zig examples through the build graph, and resolves every tracked internal Markdown/site link. Set `NVIM` to a Neovim 0.11.7-or-later executable so the checked Lua and Ex-command examples use the real editor parser without loading user configuration.
 
 ## Characterization example
 

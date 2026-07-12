@@ -19,7 +19,7 @@ export function GettingStarted() {
             <h2 className="text-3xl">Source build</h2>
           </div>
           <p className="text-slate-700 mb-5">Use Zig 0.15.2 and run:</p>
-          <pre className="bg-slate-900 text-slate-100 rounded-lg p-5 overflow-x-auto"><code>{`git clone https://github.com/vyakymenko/zigcss.git
+          <pre className="bg-slate-900 text-slate-100 rounded-lg p-5 overflow-x-auto"><code data-language="bash">{`git clone https://github.com/vyakymenko/zigcss.git
 cd zigcss
 zig build
 zig build test --summary all`}</code></pre>
@@ -31,10 +31,10 @@ zig build test --summary all`}</code></pre>
         <section className="bg-white rounded-xl p-8 shadow-sm border border-slate-200 mb-8">
           <h2 className="text-3xl mb-5">Characterization run</h2>
           <p className="text-slate-700 mb-4">Start with deliberately simple CSS:</p>
-          <pre className="bg-slate-900 text-slate-100 rounded-lg p-5 overflow-x-auto mb-4"><code>{`.notice {
+          <pre className="bg-slate-900 text-slate-100 rounded-lg p-5 overflow-x-auto mb-4"><code data-language="css">{`.notice {
   color: red;
 }`}</code></pre>
-          <pre className="bg-slate-900 text-green-300 rounded-lg p-5 overflow-x-auto"><code>zig-out/bin/zigcss input.css -o output.css</code></pre>
+          <pre className="bg-slate-900 text-green-300 rounded-lg p-5 overflow-x-auto"><code data-language="bash">zig-out/bin/zigcss input.css -o output.css</code></pre>
           <p className="text-slate-600 mt-4">
             A warning on standard error identifies the build as experimental. Successful output is not yet a standards guarantee.
           </p>

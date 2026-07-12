@@ -106,6 +106,7 @@ cd zigcss
 zig build
 zig build test --summary all
 zig build test-public-api --summary all
+zig build test-documentation-examples --summary all
 ```
 
 The executable is written to `zig-out/bin/zigcss`.
@@ -132,6 +133,8 @@ npm run test:prefix-data
 npm run check:prefix-data
 npm run test:capability-status
 npm run check:capability-status
+NVIM=/absolute/path/to/nvim npm run test:documentation
+npm run check:documentation
 npm run test:zig-package
 npm run test:vscode
 NVIM=/absolute/path/to/nvim npm run test:neovim

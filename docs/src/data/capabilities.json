@@ -155,6 +155,19 @@
           "contains": ["expect(response.status).toBe(503)"]
         }
       ]
+    },
+    "documentation": {
+      "command": "npm run test:documentation",
+      "anchors": [
+        {
+          "path": "scripts/validate-documentation.mjs",
+          "contains": ["validateInternalLink", "test-documentation-examples", "Documentation verified"]
+        },
+        {
+          "path": "build.zig",
+          "contains": ["test-documentation-examples", "examples/css_modules.zig"]
+        }
+      ]
     }
   },
   "capabilities": [
@@ -172,7 +185,7 @@
       "status": "Experimental, consumer-tested",
       "statusKind": "experimental",
       "behavior": "`zigcss.compile` returns owned CSS, maps, located diagnostics, ordered imports, optional module exports, and metrics; accepted transforms and borrowed canonical targets are explicit options.",
-      "evidence": ["public-api"]
+      "evidence": ["public-api", "documentation"]
     },
     {
       "id": "zig-package",
@@ -268,7 +281,7 @@
       "status": "Experimental, Zig-library-only native subset",
       "statusKind": "experimental",
       "behavior": "Explicit `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references and dependencies, and local values with owned results; CLI and LSP exposure remain unavailable.",
-      "evidence": ["format-matrix", "public-api"]
+      "evidence": ["format-matrix", "public-api", "documentation"]
     },
     {
       "id": "alternate-formats",
@@ -300,7 +313,7 @@
       "status": "Experimental, integration-tested",
       "statusKind": "experimental",
       "behavior": "The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled.",
-      "evidence": ["neovim", "lsp"]
+      "evidence": ["neovim", "lsp", "documentation"]
     },
     {
       "id": "public-compile",
