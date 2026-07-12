@@ -34,7 +34,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | Browser target queries | Experimental, library-only | A strict explicit-minimum grammar and pinned BCD 8.0.0 subset deterministically configure the verified rewrite; `--browsers` and `--autoprefix` remain unavailable pending later public CLI wiring. |
 | CSS Modules | Experimental, Zig-library-only native subset | Explicit `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references/dependencies, and local values with owned results. The CLI/LSP still reject `.module.css`; imported values, raw ICSS, and ambiguous forms are strict errors. |
 | SCSS, SASS, LESS, Stylus, PostCSS, CSS-in-JS, Tailwind-like `@apply` | Unavailable | The executable rejects every alternate extension before output. The compiler's SCSS/SASS, LESS, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like adapter sources are removed; the [format matrix](docs/src/content/docs/guide/format-compatibility.md) records the containment evidence. |
-| LSP | Experimental | Bounded dynamic framing and standard JSON-RPC handling now include silent notifications, initialize/shutdown/exit state, balanced full document sync, strict increasing versions, close cleanup, and validated cancellation notifications. UTF-16 positions, compiler diagnostics, syntax-aware features, and the legacy parser remain later gates. |
+| LSP | Experimental | Bounded framing, standard JSON-RPC, lifecycle/full-sync state, and explicit UTF-16 positions now cover LF/CRLF/CR text plus BMP and astral characters. Compiler diagnostics, syntax-aware advertised features, and the legacy parser remain later gates. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 pending bounded isolation. |
 
 ## Experimental Zig compile API
@@ -85,7 +85,7 @@ pub fn main() !void {
 
 The tested grammar boundary is published in [the CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md) and backed by `tests/compatibility/matrix.json`. Pretty and minified fixture output must parse in pinned Lightning CSS with error recovery disabled.
 
-Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, broader prefix data and prefix CLI exposure, element/attribute or dynamic-DOM extraction, optimized source-map composition, CLI source-map output, LSP lifecycle and feature migration, CSS Modules ID/keyframe scoping, imported values/raw ICSS, other alternate formats, and resource-bounded public compilation remain incomplete.
+Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, broader prefix data and prefix CLI exposure, element/attribute or dynamic-DOM extraction, optimized source-map composition, CLI source-map output, LSP compiler-diagnostic and syntax-aware feature migration, CSS Modules ID/keyframe scoping, imported values/raw ICSS, other alternate formats, and resource-bounded public compilation remain incomplete.
 
 Do not use current output in a production pipeline. A successful compile is not yet a standards-compatibility guarantee.
 

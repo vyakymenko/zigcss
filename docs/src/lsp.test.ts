@@ -35,7 +35,7 @@ describe('experimental LSP transport', () => {
     expect(status).toContain('unknown method returns `-32601`')
     expect(status).toContain('invalid method parameters return `-32602`')
     expect(status).toContain('next frame is processed normally')
-    expect(status).toContain('LSP-004` through `LSP-007')
+    expect(status).toContain('LSP-005` through `LSP-007')
   })
 
   test('uses standard JSON parsing and serialization with transcript regressions', () => {
@@ -71,5 +71,25 @@ describe('experimental LSP transport', () => {
     expect(audit).toContain('LSP exit without shutdown returns failure without a response (LSP-003)')
     expect(status).toContain('subsequent requests return `-32600`')
     expect(status).toContain('exit` terminates with status 0 only after shutdown or status 1 otherwise')
+  })
+
+  test('publishes and tests one UTF-16 position boundary', () => {
+    const lsp = read('src/lsp.zig')
+    const positions = read('src/lsp_position.zig')
+    const build = read('build.zig')
+    const audit = read('tests/regressions/audit.zig')
+    const status = read('docs/src/content/docs/guide/status.md')
+
+    expect(lsp).toContain('try json.objectField("positionEncoding")')
+    expect(lsp).toContain('try json.write("utf-16")')
+    expect(lsp).toContain('lsp_position.byteOffsetAtUtf16Position')
+    expect(lsp).toContain('lsp_position.utf16PositionAtByteOffset')
+    expect(positions).toContain('InvalidUtf16Boundary')
+    expect(positions).toContain('position conversion rejects invalid UTF-8 deterministically')
+    expect(build).toContain('src/lsp_position.zig')
+    expect(build).toContain('run_lsp_position_tests')
+    expect(audit).toContain('LSP executable converts non-BMP byte spans to UTF-16 positions (LSP-004)')
+    expect(status).toContain('Initialization explicitly advertises `positionEncoding: utf-16`')
+    expect(status).toContain('LF, CRLF, and lone CR')
   })
 })

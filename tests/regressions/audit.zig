@@ -405,6 +405,70 @@ test "LSP exit without shutdown returns failure without a response (LSP-003)" {
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
 }
 
+test "LSP executable converts non-BMP byte spans to UTF-16 positions (LSP-004)" {
+    const messages = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\",\"languageId\":\"css\",\"version\":1,\"text\":\"😀.foo{}\\r\\nα .foo{}\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":3}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"shutdown\"}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}",
+    };
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    for (messages) |message| try appendLspFrame(&transcript, message);
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectExitCode(result, 0);
+
+    var offset: usize = 0;
+    const initialize_body = try nextLspFrame(result.stdout, &offset);
+    const definition_body = try nextLspFrame(result.stdout, &offset);
+    const shutdown_body = try nextLspFrame(result.stdout, &offset);
+    try std.testing.expectEqual(result.stdout.len, offset);
+
+    var initialized = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        initialize_body,
+        .{},
+    );
+    defer initialized.deinit();
+    try std.testing.expectEqualStrings(
+        "utf-16",
+        initialized.value.object
+            .get("result").?.object
+            .get("capabilities").?.object
+            .get("positionEncoding").?.string,
+    );
+
+    var definition = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        definition_body,
+        .{},
+    );
+    defer definition.deinit();
+    const range = definition.value.object
+        .get("result").?.object
+        .get("range").?.object;
+    const start = range.get("start").?.object;
+    const end = range.get("end").?.object;
+    try std.testing.expectEqual(@as(i64, 0), start.get("line").?.integer);
+    try std.testing.expectEqual(@as(i64, 3), start.get("character").?.integer);
+    try std.testing.expectEqual(@as(i64, 0), end.get("line").?.integer);
+    try std.testing.expectEqual(@as(i64, 6), end.get("character").?.integer);
+
+    var shutdown = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        shutdown_body,
+        .{},
+    );
+    defer shutdown.deinit();
+    try std.testing.expect(shutdown.value.object.get("result").? == .null);
+}
+
 test "stable CLI emits functional and attribute selectors" {
     var result = try runCompiler(@embedFile("fixtures/functional-attribute.css"), &.{"--minify"});
     defer deinitRun(&result);

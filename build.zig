@@ -63,6 +63,14 @@ pub fn build(b: *std.Build) void {
     const lsp_transport_tests = b.addTest(.{ .root_module = lsp_transport_test_module });
     const run_lsp_transport_tests = b.addRunArtifact(lsp_transport_tests);
 
+    const lsp_position_test_module = b.createModule(.{
+        .root_source_file = b.path("src/lsp_position.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const lsp_position_tests = b.addTest(.{ .root_module = lsp_position_test_module });
+    const run_lsp_position_tests = b.addRunArtifact(lsp_position_tests);
+
     const core_tests = b.addTest(.{
         .root_module = library_module,
     });
@@ -141,6 +149,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_lsp_tests.step);
     test_step.dependOn(&run_lsp_transport_tests.step);
+    test_step.dependOn(&run_lsp_position_tests.step);
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
     test_step.dependOn(&public_api_example.step);

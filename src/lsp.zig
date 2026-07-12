@@ -2,6 +2,7 @@ const std = @import("std");
 const parser = @import("parser.zig");
 const formats = @import("formats.zig");
 const error_module = @import("error.zig");
+const lsp_position = @import("lsp_position.zig");
 
 const unsupported_format_message = "Unsupported or removed stylesheet format";
 
@@ -297,17 +298,11 @@ pub const LspServer = struct {
 
     fn writeDiagnostic(
         json: *JsonWriter,
-        start_line: i64,
-        start_character: i64,
-        end_line: i64,
-        end_character: i64,
+        range: PositionRange,
         message: []const u8,
     ) !void {
         try json.write(.{
-            .range = .{
-                .start = .{ .line = start_line, .character = start_character },
-                .end = .{ .line = end_line, .character = end_character },
-            },
+            .range = range,
             .severity = @as(i32, 1),
             .message = message,
             .source = "zigcss",
@@ -359,6 +354,70 @@ pub const LspServer = struct {
         }
         return @intCast(value);
     }
+
+    fn integerToLspUinteger(value: i64) !usize {
+        if (value < 0 or value > std.math.maxInt(i32)) return error.InvalidParams;
+        return @intCast(value);
+    }
+
+    fn byteOffsetAtPosition(text: []const u8, position: JsonObject) !usize {
+        const line = try integerToLspUinteger(try requireIntegerField(position, "line"));
+        const character = try integerToLspUinteger(
+            try requireIntegerField(position, "character"),
+        );
+        return lsp_position.byteOffsetAtUtf16Position(text, line, character) catch
+            error.InvalidParams;
+    }
+
+    fn utf16Position(text: []const u8, offset: usize) !lsp_position.Position {
+        return lsp_position.utf16PositionAtByteOffset(text, offset) catch
+            error.InvalidParams;
+    }
+
+    const PositionRange = struct {
+        start: lsp_position.Position,
+        end: lsp_position.Position,
+    };
+
+    fn utf16Range(text: []const u8, start: usize, end: usize) !PositionRange {
+        return .{
+            .start = try utf16Position(text, start),
+            .end = try utf16Position(text, end),
+        };
+    }
+
+    fn legacyDiagnosticRange(
+        text: []const u8,
+        one_based_line: usize,
+        one_based_byte_column: usize,
+    ) !PositionRange {
+        if (one_based_line == 0 or one_based_byte_column == 0) return error.InvalidParams;
+        const start = lsp_position.byteOffsetAtUtf8Position(
+            text,
+            one_based_line - 1,
+            one_based_byte_column - 1,
+        ) catch return error.InvalidParams;
+        var end = start;
+        if (start < text.len and text[start] != '\r' and text[start] != '\n') {
+            const length: usize = std.unicode.utf8ByteSequenceLength(text[start]) catch
+                return error.InvalidParams;
+            if (start + length > text.len) return error.InvalidParams;
+            _ = std.unicode.utf8Decode(text[start .. start + length]) catch
+                return error.InvalidParams;
+            end += length;
+        }
+        return utf16Range(text, start, end);
+    }
+
+    fn lineStartAtByteOffset(text: []const u8, offset: usize) usize {
+        var index = offset;
+        while (index > 0) {
+            const previous = text[index - 1];
+            if (previous == '\r' or previous == '\n') return index;
+            index -= 1;
+        }
+        return 0;
+    }
     
     fn handleInitialize(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
@@ -380,6 +439,8 @@ pub const LspServer = struct {
         try json.beginObject();
         try json.objectField("capabilities");
         try json.beginObject();
+        try json.objectField("positionEncoding");
+        try json.write("utf-16");
         try json.objectField("textDocumentSync");
         try json.beginObject();
         try json.objectField("openClose");
@@ -456,7 +517,11 @@ pub const LspServer = struct {
 
         const format = formats.detectFormat(uri);
         if (format == null) {
-            try writeDiagnostic(json, 0, 0, 0, 1, unsupported_format_message);
+            try writeDiagnostic(
+                json,
+                try legacyDiagnosticRange(doc.text, 1, 1),
+                unsupported_format_message,
+            );
         } else if (format.? == .css) {
             var css_parser = parser.Parser.init(self.allocator, doc.text);
             defer if (css_parser.owns_pool) {
@@ -468,18 +533,14 @@ pub const LspServer = struct {
             switch (result) {
                 .success => |*stylesheet| stylesheet.deinit(),
                 .parse_error => |parse_error| {
-                    const line = parse_error.line;
-                    const column = parse_error.column;
                     const message = error_module.ParseError.getMessage(parse_error.kind);
-
-                    const col: i64 = @intCast(column);
-                    const col_char = if (col - 1 > 0) col - 1 else 0;
                     try writeDiagnostic(
                         json,
-                        @as(i64, @intCast(line)) - 1,
-                        col_char,
-                        @as(i64, @intCast(line)) - 1,
-                        @intCast(column),
+                        try legacyDiagnosticRange(
+                            doc.text,
+                            parse_error.line,
+                            parse_error.column,
+                        ),
                         message,
                     );
                 },
@@ -495,62 +556,22 @@ pub const LspServer = struct {
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
-        const line = @max(try requireIntegerField(position, "line"), 0);
-        const character = @max(try requireIntegerField(position, "character"), 0);
 
         const doc = self.documents.get(uri) orelse {
             try json.objectField("result");
             try json.write(null);
             return;
         };
-        
-        const line_start = blk: {
-            var line_num: i64 = 0;
-            var i: usize = 0;
-            while (i < doc.text.len and line_num < line) {
-                if (doc.text[i] == '\n') {
-                    line_num += 1;
-                }
-                i += 1;
-            }
-            break :blk i;
-        };
-        
-        const line_end = blk: {
-            var i = line_start;
-            while (i < doc.text.len and doc.text[i] != '\n') {
-                i += 1;
-            }
-            break :blk i;
-        };
-        
-        const line_text = doc.text[line_start..line_end];
-        const char_pos: usize = @intCast(if (character > 0) character else 0);
-        
-        if (char_pos < line_text.len) {
-            var word_start = char_pos;
-            while (word_start > 0 and (std.ascii.isAlphanumeric(line_text[word_start - 1]) or line_text[word_start - 1] == '-')) {
-                word_start -= 1;
-            }
-            
-            var word_end = char_pos;
-            while (word_end < line_text.len and (std.ascii.isAlphanumeric(line_text[word_end]) or line_text[word_end] == '-')) {
-                word_end += 1;
-            }
-            
-            if (word_end > word_start) {
-                const word = line_text[word_start..word_end];
-                if (self.getCssPropertyInfo(word)) |info| {
-                    try json.objectField("result");
-                    try json.write(.{
-                        .contents = .{ .kind = "markdown", .value = info },
-                        .range = .{
-                            .start = .{ .line = line, .character = word_start },
-                            .end = .{ .line = line, .character = word_end },
-                        },
-                    });
-                    return;
-                }
+
+        const offset = try byteOffsetAtPosition(doc.text, position);
+        if (self.getSymbolAtPosition(doc.text, offset)) |symbol| {
+            if (self.getCssPropertyInfo(symbol.text)) |info| {
+                try json.objectField("result");
+                try json.write(.{
+                    .contents = .{ .kind = "markdown", .value = info },
+                    .range = try utf16Range(doc.text, symbol.start, symbol.end),
+                });
+                return;
             }
         }
 
@@ -563,8 +584,6 @@ pub const LspServer = struct {
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
-        const line = @max(try requireIntegerField(position, "line"), 0);
-        const character = @max(try requireIntegerField(position, "character"), 0);
 
         try json.objectField("result");
         try json.beginObject();
@@ -575,32 +594,11 @@ pub const LspServer = struct {
             try json.endObject();
             return;
         };
-        
-        const line_start = blk: {
-            var line_num: i64 = 0;
-            var i: usize = 0;
-            while (i < doc.text.len and line_num < line) {
-                if (doc.text[i] == '\n') {
-                    line_num += 1;
-                }
-                i += 1;
-            }
-            break :blk i;
-        };
-        
-        const line_end = blk: {
-            var i = line_start;
-            while (i < doc.text.len and doc.text[i] != '\n') {
-                i += 1;
-            }
-            break :blk i;
-        };
-        
-        const line_text = doc.text[line_start..line_end];
-        const char_pos: usize = @intCast(if (character > 0) character else 0);
-        
+
+        const offset = try byteOffsetAtPosition(doc.text, position);
+        const prefix = doc.text[lineStartAtByteOffset(doc.text, offset)..offset];
         for (COMMON_CSS_PROPERTIES) |prop| {
-            if (std.mem.startsWith(u8, prop, line_text[0..@min(char_pos, line_text.len)])) {
+            if (std.mem.startsWith(u8, prop, prefix)) {
                 try json.write(.{
                     .label = prop,
                     .kind = @as(i32, 10),
@@ -647,39 +645,34 @@ pub const LspServer = struct {
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
-        const line = @max(try requireIntegerField(position, "line"), 0);
-        const character = @max(try requireIntegerField(position, "character"), 0);
 
         const doc = self.documents.get(uri) orelse {
             try json.objectField("result");
             try json.write(null);
             return;
         };
-        
-        const pos = self.getPosition(doc.text, line, character);
+
+        const pos = try byteOffsetAtPosition(doc.text, position);
         const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
             try json.objectField("result");
             try json.write(null);
             return;
         };
 
-        const definition_pos = self.findDefinition(doc.text, symbol) orelse {
+        const definition_pos = self.findDefinition(doc.text, symbol.text) orelse {
             try json.objectField("result");
             try json.write(null);
             return;
         };
 
-        const def_line_col = self.getLineColumn(doc.text, definition_pos);
         try json.objectField("result");
         try json.write(.{
             .uri = uri,
-            .range = .{
-                .start = .{ .line = def_line_col.line, .character = def_line_col.column },
-                .end = .{
-                    .line = def_line_col.line,
-                    .character = def_line_col.column + @as(i64, @intCast(symbol.len)),
-                },
-            },
+            .range = try utf16Range(
+                doc.text,
+                definition_pos,
+                definition_pos + symbol.text.len,
+            ),
         });
     }
     
@@ -688,8 +681,6 @@ pub const LspServer = struct {
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
-        const line = @max(try requireIntegerField(position, "line"), 0);
-        const character = @max(try requireIntegerField(position, "character"), 0);
 
         try json.objectField("result");
         try json.beginArray();
@@ -698,24 +689,21 @@ pub const LspServer = struct {
             return;
         };
 
-        const pos = self.getPosition(doc.text, line, character);
+        const pos = try byteOffsetAtPosition(doc.text, position);
         const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
             try json.endArray();
             return;
         };
 
         var search_pos: usize = 0;
-        while (self.findNextReference(doc.text, symbol, &search_pos)) |ref_pos| {
-            const ref_line_col = self.getLineColumn(doc.text, ref_pos);
+        while (self.findNextReference(doc.text, symbol.text, &search_pos)) |ref_pos| {
             try json.write(.{
                 .uri = uri,
-                .range = .{
-                    .start = .{ .line = ref_line_col.line, .character = ref_line_col.column },
-                    .end = .{
-                        .line = ref_line_col.line,
-                        .character = ref_line_col.column + @as(i64, @intCast(symbol.len)),
-                    },
-                },
+                .range = try utf16Range(
+                    doc.text,
+                    ref_pos,
+                    ref_pos + symbol.text.len,
+                ),
             });
         }
 
@@ -728,15 +716,13 @@ pub const LspServer = struct {
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
         const new_name = try requireStringField(params, "newName");
-        const line = @max(try requireIntegerField(position, "line"), 0);
-        const character = @max(try requireIntegerField(position, "character"), 0);
 
         const doc = self.documents.get(uri) orelse {
             try writeErrorField(json, -32602, "Document not found");
             return;
         };
 
-        const pos = self.getPosition(doc.text, line, character);
+        const pos = try byteOffsetAtPosition(doc.text, position);
         const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
             try writeErrorField(json, -32602, "Symbol not found");
             return;
@@ -749,16 +735,13 @@ pub const LspServer = struct {
         try json.objectField(uri);
         try json.beginArray();
         var search_pos: usize = 0;
-        while (self.findNextReference(doc.text, symbol, &search_pos)) |ref_pos| {
-            const ref_line_col = self.getLineColumn(doc.text, ref_pos);
+        while (self.findNextReference(doc.text, symbol.text, &search_pos)) |ref_pos| {
             try json.write(.{
-                .range = .{
-                    .start = .{ .line = ref_line_col.line, .character = ref_line_col.column },
-                    .end = .{
-                        .line = ref_line_col.line,
-                        .character = ref_line_col.column + @as(i64, @intCast(symbol.len)),
-                    },
-                },
+                .range = try utf16Range(
+                    doc.text,
+                    ref_pos,
+                    ref_pos + symbol.text.len,
+                ),
                 .newText = new_name,
             });
         }
@@ -768,38 +751,13 @@ pub const LspServer = struct {
         try json.endObject();
     }
     
-    fn getPosition(self: *LspServer, text: []const u8, line: i64, character: i64) usize {
-        _ = self;
-        var line_num: i64 = 0;
-        var i: usize = 0;
-        while (i < text.len and line_num < line) {
-            if (text[i] == '\n') {
-                line_num += 1;
-            }
-            i += 1;
-        }
-        const char_usize: usize = @intCast(@max(character, 0));
-        return @min(i + char_usize, text.len);
-    }
-    
-    fn getLineColumn(self: *LspServer, text: []const u8, pos: usize) struct { line: i64, column: i64 } {
-        _ = self;
-        var line: i64 = 0;
-        var column: i64 = 0;
-        var i: usize = 0;
-        while (i < pos and i < text.len) {
-            if (text[i] == '\n') {
-                line += 1;
-                column = 0;
-            } else {
-                column += 1;
-            }
-            i += 1;
-        }
-        return .{ .line = line, .column = column };
-    }
-    
-    fn getSymbolAtPosition(self: *LspServer, text: []const u8, pos: usize) ?[]const u8 {
+    const SymbolAtPosition = struct {
+        text: []const u8,
+        start: usize,
+        end: usize,
+    };
+
+    fn getSymbolAtPosition(self: *LspServer, text: []const u8, pos: usize) ?SymbolAtPosition {
         _ = self;
         if (pos >= text.len) return null;
         
@@ -814,7 +772,7 @@ pub const LspServer = struct {
         }
         
         if (start < end) {
-            return text[start..end];
+            return .{ .text = text[start..end], .start = start, .end = end };
         }
         return null;
     }
@@ -934,6 +892,22 @@ fn expectNoResponse(server: *LspServer, message: []const u8) !void {
     }
 }
 
+fn expectJsonRange(
+    range_value: std.json.Value,
+    start_line: i64,
+    start_character: i64,
+    end_line: i64,
+    end_character: i64,
+) !void {
+    try std.testing.expect(range_value == .object);
+    const start = range_value.object.get("start").?.object;
+    const end = range_value.object.get("end").?.object;
+    try std.testing.expectEqual(start_line, start.get("line").?.integer);
+    try std.testing.expectEqual(start_character, start.get("character").?.integer);
+    try std.testing.expectEqual(end_line, end.get("line").?.integer);
+    try std.testing.expectEqual(end_character, end.get("character").?.integer);
+}
+
 test "LSP server initialization" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -967,6 +941,10 @@ test "LSP handle initialize request" {
     const capabilities = parsed.value.object
         .get("result").?.object
         .get("capabilities").?.object;
+    try std.testing.expectEqualStrings(
+        "utf-16",
+        capabilities.get("positionEncoding").?.string,
+    );
     const synchronization = capabilities.get("textDocumentSync").?.object;
     try std.testing.expect(synchronization.get("openClose").?.bool);
     try std.testing.expectEqual(@as(i64, 1), synchronization.get("change").?.integer);
@@ -1089,6 +1067,104 @@ test "LSP serializer escapes handler strings and dynamic object fields" {
         "renamed\nname",
         edits[0].object.get("newText").?.string,
     );
+}
+
+test "LSP positions use UTF-16 across non-BMP text and CRLF" {
+    const allocator = std.testing.allocator;
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    try initializeTestServer(&server);
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\",\"languageId\":\"css\",\"version\":1,\"text\":\"😀.foo{color:red}\\r\\nα .foo{}\"}}}",
+    );
+
+    const response = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":3}}}",
+    );
+    defer allocator.free(response);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
+    defer parsed.deinit();
+    const result = parsed.value.object.get("result").?;
+    try std.testing.expect(result == .object);
+    try expectJsonRange(result.object.get("range").?, 0, 3, 0, 6);
+
+    const references_response = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":3}}}",
+    );
+    defer allocator.free(references_response);
+    var parsed_references = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        references_response,
+        .{},
+    );
+    defer parsed_references.deinit();
+    const references = parsed_references.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), references.len);
+    try expectJsonRange(references[0].object.get("range").?, 0, 3, 0, 6);
+    try expectJsonRange(references[1].object.get("range").?, 1, 3, 1, 6);
+
+    const hover_response = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":0,\"character\":7}}}",
+    );
+    defer allocator.free(hover_response);
+    var parsed_hover = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        hover_response,
+        .{},
+    );
+    defer parsed_hover.deinit();
+    try expectJsonRange(
+        parsed_hover.value.object.get("result").?.object.get("range").?,
+        0,
+        7,
+        0,
+        12,
+    );
+
+    const invalid_positions = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":0,\"character\":1}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":-1,\"character\":0}}}",
+    };
+    for (invalid_positions) |request| {
+        const invalid_response = try server.handleRequest(request);
+        defer allocator.free(invalid_response);
+        var invalid = try std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
+            invalid_response,
+            .{},
+        );
+        defer invalid.deinit();
+        try std.testing.expectEqual(
+            @as(i64, -32602),
+            invalid.value.object.get("error").?.object.get("code").?.integer,
+        );
+    }
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.scss\",\"languageId\":\"scss\",\"version\":1,\"text\":\"😀$x: red;\"}}}",
+    );
+    const diagnostics_response = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/diagnostics\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.scss\"}}}",
+    );
+    defer allocator.free(diagnostics_response);
+    var parsed_diagnostics = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        diagnostics_response,
+        .{},
+    );
+    defer parsed_diagnostics.deinit();
+    const diagnostics = parsed_diagnostics.value.object
+        .get("result").?.object
+        .get("items").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try expectJsonRange(diagnostics[0].object.get("range").?, 0, 0, 0, 2);
 }
 
 test "LSP serializes every handler response as complete JSON" {
