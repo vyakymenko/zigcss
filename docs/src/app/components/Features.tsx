@@ -65,7 +65,7 @@ const capabilities = [
   {
     surface: "Alternate format adapters",
     status: "Unavailable",
-    detail: "SCSS, SASS, LESS, Stylus, CSS-in-JS, and PostCSS-like parser sources are removed; remaining legacy adapters stay internal and unavailable.",
+    detail: "The compiler's SCSS, SASS, LESS, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like adapter sources are removed.",
   },
   {
     surface: "LSP",

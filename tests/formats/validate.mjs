@@ -267,7 +267,8 @@ function validateMatrix() {
     .readdirSync(formatsDirectory)
     .filter(name => name.endsWith('.zig'))
     .map(name => `src/formats/${name}`)
-  legacySources.push('src/tailwind.zig')
+  const tailwindSource = 'src/tailwind.zig'
+  if (fs.existsSync(repositoryPath(tailwindSource))) legacySources.push(tailwindSource)
   expectExactSet(coveredLegacySources, legacySources, 'legacy adapter source inventory')
   const nativeSources = matrix.adapters
     .filter(adapter => adapter.implementation === 'LimitedNative')

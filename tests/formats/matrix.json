@@ -214,20 +214,22 @@
       "extensions": [".postcss"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
-      "implementation": "LegacyCharacterized",
+      "implementation": "Removed",
       "strategy": "remove-until-funded",
       "ownerPackages": ["TAILWIND-001"],
-      "sourceFiles": ["src/tailwind.zig"],
-      "currentBoundary": "A fixed in-memory utility table remains as unreachable characterized source after POSTCSS-001 removed its only @apply scanner and dispatch path.",
+      "removedBy": "TAILWIND-001",
+      "removedSourceFiles": ["src/tailwind.zig"],
+      "sourceFiles": [],
+      "currentBoundary": "No Tailwind-like fixed utility registry or @apply scanner remains; .postcss is retained only as an explicit CLI rejection and null legacy detector result.",
       "knownRisks": [
-        "Unknown utilities are silently omitted from the expansion.",
-        "Content scanning, configuration, versions, variants, plugins, arbitrary values, ordering, and canonical Tailwind semantics are absent."
+        "Reintroducing a fixed table under the Tailwind name without canonical content scanning, configuration, versions, variants, plugins, arbitrary values, ordering, and strict unknown-utility behavior would recreate the removed compatibility claim."
       ],
       "probe": ".card { @apply p-4 unknown-utility; }\n",
-      "sourceEvidence": [
-        { "file": "src/tailwind.zig", "contains": "pub const TailwindRegistry" },
-        { "file": "src/tailwind.zig", "contains": "fn registerDefaults" },
-        { "file": "src/tailwind.zig", "contains": "if (self.expandUtility(utility)) |decls|" }
+      "containmentEvidence": [
+        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".postcss\")" },
+        { "file": "src/main.zig", "contains": "return \"PostCSS\";" },
+        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".postcss\")" },
+        { "file": "src/lsp.zig", "contains": "file:///removed.postcss" }
       ]
     }
   ]

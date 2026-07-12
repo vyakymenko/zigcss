@@ -29,7 +29,7 @@ The machine-readable authority is `tests/formats/matrix.json`. `npm run test:for
 | `css-modules` | `.module.css` | ExperimentalLibrary | NativeSubset | LimitedNative | `limited-native-subset` | `MODULE-001`, `MODULE-002` |
 | `css-in-js` | `.css.js`, `.css.ts` | Unavailable | Unverified | Removed | `remove-until-funded` | `JS-001` |
 | `postcss` | `.postcss` | Unavailable | Unverified | Removed | `remove-until-funded` | `POSTCSS-001` |
-| `tailwind` | `.postcss` (`@apply` path) | Unavailable | Unverified | LegacyCharacterized | `remove-until-funded` | `TAILWIND-001` |
+| `tailwind` | `.postcss` (`@apply` path) | Unavailable | Unverified | Removed | `remove-until-funded` | `TAILWIND-001` |
 
 ## What the inherited code actually does
 
@@ -42,11 +42,11 @@ The machine-readable authority is `tests/formats/matrix.json`. `npm run test:for
 | CSS Modules | The FNV/legacy-AST parser is removed. `.css_modules` walks the rebuilt typed AST with source-specific names, functional scope, plain-class composition, and token-aware local values; results own class/value exports, references, and module dependency facts. | This is the exact [native CSS Modules subset](/guide/css-modules), not a claim of complete ecosystem compatibility. It never loads external modules; imported values, raw ICSS, and ambiguous semantics fail with `CSS0009` and no CSS. |
 | CSS-in-JS | Removed by `JS-001`; no byte scanner or legacy `Format` dispatch remains. | The former code had no JavaScript/TypeScript lexer or AST, could not identify valid tagged templates safely, and deleted dynamic semantics rather than rejecting them. |
 | PostCSS-like | Removed by `POSTCSS-001`; no directive scanner or legacy `Format` dispatch remains. | The former path could delete `@custom-media` and `@nest`, and had no JavaScript plugin discovery, configuration, ordering, lifecycle, dependency, or map contract. |
-| Tailwind-like | The fixed in-memory utility table remains as unreachable characterized source after `POSTCSS-001` removed its only `@apply` scanner. | Unknown utilities were omitted; content scanning, configuration, versions, variants, plugins, arbitrary values, ordering, and canonical Tailwind semantics are absent. |
+| Tailwind-like | Removed by `TAILWIND-001`; no fixed utility registry or `@apply` scanner remains. | The former table omitted unknown utilities and had no canonical content scanning, configuration, versions, variants, plugins, arbitrary values, or ordering semantics. |
 
 ## Accepted direction
 
-ADR-005 chooses removal until a dedicated program is funded for SCSS/Sass, Less, Stylus, CSS-in-JS, PostCSS-like behavior, and Tailwind-like behavior. `SCSS-001`, `LESS-001`, `STYLUS-001`, `JS-001`, and `POSTCSS-001` have deleted their heuristic parser sources and legacy dispatch tags while retaining explicit CLI/LSP rejection. “Removal” means no public syntax tag, CLI option, package claim, or fallback to CSS. Verified native transforms keep ZigCSS-specific names rather than borrowing PostCSS or Tailwind branding.
+ADR-005 chooses removal until a dedicated program is funded for SCSS/Sass, Less, Stylus, CSS-in-JS, PostCSS-like behavior, and Tailwind-like behavior. `SCSS-001`, `LESS-001`, `STYLUS-001`, `JS-001`, `POSTCSS-001`, and `TAILWIND-001` have deleted their heuristic adapter sources and legacy dispatch tags while retaining explicit CLI/LSP rejection. “Removal” means no public syntax tag, CLI option, package claim, or fallback to CSS. Verified native transforms keep ZigCSS-specific names rather than borrowing PostCSS or Tailwind branding.
 
 CSS Modules is the one accepted limited-native direction. `MODULE-001` provides library-only deterministic names, owned export mappings, limits, source maps, direct CSS import facts, recovery-disabled independent generated-CSS validation, and strict negative behavior. `MODULE-002` adds occurrence-keyed functional scope, plain-class composition with owned references/combined dependency limits, and sequential local `@value` definitions with structural use-token replacement. Imported values, raw ICSS import/export, and implicit external resolution stay unavailable by design.
 
