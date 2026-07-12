@@ -117,6 +117,14 @@ fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
     return count;
 }
 
+fn profileMetric(report: []const u8, label: []const u8) !u64 {
+    const label_start = std.mem.indexOf(u8, report, label) orelse return error.MissingProfileMetric;
+    const value_start = label_start + label.len;
+    const relative_end = std.mem.indexOfScalar(u8, report[value_start..], '\n') orelse
+        return error.UnterminatedProfileMetric;
+    return std.fmt.parseInt(u64, report[value_start .. value_start + relative_end], 10);
+}
+
 const OutputStamp = struct {
     inode: std.fs.File.INode,
     mtime: i128,
@@ -556,16 +564,45 @@ test "verified optimizer preserves unsupported selector rewrites without crashin
     try std.testing.expectEqualStrings("*>.a{color:red}", result.stdout);
 }
 
-test "profiling lifecycle: the public compile call ends once and succeeds (PROF-001)" {
+test "profiling lifecycle reports measured API stages and allocator bytes once (PROF-010)" {
     var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{ "--profile", "--optimize", "--minify" });
     defer deinitRun(&result);
 
     try expectSuccess(result);
     try std.testing.expectEqualStrings(".simple{color:red}", result.stdout);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Performance Profile") != null);
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "compile"));
-    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, result.stderr, "parse"));
-    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, result.stderr, "codegen"));
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(result.stderr, "=== Performance Profile ==="));
+    const total = try profileMetric(result.stderr, "  total_time_ns: ");
+    const parse = try profileMetric(result.stderr, "  parse_time_ns: ");
+    const validation = try profileMetric(result.stderr, "  validation_time_ns: ");
+    const dependencies = try profileMetric(result.stderr, "  dependency_time_ns: ");
+    const optimize = try profileMetric(result.stderr, "  optimize_time_ns: ");
+    const transform = try profileMetric(result.stderr, "  transform_time_ns: ");
+    const emit = try profileMetric(result.stderr, "  emit_time_ns: ");
+    const promoted = try profileMetric(result.stderr, "  result_time_ns: ");
+    const cleanup = try profileMetric(result.stderr, "  cleanup_time_ns: ");
+    try std.testing.expect(parse > 0);
+    try std.testing.expect(optimize > 0);
+    try std.testing.expectEqual(@as(u64, 0), transform);
+    try std.testing.expect(total >= parse + validation + dependencies + optimize + transform + emit + promoted + cleanup);
+
+    const allocated = try profileMetric(result.stderr, "  total_allocated_bytes: ");
+    const freed = try profileMetric(result.stderr, "  total_freed_bytes: ");
+    const peak = try profileMetric(result.stderr, "  peak_live_bytes: ");
+    const retained = try profileMetric(result.stderr, "  retained_result_bytes: ");
+    const allocations = try profileMetric(result.stderr, "  allocation_count: ");
+    const deallocations = try profileMetric(result.stderr, "  deallocation_count: ");
+    _ = try profileMetric(result.stderr, "  resize_count: ");
+    try std.testing.expect(allocated > freed);
+    try std.testing.expectEqual(retained, allocated - freed);
+    try std.testing.expect(peak >= retained);
+    try std.testing.expect(retained >= result.stdout.len);
+    try std.testing.expect(allocations > deallocations);
+
+    var invalid = try runCompiler(".a{broken}", &.{ "--profile", "--minify" });
+    defer deinitRun(&invalid);
+    try expectFailureContaining(invalid, "error CSS0007");
+    try std.testing.expectEqual(@as(usize, 1), countOccurrences(invalid.stderr, "=== Performance Profile ==="));
+    try std.testing.expect((try profileMetric(invalid.stderr, "  retained_result_bytes: ")) > 0);
 }
 
 test "CLI strictness: unavailable source maps are rejected explicitly (CLI-002)" {

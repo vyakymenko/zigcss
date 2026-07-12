@@ -39,6 +39,9 @@ comptime {
     _ = zigcss.Dependency;
     _ = zigcss.DependencyKind;
     _ = zigcss.DependencyLimits;
+    _ = zigcss.CompileMetrics;
+    _ = zigcss.CompileStageTimings;
+    _ = zigcss.CompileMemoryMetrics;
     _ = zigcss.ModuleExport;
     _ = zigcss.ModuleExports;
     _ = zigcss.Token;
@@ -74,6 +77,7 @@ test "external consumer imports the public root and owns CSS maps and diagnostic
         .{
             .format = .minified,
             .source_map = .{ .external = .{ .generated_file = "consumer.out.css" } },
+            .profile = true,
         },
     );
     defer result.deinit();
@@ -83,6 +87,10 @@ test "external consumer imports the public root and owns CSS maps and diagnostic
     try std.testing.expectEqual(@as(usize, 1), result.dependencies.len);
     try std.testing.expectEqualStrings("theme.css", result.dependencies[0].specifier);
     try std.testing.expect(result.module_exports == null);
+    const metrics = result.metrics orelse return error.MissingMetrics;
+    try std.testing.expect(metrics.total_time_ns >= metrics.stages.total());
+    try std.testing.expect(metrics.memory.peak_live_bytes >= metrics.memory.retained_result_bytes);
+    try std.testing.expect(metrics.memory.retained_result_bytes > 0);
     const source_map = result.source_map orelse return error.MissingSourceMap;
     var parsed_map = try std.json.parseFromSlice(
         std.json.Value,

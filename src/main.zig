@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const zigcss = @import("zigcss");
-const profiler = @import("profiler.zig");
 const lsp = @import("lsp.zig");
 
 const version = "0.3.0";
@@ -84,6 +83,7 @@ fn compileCss(
     syntax: zigcss.Syntax,
     optimize: bool,
     minify: bool,
+    profile: bool,
 ) zigcss.CompileError!zigcss.CompileResult {
     return zigcss.compile(
         allocator,
@@ -93,6 +93,7 @@ fn compileCss(
             .syntax = syntax,
             .format = if (minify) .minified else .pretty,
             .transforms = .{ .optimize = optimize },
+            .profile = profile,
         },
     );
 }
@@ -126,6 +127,28 @@ fn printDiagnostics(diagnostics: []const zigcss.Diagnostic) void {
             },
         );
     }
+}
+
+fn printProfile(metrics: zigcss.CompileMetrics) void {
+    std.debug.print("\n=== Performance Profile ===\n", .{});
+    std.debug.print("Timing (nanoseconds):\n", .{});
+    std.debug.print("  total_time_ns: {d}\n", .{metrics.total_time_ns});
+    std.debug.print("  parse_time_ns: {d}\n", .{metrics.stages.parse_time_ns});
+    std.debug.print("  validation_time_ns: {d}\n", .{metrics.stages.validation_time_ns});
+    std.debug.print("  dependency_time_ns: {d}\n", .{metrics.stages.dependency_time_ns});
+    std.debug.print("  optimize_time_ns: {d}\n", .{metrics.stages.optimize_time_ns});
+    std.debug.print("  transform_time_ns: {d}\n", .{metrics.stages.transform_time_ns});
+    std.debug.print("  emit_time_ns: {d}\n", .{metrics.stages.emit_time_ns});
+    std.debug.print("  result_time_ns: {d}\n", .{metrics.stages.result_time_ns});
+    std.debug.print("  cleanup_time_ns: {d}\n", .{metrics.stages.cleanup_time_ns});
+    std.debug.print("Allocator requested-byte metrics:\n", .{});
+    std.debug.print("  total_allocated_bytes: {d}\n", .{metrics.memory.total_allocated_bytes});
+    std.debug.print("  total_freed_bytes: {d}\n", .{metrics.memory.total_freed_bytes});
+    std.debug.print("  peak_live_bytes: {d}\n", .{metrics.memory.peak_live_bytes});
+    std.debug.print("  retained_result_bytes: {d}\n", .{metrics.memory.retained_result_bytes});
+    std.debug.print("  allocation_count: {d}\n", .{metrics.memory.allocation_count});
+    std.debug.print("  deallocation_count: {d}\n", .{metrics.memory.deallocation_count});
+    std.debug.print("  resize_count: {d}\n\n", .{metrics.memory.resize_count});
 }
 
 fn isStdioPath(path: []const u8) bool {
@@ -190,11 +213,6 @@ fn compileLoadedFile(
     config: CompileConfig,
     input: []const u8,
 ) !zigcss.CompileResult {
-    var perf_profiler = try profiler.Profiler.init(allocator, config.profile);
-    defer perf_profiler.deinit();
-
-    var compile_timing = try perf_profiler.startTiming("compile");
-    defer compile_timing.end() catch {};
     var result = compileCss(
         allocator,
         inputDisplayName(config.input_file),
@@ -202,15 +220,16 @@ fn compileLoadedFile(
         config.syntax,
         config.optimize,
         config.minify,
+        config.profile,
     ) catch |err| {
         std.debug.print("Error: CSS compilation failed: {s}\n", .{@errorName(err)});
         return err;
     };
     errdefer result.deinit();
-    try compile_timing.end();
 
     if (hasErrorDiagnostics(result.diagnostics)) {
         printDiagnostics(result.diagnostics);
+        if (config.profile) printProfile(result.metrics orelse return error.MissingProfileMetrics);
         return error.CompileError;
     }
 
@@ -231,9 +250,7 @@ fn compileLoadedFile(
         };
     }
 
-    if (config.profile) {
-        perf_profiler.printReport();
-    }
+    if (config.profile) printProfile(result.metrics orelse return error.MissingProfileMetrics);
 
     return result.take();
 }
@@ -527,6 +544,7 @@ fn compileTask(task: *CompileTask) bool {
         task.syntax,
         task.optimize,
         task.minify,
+        false,
     ) catch |err| {
         setTaskError(task, "Compilation error: {s}", .{@errorName(err)}, "Compilation error");
         return false;
@@ -888,7 +906,7 @@ fn printUsage() !void {
             "  --minify                 Emit compact whitespace (independent of --optimize)\n" ++
             "  --optimize               Run the closed verified optimizer preset\n" ++
             "  --watch                  Watch one input and its local CSS imports\n" ++
-            "  --profile                Time the end-to-end public compile call\n" ++
+            "  --profile                Report API stages and requested memory bytes\n" ++
             "  --lsp                    Start the experimental LSP server\n" ++
             "  -V, --version            Show the package version\n" ++
             "  -h, --help               Show this help\n" ++
@@ -1517,6 +1535,7 @@ test "legacy codegen rejects transform requests without mutating its AST" {
 }
 
 test "profiler timing handles can be ended more than once safely" {
+    const profiler = @import("profiler.zig");
     var perf_profiler = try profiler.Profiler.init(std.testing.allocator, true);
     defer perf_profiler.deinit();
 

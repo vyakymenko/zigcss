@@ -9,6 +9,7 @@ const pass_manager = @import("transform/pass_manager.zig");
 const pipeline = @import("css/pipeline.zig");
 const plugins = @import("plugins.zig");
 const prefix_rewrite = @import("prefixing/rewrite.zig");
+const profiling = @import("profiling.zig");
 const sourcemap = @import("sourcemap.zig");
 const source = @import("source.zig");
 const target_query = @import("prefixing/target_query.zig");
@@ -56,11 +57,15 @@ pub const CompileOptions = struct {
     targets: ?*const target_query.Query = null,
     plugins: PluginOptions = .none,
     dependency_limits: dependencies.Options = .{},
+    /// Adds measured stage timings and allocator-requested memory statistics
+    /// to the owned result. Disabled calls do not install the tracking wrapper.
+    profile: bool = false,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
     SourceTooLarge,
     CompilationFailed,
+    ProfilingUnavailable,
 };
 
 /// Result-owned structured diagnostic. Locations and the source name remain
@@ -93,6 +98,7 @@ pub const CompileResult = struct {
     diagnostics: []const Diagnostic,
     dependencies: []const dependencies.Dependency,
     module_exports: ?ModuleExports,
+    metrics: ?profiling.Metrics,
 
     pub fn take(self: *CompileResult) CompileResult {
         const moved = self.*;
@@ -120,6 +126,7 @@ pub const CompileResult = struct {
             .diagnostics = &.{},
             .dependencies = &.{},
             .module_exports = null,
+            .metrics = null,
         };
     }
 };
@@ -133,6 +140,7 @@ pub fn compile(
     return compileInternal(allocator, name, input, options) catch |err| switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.SourceTooLarge => error.SourceTooLarge,
+        error.TimerUnsupported => error.ProfilingUnavailable,
         else => error.CompilationFailed,
     };
 }
@@ -143,111 +151,140 @@ fn compileInternal(
     input: []const u8,
     options: CompileOptions,
 ) !CompileResult {
-    var parsed = try pipeline.parse(allocator, name, input);
-    defer parsed.deinit();
-    try validateOptions(&parsed, options);
+    var profile = try profiling.Session.init(allocator, options.profile);
+    const work_allocator = profile.workAllocator();
+    var cleanup_started_ns: u64 = 0;
+    var result = compile_work: {
+        const parse_started_ns = profile.startStage();
+        var parsed = try pipeline.parse(work_allocator, name, input);
+        profile.endStage(.parse, parse_started_ns);
+        defer parsed.deinit();
 
-    var plugin_plan: ?pass_manager.Plan = null;
-    defer if (plugin_plan) |*plan| plan.deinit();
-    if (!parsed.hasErrors()) {
-        if (experimentalPlugins(options.plugins)) |plugin_options| {
-            plugin_plan = plugins.buildPlan(allocator, plugin_options) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                else => invalid: {
-                    try reportAtStart(
-                        &parsed,
-                        .invalid_plugin,
-                        @errorName(err),
-                    );
-                    break :invalid null;
-                },
-            };
-        }
-    }
-
-    var dependency_list = dependencies.OwnedList.init(allocator);
-    defer dependency_list.deinit();
-    if (!parsed.hasErrors()) {
-        dependency_list = try dependencies.collect(
-            allocator,
-            &parsed,
-            options.dependency_limits,
-        );
-    }
-
-    if (!parsed.hasErrors() and options.transforms.optimize) {
-        verified_optimizer.applyToFixedPoint(
-            allocator,
-            &parsed,
-            emitMode(options.format),
-        ) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.OptimizationDidNotConverge => try reportAtStart(
-                &parsed,
-                .resource_limit,
-                "verified optimizer did not reach its bounded fixed point",
-            ),
-            else => try reportAtStart(
-                &parsed,
-                .internal,
-                "verified optimizer validation failed",
-            ),
-        };
-    }
-
-    if (!parsed.hasErrors()) {
-        const selected_plugins = requestedPluginCount(options.plugins) != 0;
-        if (selected_plugins) {
-            if (options.transforms.prefix) {
-                const plugin_options = experimentalPlugins(options.plugins).?;
-                applyPluginsAndPrefix(
-                    allocator,
-                    &parsed,
-                    plugin_options,
-                    options.targets.?,
-                ) catch |err| switch (err) {
+        const validation_started_ns = profile.startStage();
+        try validateOptions(&parsed, options);
+        var plugin_plan: ?pass_manager.Plan = null;
+        defer if (plugin_plan) |*plan| plan.deinit();
+        if (!parsed.hasErrors()) {
+            if (experimentalPlugins(options.plugins)) |plugin_options| {
+                plugin_plan = plugins.buildPlan(work_allocator, plugin_options) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
-                    error.InvalidCompatibilityData, error.InvalidQuery => try reportAtStart(
-                        &parsed,
-                        .internal,
-                        "target prefix validation failed",
-                    ),
-                    else => try reportAtStart(
-                        &parsed,
-                        .plugin_failed,
-                        @errorName(err),
-                    ),
-                };
-            } else {
-                parsed.applyPassPlan(allocator, &plugin_plan.?, .{}) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    else => try reportAtStart(
-                        &parsed,
-                        .plugin_failed,
-                        @errorName(err),
-                    ),
+                    else => invalid: {
+                        try reportAtStart(
+                            &parsed,
+                            .invalid_plugin,
+                            @errorName(err),
+                        );
+                        break :invalid null;
+                    },
                 };
             }
-        } else if (options.transforms.prefix) {
-            applyPrefix(allocator, &parsed, options.targets.?) catch |err| switch (err) {
+        }
+        profile.endStage(.validation, validation_started_ns);
+
+        var dependency_list = dependencies.OwnedList.init(work_allocator);
+        defer dependency_list.deinit();
+        if (!parsed.hasErrors()) {
+            const dependency_started_ns = profile.startStage();
+            dependency_list = try dependencies.collect(
+                work_allocator,
+                &parsed,
+                options.dependency_limits,
+            );
+            profile.endStage(.dependencies, dependency_started_ns);
+        }
+
+        if (!parsed.hasErrors() and options.transforms.optimize) {
+            const optimize_started_ns = profile.startStage();
+            verified_optimizer.applyToFixedPoint(
+                work_allocator,
+                &parsed,
+                emitMode(options.format),
+            ) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
+                error.OptimizationDidNotConverge => try reportAtStart(
+                    &parsed,
+                    .resource_limit,
+                    "verified optimizer did not reach its bounded fixed point",
+                ),
                 else => try reportAtStart(
                     &parsed,
                     .internal,
-                    "target prefix validation failed",
+                    "verified optimizer validation failed",
                 ),
             };
+            profile.endStage(.optimize, optimize_started_ns);
         }
-    }
 
-    var pipeline_result = try parsed.emitResult(allocator, pipelineOptions(options));
-    defer pipeline_result.deinit();
-    return try promoteResult(
-        allocator,
-        parsed.file(),
-        &pipeline_result,
-        &dependency_list,
-    );
+        if (!parsed.hasErrors()) {
+            const selected_plugins = requestedPluginCount(options.plugins) != 0;
+            if (selected_plugins or options.transforms.prefix) {
+                const transform_started_ns = profile.startStage();
+                if (selected_plugins) {
+                    if (options.transforms.prefix) {
+                        const plugin_options = experimentalPlugins(options.plugins).?;
+                        applyPluginsAndPrefix(
+                            work_allocator,
+                            &parsed,
+                            plugin_options,
+                            options.targets.?,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => return error.OutOfMemory,
+                            error.InvalidCompatibilityData, error.InvalidQuery => try reportAtStart(
+                                &parsed,
+                                .internal,
+                                "target prefix validation failed",
+                            ),
+                            else => try reportAtStart(
+                                &parsed,
+                                .plugin_failed,
+                                @errorName(err),
+                            ),
+                        };
+                    } else {
+                        parsed.applyPassPlan(work_allocator, &plugin_plan.?, .{}) catch |err| switch (err) {
+                            error.OutOfMemory => return error.OutOfMemory,
+                            else => try reportAtStart(
+                                &parsed,
+                                .plugin_failed,
+                                @errorName(err),
+                            ),
+                        };
+                    }
+                } else {
+                    applyPrefix(work_allocator, &parsed, options.targets.?) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => try reportAtStart(
+                            &parsed,
+                            .internal,
+                            "target prefix validation failed",
+                        ),
+                    };
+                }
+                profile.endStage(.transform, transform_started_ns);
+            }
+        }
+
+        const emit_started_ns = profile.startStage();
+        var pipeline_result = try parsed.emitResult(work_allocator, pipelineOptions(options));
+        profile.endStage(.emit, emit_started_ns);
+        defer pipeline_result.deinit();
+
+        const result_started_ns = profile.startStage();
+        const promoted = try promoteResult(
+            work_allocator,
+            allocator,
+            parsed.file(),
+            &pipeline_result,
+            &dependency_list,
+        );
+        profile.endStage(.result, result_started_ns);
+        cleanup_started_ns = profile.startStage();
+        break :compile_work promoted;
+    };
+    profile.endStage(.cleanup, cleanup_started_ns);
+    errdefer result.deinit();
+    result.metrics = profile.finish();
+    return result.take();
 }
 
 fn validateOptions(parsed: *pipeline.ParsedStylesheet, options: CompileOptions) !void {
@@ -392,17 +429,18 @@ fn pipelineOptions(options: CompileOptions) pipeline.Options {
 }
 
 fn promoteResult(
-    allocator: std.mem.Allocator,
+    work_allocator: std.mem.Allocator,
+    result_allocator: std.mem.Allocator,
     file: *const source.SourceFile,
     pipeline_result: *compilation.CompileResult,
     dependency_list: *dependencies.OwnedList,
 ) !CompileResult {
     const owned_diagnostics = try cloneDiagnostics(
-        allocator,
+        work_allocator,
         file,
         pipeline_result.diagnostics,
     );
-    errdefer releaseDiagnostics(allocator, owned_diagnostics);
+    errdefer releaseDiagnostics(work_allocator, owned_diagnostics);
 
     var moved = pipeline_result.take();
     const css = moved.css;
@@ -412,12 +450,13 @@ fn promoteResult(
     moved.deinit();
 
     return .{
-        .result_allocator = allocator,
+        .result_allocator = result_allocator,
         .css = css,
         .source_map = source_map,
         .diagnostics = owned_diagnostics,
         .dependencies = dependency_list.take(),
         .module_exports = null,
+        .metrics = null,
     };
 }
 
@@ -512,6 +551,7 @@ test "public compile returns owned CSS maps dependencies and no CSS modules" {
     try std.testing.expectEqualStrings("theme.css", result.dependencies[0].specifier);
     try std.testing.expectEqualStrings("api.css", result.dependencies[0].source_name);
     try std.testing.expect(result.module_exports == null);
+    try std.testing.expect(result.metrics == null);
 }
 
 test "public compile dependency limits discard partial facts" {
@@ -608,13 +648,72 @@ test "public compile composes explicit optimization and target prefixing" {
 }
 
 test "public compile results support explicit moves and repeated cleanup" {
-    var original = try compile(std.testing.allocator, "move-api.css", ".a{x:1}", .{});
+    var original = try compile(
+        std.testing.allocator,
+        "move-api.css",
+        ".a{x:1}",
+        .{ .profile = true },
+    );
     var moved = original.take();
-    defer moved.deinit();
     original.deinit();
     original.deinit();
     try std.testing.expectEqualStrings(".a {\n  x: 1;\n}\n", moved.css);
     try std.testing.expectEqual(@as(usize, 0), original.css.len);
+    try std.testing.expect(original.metrics == null);
+    try std.testing.expect(moved.metrics != null);
+    moved.deinit();
+    moved.deinit();
+    try std.testing.expect(moved.metrics == null);
+}
+
+test "public compile profiling measures actual stages and requested memory" {
+    var result = try compile(
+        std.testing.allocator,
+        "profiled-api.css",
+        "@import \"theme.css\";.empty{}.a{width:calc(1px + 2px);color:#ffffff}",
+        .{
+            .format = .minified,
+            .transforms = .{ .optimize = true },
+            .profile = true,
+        },
+    );
+    defer result.deinit();
+
+    const metrics = result.metrics orelse return error.MissingMetrics;
+    try std.testing.expectEqualStrings("@import \"theme.css\";.a{width:3px;color:#fff}", result.css);
+    try std.testing.expect(metrics.total_time_ns >= metrics.stages.total());
+    try std.testing.expect(metrics.stages.parse_time_ns > 0);
+    try std.testing.expect(metrics.stages.optimize_time_ns > 0);
+    try std.testing.expectEqual(@as(u64, 0), metrics.stages.transform_time_ns);
+    try std.testing.expect(metrics.memory.total_allocated_bytes > 0);
+    try std.testing.expect(metrics.memory.total_freed_bytes > 0);
+    try std.testing.expect(metrics.memory.peak_live_bytes >= metrics.memory.retained_result_bytes);
+    try std.testing.expect(metrics.memory.retained_result_bytes > result.css.len);
+    try std.testing.expectEqual(
+        metrics.memory.retained_result_bytes,
+        metrics.memory.total_allocated_bytes - metrics.memory.total_freed_bytes,
+    );
+    try std.testing.expect(metrics.memory.allocation_count > 0);
+    try std.testing.expect(metrics.memory.deallocation_count > 0);
+}
+
+test "public compile profiling returns metrics with structured diagnostics" {
+    var result = try compile(
+        std.testing.allocator,
+        "profiled-invalid.css",
+        ".a{broken}",
+        .{ .format = .minified, .profile = true },
+    );
+    defer result.deinit();
+
+    const metrics = result.metrics orelse return error.MissingMetrics;
+    try std.testing.expect(result.diagnostics.len > 0);
+    try std.testing.expectEqual(@as(usize, 0), result.css.len);
+    try std.testing.expect(metrics.total_time_ns >= metrics.stages.total());
+    try std.testing.expect(metrics.stages.parse_time_ns > 0);
+    try std.testing.expectEqual(@as(u64, 0), metrics.stages.optimize_time_ns);
+    try std.testing.expectEqual(@as(u64, 0), metrics.stages.transform_time_ns);
+    try std.testing.expect(metrics.memory.retained_result_bytes > 0);
 }
 
 fn exercisePublicCompileAllocationFailures(allocator: std.mem.Allocator) !void {
@@ -642,6 +741,7 @@ fn exercisePublicCompileAllocationFailures(allocator: std.mem.Allocator) !void {
                 .requested = &.{"plugin.oom"},
                 .policy = .{ .allow_experimental = true },
             } },
+            .profile = true,
         },
     );
     defer result.deinit();
@@ -652,9 +752,10 @@ fn exercisePublicCompileAllocationFailures(allocator: std.mem.Allocator) !void {
 }
 
 fn exerciseDiagnosticResultAllocationFailures(allocator: std.mem.Allocator) !void {
-    var result = try compile(allocator, "oom-diagnostic-api.css", ".a{broken}", .{});
+    var result = try compile(allocator, "oom-diagnostic-api.css", ".a{broken}", .{ .profile = true });
     defer result.deinit();
     try std.testing.expect(result.diagnostics.len > 0);
+    try std.testing.expect(result.metrics != null);
 }
 
 test "public compile handles every result and diagnostic allocation failure" {

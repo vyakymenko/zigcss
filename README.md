@@ -38,9 +38,11 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 
 ## Experimental Zig compile API
 
-`build.zig` registers one external module named `zigcss` at `src/lib.zig`. `zigcss.compile` accepts `CompileOptions` for CSS output format, separate source maps, the verified optimizer, verified target prefixing, a borrowed canonical target query, and bounded dependency reporting. Its move-only-by-convention `CompileResult` owns CSS, optional map bytes, located structured diagnostics, ordered decoded top-level `@import` dependencies, and optional module-export state through one idempotent `deinit` path.
+`build.zig` registers one external module named `zigcss` at `src/lib.zig`. `zigcss.compile` accepts `CompileOptions` for CSS output format, separate source maps, the verified optimizer, verified target prefixing, a borrowed canonical target query, bounded dependency reporting, and opt-in profiling. Its move-only-by-convention `CompileResult` owns CSS, optional map bytes, located structured diagnostics, ordered decoded top-level `@import` dependencies, optional module-export state, and optional measured compile metrics through one idempotent `deinit` path.
 
 The stable CSS path returns `module_exports = null`; CSS Modules remain experimental. Fixed-point optimization and source maps cannot be combined until intermediate maps can be composed, and incoherent options return owned `API0001` diagnostics without CSS.
+
+With `.profile = true`, the result includes one monotonic end-to-end duration plus measured parse, validation, dependency, optimizer, plugin/prefix transform, emit, result-promotion, and cleanup stages. A forwarding allocator records successful allocation/free/resize events, cumulative requested/freed bytes, peak live requested bytes, and result bytes retained after compiler cleanup. These are allocator-requested byte metrics, not operating-system RSS. Profiling-disabled calls install no wrapper; an unavailable monotonic timer fails explicitly instead of returning invented zeroes.
 
 `build.zig.zon` gives the source package stable identity `zigcss`, version 0.3.0, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. Its allowlist contains only `build.zig`, the manifest, supported `build_helpers.zig`, `src`, README, and license. `tests/package-consumer` is a real path dependency that resolves `zigcss.module("zigcss")`; an isolated `zig fetch .` copy with only allowlisted files passes the same API smoke. No remote package URL is published.
 

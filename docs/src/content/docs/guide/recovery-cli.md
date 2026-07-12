@@ -15,7 +15,7 @@ All supported CSS modes delegate to one public `zigcss.compile` call site. The C
 | `--minify` | Emit compact whitespace; this is independent of `--optimize`. |
 | `--optimize` | Run the closed verified cleanup/semantic preset to a bounded byte-stable fixed point. |
 | `--watch` | Recompile one input when its content or a direct local relative CSS import changes. |
-| `--profile` | Print one end-to-end public compile-call timing; accurate internal stage and allocator metrics belong to `PROF-010`. |
+| `--profile` | Print one measured public compile total, actual internal stages, and allocator-requested memory metrics. |
 | `--lsp` | Start the experimental language server. |
 | `-V`, `--version` | Print the package-synchronized version to stdout. |
 | `-h`, `--help` | Print the current contract. |
@@ -25,6 +25,12 @@ Every boolean or valued option may appear at most once. Help and version must be
 ## Streams and exit status
 
 With no `-o`, one file or stdin emits CSS to stdout. `-o -` requests stdout explicitly; `-o <path>` writes a file. Help/version and successful compilation exit `0`. Parser/transform diagnostics and operational read/write failures exit `1`. Missing input or values, unknown/duplicate/unavailable flags, unsupported syntax, and incoherent stream/batch/watch combinations exit `2`. Informational text and CSS use stdout; warnings, diagnostics, and usage errors use stderr. The npm launcher inherits all three streams, propagates exact native exit codes, and re-raises POSIX termination signals.
+
+## Profiling
+
+`--profile` sets the public API's opt-in profile field; the executable has no parallel timer or guessed stage model. One monotonic session ends after result promotion and compiler-temporary cleanup. It reports total nanoseconds and the actual parse, validation/plugin-plan, dependency, verified-optimizer, plugin/prefix transform, emit, result-promotion, and cleanup intervals. Stages that did not execute report zero; an interval shorter than the timer's observable resolution may also round to zero. The total may exceed the stage sum because small orchestration gaps remain real end-to-end work.
+
+The same call installs a forwarding allocator that counts successful allocation, deallocation, and resize operations. Byte fields are requested bytes: cumulative allocated/freed, peak live, and the owned result bytes remaining after compiler cleanup. They are not RSS, heap capacity, or an operating-system memory claim. The returned CSS, maps, diagnostics, and dependencies are still freed through the caller's original allocator. Profiling-disabled calls do not install this wrapper. If the platform cannot provide the monotonic timer, compilation returns `ProfilingUnavailable` rather than zero metrics. CLI profiling remains single-input; watch mode emits one report per real compile attempt, while batch profiling is rejected rather than silently aggregated.
 
 ## Explicitly unavailable
 

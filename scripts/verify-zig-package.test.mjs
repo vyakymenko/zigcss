@@ -121,6 +121,8 @@ test('every Zig example has an executable build gate', () => {
 test('the installed executable delegates CSS compilation to the public facade', () => {
   const build = read('build.zig')
   const main = read('src/main.zig')
+  const api = read('src/api.zig')
+  const profiling = read('src/profiling.zig')
   const runtime = main.split('\ntest "')[0]
   const watch = runtime.match(/fn watchFile\([\s\S]*?\n}\n\nconst CompileError/)
   const parallel = runtime.match(/const BatchWorkQueue[\s\S]*?\n}\n\nconst CompileError/)
@@ -132,6 +134,14 @@ test('the installed executable delegates CSS compilation to the public facade', 
     runtime,
     /css\/pipeline|verified_optimizer|const (?:formats|codegen|parser|optimizer|autoprefixer) =/,
   )
+  assert.doesNotMatch(runtime, /const profiler = @import/)
+  assert.match(runtime, /\.profile = profile/)
+  assert.match(runtime, /result\.metrics orelse return error\.MissingProfileMetrics/)
+  assert.match(api, /profile: bool = false/)
+  assert.match(api, /profiling\.Session\.init\(allocator, options\.profile\)/)
+  assert.match(api, /result\.metrics = profile\.finish\(\)/)
+  assert.match(profiling, /pub const TrackingAllocator/)
+  assert.match(profiling, /retained_result_bytes/)
   assert.match(build, /executable_module\.addImport\("zigcss", library_module\)/)
   assert.match(build, /test_module\.addImport\("zigcss", library_module\)/)
   assert.match(build, /audit_test_module\.addImport\("zigcss", library_module\)/)
