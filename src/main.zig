@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const zigcss = @import("zigcss");
 const lsp = @import("lsp.zig");
+const lsp_transport = @import("lsp_transport.zig");
 
 const version = "0.3.0";
 const experimental_notice = "Warning: ZigCSS 0.3 is an experimental recovery build; do not use it for production CSS.\n";
@@ -669,44 +670,12 @@ fn runLspServer(allocator: std.mem.Allocator) !void {
     var stdout_buffer: [8192]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     
-    var buffer: [8192]u8 = undefined;
-    
-    while (true) {
-        const content_length_line = stdin_reader.interface.takeDelimiterExclusive('\n') catch |err| {
-            if (err == error.EndOfStream) break;
-            return err;
-        };
-        
-        if (content_length_line.len == 0) {
-            continue;
-        }
-        
-        if (!std.mem.startsWith(u8, content_length_line, "Content-Length: ")) {
-            continue;
-        }
-        
-        const length_str = content_length_line["Content-Length: ".len..];
-        const content_length = try std.fmt.parseInt(usize, std.mem.trim(u8, length_str, " \r"), 10);
-        
-        _ = stdin_reader.interface.takeDelimiterExclusive('\n') catch |err| {
-            if (err == error.EndOfStream) break;
-            return err;
-        };
-        
-        if (content_length > buffer.len) {
-            return error.BufferTooSmall;
-        }
-        
-        var total_read: usize = 0;
-        while (total_read < content_length) {
-            const bytes_read = try stdin_reader.interface.readSliceShort(buffer[total_read..content_length]);
-            total_read += bytes_read;
-        }
-        const request = buffer[0..total_read];
+    while (try lsp_transport.readFrame(allocator, &stdin_reader.interface)) |request| {
+        defer allocator.free(request);
         const response = try server.handleRequest(request);
         defer allocator.free(response);
-        
-        try stdout_writer.interface.print("Content-Length: {}\r\n\r\n{s}", .{ response.len, response });
+
+        try lsp_transport.writeFrame(&stdout_writer.interface, response);
         try stdout_writer.interface.flush();
     }
 }

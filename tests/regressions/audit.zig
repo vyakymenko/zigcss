@@ -117,6 +117,26 @@ fn countOccurrences(haystack: []const u8, needle: []const u8) usize {
     return count;
 }
 
+fn appendLspFrame(output: *std.ArrayList(u8), body: []const u8) !void {
+    try output.writer(allocator).print("Content-Length: {d}\r\n\r\n", .{body.len});
+    try output.appendSlice(allocator, body);
+}
+
+fn nextLspFrame(bytes: []const u8, offset: *usize) ![]const u8 {
+    const header_end = std.mem.indexOfPos(u8, bytes, offset.*, "\r\n\r\n") orelse
+        return error.MissingLspHeaderTerminator;
+    const prefix = "Content-Length: ";
+    const header = bytes[offset.*..header_end];
+    if (!std.mem.startsWith(u8, header, prefix)) return error.MissingLspContentLength;
+    const content_length = try std.fmt.parseInt(usize, header[prefix.len..], 10);
+    const body_start = header_end + "\r\n\r\n".len;
+    const body_end = std.math.add(usize, body_start, content_length) catch
+        return error.InvalidLspContentLength;
+    if (body_end > bytes.len) return error.TruncatedLspFrame;
+    offset.* = body_end;
+    return bytes[body_start..body_end];
+}
+
 fn profileMetric(report: []const u8, label: []const u8) !u64 {
     const label_start = std.mem.indexOf(u8, report, label) orelse return error.MissingProfileMetric;
     const value_start = label_start + label.len;
@@ -184,6 +204,37 @@ test "stable CLI preserves compound selectors separately from descendants" {
     try std.testing.expectEqualStrings(".a.b{color:red}", compound.stdout);
     try std.testing.expectEqualStrings(".a .b{color:red}", descendant.stdout);
     try std.testing.expect(!std.mem.eql(u8, compound.stdout, descendant.stdout));
+}
+
+test "LSP transport accepts sequential frames and bodies above 8 KiB (LSP-001)" {
+    var initialize = std.ArrayList(u8).empty;
+    defer initialize.deinit(allocator);
+    try initialize.appendSlice(
+        allocator,
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file:///",
+    );
+    try initialize.appendNTimes(allocator, 'a', 9 * 1024);
+    try initialize.appendSlice(allocator, "\",\"capabilities\":{}}}");
+    try std.testing.expect(initialize.items.len > 8192);
+
+    const second = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"unknown/method\",\"params\":{}}";
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    try appendLspFrame(&transcript, initialize.items);
+    try appendLspFrame(&transcript, second);
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectSuccess(result);
+
+    var offset: usize = 0;
+    const initialize_response = try nextLspFrame(result.stdout, &offset);
+    const second_response = try nextLspFrame(result.stdout, &offset);
+    try std.testing.expectEqual(result.stdout.len, offset);
+    try std.testing.expect(std.mem.indexOf(u8, initialize_response, "\"id\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, initialize_response, "\"capabilities\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second_response, "\"id\":2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, second_response, "\"code\":-32601") != null);
 }
 
 test "stable CLI emits functional and attribute selectors" {

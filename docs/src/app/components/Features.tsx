@@ -70,7 +70,7 @@ const capabilities = [
   {
     surface: "LSP",
     status: "Experimental",
-    detail: "The server still shares the legacy parser and is not a stable editor contract.",
+    detail: "Dynamic framing supports sequential requests up to 16 MiB, while JSON lifecycle, positions, features, and parser migration remain later gates.",
   },
   {
     surface: "Public compile API and playground",
