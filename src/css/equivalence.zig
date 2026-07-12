@@ -201,15 +201,40 @@ const Comparator = struct {
         for (left.declarations, right.declarations) |left_declaration, right_declaration| {
             if (!identifiersEqual(left_declaration.name, right_declaration.name) or
                 (left_declaration.important == null) != (right_declaration.important == null) or
-                !try self.componentLists(
-                    left_declaration.valueWithoutImportance(),
-                    right_declaration.valueWithoutImportance(),
-                ))
+                !try self.declarationValues(left_declaration, right_declaration))
             {
                 return false;
             }
         }
         return true;
+    }
+
+    fn declarationValues(
+        self: *Comparator,
+        left: ast.Declaration,
+        right: ast.Declaration,
+    ) Error!bool {
+        if (left.generated_numeric) |generated| {
+            if (!generated.source_span.source.eql(self.left_file.id)) return error.SourceMismatch;
+            if (right.generated_numeric) |other| {
+                if (!other.source_span.source.eql(self.right_file.id)) return error.SourceMismatch;
+                return generatedNumericEqual(generated, other);
+            }
+            return generatedMatchesComponents(
+                generated,
+                right.valueWithoutImportance(),
+                self.right_file,
+            );
+        }
+        if (right.generated_numeric) |generated| {
+            if (!generated.source_span.source.eql(self.right_file.id)) return error.SourceMismatch;
+            return generatedMatchesComponents(
+                generated,
+                left.valueWithoutImportance(),
+                self.left_file,
+            );
+        }
+        return self.componentLists(left.valueWithoutImportance(), right.valueWithoutImportance());
     }
 
     fn atRules(self: *Comparator, left: *const ast.AtRule, right: *const ast.AtRule) Error!bool {
@@ -558,6 +583,34 @@ fn isComment(value: syntax.ComponentValue) bool {
     };
 }
 
+fn generatedNumericEqual(left: ast.GeneratedNumericValue, right: ast.GeneratedNumericValue) bool {
+    var left_buffer: [ast.generated_numeric_buffer_size]u8 = undefined;
+    var right_buffer: [ast.generated_numeric_buffer_size]u8 = undefined;
+    const left_bytes = left.serialize(&left_buffer) catch return false;
+    const right_bytes = right.serialize(&right_buffer) catch return false;
+    return std.mem.eql(u8, left_bytes, right_bytes);
+}
+
+fn generatedMatchesComponents(
+    generated: ast.GeneratedNumericValue,
+    values: []const syntax.ComponentValue,
+    file: *const source.SourceFile,
+) Error!bool {
+    var first: usize = 0;
+    while (first < values.len and isWhitespace(values[first])) : (first += 1) {}
+    var end = values.len;
+    while (end > first and isWhitespace(values[end - 1])) : (end -= 1) {}
+    if (end - first != 1) return false;
+
+    var buffer: [ast.generated_numeric_buffer_size]u8 = undefined;
+    const generated_bytes = generated.serialize(&buffer) catch return false;
+    const raw = file.slice(values[first].span()) catch |err| switch (err) {
+        error.SourceMismatch => return error.SourceMismatch,
+        error.InvalidSpan => return error.InvalidSpan,
+    };
+    return std.mem.eql(u8, generated_bytes, raw);
+}
+
 fn parseSource(
     context: *compilation.Compilation,
     name: []const u8,
@@ -690,6 +743,33 @@ test "semantic equivalence validates each AST source binding" {
             try context.sources.get(second[0]),
             second[1],
         ),
+    );
+
+    const first_file = try context.sources.get(first[0]);
+    const second_file = try context.sources.get(second[0]);
+    var first_declaration = first[1].rules[0].style_rule.block.declarations.declarations[0];
+    first_declaration.generated_numeric = .{
+        .value = 1,
+        .unit = .number,
+        .source_span = first_declaration.valueWithoutImportance()[0].span(),
+    };
+    first_declaration = try ast.Declaration.init(first_declaration);
+    var second_declaration = second[1].rules[0].style_rule.block.declarations.declarations[0];
+    second_declaration.generated_numeric = .{
+        .value = 1,
+        .unit = .number,
+        .source_span = second_declaration.valueWithoutImportance()[0].span(),
+    };
+    second_declaration = try ast.Declaration.init(second_declaration);
+    second_declaration.generated_numeric.?.source_span.source = first_file.id;
+    var comparator = Comparator{
+        .allocator = std.testing.allocator,
+        .left_file = first_file,
+        .right_file = second_file,
+    };
+    try std.testing.expectError(
+        error.SourceMismatch,
+        comparator.declarationValues(first_declaration, second_declaration),
     );
 }
 

@@ -436,9 +436,20 @@ const Emitter = struct {
         try self.writeIdentifier(declaration.name.value);
         try self.appendSlice(if (self.pretty()) ": " else ":");
         const value = declaration.valueWithoutImportance();
-        try self.writeComponentValues(value);
+        if (declaration.generated_numeric) |generated| {
+            _ = ast.GeneratedNumericValue.init(generated) catch return error.InvalidAst;
+            try self.mark(generated.source_span);
+            var buffer: [ast.generated_numeric_buffer_size]u8 = undefined;
+            try self.appendSlice(generated.serialize(&buffer) catch return error.InvalidAst);
+        } else {
+            try self.writeComponentValues(value);
+        }
         if (declaration.important != null) {
-            if (self.pretty() and hasNonWhitespace(value)) try self.appendByte(' ');
+            if (self.pretty() and
+                (declaration.generated_numeric != null or hasNonWhitespace(value)))
+            {
+                try self.appendByte(' ');
+            }
             try self.appendSlice("!important");
         }
         if (terminate) try self.appendByte(';');
@@ -1100,6 +1111,79 @@ test "pretty emission deterministically formats typed rules without reordering" 
     try std.testing.expectEqualStrings("color", reparsed[1].rules[0].style_rule.block.declarations.declarations[1].name.value);
     try std.testing.expect(reparsed[1].rules[0].style_rule.block.declarations.declarations[1].important != null);
     try std.testing.expectEqual(@as(usize, 0), reparsed_context.diagnostics.items().len);
+}
+
+test "structured generated numeric values emit closed syntax with causal mappings" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "generated-numeric.css",
+        ".a{x:calc(1px + 2px)!important;y:4px}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const old_root = parsed[1];
+    const old_style = old_root.rules[0].style_rule;
+    const arena = context.arenaAllocator();
+
+    const declarations = try arena.dupe(ast.Declaration, old_style.block.declarations.declarations);
+    const causal_span = declarations[0].valueWithoutImportance()[0].span();
+    declarations[0].generated_numeric = .{
+        .value = 3,
+        .unit = .px,
+        .source_span = causal_span,
+    };
+    declarations[0] = try ast.Declaration.init(declarations[0]);
+    const declaration_list = try ast.DeclarationList.init(old_style.block.declarations.span, declarations);
+    const style = try arena.create(ast.StyleRule);
+    style.* = try ast.StyleRule.init(.{
+        .selectors = old_style.selectors,
+        .block = try ast.StyleBlock.init(
+            old_style.block.envelope,
+            declaration_list,
+            old_style.block.rules,
+        ),
+        .span = old_style.span,
+    });
+    const rules = try arena.dupe(ast.Rule, old_root.rules);
+    rules[0] = .{ .style_rule = style };
+    const root = try arena.create(ast.RuleList);
+    root.* = try ast.RuleList.initWithOmissions(old_root.span, rules, old_root.omitted_rules);
+
+    const pretty_output = try emit(std.testing.allocator, file, root, .{});
+    defer std.testing.allocator.free(pretty_output);
+    try std.testing.expectEqualStrings(
+        ".a {\n  x: 3px !important;\n  y: 4px;\n}\n",
+        pretty_output,
+    );
+
+    var mapped = try emitWithSourceMap(
+        std.testing.allocator,
+        file,
+        root,
+        .{ .mode = .minified },
+        .{},
+    );
+    defer mapped.deinit();
+    try std.testing.expectEqualStrings(".a{x:3px!important;y:4px}", mapped.css);
+    var json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, mapped.source_map, .{});
+    defer json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const generated_start = std.mem.indexOf(u8, mapped.css, "3px").?;
+    try std.testing.expect(hasMapping(mappings, .{
+        .generated_line = 0,
+        .generated_column = @intCast(generated_start),
+        .original_line = 0,
+        .original_column = @intCast(causal_span.start),
+    }));
+    for (mappings) |mapping| {
+        try std.testing.expect(mapping.generated_column != generated_start + 1);
+        try std.testing.expect(mapping.generated_column != generated_start + 2);
+    }
 }
 
 test "keyframes and page structures receive ordered nested pretty formatting" {

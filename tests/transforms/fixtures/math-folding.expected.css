@@ -1,0 +1,31 @@
+.card {
+  width: 9px;
+  width: calc(1in + 96px);
+  opacity: 20% !important;
+  margin-left: 3em;
+  border-top-width: 2px;
+  rotate: 10deg;
+  animation-delay: -1s;
+  line-height: calc(1 + 2);
+  --custom-size: calc(1px + 2px);
+  height: calc(var(--size) + 1px);
+  padding-left: calc(1px/**/ + 2px);
+}
+.host {
+  width: 4px;
+  .child {
+    height: 2rem;
+  }
+  @media all {
+    opacity: 0.5;
+  }
+  margin-left: 3vw;
+}
+@keyframes fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    rotate: 2deg;
+  }
+}

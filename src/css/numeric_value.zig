@@ -1,4 +1,5 @@
 const std = @import("std");
+const numeric_unit = @import("numeric_unit.zig");
 const source = @import("../source.zig");
 const syntax = @import("../syntax.zig");
 const tokenizer = @import("../tokenizer.zig");
@@ -23,15 +24,7 @@ pub const PercentHint = enum {
     flex,
 };
 
-pub const BaseDimension = enum {
-    length,
-    angle,
-    time,
-    frequency,
-    resolution,
-    flex,
-    percent,
-};
+pub const BaseDimension = numeric_unit.BaseDimension;
 
 /// CSS Typed OM type map. A number is the empty map. Multiplication and
 /// division may produce compound intermediate types; callers can separately
@@ -107,210 +100,7 @@ pub const ResultType = union(enum) {
     none,
 };
 
-pub const Unit = enum {
-    number,
-    percent,
-
-    // Absolute lengths.
-    px,
-    cm,
-    mm,
-    q,
-    in,
-    pc,
-    pt,
-
-    // Font-relative lengths.
-    em,
-    rem,
-    ex,
-    rex,
-    cap,
-    rcap,
-    ch,
-    rch,
-    ic,
-    ric,
-    lh,
-    rlh,
-
-    // Viewport-relative lengths.
-    vw,
-    vh,
-    vi,
-    vb,
-    vmin,
-    vmax,
-    svw,
-    svh,
-    svi,
-    svb,
-    svmin,
-    svmax,
-    lvw,
-    lvh,
-    lvi,
-    lvb,
-    lvmin,
-    lvmax,
-    dvw,
-    dvh,
-    dvi,
-    dvb,
-    dvmin,
-    dvmax,
-
-    // Container-relative lengths.
-    cqw,
-    cqh,
-    cqi,
-    cqb,
-    cqmin,
-    cqmax,
-
-    deg,
-    grad,
-    rad,
-    turn,
-    s,
-    ms,
-    hz,
-    khz,
-    dpi,
-    dpcm,
-    dppx,
-    x,
-    fr,
-    unknown,
-
-    pub fn baseDimension(self: Unit) ?BaseDimension {
-        return switch (self) {
-            .number => null,
-            .percent => .percent,
-            .px,
-            .cm,
-            .mm,
-            .q,
-            .in,
-            .pc,
-            .pt,
-            .em,
-            .rem,
-            .ex,
-            .rex,
-            .cap,
-            .rcap,
-            .ch,
-            .rch,
-            .ic,
-            .ric,
-            .lh,
-            .rlh,
-            .vw,
-            .vh,
-            .vi,
-            .vb,
-            .vmin,
-            .vmax,
-            .svw,
-            .svh,
-            .svi,
-            .svb,
-            .svmin,
-            .svmax,
-            .lvw,
-            .lvh,
-            .lvi,
-            .lvb,
-            .lvmin,
-            .lvmax,
-            .dvw,
-            .dvh,
-            .dvi,
-            .dvb,
-            .dvmin,
-            .dvmax,
-            .cqw,
-            .cqh,
-            .cqi,
-            .cqb,
-            .cqmin,
-            .cqmax,
-            => .length,
-            .deg, .grad, .rad, .turn => .angle,
-            .s, .ms => .time,
-            .hz, .khz => .frequency,
-            .dpi, .dpcm, .dppx, .x => .resolution,
-            .fr => .flex,
-            .unknown => null,
-        };
-    }
-
-    /// Static factor to the category's canonical unit: px, deg, s, hz, dppx,
-    /// or fr. Context-dependent length units deliberately return null.
-    pub fn canonicalScale(self: Unit) ?f64 {
-        return switch (self) {
-            .number, .percent, .px, .deg, .s, .hz, .dppx, .x, .fr => 1,
-            .cm => 96.0 / 2.54,
-            .mm => 96.0 / 25.4,
-            .q => 96.0 / 101.6,
-            .in => 96,
-            .pc => 16,
-            .pt => 96.0 / 72.0,
-            .grad => 0.9,
-            .rad => 180.0 / std.math.pi,
-            .turn => 360,
-            .ms => 0.001,
-            .khz => 1000,
-            .dpi => 1.0 / 96.0,
-            .dpcm => 2.54 / 96.0,
-            .em,
-            .rem,
-            .ex,
-            .rex,
-            .cap,
-            .rcap,
-            .ch,
-            .rch,
-            .ic,
-            .ric,
-            .lh,
-            .rlh,
-            .vw,
-            .vh,
-            .vi,
-            .vb,
-            .vmin,
-            .vmax,
-            .svw,
-            .svh,
-            .svi,
-            .svb,
-            .svmin,
-            .svmax,
-            .lvw,
-            .lvh,
-            .lvi,
-            .lvb,
-            .lvmin,
-            .lvmax,
-            .dvw,
-            .dvh,
-            .dvi,
-            .dvb,
-            .dvmin,
-            .dvmax,
-            .cqw,
-            .cqh,
-            .cqi,
-            .cqb,
-            .cqmin,
-            .cqmax,
-            .unknown,
-            => null,
-        };
-    }
-};
+pub const Unit = numeric_unit.Unit;
 
 pub const LiteralKind = enum {
     numeric,
@@ -395,6 +185,11 @@ pub const Options = struct {
     max_arguments: usize = 4096,
 };
 
+pub const Evaluated = struct {
+    value: f64,
+    unit: Unit,
+};
+
 /// Parses one standalone number, percentage, dimension, or supported CSS math
 /// function. Type-incompatible syntax returns an Expression with an invalid
 /// result type; malformed, unsupported, unbounded, or foreign syntax fails.
@@ -425,6 +220,176 @@ pub fn parse(
         .span = typed.span,
         .result_type = typed.result_type,
     };
+}
+
+/// Evaluates a parsed expression only when every operation is finite and can
+/// retain one exact authored unit (or cancel identical units). Different-unit
+/// conversion and compound symbolic algebra intentionally return null.
+pub fn evaluate(
+    allocator: std.mem.Allocator,
+    expression: *const Expression,
+) std.mem.Allocator.Error!?Evaluated {
+    const result_type = switch (expression.result_type) {
+        .valid => |value| value,
+        .invalid, .none => return null,
+    };
+    if (!result_type.isRepresentableNumeric() or expression.instructions.len == 0) return null;
+
+    const stack = try allocator.alloc(EvaluationValue, expression.instructions.len);
+    defer allocator.free(stack);
+    var stack_len: usize = 0;
+    for (expression.instructions) |instruction| {
+        switch (instruction) {
+            .literal => |literal| {
+                const value = evaluateLiteral(literal) orelse return null;
+                stack[stack_len] = value;
+                stack_len += 1;
+            },
+            .add, .subtract, .multiply, .divide => {
+                if (stack_len < 2) return null;
+                const right = stack[stack_len - 1];
+                const left = stack[stack_len - 2];
+                const value = switch (instruction) {
+                    .add => evaluateBinary(left, right, .add),
+                    .subtract => evaluateBinary(left, right, .subtract),
+                    .multiply => evaluateBinary(left, right, .multiply),
+                    .divide => evaluateBinary(left, right, .divide),
+                    else => unreachable,
+                } orelse return null;
+                stack_len -= 1;
+                stack[stack_len - 1] = value;
+            },
+            .call => |call| {
+                const argument_count: usize = call.argument_count;
+                if (argument_count == 0 or argument_count > stack_len) return null;
+                const first = stack_len - argument_count;
+                const value = evaluateCall(call.kind, stack[first..stack_len]) orelse return null;
+                stack[first] = value;
+                stack_len = first + 1;
+            },
+        }
+    }
+    if (stack_len != 1) return null;
+    return switch (stack[0]) {
+        .scalar => |value| value,
+        .none => null,
+    };
+}
+
+const EvaluationValue = union(enum) {
+    scalar: Evaluated,
+    none,
+};
+
+const EvaluationBinary = enum { add, subtract, multiply, divide };
+
+fn evaluateLiteral(literal: Literal) ?EvaluationValue {
+    if (literal.kind == .none) return .none;
+    if (literal.kind == .infinity or
+        literal.kind == .negative_infinity or
+        literal.kind == .nan or
+        literal.unit == .unknown or
+        !std.math.isFinite(literal.value))
+    {
+        return null;
+    }
+    return .{ .scalar = .{ .value = literal.value, .unit = literal.unit } };
+}
+
+fn evaluateBinary(
+    left_value: EvaluationValue,
+    right_value: EvaluationValue,
+    operation: EvaluationBinary,
+) ?EvaluationValue {
+    const left = switch (left_value) {
+        .scalar => |value| value,
+        .none => return null,
+    };
+    const right = switch (right_value) {
+        .scalar => |value| value,
+        .none => return null,
+    };
+
+    const result: Evaluated = switch (operation) {
+        .add, .subtract => blk: {
+            if (left.unit != right.unit) return null;
+            break :blk .{
+                .value = if (operation == .add)
+                    left.value + right.value
+                else
+                    left.value - right.value,
+                .unit = left.unit,
+            };
+        },
+        .multiply => blk: {
+            if (left.unit != .number and right.unit != .number) return null;
+            break :blk .{
+                .value = left.value * right.value,
+                .unit = if (left.unit == .number) right.unit else left.unit,
+            };
+        },
+        .divide => blk: {
+            if (right.value == 0) return null;
+            if (right.unit == .number) {
+                break :blk .{ .value = left.value / right.value, .unit = left.unit };
+            }
+            if (left.unit != right.unit) return null;
+            break :blk .{ .value = left.value / right.value, .unit = .number };
+        },
+    };
+    if (!std.math.isFinite(result.value)) return null;
+    return .{ .scalar = result };
+}
+
+fn evaluateCall(kind: FunctionKind, arguments: []const EvaluationValue) ?EvaluationValue {
+    return switch (kind) {
+        .calc => if (arguments.len == 1 and arguments[0] != .none) arguments[0] else null,
+        .min => evaluateComparison(arguments, true),
+        .max => evaluateComparison(arguments, false),
+        .clamp => evaluateClamp(arguments),
+    };
+}
+
+fn evaluateComparison(arguments: []const EvaluationValue, minimum: bool) ?EvaluationValue {
+    if (arguments.len == 0) return null;
+    var result = switch (arguments[0]) {
+        .scalar => |value| value,
+        .none => return null,
+    };
+    for (arguments[1..]) |argument| {
+        const candidate = switch (argument) {
+            .scalar => |value| value,
+            .none => return null,
+        };
+        result = chooseComparison(result, candidate, minimum) orelse return null;
+    }
+    return .{ .scalar = result };
+}
+
+fn evaluateClamp(arguments: []const EvaluationValue) ?EvaluationValue {
+    if (arguments.len != 3 or arguments[1] == .none) return null;
+    var result = switch (arguments[1]) {
+        .scalar => |value| value,
+        .none => unreachable,
+    };
+    if (arguments[2] == .scalar) {
+        result = chooseComparison(result, arguments[2].scalar, true) orelse return null;
+    }
+    if (arguments[0] == .scalar) {
+        result = chooseComparison(arguments[0].scalar, result, false) orelse return null;
+    }
+    return .{ .scalar = result };
+}
+
+fn chooseComparison(left: Evaluated, right: Evaluated, minimum: bool) ?Evaluated {
+    if (left.unit != right.unit) return null;
+    if (left.value == 0 and right.value == 0 and
+        std.math.signbit(left.value) != std.math.signbit(right.value))
+    {
+        return null;
+    }
+    if (minimum) return if (right.value < left.value) right else left;
+    return if (right.value > left.value) right else left;
 }
 
 const Typed = struct {
@@ -985,76 +950,14 @@ fn hintBase(hint: PercentHint) BaseDimension {
 }
 
 fn classifyUnit(unit: []const u8) Unit {
-    inline for (unit_table) |entry| {
-        if (std.ascii.eqlIgnoreCase(unit, entry.name)) return entry.unit;
+    inline for (std.meta.tags(Unit)) |candidate| {
+        switch (candidate) {
+            .number, .percent, .unknown => {},
+            else => if (std.ascii.eqlIgnoreCase(unit, candidate.suffix().?)) return candidate,
+        }
     }
     return .unknown;
 }
-
-const unit_table = [_]struct { name: []const u8, unit: Unit }{
-    .{ .name = "px", .unit = .px },
-    .{ .name = "cm", .unit = .cm },
-    .{ .name = "mm", .unit = .mm },
-    .{ .name = "q", .unit = .q },
-    .{ .name = "in", .unit = .in },
-    .{ .name = "pc", .unit = .pc },
-    .{ .name = "pt", .unit = .pt },
-    .{ .name = "em", .unit = .em },
-    .{ .name = "rem", .unit = .rem },
-    .{ .name = "ex", .unit = .ex },
-    .{ .name = "rex", .unit = .rex },
-    .{ .name = "cap", .unit = .cap },
-    .{ .name = "rcap", .unit = .rcap },
-    .{ .name = "ch", .unit = .ch },
-    .{ .name = "rch", .unit = .rch },
-    .{ .name = "ic", .unit = .ic },
-    .{ .name = "ric", .unit = .ric },
-    .{ .name = "lh", .unit = .lh },
-    .{ .name = "rlh", .unit = .rlh },
-    .{ .name = "vw", .unit = .vw },
-    .{ .name = "vh", .unit = .vh },
-    .{ .name = "vi", .unit = .vi },
-    .{ .name = "vb", .unit = .vb },
-    .{ .name = "vmin", .unit = .vmin },
-    .{ .name = "vmax", .unit = .vmax },
-    .{ .name = "svw", .unit = .svw },
-    .{ .name = "svh", .unit = .svh },
-    .{ .name = "svi", .unit = .svi },
-    .{ .name = "svb", .unit = .svb },
-    .{ .name = "svmin", .unit = .svmin },
-    .{ .name = "svmax", .unit = .svmax },
-    .{ .name = "lvw", .unit = .lvw },
-    .{ .name = "lvh", .unit = .lvh },
-    .{ .name = "lvi", .unit = .lvi },
-    .{ .name = "lvb", .unit = .lvb },
-    .{ .name = "lvmin", .unit = .lvmin },
-    .{ .name = "lvmax", .unit = .lvmax },
-    .{ .name = "dvw", .unit = .dvw },
-    .{ .name = "dvh", .unit = .dvh },
-    .{ .name = "dvi", .unit = .dvi },
-    .{ .name = "dvb", .unit = .dvb },
-    .{ .name = "dvmin", .unit = .dvmin },
-    .{ .name = "dvmax", .unit = .dvmax },
-    .{ .name = "cqw", .unit = .cqw },
-    .{ .name = "cqh", .unit = .cqh },
-    .{ .name = "cqi", .unit = .cqi },
-    .{ .name = "cqb", .unit = .cqb },
-    .{ .name = "cqmin", .unit = .cqmin },
-    .{ .name = "cqmax", .unit = .cqmax },
-    .{ .name = "deg", .unit = .deg },
-    .{ .name = "grad", .unit = .grad },
-    .{ .name = "rad", .unit = .rad },
-    .{ .name = "turn", .unit = .turn },
-    .{ .name = "s", .unit = .s },
-    .{ .name = "ms", .unit = .ms },
-    .{ .name = "hz", .unit = .hz },
-    .{ .name = "khz", .unit = .khz },
-    .{ .name = "dpi", .unit = .dpi },
-    .{ .name = "dpcm", .unit = .dpcm },
-    .{ .name = "dppx", .unit = .dppx },
-    .{ .name = "x", .unit = .x },
-    .{ .name = "fr", .unit = .fr },
-};
 
 fn isTokenKind(value: syntax.ComponentValue, kind: tokenizer.TokenKind) bool {
     return switch (value) {
@@ -1246,13 +1149,18 @@ test "numeric values classify current CSS units and static canonical scales" {
     try std.testing.expectApproxEqAbs(@as(f64, 1), Unit.dpi.canonicalScale().? * 96, 0.000001);
     try std.testing.expect(Unit.rex.canonicalScale() == null);
 
-    try std.testing.expectEqual(std.meta.fields(Unit).len, unit_table.len + 3);
-    for (unit_table, 0..) |entry, index| {
-        try std.testing.expectEqual(entry.unit, classifyUnit(entry.name));
-        try std.testing.expect(entry.unit.baseDimension() != null);
-        for (unit_table[index + 1 ..]) |other| {
-            try std.testing.expect(!std.ascii.eqlIgnoreCase(entry.name, other.name));
-            try std.testing.expect(entry.unit != other.unit);
+    const units = std.meta.tags(Unit);
+    try std.testing.expect(Unit.unknown.suffix() == null);
+    for (units, 0..) |unit, index| {
+        if (unit == .unknown) continue;
+        const suffix = unit.suffix().?;
+        if (unit != .number and unit != .percent) {
+            try std.testing.expectEqual(unit, classifyUnit(suffix));
+            try std.testing.expect(unit.baseDimension() != null);
+        }
+        for (units[index + 1 ..]) |other| {
+            const other_suffix = other.suffix() orelse continue;
+            try std.testing.expect(!std.mem.eql(u8, suffix, other_suffix));
         }
     }
 
@@ -1563,5 +1471,56 @@ test "numeric expression cleanup is idempotent and none remains clamp-only" {
     try std.testing.expectError(
         error.UnsupportedSyntax,
         parseTestDeclaration(std.testing.allocator, &parsed, 4, .{}),
+    );
+}
+
+test "numeric evaluation folds only finite same-unit expressions" {
+    var parsed = try pipeline.parse(
+        std.testing.allocator,
+        "evaluate.css",
+        ".a{a:calc(1px + 2px);b:min(4em,2em);c:max(10%,20%);" ++
+            "d:clamp(none,5s,3s);e:clamp(10px,5px,3px);f:calc(2 * 3fr);" ++
+            "g:calc(1em / 2em);h:calc(1in + 96px);i:calc(1 / 0);" ++
+            "j:calc(infinity * 1px);k:min(-0,0)}",
+    );
+    defer parsed.deinit();
+    const expected = [_]Evaluated{
+        .{ .value = 3, .unit = .px },
+        .{ .value = 2, .unit = .em },
+        .{ .value = 20, .unit = .percent },
+        .{ .value = 3, .unit = .s },
+        .{ .value = 10, .unit = .px },
+        .{ .value = 6, .unit = .fr },
+        .{ .value = 0.5, .unit = .number },
+    };
+    for (expected, 0..) |wanted, index| {
+        var expression = try parseTestDeclaration(std.testing.allocator, &parsed, index, .{});
+        defer expression.deinit();
+        const actual = (try evaluate(std.testing.allocator, &expression)).?;
+        try std.testing.expectEqual(wanted.unit, actual.unit);
+        try std.testing.expectEqual(wanted.value, actual.value);
+    }
+    for (7..11) |index| {
+        var expression = try parseTestDeclaration(std.testing.allocator, &parsed, index, .{});
+        defer expression.deinit();
+        try std.testing.expect((try evaluate(std.testing.allocator, &expression)) == null);
+    }
+}
+
+fn exerciseEvaluationAllocationFailures(allocator: std.mem.Allocator) !void {
+    var parsed = try pipeline.parse(allocator, "evaluate-oom.css", ".a{x:calc((1px + 2px) * 3)}");
+    defer parsed.deinit();
+    var expression = try parseTestDeclaration(allocator, &parsed, 0, .{});
+    defer expression.deinit();
+    const result = (try evaluate(allocator, &expression)).?;
+    try std.testing.expectEqual(@as(f64, 9), result.value);
+    try std.testing.expectEqual(Unit.px, result.unit);
+}
+
+test "numeric evaluation handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseEvaluationAllocationFailures,
+        .{},
     );
 }

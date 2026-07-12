@@ -70,6 +70,9 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('https://www.w3.org/TR/css-typed-om-1/')
     expect(adr).toContain('caller-owned flat postfix instruction stream')
     expect(adr).toContain('`VAL-001` supplies type evidence only')
+    expect(adr).toContain('`MATH-001` evaluates the postfix evidence with a bounded stack')
+    expect(adr).toContain('results that are not strictly shorter all retain the exact input root')
+    expect(adr).toContain('It is not registered in the stable CLI')
     expect(adr).toContain('does not enable `--optimize`')
   })
 

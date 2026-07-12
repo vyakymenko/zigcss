@@ -1,5 +1,6 @@
 const std = @import("std");
 const compilation = @import("../compilation.zig");
+const numeric_unit = @import("numeric_unit.zig");
 const source = @import("../source.zig");
 const syntax = @import("../syntax.zig");
 
@@ -11,6 +12,7 @@ pub const AstError = error{
     InvalidBlockSpan,
     InvalidComponentValueList,
     InvalidDeclaration,
+    InvalidGeneratedValue,
     InvalidImportantAnnotation,
     InvalidKeyframes,
     InvalidRule,
@@ -423,12 +425,53 @@ pub const ImportantAnnotation = struct {
     }
 };
 
+pub const generated_numeric_buffer_size: usize = 128;
+
+/// Structured output for a whole authored numeric value. The emitter owns the
+/// serialization grammar; transforms cannot inject arbitrary CSS bytes.
+pub const GeneratedNumericValue = struct {
+    value: f64,
+    unit: numeric_unit.Unit,
+    source_span: source.Span,
+
+    pub fn init(candidate: GeneratedNumericValue) AstError!GeneratedNumericValue {
+        try validateSpan(candidate.source_span);
+        if (candidate.source_span.isEmpty() or
+            !std.math.isFinite(candidate.value) or
+            candidate.unit.suffix() == null)
+        {
+            return error.InvalidGeneratedValue;
+        }
+        var buffer: [generated_numeric_buffer_size]u8 = undefined;
+        _ = candidate.serialize(&buffer) catch return error.InvalidGeneratedValue;
+        return candidate;
+    }
+
+    pub fn serialize(
+        self: GeneratedNumericValue,
+        buffer: []u8,
+    ) error{ NoSpaceLeft, InvalidGeneratedValue }![]const u8 {
+        if (!std.math.isFinite(self.value)) return error.InvalidGeneratedValue;
+        const suffix = self.unit.suffix() orelse return error.InvalidGeneratedValue;
+        const number = if (self.value == 0 and std.math.signbit(self.value)) blk: {
+            if (buffer.len < 2) return error.NoSpaceLeft;
+            buffer[0] = '-';
+            buffer[1] = '0';
+            break :blk buffer[0..2];
+        } else try std.fmt.bufPrint(buffer, "{d}", .{self.value});
+        if (buffer.len - number.len < suffix.len) return error.NoSpaceLeft;
+        @memcpy(buffer[number.len..][0..suffix.len], suffix);
+        return buffer[0 .. number.len + suffix.len];
+    }
+};
+
 pub const Declaration = struct {
     name: Identifier,
     colon: source.Span,
     /// Includes all raw leading/trailing trivia and the `!important` marker.
     value: ComponentValueList,
     important: ?ImportantAnnotation = null,
+    generated_numeric: ?GeneratedNumericValue = null,
     terminator: ?source.Span = null,
     span: source.Span,
 
@@ -453,6 +496,23 @@ pub const Declaration = struct {
             ) catch return error.InvalidDeclaration;
             if (!spansEqual(validated.span, important.span) or
                 !spansEqual(validated.bang, important.bang))
+            {
+                return error.InvalidDeclaration;
+            }
+        }
+        if (candidate.generated_numeric) |generated| {
+            _ = GeneratedNumericValue.init(generated) catch return error.InvalidDeclaration;
+            try validateChild(candidate.value.span, generated.source_span);
+            const semantic_end = if (candidate.important) |important|
+                important.value_end
+            else
+                candidate.value.values.len;
+            var first: usize = 0;
+            while (first < semantic_end and isWhitespace(candidate.value.values[first])) : (first += 1) {}
+            var end = semantic_end;
+            while (end > first and isWhitespace(candidate.value.values[end - 1])) : (end -= 1) {}
+            if (end - first != 1 or
+                !spansEqual(candidate.value.values[first].span(), generated.source_span))
             {
                 return error.InvalidDeclaration;
             }
@@ -1007,6 +1067,13 @@ fn isTrivia(value: syntax.ComponentValue) bool {
     };
 }
 
+fn isWhitespace(value: syntax.ComponentValue) bool {
+    return switch (value) {
+        .token => |token| token.kind == .whitespace,
+        else => false,
+    };
+}
+
 fn validateSimpleSelector(simple: SimpleSelector) SelectorError!void {
     const parent = simple.span();
     switch (simple) {
@@ -1257,6 +1324,42 @@ test "declaration values retain nested components and explicit important metadat
     );
     try std.testing.expectEqualStrings("IMPORTANT", declaration.important.?.keyword.value);
     try std.testing.expect(declaration.important.?.span.start < declaration.important.?.span.end);
+
+    var generated_candidate = declaration;
+    generated_candidate.generated_numeric = .{
+        .value = 3.5,
+        .unit = .px,
+        .source_span = document.values[3].span(),
+    };
+    const generated = try Declaration.init(generated_candidate);
+    var generated_buffer: [generated_numeric_buffer_size]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "3.5px",
+        try generated.generated_numeric.?.serialize(&generated_buffer),
+    );
+
+    generated_candidate.generated_numeric.?.source_span = declaration.value.span;
+    try std.testing.expectError(error.InvalidDeclaration, Declaration.init(generated_candidate));
+    try std.testing.expectError(error.InvalidGeneratedValue, GeneratedNumericValue.init(.{
+        .value = std.math.nan(f64),
+        .unit = .number,
+        .source_span = document.values[3].span(),
+    }));
+    try std.testing.expectError(error.InvalidGeneratedValue, GeneratedNumericValue.init(.{
+        .value = 1,
+        .unit = .unknown,
+        .source_span = document.values[3].span(),
+    }));
+
+    var negative_zero_buffer: [generated_numeric_buffer_size]u8 = undefined;
+    const negative_zero = try GeneratedNumericValue.init(.{
+        .value = -0.0,
+        .unit = .percent,
+        .source_span = document.values[3].span(),
+    });
+    try std.testing.expectEqualStrings("-0%", try negative_zero.serialize(&negative_zero_buffer));
+    var undersized_buffer: [1]u8 = undefined;
+    try std.testing.expectError(error.NoSpaceLeft, negative_zero.serialize(&undersized_buffer));
 }
 
 test "important markers reject non-trivia gaps and non-important keywords" {

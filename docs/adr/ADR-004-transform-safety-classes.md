@@ -55,6 +55,14 @@ The numeric parser validates source ownership and complete nested spans, rejects
 
 `VAL-001` supplies type evidence only. Folding, unit conversion, or shortening requires a later verified semantic-rewrite pass with pass-specific compatibility, finite-value, precision, output-equivalence, idempotence, and size evidence. Unknown units, unresolved substitutions such as `var()`, and compound result types therefore default to no rewrite.
 
+### Conservative numeric math folding
+
+`MATH-001` evaluates the postfix evidence with a bounded stack only when every intermediate operation remains finite and can retain one exact authored unit. Addition, subtraction, `min()`, `max()`, and finite `clamp()` bounds require identical units. Multiplication requires a unitless side; division requires a unitless divisor or identical units that cancel. Static cross-unit conversion is deliberately deferred even when `VAL-001` records a conversion factor.
+
+Rewriting is restricted to a complete single `calc()`, `min()`, `max()`, or `clamp()` component in a closed property-specific allowlist. Each property policy declares the accepted numeric category and whether negative results are valid. Custom properties, descriptor blocks, comments, substitutions, unsupported properties, mixed units, non-finite results, ambiguous signed-zero comparisons, invalid ranges, and results that are not strictly shorter all retain the exact input root.
+
+A successful fold stores a finite number, a closed known-unit enum, and the whole math function's causal span as structured AST data. The emitter—not the pass—serializes that data and applies the one-segment mapping contract from `ADR-007`. The verified pass reconstructs only changed declaration/rule paths, preserves order and importance, validates a second independently computed candidate plus source map, and remains available only through explicit semantic-rewrite policy and the test driver. It is not registered in the stable CLI.
+
 ### Deterministic planning
 
 - Requested passes include their transitive dependencies.
