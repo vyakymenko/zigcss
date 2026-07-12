@@ -8,13 +8,21 @@ The authoritative roadmap is [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Executi
 
 ## Autonomous development operations
 
-The repository keeps its persistent Codex procedure in [docs/operations/codex-loop-protocol.md](docs/operations/codex-loop-protocol.md). A read-only orientation helper reconstructs branch, dirty state, ledger work, blockers, validation evidence, checkpoints, and toolchain visibility:
+The repository keeps its persistent Codex procedure in [docs/operations/codex-loop-protocol.md](docs/operations/codex-loop-protocol.md). An Alvo-style single-lane Bash supervisor runs bounded, serialized `codex exec` passes with the approved `gpt-5.6-sol` model and `ultra` reasoning. It never delegates or falls back, and its pass prompt retains the no-push, no-publication, no-deployment boundary.
+
+```bash
+scripts/autodevelop/ctl.sh doctor
+scripts/autodevelop/ctl.sh start
+scripts/autodevelop/ctl.sh status
+```
+
+Use `pause`, `resume`, `stop`, and `logs` through the same control script. One pass may own at most one dependency-eligible roadmap package; the outer loop continues after each clean local checkpoint, backs off on transient limits, and pauses only after repeated genuine blockers or failures. Runtime state, caches, and transcripts live in ignored `.autodevelop/` storage inside this isolated worktree. `start` persists for the current login but does not install a LaunchAgent or modify system startup; pause the loop before doing manual work in the same worktree.
+
+The separate orientation helper remains read-only and can be run at any time:
 
 ```bash
 bash scripts/autodevelop/orient.sh
 ```
-
-The helper does not launch a model or mutate the repository; the active Codex task owns scheduling and goal continuation.
 
 ## Current contract
 

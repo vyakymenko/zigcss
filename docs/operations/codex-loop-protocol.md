@@ -6,11 +6,21 @@ The short operator request is only an invocation. This file, `DEVELOPMENT_PLAN.m
 
 ## 1. What is automated
 
-The Codex task owns a persistent goal and continues package by package across goal turns. The loop is in-session: after a green checkpoint, re-orient and select the next dependency-eligible package. Do not stop merely because one package or milestone completed.
+The repository-owned Bash supervisor provides the durable outer loop. It launches exactly one ephemeral non-interactive Codex pass at a time, pins `gpt-5.6-sol` with `ultra` reasoning, limits each pass to one dependency-eligible package, requires a clean committed checkpoint for progress, classifies the result, and starts the next pass. No subagent, child-task, alternate-model, or concurrent-lane path exists.
 
-The Bash helper does not launch models, schedule wakeups, or impersonate the Codex goal system. `scripts/autodevelop/orient.sh` is intentionally read-only: it reconstructs repository facts so a resumed session starts from durable evidence instead of conversational memory.
+Run the preflight and start the background supervisor from anywhere inside the worktree:
 
-Run it from anywhere inside the worktree:
+```bash
+scripts/autodevelop/ctl.sh doctor
+scripts/autodevelop/ctl.sh start
+scripts/autodevelop/ctl.sh status
+```
+
+The control surface also provides `test` (one foreground pass), `run` (foreground loop), `pause`, `resume`, `stop`, `logs`, and `orient`. `pause` and `stop` are graceful: an active pass finishes first so the runner does not manufacture an unowned half-edit. Use `pause` before starting manual work in the same worktree.
+
+The background process lasts for the current login. It deliberately does not install a LaunchAgent, modify login items, or mutate any system startup surface. Ignored `.autodevelop/` storage inside the isolated worktree owns logs, caches, control files, and outcome state.
+
+The orientation helper itself remains intentionally read-only: it reconstructs repository facts so every fresh pass starts from durable evidence instead of conversational memory. Run it directly with:
 
 ```bash
 bash scripts/autodevelop/orient.sh
@@ -23,7 +33,7 @@ bash scripts/autodevelop/orient.sh
 - Read `DEVELOPMENT_PLAN.md` completely before the first code change. Re-read the current milestone, dependencies, gates, and relevant decisions when orienting to each package.
 - Treat `DEVELOPMENT_STATUS.md` as the durable execution ledger. Repository and test evidence outrank memory or stale commentary.
 - Preserve inherited and unrelated changes. Never reset, rewrite, or discard work that is not owned by the current package.
-- Keep the persistent goal active without a token budget until the roadmap definition of done is genuinely achieved or a true blocker satisfies the goal-blocking rules.
+- Keep exactly one continuation owner active without a token budget: either the interactive persistent goal or this Bash supervisor. Never advance the same worktree manually while the supervisor is running.
 - Do not push, publish, deploy, or open a pull request. Do not create tags, releases, packages, or external-system changes without new explicit authorization.
 - Do not weaken tests, suppress failures, lower safety gates, or re-enable an unsafe transform to make a package green.
 - Security, parser correctness, semantic preservation, deterministic behavior, and regression evidence take priority over performance or feature count.
@@ -96,7 +106,7 @@ If a repository-wide gate already failed at baseline, prove the package did not 
 
 ## 7. Continuation and STOP conditions
 
-A green checkpoint is not a handoff. Continue autonomously unless one of these holds:
+A green checkpoint is not a handoff. An interactive task continues in-session; a bounded runner pass emits `PROGRESS` and exits so the outer Bash supervisor can immediately start the next pass. Continue autonomously unless one of these holds:
 
 1. New authority is required for an outward action such as push, publication, deployment, PR creation, paid service use, secrets, or an external-system mutation.
 2. An irreversible product, compatibility, licensing, or architecture decision is not already resolved by the roadmap and cannot safely be represented by a reversible ADR proposal.
@@ -106,7 +116,7 @@ A green checkpoint is not a handoff. Continue autonomously unless one of these h
 
 Difficulty, a failing test, incomplete work, a long milestone, or a package that benefits from clarification is not a blocker. Diagnose and continue.
 
-Do not mark the persistent goal blocked on the first encounter. Park a local blocker and continue elsewhere when possible. Goal-level `blocked` is appropriate only after the same true blocking condition repeats for three consecutive goal turns and no meaningful in-scope progress remains, matching the Codex goal rules.
+Do not treat the roadmap as blocked on the first encounter. Park a local blocker and continue elsewhere when possible. The supervisor pauses as blocked only after the same true condition repeats for three consecutive passes and no meaningful in-scope progress remains, matching the Codex goal rule.
 
 ## 8. On a true STOP
 
@@ -122,7 +132,7 @@ For genuine completion:
 - run the plan's complete validation and release-readiness gates;
 - ensure generated artifacts and the worktree are clean;
 - update every package/milestone state and final evidence in the ledger;
-- mark the persistent goal complete only when no required work remains;
+- mark an interactive persistent goal complete only when no required work remains; the Bash supervisor instead writes `COMPLETE` state and stops for review;
 - report that push, publication, deployment, and PR creation were not performed unless separately authorized.
 
 ## 9. Orientation helper safety contract
@@ -135,3 +145,18 @@ For genuine completion:
 - infer completion from commit count alone.
 
 Its output is orientation evidence, not a scheduler and not a substitute for the roadmap gates.
+
+## 10. Supervisor safety contract
+
+`scripts/autodevelop/loop.sh` and `run-pass.sh` enforce one serialized implementation lane:
+
+- an atomic directory lock and live PID prevent a second supervisor;
+- an initial start requires a clean tree, while a runner-recorded interrupted WIP marker permits only recovery of the same package;
+- `PROGRESS` requires both a new local commit and a clean tree;
+- state and dependency caches stay under ignored `.autodevelop/` storage;
+- every invocation explicitly selects the approved model and reasoning effort with no fallback;
+- the Codex sandbox admits the worktree plus the worktree/common Git metadata needed for local commits, while the prompt forbids the main checkout and every outward mutation;
+- rate limits use bounded backoff, authentication failure pauses immediately, five consecutive tool failures pause, and the same reported blocker must recur three times before the supervisor pauses as blocked;
+- `COMPLETE` stops the loop for operator review; it does not publish, push, or mark an external release complete.
+
+`scripts/autodevelop/selftest.sh` tests classification, prompt-echo rejection, rate-limit parsing, timeout precedence, authentication detection, and atomic state counters without a model call or repository mutation. The control script exposes no install/deploy/publish command.
