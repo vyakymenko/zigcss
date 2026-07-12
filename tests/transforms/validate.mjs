@@ -33,6 +33,16 @@ const fixtures = [
     },
     warningExpectation: 'none',
   },
+  {
+    label: 'typed-color-zero-shortening',
+    passId: 'typed-color-zero-shortening',
+    input: path.join(scriptDirectory, 'fixtures', 'color-zero-shortening.css'),
+    expected: {
+      pretty: path.join(scriptDirectory, 'fixtures', 'color-zero-shortening.expected.css'),
+      minified: path.join(scriptDirectory, 'fixtures', 'color-zero-shortening.expected.min.css'),
+    },
+    warningExpectation: 'none',
+  },
 ]
 const validatorOptions = {
   errorRecovery: false,

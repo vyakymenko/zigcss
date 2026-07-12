@@ -389,7 +389,7 @@ fn foldDeclaration(
         return .{ .value = input, .changed = false };
     };
     var output = input;
-    output.generated_numeric = generated;
+    output.generated_value = .{ .numeric = generated };
     output = ast.Declaration.init(output) catch return error.InvalidAst;
     return .{ .value = output, .changed = true };
 }
@@ -414,7 +414,7 @@ fn expectedGenerated(
     context: *pass_manager.Context,
     declaration: ast.Declaration,
 ) pass_manager.Error!?ast.GeneratedNumericValue {
-    if (declaration.generated_numeric != null or declaration.name.isCustomProperty()) return null;
+    if (declaration.generated_value != null or declaration.name.isCustomProperty()) return null;
     const policy = propertyPolicy(declaration.name.value) orelse return null;
     const values = declaration.valueWithoutImportance();
     const root = singleMathFunction(values) orelse return null;
@@ -849,7 +849,7 @@ test "math folding validator rejects a forged result and default policy denies t
     const old_style = transformed.rules[0].style_rule;
     const arena = parsed.compilation.arenaAllocator();
     const declarations = try arena.dupe(ast.Declaration, old_style.block.declarations.declarations);
-    declarations[0].generated_numeric.?.value = 4;
+    declarations[0].generated_value.?.numeric.value = 4;
     declarations[0] = try ast.Declaration.init(declarations[0]);
     const style = try arena.create(ast.StyleRule);
     style.* = try ast.StyleRule.init(.{

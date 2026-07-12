@@ -1,0 +1,25 @@
+/* exact sRGB and zero lengths shorten without crossing compatibility boundaries */
+.palette {
+  color: #ff0000;
+  color: currentColor;
+  background-color: rgb(255, 255, 255);
+  border-inline-start-color: #808080 !important;
+  width: 0px;
+  margin-block-end: 0rem;
+  line-height: 0px;
+  --brand: #ffffff;
+  outline-color: rgba(0, 0, 0, .5);
+  caret-color: transparent;
+  accent-color: #aabbccdd;
+}
+@layer theme {
+  .card {
+    border-color: #000080;
+    padding-inline-start: 0vw;
+    .label { text-decoration-color: #ffffff; }
+  }
+}
+@keyframes pulse {
+  from { color: #800080; }
+  to { width: 0em; }
+}

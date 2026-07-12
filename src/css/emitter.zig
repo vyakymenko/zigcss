@@ -436,17 +436,17 @@ const Emitter = struct {
         try self.writeIdentifier(declaration.name.value);
         try self.appendSlice(if (self.pretty()) ": " else ":");
         const value = declaration.valueWithoutImportance();
-        if (declaration.generated_numeric) |generated| {
-            _ = ast.GeneratedNumericValue.init(generated) catch return error.InvalidAst;
-            try self.mark(generated.source_span);
-            var buffer: [ast.generated_numeric_buffer_size]u8 = undefined;
+        if (declaration.generated_value) |generated| {
+            _ = ast.GeneratedValue.init(generated) catch return error.InvalidAst;
+            try self.mark(generated.sourceSpan());
+            var buffer: [ast.generated_value_buffer_size]u8 = undefined;
             try self.appendSlice(generated.serialize(&buffer) catch return error.InvalidAst);
         } else {
             try self.writeComponentValues(value);
         }
         if (declaration.important != null) {
             if (self.pretty() and
-                (declaration.generated_numeric != null or hasNonWhitespace(value)))
+                (declaration.generated_value != null or hasNonWhitespace(value)))
             {
                 try self.appendByte(' ');
             }
@@ -1128,11 +1128,11 @@ test "structured generated numeric values emit closed syntax with causal mapping
 
     const declarations = try arena.dupe(ast.Declaration, old_style.block.declarations.declarations);
     const causal_span = declarations[0].valueWithoutImportance()[0].span();
-    declarations[0].generated_numeric = .{
+    declarations[0].generated_value = .{ .numeric = .{
         .value = 3,
         .unit = .px,
         .source_span = causal_span,
-    };
+    } };
     declarations[0] = try ast.Declaration.init(declarations[0]);
     const declaration_list = try ast.DeclarationList.init(old_style.block.declarations.span, declarations);
     const style = try arena.create(ast.StyleRule);

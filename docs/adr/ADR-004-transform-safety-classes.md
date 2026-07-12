@@ -63,6 +63,16 @@ Rewriting is restricted to a complete single `calc()`, `min()`, `max()`, or `cla
 
 A successful fold stores a finite number, a closed known-unit enum, and the whole math function's causal span as structured AST data. The emitter—not the pass—serializes that data and applies the one-segment mapping contract from `ADR-007`. The verified pass reconstructs only changed declaration/rule paths, preserves order and importance, validates a second independently computed candidate plus source map, and remains available only through explicit semantic-rewrite policy and the test driver. It is not registered in the stable CLI.
 
+### Typed color and zero shortening
+
+`OPT-012` recognizes a closed exact subset of [CSS Color Level 4](https://drafts.csswg.org/css-color-4/): 3/4/6/8-digit hexadecimal colors, the standardized basic named-color set and aliases, and `rgb()`/`rgba()` channels that map exactly to 8-bit sRGB. Wider color spaces, contextual/system colors, missing or calculated channels, fractional channels, out-of-range clamping, and non-endpoint alpha values retain authored syntax. The serializer chooses only deterministic lowercase hex or a shorter universally supported basic name.
+
+Compatibility is part of equivalence. Opaque named, hex, and RGB forms may share the older basic-name/hex output surface. A non-opaque `rgba()` or `transparent` value is not changed into alpha-hex without target data because that could raise the browser requirement; only authored alpha-hex may shorten within alpha-hex notation. Color rewriting is further restricted to a closed list of properties whose complete value can be one `<color>`.
+
+CSS Values Level 4 permits a zero `<length>` to omit its unit, but a zero that can also parse as `<number>` must take the number interpretation. Zero shortening therefore accepts only a complete positive-zero length dimension on a closed length-only or length-percentage property list. Percentages, angles, times, signed zero, math functions, custom properties, descriptors, and number-or-length grammars such as `line-height` remain unchanged.
+
+Numeric and color output are variants of one structured generated-value union. A shared bounded immutable traversal covers style/nested declarations, group rules, keyframes, pages, and margin boxes while deliberately skipping declaration-backed descriptors. `OPT-012` requires strict byte reduction, recomputed output/source-map validation, idempotence, allocation-failure coverage, and independent canonical equivalence. Like `MATH-001`, it is exposed only through explicit semantic-rewrite policy and the test driver, not the stable CLI.
+
 ### Deterministic planning
 
 - Requested passes include their transitive dependencies.

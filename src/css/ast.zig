@@ -1,4 +1,5 @@
 const std = @import("std");
+const color = @import("color.zig");
 const compilation = @import("../compilation.zig");
 const numeric_unit = @import("numeric_unit.zig");
 const source = @import("../source.zig");
@@ -465,13 +466,72 @@ pub const GeneratedNumericValue = struct {
     }
 };
 
+pub const GeneratedColorValue = struct {
+    value: color.Color,
+    source_span: source.Span,
+
+    pub fn init(candidate: GeneratedColorValue) AstError!GeneratedColorValue {
+        try validateSpan(candidate.source_span);
+        if (candidate.source_span.isEmpty()) return error.InvalidGeneratedValue;
+        var buffer: [color.serialized_buffer_size]u8 = undefined;
+        _ = candidate.serialize(&buffer) catch return error.InvalidGeneratedValue;
+        return candidate;
+    }
+
+    pub fn serialize(
+        self: GeneratedColorValue,
+        buffer: []u8,
+    ) error{NoSpaceLeft}![]const u8 {
+        return self.value.serialize(buffer);
+    }
+};
+
+pub const generated_value_buffer_size: usize = @max(
+    generated_numeric_buffer_size,
+    color.serialized_buffer_size,
+);
+
+pub const GeneratedValue = union(enum) {
+    numeric: GeneratedNumericValue,
+    color: GeneratedColorValue,
+
+    pub fn init(candidate: GeneratedValue) AstError!GeneratedValue {
+        switch (candidate) {
+            .numeric => |value| _ = GeneratedNumericValue.init(value) catch {
+                return error.InvalidGeneratedValue;
+            },
+            .color => |value| _ = GeneratedColorValue.init(value) catch {
+                return error.InvalidGeneratedValue;
+            },
+        }
+        return candidate;
+    }
+
+    pub fn sourceSpan(self: GeneratedValue) source.Span {
+        return switch (self) {
+            .numeric => |value| value.source_span,
+            .color => |value| value.source_span,
+        };
+    }
+
+    pub fn serialize(
+        self: GeneratedValue,
+        buffer: []u8,
+    ) error{ NoSpaceLeft, InvalidGeneratedValue }![]const u8 {
+        return switch (self) {
+            .numeric => |value| value.serialize(buffer),
+            .color => |value| value.serialize(buffer),
+        };
+    }
+};
+
 pub const Declaration = struct {
     name: Identifier,
     colon: source.Span,
     /// Includes all raw leading/trailing trivia and the `!important` marker.
     value: ComponentValueList,
     important: ?ImportantAnnotation = null,
-    generated_numeric: ?GeneratedNumericValue = null,
+    generated_value: ?GeneratedValue = null,
     terminator: ?source.Span = null,
     span: source.Span,
 
@@ -500,9 +560,9 @@ pub const Declaration = struct {
                 return error.InvalidDeclaration;
             }
         }
-        if (candidate.generated_numeric) |generated| {
-            _ = GeneratedNumericValue.init(generated) catch return error.InvalidDeclaration;
-            try validateChild(candidate.value.span, generated.source_span);
+        if (candidate.generated_value) |generated| {
+            _ = GeneratedValue.init(generated) catch return error.InvalidDeclaration;
+            try validateChild(candidate.value.span, generated.sourceSpan());
             const semantic_end = if (candidate.important) |important|
                 important.value_end
             else
@@ -512,7 +572,7 @@ pub const Declaration = struct {
             var end = semantic_end;
             while (end > first and isWhitespace(candidate.value.values[end - 1])) : (end -= 1) {}
             if (end - first != 1 or
-                !spansEqual(candidate.value.values[first].span(), generated.source_span))
+                !spansEqual(candidate.value.values[first].span(), generated.sourceSpan()))
             {
                 return error.InvalidDeclaration;
             }
@@ -1326,19 +1386,19 @@ test "declaration values retain nested components and explicit important metadat
     try std.testing.expect(declaration.important.?.span.start < declaration.important.?.span.end);
 
     var generated_candidate = declaration;
-    generated_candidate.generated_numeric = .{
+    generated_candidate.generated_value = .{ .numeric = .{
         .value = 3.5,
         .unit = .px,
         .source_span = document.values[3].span(),
-    };
+    } };
     const generated = try Declaration.init(generated_candidate);
     var generated_buffer: [generated_numeric_buffer_size]u8 = undefined;
     try std.testing.expectEqualStrings(
         "3.5px",
-        try generated.generated_numeric.?.serialize(&generated_buffer),
+        try generated.generated_value.?.numeric.serialize(&generated_buffer),
     );
 
-    generated_candidate.generated_numeric.?.source_span = declaration.value.span;
+    generated_candidate.generated_value.?.numeric.source_span = declaration.value.span;
     try std.testing.expectError(error.InvalidDeclaration, Declaration.init(generated_candidate));
     try std.testing.expectError(error.InvalidGeneratedValue, GeneratedNumericValue.init(.{
         .value = std.math.nan(f64),
@@ -1360,6 +1420,13 @@ test "declaration values retain nested components and explicit important metadat
     try std.testing.expectEqualStrings("-0%", try negative_zero.serialize(&negative_zero_buffer));
     var undersized_buffer: [1]u8 = undefined;
     try std.testing.expectError(error.NoSpaceLeft, negative_zero.serialize(&undersized_buffer));
+
+    var generated_color_buffer: [generated_value_buffer_size]u8 = undefined;
+    const generated_color = try GeneratedValue.init(.{ .color = .{
+        .value = .{ .red = 255, .green = 0, .blue = 0 },
+        .source_span = document.values[3].span(),
+    } });
+    try std.testing.expectEqualStrings("red", try generated_color.serialize(&generated_color_buffer));
 }
 
 test "important markers reject non-trivia gaps and non-important keywords" {

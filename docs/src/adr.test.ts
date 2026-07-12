@@ -73,6 +73,10 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('`MATH-001` evaluates the postfix evidence with a bounded stack')
     expect(adr).toContain('results that are not strictly shorter all retain the exact input root')
     expect(adr).toContain('It is not registered in the stable CLI')
+    expect(adr).toContain('https://drafts.csswg.org/css-color-4/')
+    expect(adr).toContain('A non-opaque `rgba()` or `transparent` value is not changed into alpha-hex')
+    expect(adr).toContain('complete positive-zero length dimension')
+    expect(adr).toContain('one structured generated-value union')
     expect(adr).toContain('does not enable `--optimize`')
   })
 

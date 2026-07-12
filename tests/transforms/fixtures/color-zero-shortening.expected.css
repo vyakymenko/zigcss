@@ -1,0 +1,30 @@
+.palette {
+  color: red;
+  color: currentColor;
+  background-color: #fff;
+  border-inline-start-color: gray !important;
+  width: 0;
+  margin-block-end: 0;
+  line-height: 0px;
+  --brand: #ffffff;
+  outline-color: rgba(0, 0, 0, .5);
+  caret-color: transparent;
+  accent-color: #abcd;
+}
+@layer theme {
+  .card {
+    border-color: navy;
+    padding-inline-start: 0;
+    .label {
+      text-decoration-color: #fff;
+    }
+  }
+}
+@keyframes pulse {
+  from {
+    color: purple;
+  }
+  to {
+    width: 0;
+  }
+}
