@@ -70,4 +70,17 @@ describe('native artifact workflows', () => {
     expect(compatibility).toBeGreaterThan(nativeTests)
     expect(transforms).toBeGreaterThan(compatibility)
   })
+
+  test('validates package metadata and a real path dependency before CSS oracles', () => {
+    const metadata = buildWorkflow.indexOf('npm run test:zig-package')
+    const nativeTests = buildWorkflow.lastIndexOf('zig build test --summary all', metadata)
+    const packageConsumer = buildWorkflow.indexOf('working-directory: tests/package-consumer', metadata)
+    const consumerTests = buildWorkflow.indexOf('zig build test --summary all', packageConsumer)
+    const compatibility = buildWorkflow.indexOf('npm run test:compat', consumerTests)
+
+    expect(metadata).toBeGreaterThan(nativeTests)
+    expect(packageConsumer).toBeGreaterThan(metadata)
+    expect(consumerTests).toBeGreaterThan(packageConsumer)
+    expect(compatibility).toBeGreaterThan(consumerTests)
+  })
 })

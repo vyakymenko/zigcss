@@ -97,6 +97,13 @@ jobs:
       - name: Run Tests
         run: zig build test --summary all
 
+      - name: Verify Zig package metadata
+        run: npm run test:zig-package
+
+      - name: Test Zig package consumer
+        working-directory: tests/package-consumer
+        run: zig build test --summary all
+
       - name: Validate emitted CSS independently
         run: npm run test:compat
 

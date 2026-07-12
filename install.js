@@ -126,7 +126,7 @@ async function install() {
       console.error('');
       console.error('Options:');
       console.error('  • Wait for a new release that includes your platform');
-      console.error('  • Build from source (requires Zig 0.15.2+):');
+      console.error('  • Build from source (tested with Zig 0.15.2):');
       console.error('    git clone https://github.com/vyakymenko/zigcss.git');
       console.error('    cd zigcss && zig build -Doptimize=ReleaseFast');
       console.error('  • Install Zig: https://ziglang.org/download/');

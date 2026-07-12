@@ -22,6 +22,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 |---|---|---|
 | `.css` parsing and emission | Experimental, matrix-tested | Stable CLI input uses the rebuilt parser/emitter; the tested grammar boundary is published below. |
 | Zig compile API | Experimental, consumer-tested | The `zigcss` module exposes owned compile options/results, located structured diagnostics, ordered `@import` dependencies, maps, accepted transforms, and target queries. |
+| Zig package metadata | Experimental, consumer-tested | `build.zig.zon` declares package `zigcss` 0.3.0 with minimum Zig 0.15.2; path and freshly fetched package consumers compile against module `zigcss`. |
 | Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed Zig callbacks through deterministic, transactional pass plans; there is no stable or cross-language plugin ABI. |
 | `--minify` | Experimental | Compacts emitted whitespace without enabling AST transforms. |
 | Output planning | Verified safety boundary | Rejects input/output aliases and duplicate batch destinations before writes. |
@@ -38,7 +39,9 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 
 `build.zig` registers one external module named `zigcss` at `src/lib.zig`. `zigcss.compile` accepts `CompileOptions` for CSS output format, separate source maps, the verified optimizer, verified target prefixing, a borrowed canonical target query, and bounded dependency reporting. Its move-only-by-convention `CompileResult` owns CSS, optional map bytes, located structured diagnostics, ordered decoded top-level `@import` dependencies, and optional module-export state through one idempotent `deinit` path.
 
-The stable CSS path returns `module_exports = null`; CSS Modules remain experimental. Fixed-point optimization and source maps cannot be combined until intermediate maps can be composed, and incoherent options return owned `API0001` diagnostics without CSS. Dependency metadata and installed external-package consumption belong to `BUILD-001` and later packages.
+The stable CSS path returns `module_exports = null`; CSS Modules remain experimental. Fixed-point optimization and source maps cannot be combined until intermediate maps can be composed, and incoherent options return owned `API0001` diagnostics without CSS.
+
+`build.zig.zon` gives the source package stable identity `zigcss`, version 0.3.0, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. Its allowlist contains only `build.zig`, the manifest, `src`, README, and license. `tests/package-consumer` is a real path dependency that resolves `zigcss.module("zigcss")`; an isolated `zig fetch .` copy with only allowlisted files passes the same API smoke. No remote package URL is published, and `build_helpers.zig` remains excluded until `BUILD-002` replaces its unsupported APIs.
 
 Native plugins are a separate trusted-only experiment. `PluginOptions.experimental` borrows `plugin.`-namespaced pass definitions, requests, callbacks, and user state only until `compile` returns. The pass manager closes dependencies and orders execution by phase, priority, and stable ID independent of registration order. Exact safety/maturity permissions remain deny-by-default. Invalid configuration returns `API0002`; callback or validator failure transactionally returns `API0003` without CSS; successful warnings remain owned diagnostics. Active plugins cannot request source maps, do not enter the CLI or HTTP service, and are not a stable ABI or sandbox.
 
@@ -112,6 +115,7 @@ After building, the independent grammar gate can be run with Node.js:
 npm ci --ignore-scripts
 npm run test:prefix-data
 npm run check:prefix-data
+npm run test:zig-package
 npm run test:compat
 npm run test:transforms
 ```

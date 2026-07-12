@@ -13,6 +13,11 @@ const capabilities = [
     detail: "A separate consumer verifies owned CSS/maps, located diagnostics, ordered imports, accepted transforms, borrowed canonical targets, and one result cleanup path.",
   },
   {
+    surface: "Zig package metadata",
+    status: "Experimental / consumer-tested",
+    detail: "Package zigcss 0.3.0 pins minimum Zig 0.15.2 and a minimal source allowlist; path and freshly fetched consumers resolve the public module.",
+  },
+  {
     surface: "Native plugins",
     status: "Experimental / trusted library-only",
     detail: "Borrowed plugin.-namespaced Zig callbacks use deterministic transactional pass plans; there is no stable ABI, sandbox, CLI, or HTTP path.",
