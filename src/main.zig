@@ -617,7 +617,7 @@ pub fn main() !void {
             std.mem.eql(u8, args[i], "--critical-elements"))
         {
             _ = requireOptionValue(args, i, args[i]);
-            exitWithCliError("{s} is unavailable until conservative critical-CSS extraction is validated", .{args[i]});
+            exitWithCliError("{s} is unavailable in the recovery CLI; conservative extraction remains library/test-driver only", .{args[i]});
         } else if (std.mem.eql(u8, args[i], "-h") or std.mem.eql(u8, args[i], "--help")) {
             printUsage();
             return;

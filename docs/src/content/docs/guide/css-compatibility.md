@@ -48,7 +48,24 @@ A separate `PREFIX-002` acceptance fixture verifies the library-only target pass
 
 The fixture has reviewed pretty and minified goldens, reparses byte-idempotently, and is independently projected with Lightning CSS 1.30.1 to remove compatibility-only forms before comparison with the original standard semantics. The reviewed legacy target query expands the output, while `chrome >= 120, edge >= 120, firefox >= 120` is exactly transform-free. This evidence is narrower than browser computed-style testing and is not a claim of general autoprefixing.
 
-Source-map generation exists in the library pipeline, but the recovery CLI still rejects `--source-map` until its map-file and comment policy is defined. Optimizer CLI wiring, target/prefix CLI flags, critical CSS, preprocessors, CSS Modules, CSS-in-JS, and the public compile service remain outside this grammar matrix.
+## Experimental selector extraction matrix
+
+`TREE-001` exposes two library/test-driver modes over an explicit closed selector domain. A non-null inventory category is exhaustive; null means unknown and grants no absence proof. Dead-code mode targets a closed document snapshot. Critical-CSS mode targets a standalone closed selector-matching render tree containing every node that admitted combinators can inspect. Both remain experimental and require separate extraction and experimental policy grants.
+
+| Boundary | Status | Current contract |
+|---|---|---|
+| Direct class and ID selectors | Supported for extraction | Decoded inventory values are canonicalized and matched conservatively across ASCII case variants. One absent direct requirement proves that selector alternative impossible. |
+| Selector lists | Supported conservatively | The whole style rule is omitted only when every alternative is proven impossible; one possible or unknown alternative retains the complete list. |
+| Combinators and native nesting | Supported conservatively | Direct class/ID requirements may prove absence, but the caller's closed domain must include every related node matching can inspect. Parent and survivor order is unchanged. |
+| Functional pseudo arguments | Preserved | Arguments to `:is()`, `:where()`, `:not()`, `:has()`, and related forms do not grant evidence because their polarity, forgiveness, and relationships differ. Direct requirements outside the function may still prove absence. |
+| Type, namespace, and attribute selectors | Preserved | Document-language case, namespace, and attribute semantics are not inferred from CSS or the initial inventory. |
+| Imports, layers, descriptors, keyframes, custom-property definitions, and unknown at-rules | Preserved | Dependency-bearing non-style rules are retained. Typed group and possible nested style rules recurse without removing their wrappers. |
+| Missing, duplicate, empty-name, or over-limit configuration | Rejected | Invalid inventories produce a structured diagnostic and no CSS. A non-null empty category is valid and means the category is known empty. |
+| Dynamic DOM or an inventory that omits selector-related nodes | Unsupported | The proof applies only to the declared closed snapshot/tree. Later DOM mutations or incomplete critical ancestry/relationships require a new inventory. |
+
+The dead-code and critical fixtures share one stylesheet but use different complete inventories. Reviewed pretty/minified goldens preserve custom and logical declarations, layers, media/supports groups, nested styles, functional pseudos, attributes, elements, font faces, and keyframes at the documented boundaries. A separate Lightning CSS visitor independently removes only style rules whose every selector has a direct absent class/ID requirement, then canonicalizes the expected subset. Both modes reduce their transform-free baseline, emit no mappings for extracted rules, reject forged proofs, and remain byte-idempotent after reparse.
+
+Source-map generation exists in the library pipeline, but the recovery CLI still rejects `--source-map` until its map-file and comment policy is defined. General optimizer CLI wiring, target/prefix flags, extraction flags, preprocessors, CSS Modules, CSS-in-JS, and the public compile service remain outside the stable grammar/CLI contract.
 
 To run the independent gate after building the compiler:
 

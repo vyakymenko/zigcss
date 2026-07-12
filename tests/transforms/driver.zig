@@ -15,6 +15,8 @@ const RequestedPass = enum {
     selector_rule_merge,
     at_rule_merge,
     target_prefix_rewrite,
+    dead_code_extraction,
+    critical_css_extraction,
 };
 
 pub fn main() !void {
@@ -28,6 +30,12 @@ pub fn main() !void {
     var requested_pass: RequestedPass = .empty_cleanup;
     var pass_was_set = false;
     var targets: ?[]const u8 = null;
+    var complete_classes = false;
+    var complete_ids = false;
+    var known_classes = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer known_classes.deinit(allocator);
+    var known_ids = try std.ArrayList([]const u8).initCapacity(allocator, 0);
+    defer known_ids.deinit(allocator);
     var minified = false;
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
@@ -54,6 +62,28 @@ pub fn main() !void {
             targets = args[index];
             continue;
         }
+        if (std.mem.eql(u8, argument, "--complete-classes")) {
+            if (complete_classes) return invalidArguments("duplicate --complete-classes argument", .{});
+            complete_classes = true;
+            continue;
+        }
+        if (std.mem.eql(u8, argument, "--complete-ids")) {
+            if (complete_ids) return invalidArguments("duplicate --complete-ids argument", .{});
+            complete_ids = true;
+            continue;
+        }
+        if (std.mem.eql(u8, argument, "--known-class")) {
+            index += 1;
+            if (index >= args.len) return invalidArguments("--known-class requires a value", .{});
+            try known_classes.append(allocator, args[index]);
+            continue;
+        }
+        if (std.mem.eql(u8, argument, "--known-id")) {
+            index += 1;
+            if (index >= args.len) return invalidArguments("--known-id requires a value", .{});
+            try known_ids.append(allocator, args[index]);
+            continue;
+        }
         if (std.mem.startsWith(u8, argument, "--")) {
             return invalidArguments("unknown argument: {s}", .{argument});
         }
@@ -61,7 +91,7 @@ pub fn main() !void {
         input_path = argument;
     }
     const input = input_path orelse return invalidArguments(
-        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis|adjacent-selector-rule-merge|adjacent-at-rule-merge|target-prefix-rewrite>] [--targets <query>] [--minify]",
+        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis|adjacent-selector-rule-merge|adjacent-at-rule-merge|target-prefix-rewrite|conservative-dead-code-extraction|conservative-critical-css-extraction>] [--targets <query>] [--complete-classes [--known-class <name>]...] [--complete-ids [--known-id <name>]...] [--minify]",
         .{},
     );
 
@@ -76,7 +106,21 @@ pub fn main() !void {
         return error.ParseFailed;
     }
 
+    const extraction_requested = requested_pass == .dead_code_extraction or
+        requested_pass == .critical_css_extraction;
+    if (known_classes.items.len != 0 and !complete_classes) {
+        return invalidArguments("--known-class requires --complete-classes", .{});
+    }
+    if (known_ids.items.len != 0 and !complete_ids) {
+        return invalidArguments("--known-id requires --complete-ids", .{});
+    }
+    const has_extraction_arguments = complete_classes or complete_ids or
+        known_classes.items.len != 0 or known_ids.items.len != 0;
+
     if (requested_pass == .target_prefix_rewrite) {
+        if (has_extraction_arguments) {
+            return invalidArguments("inventory arguments require an extraction pass", .{});
+        }
         const target_input = targets orelse return invalidArguments(
             "target-prefix-rewrite requires --targets",
             .{},
@@ -102,7 +146,39 @@ pub fn main() !void {
         );
         defer plan.deinit();
         try parsed.applyPassPlan(allocator, &plan, .{ .verify_idempotence = true });
+    } else if (extraction_requested) {
+        if (targets != null) return invalidArguments("--targets requires target-prefix-rewrite", .{});
+        if (!complete_classes and !complete_ids) {
+            return invalidArguments("extraction requires at least one complete inventory category", .{});
+        }
+        var config = zigcss.transform.selector_extraction.Configuration.init(
+            allocator,
+            if (requested_pass == .dead_code_extraction) .dead_code else .critical_css,
+            .{
+                .classes = if (complete_classes) known_classes.items else null,
+                .ids = if (complete_ids) known_ids.items else null,
+            },
+            .{},
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return invalidArguments("invalid extraction inventory: {s}", .{@errorName(err)}),
+        };
+        defer config.deinit();
+        const registry = [_]zigcss.transform.pass_manager.Pass{
+            zigcss.transform.selector_extraction.definition(&config),
+        };
+        var plan = try zigcss.transform.pass_manager.buildPlan(
+            allocator,
+            &registry,
+            &.{config.passId()},
+            .{ .allow_extraction = true, .allow_experimental = true },
+        );
+        defer plan.deinit();
+        try parsed.applyPassPlan(allocator, &plan, .{ .verify_idempotence = true });
     } else if (requested_pass != .none) {
+        if (has_extraction_arguments) {
+            return invalidArguments("inventory arguments require an extraction pass", .{});
+        }
         if (targets != null) return invalidArguments("--targets requires target-prefix-rewrite", .{});
         const registry = [_]zigcss.transform.pass_manager.Pass{
             zigcss.transform.empty_cleanup.definition(),
@@ -122,6 +198,7 @@ pub fn main() !void {
             .selector_rule_merge => zigcss.transform.selector_rule_merge.id,
             .at_rule_merge => zigcss.transform.at_rule_merge.id,
             .target_prefix_rewrite => unreachable,
+            .dead_code_extraction, .critical_css_extraction => unreachable,
         }};
         const policy: zigcss.transform.pass_manager.Policy = switch (requested_pass) {
             .none => unreachable,
@@ -132,6 +209,7 @@ pub fn main() !void {
             .selector_rule_merge => .{ .allow_semantic_rewrite = true },
             .at_rule_merge => .{ .allow_semantic_rewrite = true },
             .target_prefix_rewrite => unreachable,
+            .dead_code_extraction, .critical_css_extraction => unreachable,
         };
         var plan = try zigcss.transform.pass_manager.buildPlan(
             allocator,
@@ -141,8 +219,11 @@ pub fn main() !void {
         );
         defer plan.deinit();
         try parsed.applyPassPlan(allocator, &plan, .{ .verify_idempotence = true });
-    } else if (targets != null) {
-        return invalidArguments("--targets requires target-prefix-rewrite", .{});
+    } else {
+        if (targets != null) return invalidArguments("--targets requires target-prefix-rewrite", .{});
+        if (has_extraction_arguments) {
+            return invalidArguments("inventory arguments require an extraction pass", .{});
+        }
     }
 
     var result = try parsed.emitResult(allocator, .{
@@ -165,6 +246,12 @@ fn parsePass(value: []const u8) ?RequestedPass {
     if (std.mem.eql(u8, value, zigcss.transform.selector_rule_merge.id)) return .selector_rule_merge;
     if (std.mem.eql(u8, value, zigcss.transform.at_rule_merge.id)) return .at_rule_merge;
     if (std.mem.eql(u8, value, zigcss.prefixing.rewrite.id)) return .target_prefix_rewrite;
+    if (std.mem.eql(u8, value, zigcss.transform.selector_extraction.dead_code_id)) {
+        return .dead_code_extraction;
+    }
+    if (std.mem.eql(u8, value, zigcss.transform.selector_extraction.critical_css_id)) {
+        return .critical_css_extraction;
+    }
     return null;
 }
 

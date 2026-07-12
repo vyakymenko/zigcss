@@ -79,6 +79,12 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('complete positive-zero length dimension')
     expect(adr).toContain('one structured generated-value union')
     expect(adr).toContain('does not enable `--optimize`')
+    expect(adr).toContain('`conservative-dead-code-extraction`')
+    expect(adr).toContain('closed selector-matching render tree')
+    expect(adr).toContain('https://drafts.csswg.org/css-nesting/')
+    expect(adr).toContain('zero-output generated proof')
+    expect(adr).toContain('allow_extraction')
+    expect(adr).toContain('allow_experimental')
   })
 
   test('maps generated syntax only to an explicit causal source span', () => {

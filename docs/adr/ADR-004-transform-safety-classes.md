@@ -19,7 +19,7 @@ The rebuilt CSS AST is compilation-owned and intentionally exposed through const
 - In-place mutation, including mutation through `@constCast`, is outside the pass contract. A plan publishes only the final root after every selected pass and validator succeeds.
 - Failed candidates may remain arena-allocated until compilation cleanup, but no failed root is returned or installed. This provides a transaction boundary without unsafe partial rollback.
 - Persistent AST allocations use the compilation arena. Temporary comparison and validation work uses an explicit caller-provided scratch allocator.
-- A deleted rule remains represented as a proof-carrying `omitted_rules` entry on its source `RuleList`. AST validation and emission independently accept only structurally empty style rules and the explicitly authorized empty conditional groups; an arbitrary omitted source range is invalid.
+- A lossless-cleanup deletion remains represented as a proof-carrying `omitted_rules` entry on its source `RuleList`. AST validation and emission independently accept only structurally empty style rules and the explicitly authorized empty conditional groups. Experimental extraction instead retains a nonempty authored rule under a zero-output generated proof carrying its complete inventory; an arbitrary omitted source range is invalid in either channel.
 
 ### Safety classes
 
@@ -105,6 +105,20 @@ The AST retains both complete authored rules plus ordered non-overlapping proof 
 
 The current independent oracle cannot prove direct declaration runs inside nested conditional groups: Lightning CSS 1.30.1 serializes the two-group input without a required declaration separator. `OPT-015` therefore excludes any candidate block whose immediate child list contains a nested-declarations rule, even though ordinary nested style-rule groups remain eligible. Both authored at-rules remain as proof metadata; the emitter rechecks typed kind, prelude equivalence, layer identity, termination, nesting mode, child shape, adjacency, and source containment before composing the first header with both child streams. The pass is available only through semantic-rewrite policy and the test driver.
 
+### Conservative selector extraction
+
+`TREE-001` replaces the inherited token-presence heuristic with two explicit experimental extraction modes: `conservative-dead-code-extraction` and `conservative-critical-css-extraction`. [Selectors Level 4](https://drafts.csswg.org/selectors/) evaluates selectors against an element tree whose class, ID, type, namespace, and attribute semantics can depend on the document language. [CSS Nesting Level 1](https://drafts.csswg.org/css-nesting/) further makes nested selectors relative to their parent selector context. A source-only stylesheet cannot infer that tree, runtime DOM mutations, shadow boundaries, pseudo state, or selector relationships.
+
+The caller must therefore provide at least one non-null complete category. A class or ID slice is an exhaustive decoded inventory for the declared domain; null means unknown and grants no absence proof, while a non-null empty slice means the category is known empty. Dead-code mode requires a closed document snapshot. Critical mode requires a closed selector-matching render tree containing the selected subjects and every ancestor, sibling, descendant, or other node that admitted combinators can inspect. It is not sound to pass only a list of aesthetically “critical” names from a larger live DOM.
+
+Inventories are deeply owned, byte/count/depth/rule/proof bounded, deterministically sorted, and duplicate-free under conservative ASCII folding. Class comparisons retain ASCII case variants because Selectors requires quirks-mode class matching to be ASCII case-insensitive. The initial matrix uses only direct positive class and ID simple selectors. Type and attribute selectors remain authored because their case and namespace behavior depends on the document language. Functional pseudo arguments remain authored because `:is()`, `:where()`, `:not()`, `:has()`, and related forms have positive, negative, forgiving, or relational semantics. A direct class or ID outside those arguments can still prove its containing complex selector impossible.
+
+A style rule produces zero output only when every selector-list alternative contains at least one such required token absent from a complete category. One possible or unknown alternative retains the whole rule. Traversal recurses through typed group and nested style rules, but imports, layers, descriptors, custom-property definitions, keyframes, unknown at-rules, and every other dependency-bearing non-style rule remain present. Existing generated-rule ranges are protected from overlapping extraction proofs, and all survivors remain in source order.
+
+The AST retains each extracted authored style rule plus the canonical inventory and mode in a closed zero-output proof. The emitter independently re-runs selector impossibility analysis before omitting bytes; forged proofs fail, removed rules receive no source-map segment, and reparsed output is byte-idempotent. Lightning CSS 1.30.1 independently applies the same published matrix through a separate selector visitor for both reviewed modes. Invalid, incomplete, duplicate, or over-limit inventories fail without CSS output.
+
+Both passes remain `experimental` even after their package acceptance suite. A plan must separately grant `allow_extraction` and `allow_experimental`; neither pass is registered in the stable CLI, and the inherited optimizer is never called. Dynamic DOM use, element/attribute inventories, functional-pseudo reasoning, dependency pruning, selector removal within a retained list, and browser computed-style validation require later matrix expansions rather than inference.
+
 ### Deterministic planning
 
 - Requested passes include their transitive dependencies.
@@ -133,7 +147,7 @@ Positive consequences:
 Costs and constraints:
 
 - Reconstructing changed paths uses more temporary arena memory than unrestricted in-place mutation.
-- Proof-carrying omissions retain small unreachable-rule paths until compilation cleanup instead of reducing the AST to unauditable deleted byte ranges.
+- Proof-carrying cleanup omissions and extraction proofs retain small unreachable-rule paths until compilation cleanup instead of reducing the AST to unauditable deleted byte ranges.
 - Each pass needs dedicated recursive traversal and validation rather than access to a monolithic optimizer.
 - Constness is a contract rather than a language-enforced guarantee against malicious `@constCast`; code review and tests must reject such implementations.
 - Structural equivalence alone is insufficient for every cleanup or rewrite, so some validators require browser computed-style or domain-specific cascade proofs.

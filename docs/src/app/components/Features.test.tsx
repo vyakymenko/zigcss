@@ -23,7 +23,8 @@ describe('Features', () => {
 
   it('lists disabled and library-only surfaces explicitly', () => {
     renderFeatures()
-    expect(screen.getByText('Optimizer and critical CSS')).toBeInTheDocument()
+    expect(screen.getByText('General optimizer')).toBeInTheDocument()
+    expect(screen.getByText('Dead-code and critical-CSS extraction')).toBeInTheDocument()
     expect(screen.getByText('Target prefix rewrite')).toBeInTheDocument()
     expect(screen.getByText('Source maps')).toBeInTheDocument()
     expect(screen.getByText('Browser targets')).toBeInTheDocument()

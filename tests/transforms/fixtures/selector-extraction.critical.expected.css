@@ -1,0 +1,56 @@
+@layer base {
+  :root {
+    --theme: red;
+  }
+  :not(.unused) {
+    outline: 0;
+  }
+  :is(.unused) {
+    opacity: 0.5;
+  }
+  #hero {
+    min-height: 20rem;
+  }
+  [data-state] {
+    visibility: visible;
+  }
+  button {
+    font: inherit;
+  }
+  @media (width > 20rem) {
+    .critical {
+      display: flex;
+    }
+  }
+}
+.critical {
+  color: red;
+  color: var(--theme) !important;
+  direction: rtl;
+  writing-mode: vertical-rl;
+  margin-inline-start: 1px;
+  width: future-size(1 foo);
+}
+.parent {
+  color: black;
+  .critical {
+    color: red;
+  }
+}
+@supports (display: grid) {
+  .critical {
+    display: grid;
+  }
+}
+@font-face {
+  font-family: Demo;
+  src: url(demo.woff2);
+}
+@keyframes pulse {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

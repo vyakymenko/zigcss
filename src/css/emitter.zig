@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const compatibility_analysis = @import("../prefixing/rewrite_analysis.zig");
+const extraction_analysis = @import("../transform/selector_extraction_analysis.zig");
 const rule_parser = @import("rule_parser.zig");
 const rule_merge = @import("rule_merge.zig");
 const shorthand = @import("shorthand.zig");
@@ -134,13 +135,15 @@ const Emitter = struct {
         var generated_index: usize = 0;
         var output_index: usize = 0;
         while (rule_index < rules.rules.len) {
-            if (output_index > 0 and self.pretty()) try self.appendByte('\n');
             if (generated_index < rules.generated_rules.len and
                 rules.generated_rules[generated_index].first_rule == rule_index)
             {
-                if (self.pretty()) try self.writeIndent(depth);
                 const generated = rules.generated_rules[generated_index];
                 const generated_output_count = generated.outputCount() catch return error.InvalidAst;
+                if (generated_output_count > 0 and self.pretty()) {
+                    if (output_index > 0) try self.appendByte('\n');
+                    try self.writeIndent(depth);
+                }
                 const has_following = output_index + generated_output_count < output_count or
                     external_following_rule;
                 try self.writeGeneratedRule(rules, generated, depth, has_following);
@@ -154,7 +157,10 @@ const Emitter = struct {
                     return error.InvalidAst;
                 }
                 const rule = rules.rules[rule_index];
-                if (self.pretty() and rule != .nested_declarations) try self.writeIndent(depth);
+                if (self.pretty()) {
+                    if (output_index > 0) try self.appendByte('\n');
+                    if (rule != .nested_declarations) try self.writeIndent(depth);
+                }
                 try self.writeRule(
                     rule,
                     depth,
@@ -248,6 +254,15 @@ const Emitter = struct {
                     try self.writeIndent(depth);
                 }
                 try self.writeRule(input, depth, external_following_rule);
+            },
+            .extraction => extraction_analysis.validateRuleExpansionAssumeListValid(
+                self.file,
+                rules,
+                generated,
+            ) catch |err| switch (err) {
+                error.SourceMismatch => return error.SourceMismatch,
+                error.InvalidSpan => return error.InvalidSpan,
+                error.InvalidAst => return error.InvalidAst,
             },
         }
     }

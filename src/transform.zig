@@ -9,6 +9,7 @@ pub const shorthand_synthesis = @import("transform/shorthand_synthesis.zig");
 pub const value_rewrite = @import("transform/value_rewrite.zig");
 pub const rule_rewrite = @import("transform/rule_rewrite.zig");
 pub const selector_rule_merge = @import("transform/selector_rule_merge.zig");
+pub const selector_extraction = @import("transform/selector_extraction.zig");
 
 test {
     _ = pass_manager;
@@ -22,6 +23,7 @@ test {
     _ = value_rewrite;
     _ = rule_rewrite;
     _ = selector_rule_merge;
+    _ = selector_extraction;
 }
 
 const std = @import("std");

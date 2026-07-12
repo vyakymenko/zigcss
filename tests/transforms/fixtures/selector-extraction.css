@@ -1,0 +1,109 @@
+@layer base {
+  :root {
+    --theme: red;
+  }
+
+  .shell {
+    display: grid;
+  }
+
+  .unused {
+    color: gray;
+  }
+
+  .shell.unused {
+    color: silver;
+  }
+
+  .unused,
+  .shell {
+    border: 1px solid;
+  }
+
+  :not(.unused) {
+    outline: 0;
+  }
+
+  :is(.unused) {
+    opacity: 0.5;
+  }
+
+  #hero {
+    min-height: 20rem;
+  }
+
+  #unused-id {
+    min-height: 1px;
+  }
+
+  [data-state] {
+    visibility: visible;
+  }
+
+  button {
+    font: inherit;
+  }
+
+  @media (width > 20rem) {
+    .later {
+      display: block;
+    }
+
+    .critical {
+      display: flex;
+    }
+
+    .unused {
+      display: none;
+    }
+  }
+}
+
+.critical {
+  color: red;
+  color: var(--theme) !important;
+  direction: rtl;
+  writing-mode: vertical-rl;
+  margin-inline-start: 1px;
+  width: future-size(1 foo);
+}
+
+.later {
+  content-visibility: auto;
+}
+
+.parent {
+  color: black;
+
+  .unused {
+    color: gray;
+  }
+
+  .critical {
+    color: red;
+  }
+}
+
+@supports (display: grid) {
+  .critical {
+    display: grid;
+  }
+
+  .unused {
+    display: block;
+  }
+}
+
+@font-face {
+  font-family: Demo;
+  src: url(demo.woff2);
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

@@ -18,9 +18,14 @@ const capabilities = [
     detail: "Rejects input aliases and duplicate batch destinations before writes.",
   },
   {
-    surface: "Optimizer and critical CSS",
+    surface: "General optimizer",
     status: "Disabled",
     detail: "Known unsafe transforms are unreachable from the recovery CLI and stable code generation path.",
+  },
+  {
+    surface: "Dead-code and critical-CSS extraction",
+    status: "Experimental / library-only",
+    detail: "Two bounded passes require complete class/ID inventories plus explicit experimental and extraction authority; the recovery CLI does not expose them.",
   },
   {
     surface: "Target prefix rewrite",

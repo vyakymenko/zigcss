@@ -10,7 +10,8 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 | `--minify` | Experimental | Changes whitespace during emission only. It does not enable optimizer transforms. |
 | Output planning | Safety boundary verified | Input/output aliases and multi-file destination collisions are rejected before writes. |
 | `--profile` | Experimental | Reports parse, optimizer-stage, and emission timings without the former lifecycle crash. |
-| Optimizer and critical CSS | Disabled | Unsafe transform paths fail explicitly. |
+| General optimizer | Disabled | Unsafe transform paths fail explicitly. |
+| Dead-code and critical-CSS extraction | Experimental, library/test-only | Two bounded passes use complete class/ID inventories and require separate experimental plus extraction authorization; stable CLI flags remain unavailable. |
 | Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property/value/selector/at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
 | Source maps | Experimental, library-only | The library pipeline produces deterministic mappings; the CLI flag remains unavailable until its output policy is defined. |
 | Browser target queries | Experimental, library-only | The Zig API accepts a strict explicit-minimum grammar over six browsers and deterministically configures the verified rewrite from pinned BCD 8.0.0 data; CLI flags remain unavailable pending public option wiring. |
@@ -23,6 +24,14 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 The stable CLI no longer consumes the inherited byte parser. Its typed and lossless grammar boundary is listed in the [CSS compatibility matrix](/guide/css-compatibility), and every emitting fixture is checked in pretty and minified modes by an independent parser with recovery disabled.
 
 Property-specific values are generally preserved as component trees rather than fully validated semantic values. Browser computed-style validation, broader target data and stable CLI prefix exposure, CLI source-map output, the LSP migration, alternate formats, and public untrusted compilation remain later gates. Independent syntax acceptance is evidence, not a complete browser-semantics guarantee.
+
+## Experimental extraction boundary
+
+The library exposes distinct conservative dead-code and critical-CSS passes. A non-null class or ID category is exhaustive for the declared domain; null is unknown and cannot prove absence. Dead-code mode requires a closed document snapshot. Critical mode requires a closed selector-matching render tree that includes every related node a combinator can inspect—not merely a list of preferred names from a larger live page.
+
+Only direct positive class and ID requirements participate. A style rule is removed only when every selector-list alternative contains a required token absent from a complete category. Type/attribute evidence, functional pseudo arguments, possible selector alternatives, imports, descriptors, keyframes, custom-property dependencies, layers, and other non-style rules remain authored. Inventories are owned, canonical, bounded, and conservative across ASCII case variants.
+
+Both modes remain experimental and library/test-driver only. They require `allow_extraction` and `allow_experimental`, pass independent Lightning CSS selector projection in pretty and minified modes, and are never reached by `--optimize` or `--critical-*`.
 
 ## Library target boundary
 

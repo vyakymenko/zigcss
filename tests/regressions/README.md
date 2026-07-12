@@ -25,6 +25,7 @@ Cases labeled `optimizer containment:` are active safety assertions: every trans
 | Profiling lifecycle crash | Verified by `PROF-001` | `PROF-010` owns real allocator-backed metrics. |
 | Source-map no-op behavior | Explicitly unavailable via `CLI-002` | `MAP-001` |
 | Browser-target prefix behavior | Verified at the library/test-driver boundary by `PREFIX-001` and `PREFIX-002`; stable flags remain explicitly unavailable via `CLI-002` | Later public API/CLI wiring |
+| Dead-code and critical-CSS selector filtering | Verified as two bounded experimental library/test-driver modes by `TREE-001`; stable transform flags remain unavailable via `OPT-001` and `CLI-002` | Later public API/CLI wiring and matrix expansion |
 | Input overwrite and batch output collision | Verified by `CLI-001` | `CLI-012` later adds atomic writes and final naming policy. |
 | Unknown flags and missing flag values | Verified by `CLI-002` | `CLI-011` later owns the final public option contract. |
 

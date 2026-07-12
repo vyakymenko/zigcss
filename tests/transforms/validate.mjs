@@ -93,6 +93,52 @@ const fixtures = [
       'chrome >= 120, edge >= 120, firefox >= 120',
     ],
   },
+  {
+    label: 'conservative-dead-code-extraction',
+    passId: 'conservative-dead-code-extraction',
+    input: path.join(scriptDirectory, 'fixtures', 'selector-extraction.css'),
+    expected: {
+      pretty: path.join(scriptDirectory, 'fixtures', 'selector-extraction.dead.expected.css'),
+      minified: path.join(scriptDirectory, 'fixtures', 'selector-extraction.dead.expected.min.css'),
+    },
+    warningExpectation: 'none',
+    semanticMode: 'selector-extraction',
+    inventory: {
+      classes: ['shell', 'critical', 'later', 'parent'],
+      ids: ['hero'],
+    },
+    driverArgs: [
+      '--complete-classes',
+      '--known-class', 'shell',
+      '--known-class', 'critical',
+      '--known-class', 'later',
+      '--known-class', 'parent',
+      '--complete-ids',
+      '--known-id', 'hero',
+    ],
+  },
+  {
+    label: 'conservative-critical-css-extraction',
+    passId: 'conservative-critical-css-extraction',
+    input: path.join(scriptDirectory, 'fixtures', 'selector-extraction.css'),
+    expected: {
+      pretty: path.join(scriptDirectory, 'fixtures', 'selector-extraction.critical.expected.css'),
+      minified: path.join(scriptDirectory, 'fixtures', 'selector-extraction.critical.expected.min.css'),
+    },
+    warningExpectation: 'none',
+    semanticMode: 'selector-extraction',
+    inventory: {
+      classes: ['critical', 'parent'],
+      ids: ['hero'],
+    },
+    driverArgs: [
+      '--complete-classes',
+      '--known-class', 'critical',
+      '--known-class', 'parent',
+      '--complete-ids',
+      '--known-id', 'hero',
+    ],
+  },
 ]
 const validatorOptions = {
   errorRecovery: false,
@@ -160,6 +206,40 @@ function validateInvalidTargetQuery(driver, input) {
   if (result.stdout.length !== 0) fail('target-prefix-rewrite/invalid-query: rejected query emitted CSS')
   if (!result.stderr.startsWith('invalid target query at byte 0: unknown_browser\n')) {
     fail(`target-prefix-rewrite/invalid-query: missing structured byte diagnostic\n${result.stderr}`)
+  }
+}
+
+function validateInvalidExtractionInventories(driver, input) {
+  const cases = [
+    {
+      label: 'incomplete-category',
+      args: ['--known-class', 'critical'],
+      diagnostic: '--known-class requires --complete-classes\n',
+    },
+    {
+      label: 'duplicate-entry',
+      args: ['--complete-classes', '--known-class', 'Critical', '--known-class', 'critical'],
+      diagnostic: 'invalid extraction inventory: DuplicateEntry\n',
+    },
+  ]
+  for (const testCase of cases) {
+    const result = spawnSync(
+      driver,
+      [input, '--pass', 'conservative-critical-css-extraction', ...testCase.args],
+      {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+      },
+    )
+    const label = `selector-extraction/${testCase.label}`
+    if (result.error) fail(`${label}: driver launch failed: ${result.error.message}`)
+    if (result.signal) fail(`${label}: driver terminated by ${result.signal}`)
+    if (result.status === 0) fail(`${label}: invalid inventory was accepted`)
+    if (result.stdout.length !== 0) fail(`${label}: rejected inventory emitted CSS`)
+    if (!result.stderr.startsWith(testCase.diagnostic)) {
+      fail(`${label}: missing structured inventory diagnostic\n${result.stderr}`)
+    }
   }
 }
 
@@ -263,9 +343,68 @@ function projectCompatibility(code, label, warningExpectation) {
   return { canonical: result.code.toString('utf8'), removed }
 }
 
+function asciiLower(value) {
+  let result = ''
+  for (const character of value) {
+    const code = character.codePointAt(0)
+    result += code >= 65 && code <= 90 ? String.fromCodePoint(code + 32) : character
+  }
+  return result
+}
+
+function inventoryContains(entries, value) {
+  if (entries === null || entries === undefined) return true
+  const expected = asciiLower(value)
+  return entries.some(entry => asciiLower(entry) === expected)
+}
+
+function selectorImpossible(selector, inventory) {
+  for (const component of selector) {
+    if (component.type === 'class' && !inventoryContains(inventory.classes, component.name)) {
+      return true
+    }
+    if (component.type === 'id' && !inventoryContains(inventory.ids, component.name)) {
+      return true
+    }
+  }
+  return false
+}
+
+function projectSelectorExtraction(code, fixture, label) {
+  let removed = 0
+  let result
+  try {
+    result = transform({
+      filename: `${label}.css`,
+      code: Buffer.from(code),
+      minify: true,
+      errorRecovery: validatorOptions.errorRecovery,
+      drafts: validatorOptions.drafts,
+      visitor: {
+        Rule(rule) {
+          if (
+            rule.type === 'style' &&
+            rule.value.selectors.every(selector => selectorImpossible(selector, fixture.inventory))
+          ) {
+            removed += 1
+            return []
+          }
+        },
+      },
+    })
+  } catch (error) {
+    fail(`${label}: Lightning CSS rejected selector extraction projection: ${error.message}`)
+  }
+  validateWarnings(result.warnings, fixture.warningExpectation, label)
+  return { canonical: result.code.toString('utf8'), removed }
+}
+
 function semanticCanonical(code, fixture, label) {
   if (fixture.semanticMode === 'compatibility-projection') {
     return projectCompatibility(code, label, fixture.warningExpectation)
+  }
+  if (fixture.semanticMode === 'selector-extraction') {
+    return projectSelectorExtraction(code, fixture, label)
   }
   return {
     canonical: canonicalize(code, label, fixture.warningExpectation),
@@ -286,6 +425,10 @@ fs.accessSync(driver, fs.constants.X_OK)
 validateInvalidTargetQuery(
   driver,
   path.join(scriptDirectory, 'fixtures', 'target-prefix-rewrite.css'),
+)
+validateInvalidExtractionInventories(
+  driver,
+  path.join(scriptDirectory, 'fixtures', 'selector-extraction.css'),
 )
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-transform-'))
 
@@ -316,6 +459,12 @@ try {
         semanticOutput.removed <= semanticInput.removed
       ) {
         fail(`${fixture.label}/${mode}: compatibility projection did not observe generated vendor forms`)
+      }
+      if (
+        fixture.semanticMode === 'selector-extraction' &&
+        (semanticInput.removed === 0 || semanticOutput.removed !== 0)
+      ) {
+        fail(`${fixture.label}/${mode}: independent selector inventory did not prove the exact extraction subset`)
       }
 
       const repeatedInput = path.join(temporaryDirectory, `${fixture.label}-${mode}.css`)
@@ -364,5 +513,5 @@ try {
 }
 
 console.log(
-  `Transform differential verified: ${fixtures.map((fixture) => fixture.label).join(', ')} pretty/minified outputs, golden order, byte idempotence, independent canonical semantics, target-dependent compatibility output, structured target-query rejection, and pass-specific size contracts (Lightning CSS ${validatorPackage.version}).`,
+  `Transform differential verified: ${fixtures.map((fixture) => fixture.label).join(', ')} pretty/minified outputs, golden order, byte idempotence, independent canonical semantics, target-dependent compatibility output, independently proven selector subsets, structured query/inventory rejection, and pass-specific size contracts (Lightning CSS ${validatorPackage.version}).`,
 )

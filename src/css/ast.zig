@@ -940,11 +940,12 @@ pub const GeneratedRuleKind = enum {
     selector_list_merge,
     group_at_rule_merge,
     compatibility,
+    extraction,
 
     pub fn inputCount(self: GeneratedRuleKind) usize {
         return switch (self) {
             .selector_list_merge, .group_at_rule_merge => 2,
-            .compatibility => 1,
+            .compatibility, .extraction => 1,
         };
     }
 };
@@ -960,6 +961,26 @@ pub const GeneratedCompatibilityRule = struct {
     forms: []const CompatibilityForm,
 };
 
+pub const ExtractionMode = enum {
+    dead_code,
+    critical_css,
+};
+
+/// A non-null category is a complete inventory for the extraction domain;
+/// null means that category is unknown and can never prove absence. A critical
+/// domain must be a closed selector-matching render tree, including every node
+/// that combinators may inspect. Inventory bytes are decoded selector values,
+/// not CSS source spellings.
+pub const CompleteSelectorInventory = struct {
+    classes: ?[]const []const u8 = null,
+    ids: ?[]const []const u8 = null,
+};
+
+pub const GeneratedExtractionRule = struct {
+    mode: ExtractionMode,
+    inventory: CompleteSelectorInventory,
+};
+
 /// Proof metadata for replacing adjacent authored rules with one structured
 /// logical rule. Input rules remain in source order so the emitter and pass
 /// validators can independently re-check every merge precondition.
@@ -968,17 +989,28 @@ pub const GeneratedRule = struct {
     first_rule: usize,
     source_span: source.Span,
     compatibility: ?GeneratedCompatibilityRule = null,
+    extraction: ?GeneratedExtractionRule = null,
 
     pub fn outputCount(self: GeneratedRule) AstError!usize {
         return switch (self.kind) {
-            .selector_list_merge, .group_at_rule_merge => if (self.compatibility == null)
+            .selector_list_merge, .group_at_rule_merge => if (self.compatibility == null and
+                self.extraction == null)
                 1
             else
                 error.InvalidRule,
             .compatibility => blk: {
+                if (self.extraction != null) return error.InvalidRule;
                 const compatibility = self.compatibility orelse return error.InvalidRule;
                 try validateCompatibilityRuleForms(compatibility);
                 break :blk compatibility.forms.len + 1;
+            },
+            .extraction => blk: {
+                if (self.compatibility != null) return error.InvalidRule;
+                const extraction = self.extraction orelse return error.InvalidRule;
+                if (extraction.inventory.classes == null and extraction.inventory.ids == null) {
+                    return error.InvalidRule;
+                }
+                break :blk 0;
             },
         };
     }
@@ -1035,6 +1067,7 @@ pub const RuleList = struct {
             }
         }
         var previous_generated_end: usize = 0;
+        var validated_extraction: ?GeneratedExtractionRule = null;
         for (generated_rules) |generated| {
             try validateChild(span, generated.source_span);
             const count = generated.kind.inputCount();
@@ -1056,6 +1089,15 @@ pub const RuleList = struct {
                     omitted_span.end <= generated.source_span.end)
                 {
                     return error.InvalidRule;
+                }
+            }
+            if (generated.kind == .extraction) {
+                const extraction = generated.extraction orelse return error.InvalidRule;
+                if (validated_extraction == null or
+                    !sameExtractionInventoryStorage(validated_extraction.?, extraction))
+                {
+                    try validateCompleteSelectorInventory(extraction.inventory);
+                    validated_extraction = extraction;
                 }
             }
             try validateGeneratedRuleStructure(generated, inputs);
@@ -1086,7 +1128,9 @@ fn validateGeneratedRuleStructure(
     if (inputs.len != generated.kind.inputCount()) return error.InvalidRule;
     switch (generated.kind) {
         .selector_list_merge => {
-            if (generated.compatibility != null) return error.InvalidRule;
+            if (generated.compatibility != null or generated.extraction != null) {
+                return error.InvalidRule;
+            }
             if (inputs[0] != .style_rule or inputs[1] != .style_rule) return error.InvalidRule;
             const first = inputs[0].style_rule;
             const second = inputs[1].style_rule;
@@ -1105,7 +1149,9 @@ fn validateGeneratedRuleStructure(
             ) catch return error.InvalidRule;
         },
         .group_at_rule_merge => {
-            if (generated.compatibility != null) return error.InvalidRule;
+            if (generated.compatibility != null or generated.extraction != null) {
+                return error.InvalidRule;
+            }
             if (inputs[0] != .at_rule or inputs[1] != .at_rule) return error.InvalidRule;
             const first = inputs[0].at_rule;
             const second = inputs[1].at_rule;
@@ -1116,13 +1162,89 @@ fn validateGeneratedRuleStructure(
             if (first_block.nested != second_block.nested) return error.InvalidRule;
         },
         .compatibility => {
+            if (generated.extraction != null) return error.InvalidRule;
             const compatibility = generated.compatibility orelse return error.InvalidRule;
             try validateCompatibilityRuleForms(compatibility);
             if (!compatibilityRuleMatchesStructure(inputs[0], compatibility.feature)) {
                 return error.InvalidRule;
             }
         },
+        .extraction => {
+            if (generated.compatibility != null or inputs[0] != .style_rule) {
+                return error.InvalidRule;
+            }
+            const extraction = generated.extraction orelse return error.InvalidRule;
+            if (extraction.inventory.classes == null and extraction.inventory.ids == null) {
+                return error.InvalidRule;
+            }
+            _ = try StyleRule.init(inputs[0].style_rule.*);
+        },
     }
+}
+
+fn sameExtractionInventoryStorage(
+    left: GeneratedExtractionRule,
+    right: GeneratedExtractionRule,
+) bool {
+    return left.mode == right.mode and
+        optionalStringSliceStorageEqual(left.inventory.classes, right.inventory.classes) and
+        optionalStringSliceStorageEqual(left.inventory.ids, right.inventory.ids);
+}
+
+fn optionalStringSliceStorageEqual(
+    left: ?[]const []const u8,
+    right: ?[]const []const u8,
+) bool {
+    if (left == null or right == null) return left == null and right == null;
+    return left.?.len == right.?.len and left.?.ptr == right.?.ptr;
+}
+
+pub const max_extraction_inventory_entries: usize = 100_000;
+pub const max_extraction_inventory_entry_bytes: usize = 4_096;
+pub const max_extraction_inventory_bytes: usize = 8 * 1024 * 1024;
+
+pub fn validateCompleteSelectorInventory(inventory: CompleteSelectorInventory) AstError!void {
+    if (inventory.classes == null and inventory.ids == null) return error.InvalidRule;
+    var total_entries: usize = 0;
+    var total_bytes: usize = 0;
+    for ([_]?[]const []const u8{ inventory.classes, inventory.ids }) |category| {
+        const entries = category orelse continue;
+        total_entries = std.math.add(usize, total_entries, entries.len) catch {
+            return error.InvalidRule;
+        };
+        if (total_entries > max_extraction_inventory_entries) return error.InvalidRule;
+        for (entries, 0..) |entry, index| {
+            if (entry.len == 0 or entry.len > max_extraction_inventory_entry_bytes) {
+                return error.InvalidRule;
+            }
+            total_bytes = std.math.add(usize, total_bytes, entry.len) catch {
+                return error.InvalidRule;
+            };
+            if (total_bytes > max_extraction_inventory_bytes) return error.InvalidRule;
+            if (index > 0 and
+                conservativeSelectorNameOrder(entries[index - 1], entry) != .lt)
+            {
+                return error.InvalidRule;
+            }
+        }
+    }
+}
+
+pub fn conservativeSelectorNameEqual(left: []const u8, right: []const u8) bool {
+    return conservativeSelectorNameOrder(left, right) == .eq;
+}
+
+pub fn conservativeSelectorNameOrder(left: []const u8, right: []const u8) std.math.Order {
+    const length = @min(left.len, right.len);
+    for (left[0..length], right[0..length]) |left_byte, right_byte| {
+        const folded_left = std.ascii.toLower(left_byte);
+        const folded_right = std.ascii.toLower(right_byte);
+        if (folded_left < folded_right) return .lt;
+        if (folded_left > folded_right) return .gt;
+    }
+    if (left.len < right.len) return .lt;
+    if (left.len > right.len) return .gt;
+    return .eq;
 }
 
 fn validateCompatibilityRuleForms(compatibility: GeneratedCompatibilityRule) AstError!void {

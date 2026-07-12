@@ -414,6 +414,8 @@ test "CLI strictness: unavailable target and extraction features are rejected (C
 
     try expectFailureContaining(browsers, "--browsers is unavailable");
     try expectFailureContaining(critical, "--critical-classes is unavailable");
+    try std.testing.expect(std.mem.indexOf(u8, critical.stderr, "library/test-driver only") != null);
+    try std.testing.expectEqual(@as(usize, 0), critical.stdout.len);
 }
 
 test "CLI strictness: output-dir is rejected outside explicit batch mode (CLI-002)" {

@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const emitter = @import("emitter.zig");
 const compatibility_analysis = @import("../prefixing/rewrite_analysis.zig");
+const extraction_analysis = @import("../transform/selector_extraction_analysis.zig");
 const rule_merge = @import("rule_merge.zig");
 const rule_parser = @import("rule_parser.zig");
 const shorthand = @import("shorthand.zig");
@@ -44,6 +45,11 @@ const Comparator = struct {
     right_file: *const source.SourceFile,
 
     fn ruleLists(self: *Comparator, left: *const ast.RuleList, right: *const ast.RuleList) Error!bool {
+        if (!try extractionProofsValid(self.left_file, left) or
+            !try extractionProofsValid(self.right_file, right))
+        {
+            return false;
+        }
         var left_iterator = LogicalRuleIterator{ .list = left };
         var right_iterator = LogicalRuleIterator{ .list = right };
         while (true) {
@@ -107,6 +113,7 @@ const Comparator = struct {
                 else
                     try self.rules(authored, generated.inputs[0]);
             },
+            .extraction => false,
         };
     }
 
@@ -205,6 +212,7 @@ const Comparator = struct {
                 self.rules(left.inputs[0], right.inputs[0])
             else
                 false,
+            .extraction => false,
         };
     }
 
@@ -306,6 +314,7 @@ const Comparator = struct {
                 };
                 break :blk GeneratedRuleProof{ .compatibility = generated.proof.source_span };
             },
+            .extraction => null,
         } orelse return null;
         const source_span = proof.sourceSpan();
         if (!source_span.source.eql(generated.proof.source_span.source) or
@@ -877,6 +886,21 @@ const Comparator = struct {
     }
 };
 
+fn extractionProofsValid(
+    file: *const source.SourceFile,
+    list: *const ast.RuleList,
+) Error!bool {
+    for (list.generated_rules) |generated| {
+        if (generated.kind != .extraction) continue;
+        extraction_analysis.validateRuleExpansionAssumeListValid(file, list, generated) catch |err| switch (err) {
+            error.SourceMismatch => return error.SourceMismatch,
+            error.InvalidSpan => return error.InvalidSpan,
+            error.InvalidAst => return false,
+        };
+    }
+    return true;
+}
+
 const LogicalGeneratedRule = struct {
     proof: ast.GeneratedRule,
     inputs: []const ast.Rule,
@@ -909,43 +933,50 @@ const LogicalRuleIterator = struct {
     invalid: bool = false,
 
     fn next(self: *LogicalRuleIterator) ?LogicalRule {
-        if (self.invalid) return null;
-        if (self.rule_index == self.list.rules.len) {
-            if (self.generated_index != self.list.generated_rules.len) self.invalid = true;
-            return null;
-        }
-        if (self.generated_index < self.list.generated_rules.len) {
-            const generated = self.list.generated_rules[self.generated_index];
-            if (generated.first_rule < self.rule_index) {
-                self.invalid = true;
+        while (true) {
+            if (self.invalid) return null;
+            if (self.rule_index == self.list.rules.len) {
+                if (self.generated_index != self.list.generated_rules.len) self.invalid = true;
                 return null;
             }
-            if (generated.first_rule == self.rule_index) {
-                const end = std.math.add(
-                    usize,
-                    self.rule_index,
-                    generated.kind.inputCount(),
-                ) catch {
-                    self.invalid = true;
-                    return null;
-                };
-                if (end > self.list.rules.len) {
+            if (self.generated_index < self.list.generated_rules.len) {
+                const generated = self.list.generated_rules[self.generated_index];
+                if (generated.first_rule < self.rule_index) {
                     self.invalid = true;
                     return null;
                 }
-                const result = LogicalRule{ .generated = .{
-                    .proof = generated,
-                    .inputs = self.list.rules[self.rule_index..end],
-                    .list = self.list,
-                } };
-                self.rule_index = end;
-                self.generated_index += 1;
-                return result;
+                if (generated.first_rule == self.rule_index) {
+                    const start = self.rule_index;
+                    const end = std.math.add(
+                        usize,
+                        start,
+                        generated.kind.inputCount(),
+                    ) catch {
+                        self.invalid = true;
+                        return null;
+                    };
+                    const output_count = generated.outputCount() catch {
+                        self.invalid = true;
+                        return null;
+                    };
+                    if (end > self.list.rules.len) {
+                        self.invalid = true;
+                        return null;
+                    }
+                    self.rule_index = end;
+                    self.generated_index += 1;
+                    if (output_count == 0) continue;
+                    return LogicalRule{ .generated = .{
+                        .proof = generated,
+                        .inputs = self.list.rules[start..end],
+                        .list = self.list,
+                    } };
+                }
             }
+            const result = LogicalRule{ .authored = self.list.rules[self.rule_index] };
+            self.rule_index += 1;
+            return result;
         }
-        const result = LogicalRule{ .authored = self.list.rules[self.rule_index] };
-        self.rule_index += 1;
-        return result;
     }
 };
 
