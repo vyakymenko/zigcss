@@ -92,6 +92,35 @@ assert_equal "$(grep -xc -- 'gpt-5.6-sol' "$FAKE_ARGS")" 1 'fixed model argument
 assert_equal "$(grep -xc -- 'model_reasoning_effort="ultra"' "$FAKE_ARGS")" 1 'fixed reasoning argument'
 assert_equal "$(cat "$PASS_HOME/state/resume-wip")" "$(autodevelop_dirty_fingerprint)" 'interrupted WIP fingerprint'
 
+PUSH_REPO="$TMP/push-repo"
+PUSH_REMOTE="$TMP/push-remote.git"
+mkdir -p "$PUSH_REPO/scripts/autodevelop"
+cp "$HERE/lib.sh" "$HERE/push-checkpoint.sh" "$PUSH_REPO/scripts/autodevelop/"
+git init -q --bare "$PUSH_REMOTE"
+git -C "$PUSH_REPO" init -q
+git -C "$PUSH_REPO" config user.name 'ZigCSS selftest'
+git -C "$PUSH_REPO" config user.email 'zigcss-selftest@example.invalid'
+printf 'plan\n' > "$PUSH_REPO/DEVELOPMENT_PLAN.md"
+printf 'status\n' > "$PUSH_REPO/DEVELOPMENT_STATUS.md"
+printf '.autodevelop/\n' > "$PUSH_REPO/.gitignore"
+git -C "$PUSH_REPO" add DEVELOPMENT_PLAN.md DEVELOPMENT_STATUS.md .gitignore scripts/autodevelop/lib.sh scripts/autodevelop/push-checkpoint.sh
+git -C "$PUSH_REPO" commit -q -m baseline
+git -C "$PUSH_REPO" checkout -q -b vale/selftest
+git -C "$PUSH_REPO" remote add origin "$PUSH_REMOTE"
+
+UNAPPROVED_REMOTE_RC=0
+env -u ZIGCSS_AUTODEVELOP_STATE_DIR ZIGCSS_AUTODEVELOP_TEST_MODE=0 \
+  bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" --check > /dev/null 2>&1 || UNAPPROVED_REMOTE_RC=$?
+assert_equal "$UNAPPROVED_REMOTE_RC" 1 'unapproved production push remote rejected'
+
+PUSH_STATE="$TMP/push-state"
+ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$PUSH_STATE" \
+  bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" > "$TMP/push.log" 2>&1
+PUSH_HEAD="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/vale/selftest)" "$PUSH_HEAD" 'green checkpoint pushed to exact branch'
+assert_equal "$(cat "$PUSH_STATE/state/last-pushed-head")" "$PUSH_HEAD" 'pushed head recorded'
+assert_equal "$(cat "$PUSH_STATE/state/last-pushed-branch")" vale/selftest 'pushed branch recorded'
+
 OVERRIDE_RC=0
 ZIGCSS_AUTODEVELOP_TEST_MODE=0 ZIGCSS_AUTODEVELOP_STATE_DIR="$TMP/forbidden-state" \
   bash -c '. "$1"' _ "$HERE/lib.sh" > /dev/null 2>&1 || OVERRIDE_RC=$?

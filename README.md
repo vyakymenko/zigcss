@@ -8,7 +8,7 @@ The authoritative roadmap is [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Executi
 
 ## Autonomous development operations
 
-The repository keeps its persistent Codex procedure in [docs/operations/codex-loop-protocol.md](docs/operations/codex-loop-protocol.md). An Alvo-style single-lane Bash supervisor runs bounded, serialized `codex exec` passes with the approved `gpt-5.6-sol` model and `ultra` reasoning. It never delegates or falls back, and its pass prompt retains the no-push, no-publication, no-deployment boundary.
+The repository keeps its persistent Codex procedure in [docs/operations/codex-loop-protocol.md](docs/operations/codex-loop-protocol.md). An Alvo-style single-lane Bash supervisor runs bounded, serialized `codex exec` passes with the approved `gpt-5.6-sol` model and `ultra` reasoning. It never delegates or falls back. Model passes cannot push; after independently proving a new clean checkpoint, the supervisor automatically pushes only the current `vale/*` branch to the approved `origin`. Publication and deployment remain unavailable.
 
 ```bash
 scripts/autodevelop/ctl.sh doctor
@@ -16,7 +16,7 @@ scripts/autodevelop/ctl.sh start
 scripts/autodevelop/ctl.sh status
 ```
 
-Use `pause`, `resume`, `stop`, and `logs` through the same control script. One pass may own at most one dependency-eligible roadmap package; the outer loop continues after each clean local checkpoint, backs off on transient limits, and pauses only after repeated genuine blockers or failures. Runtime state, caches, and transcripts live in ignored `.autodevelop/` storage inside this isolated worktree. `start` persists for the current login but does not install a LaunchAgent or modify system startup; pause the loop before doing manual work in the same worktree.
+Use `pause`, `resume`, `stop`, and `logs` through the same control script. One pass may own at most one dependency-eligible roadmap package; the outer loop verifies and pushes each clean checkpoint before continuing, backs off on transient limits, and pauses only after repeated genuine blockers or failures. A rejected push stops the supervisor with the checkpoint safely local. Runtime state, caches, and transcripts live in ignored `.autodevelop/` storage inside this isolated worktree. On macOS, `start` uses a transient per-login launchd job so it survives terminal/task boundaries, but it does not install a LaunchAgent or modify system startup; pause the loop before doing manual work in the same worktree.
 
 The separate orientation helper remains read-only and can be run at any time:
 

@@ -6,7 +6,7 @@ The short operator request is only an invocation. This file, `DEVELOPMENT_PLAN.m
 
 ## 1. What is automated
 
-The repository-owned Bash supervisor provides the durable outer loop. It launches exactly one ephemeral non-interactive Codex pass at a time, pins `gpt-5.6-sol` with `ultra` reasoning, limits each pass to one dependency-eligible package, requires a clean committed checkpoint for progress, classifies the result, and starts the next pass. No subagent, child-task, alternate-model, or concurrent-lane path exists.
+The repository-owned Bash supervisor provides the durable outer loop. It launches exactly one ephemeral non-interactive Codex pass at a time, pins `gpt-5.6-sol` with `ultra` reasoning, limits each pass to one dependency-eligible package, requires a clean committed checkpoint for progress, automatically pushes and reads back that exact checkpoint on the current `vale/*` branch, and only then starts the next pass. No subagent, child-task, alternate-model, or concurrent-lane path exists.
 
 Run the preflight and start the background supervisor from anywhere inside the worktree:
 
@@ -18,7 +18,7 @@ scripts/autodevelop/ctl.sh status
 
 The control surface also provides `test` (one foreground pass), `run` (foreground loop), `pause`, `resume`, `stop`, `logs`, and `orient`. `pause` and `stop` are graceful: an active pass finishes first so the runner does not manufacture an unowned half-edit. Use `pause` before starting manual work in the same worktree.
 
-The background process lasts for the current login. It deliberately does not install a LaunchAgent, modify login items, or mutate any system startup surface. Ignored `.autodevelop/` storage inside the isolated worktree owns logs, caches, control files, and outcome state.
+The background process lasts for the current login. On macOS, `start` submits a transient launchd job so the process survives terminal and Codex-task boundaries; it deliberately does not install a LaunchAgent, modify login items, or mutate any system startup surface. Other platforms retain the `nohup` fallback. Ignored `.autodevelop/` storage inside the isolated worktree owns logs, caches, control files, and outcome state.
 
 On macOS, the supervisor prefers the Codex CLI bundled with the current ChatGPT or Codex app before an optional older user-local binary. Each pass writes the agent's final message to a separate file through Codex's `--output-last-message` contract; status markers are read only from that file, while transport diagnostics stay in the ordinary pass log. Echoed prompt text therefore cannot impersonate completion, a blocker, or a rate-limit response.
 
@@ -36,7 +36,7 @@ bash scripts/autodevelop/orient.sh
 - Treat `DEVELOPMENT_STATUS.md` as the durable execution ledger. Repository and test evidence outrank memory or stale commentary.
 - Preserve inherited and unrelated changes. Never reset, rewrite, or discard work that is not owned by the current package.
 - Keep exactly one continuation owner active without a token budget: either the interactive persistent goal or this Bash supervisor. Never advance the same worktree manually while the supervisor is running.
-- Do not push, publish, deploy, or open a pull request. Do not create tags, releases, packages, or external-system changes without new explicit authorization.
+- Model passes must not push. Under the operator's 2026-07-13 authorization, only the outer supervisor may automatically push a verified clean checkpoint to `origin` at the same current `vale/*` branch. Do not publish, deploy, or open a pull request. Do not create tags, releases, packages, or any other external-system change without new explicit authorization.
 - Do not weaken tests, suppress failures, lower safety gates, or re-enable an unsafe transform to make a package green.
 - Security, parser correctness, semantic preservation, deterministic behavior, and regression evidence take priority over performance or feature count.
 
@@ -110,7 +110,7 @@ If a repository-wide gate already failed at baseline, prove the package did not 
 
 A green checkpoint is not a handoff. An interactive task continues in-session; a bounded runner pass emits `PROGRESS` and exits so the outer Bash supervisor can immediately start the next pass. Continue autonomously unless one of these holds:
 
-1. New authority is required for an outward action such as push, publication, deployment, PR creation, paid service use, secrets, or an external-system mutation.
+1. New authority is required for an outward action other than the approved checkpoint push, such as publication, deployment, PR creation, pushing another branch or remote, paid service use, secrets, or an external-system mutation.
 2. An irreversible product, compatibility, licensing, or architecture decision is not already resolved by the roadmap and cannot safely be represented by a reversible ADR proposal.
 3. Required external state or access is unavailable and no other dependency-eligible work can make meaningful progress.
 4. The approved model is unavailable or cannot be verified.
@@ -135,7 +135,7 @@ For genuine completion:
 - ensure generated artifacts and the worktree are clean;
 - update every package/milestone state and final evidence in the ledger;
 - mark an interactive persistent goal complete only when no required work remains; the Bash supervisor instead writes `COMPLETE` state and stops for review;
-- report that push, publication, deployment, and PR creation were not performed unless separately authorized.
+- report the final pushed checkpoint and confirm that publication, deployment, and PR creation were not performed unless separately authorized.
 
 ## 9. Orientation helper safety contract
 
@@ -155,10 +155,11 @@ Its output is orientation evidence, not a scheduler and not a substitute for the
 - an atomic directory lock and live PID prevent a second supervisor;
 - an initial start requires a clean tree, while a runner-recorded interrupted WIP marker permits only recovery of the same package;
 - `PROGRESS` requires both a new local commit and a clean tree;
+- the model pass cannot push; the outer supervisor alone performs a non-interactive, five-minute-bounded push of `HEAD` to the same current `vale/*` branch on the closed approved `origin`, reads back the exact object ID under the same bound, records it, and stops immediately on rejection, timeout, or mismatch;
 - state and dependency caches stay under ignored `.autodevelop/` storage;
 - every invocation explicitly selects the approved model and reasoning effort with no fallback;
 - the Codex sandbox admits the worktree plus the worktree/common Git metadata needed for local commits, while the prompt forbids the main checkout and every outward mutation;
 - rate limits use bounded backoff, authentication failure pauses immediately, five consecutive tool failures pause, and the same reported blocker must recur three times before the supervisor pauses as blocked;
-- `COMPLETE` stops the loop for operator review; it does not publish, push, or mark an external release complete.
+- `COMPLETE` verifies and pushes the final clean checkpoint, then stops the loop for operator review; it does not publish or mark an external release complete.
 
 `scripts/autodevelop/selftest.sh` tests isolated final-message classification, prompt-echo rejection, rate-limit parsing, timeout precedence, authentication detection, exact CLI arguments, and atomic state counters without a model call or repository mutation. The control script exposes no install/deploy/publish command.

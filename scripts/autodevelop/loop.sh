@@ -47,6 +47,14 @@ cleanup() {
   rm -rf "$LOCK_DIR"
 }
 
+push_green_checkpoint() {
+  if bash "$HERE/push-checkpoint.sh"; then return 0; fi
+  write_loop_status PUSH_FAILED "green checkpoint remains local; automatic push failed"
+  autodevelop_log ERROR "automatic push failed; supervisor stopped with the clean checkpoint local"
+  autodevelop_notify_local "ZigCSS automatic push failed" "The green checkpoint remains local; inspect the orchestrator log before restarting."
+  return 1
+}
+
 trap 'touch "$AUTODEVELOP_STOP_FILE"' TERM INT HUP
 trap cleanup EXIT
 
@@ -79,15 +87,17 @@ while :; do
 
   case "$CLASS" in
     PROGRESS)
+      push_green_checkpoint || break
       autodevelop_state_set consecutive-errors 0
       autodevelop_state_set blocked-count 0
       autodevelop_state_set blocked-fingerprint ''
-      write_loop_status PROGRESS "checkpoint complete; continuing"
+      write_loop_status PROGRESS "checkpoint pushed and verified; continuing"
       autodevelop_sleep_interruptible "$AUTODEVELOP_INTER_PASS_SECS" || true
       ;;
     COMPLETE)
+      push_green_checkpoint || break
       touch "$AUTODEVELOP_COMPLETE_FILE"
-      write_loop_status COMPLETE "roadmap completion reported"
+      write_loop_status COMPLETE "roadmap completion reported; final checkpoint pushed"
       autodevelop_notify_local "ZigCSS autodevelop complete" "The runner reported complete; review DEVELOPMENT_STATUS.md and local commits."
       break
       ;;

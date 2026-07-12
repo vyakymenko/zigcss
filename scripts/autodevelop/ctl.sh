@@ -65,6 +65,12 @@ doctor() {
     printf 'state ignore: .autodevelop is not ignored\n' >&2
     failures=$((failures + 1))
   fi
+  PUSH_CHECK="$(bash "$HERE/push-checkpoint.sh" --check 2>&1)" || {
+    printf 'push: unavailable (%s)\n' "$PUSH_CHECK" >&2
+    failures=$((failures + 1))
+    PUSH_CHECK=''
+  }
+  if [ -n "$PUSH_CHECK" ]; then printf '%s\n' "$PUSH_CHECK"; fi
   printf 'worktree: %s\n' "$(if autodevelop_git_clean; then printf 'clean'; else printf 'dirty'; fi)"
   if [ "$failures" -ne 0 ]; then return 1; fi
 }
@@ -110,15 +116,39 @@ case "$COMMAND" in
       exit 1
     }
     rm -f "$AUTODEVELOP_STOP_FILE" "$AUTODEVELOP_COMPLETE_FILE"
-    nohup bash "$HERE/loop.sh" >> "$AUTODEVELOP_LOG_DIR/launch.log" 2>&1 </dev/null &
-    START_PID=$!
-    sleep 1
-    LIVE_PID="$(running_pid)"
+    if [ "$(uname -s)" = Darwin ] && command -v launchctl >/dev/null 2>&1; then
+      launchctl remove "$AUTODEVELOP_LAUNCH_LABEL" >/dev/null 2>&1 || true
+      LAUNCH_ENV=(/usr/bin/env "HOME=$HOME" "PATH=$PATH")
+      for variable in TMPDIR LANG LC_ALL SHELL USER LOGNAME MACOSX_DEPLOYMENT_TARGET; do
+        value="${!variable:-}"
+        if [ -n "$value" ]; then LAUNCH_ENV+=("$variable=$value"); fi
+      done
+      launchctl submit \
+        -l "$AUTODEVELOP_LAUNCH_LABEL" \
+        -o "$AUTODEVELOP_LOG_DIR/launch.log" \
+        -e "$AUTODEVELOP_LOG_DIR/launch.log" \
+        -- "${LAUNCH_ENV[@]}" /bin/bash "$HERE/loop.sh" || {
+          autodevelop_die "launchctl submit failed"
+          exit 1
+        }
+      STARTED_BY="transient launchd job $AUTODEVELOP_LAUNCH_LABEL"
+    else
+      nohup bash "$HERE/loop.sh" >> "$AUTODEVELOP_LOG_DIR/launch.log" 2>&1 </dev/null &
+      STARTED_BY="launcher pid $!"
+    fi
+    attempts=0
+    LIVE_PID=''
+    while [ "$attempts" -lt 50 ]; do
+      LIVE_PID="$(running_pid)"
+      if [ -n "$LIVE_PID" ]; then break; fi
+      sleep 0.1
+      attempts=$((attempts + 1))
+    done
     if [ -z "$LIVE_PID" ]; then
       autodevelop_die "runner failed to start; inspect $AUTODEVELOP_LOG_DIR/launch.log"
       exit 1
     fi
-    printf 'started ZigCSS autodevelop pid %s (launcher %s)\n' "$LIVE_PID" "$START_PID"
+    printf 'started ZigCSS autodevelop pid %s (%s)\n' "$LIVE_PID" "$STARTED_BY"
     printf 'status: %s status\n' "$HERE/ctl.sh"
     printf 'logs:   %s logs\n' "$HERE/ctl.sh"
     ;;
@@ -154,6 +184,11 @@ case "$COMMAND" in
       cat "$AUTODEVELOP_STATE_DIR/last-run.env"
       REASON="$(cat "$AUTODEVELOP_STATE_DIR/last-run.reason" 2>/dev/null || true)"
       if [ -n "$REASON" ]; then printf 'REASON=%s\n' "$REASON"; fi
+    fi
+    if [ -f "$AUTODEVELOP_STATE_DIR/last-pushed-head" ]; then
+      printf '\nlast pushed:\n'
+      printf 'HEAD=%s\n' "$(cat "$AUTODEVELOP_STATE_DIR/last-pushed-head")"
+      printf 'BRANCH=%s\n' "$(cat "$AUTODEVELOP_STATE_DIR/last-pushed-branch" 2>/dev/null || printf 'unknown')"
     fi
     ;;
   logs)

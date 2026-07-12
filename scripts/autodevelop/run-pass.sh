@@ -17,7 +17,7 @@ Hard execution contract:
 - Read DEVELOPMENT_STATUS.md and run scripts/autodevelop/orient.sh before selecting work. If a coherent interrupted package is dirty, resume it before selecting another.
 - Execute at most one smallest dependency-ordered work package in this pass: reproduce or measure, add/strengthen tests, implement the smallest correct change, run proportionate gates, search sibling surfaces, update the ledger, and commit intentional green checkpoints.
 - Prioritize security, parser correctness, semantic preservation, determinism, and regression evidence. Do not weaken tests or quality gates.
-- Do not push, publish, deploy, create a PR/tag/release, send messages, spend money, use secrets, or modify external systems.
+- Do not push from this model pass. The outer Bash supervisor alone may push the independently verified clean checkpoint to the approved origin branch. Do not publish, deploy, create a PR/tag/release, send messages, spend money, use secrets, or modify any other external system.
 - Do not fetch, pull, rebase, merge, or switch branches. Stage only explicit package-owned paths; never use git add -A.
 - Make safe reversible engineering decisions without asking. Report BLOCKED only for a true authority/external-state/irreversible-decision blocker after exhausting in-scope alternatives.
 - Leave the worktree clean after PROGRESS or COMPLETE. A local commit is required for progress. Do not sleep or wait for rate limits; the outer Bash supervisor owns continuation.
