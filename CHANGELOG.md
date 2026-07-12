@@ -114,7 +114,7 @@ Target release: `0.4.0-rc.1` (not published).
 - Add pre-built binaries documentation - installation instructions for all supported platforms
 - Add npm package integration - install zigcss globally via `npm install -g zigcss`
 - Add npm install script - automatically downloads appropriate binary for platform during npm install
-- Add Homebrew formula - install zigcss via Homebrew on macOS with `brew tap vyakymenko/zigcss && brew install zigcss`
+- Add an experimental, checksum-pinned Homebrew source formula for local verification; no tap is published.
 - Add package manager installation instructions to README
 - Add VSCode extension - full VSCode integration with LSP support for CSS, SCSS, SASS, LESS, and Stylus files
 - Add VSCode extension configuration - package.json, TypeScript extension code, and build configuration

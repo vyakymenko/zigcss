@@ -11,6 +11,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { releaseAssetsFor, releaseTargets } from './generate-release-metadata.mjs'
 import { prepareReleaseContainer } from './prepare-release-container.mjs'
+import { parseHomebrewFormula } from './verify-homebrew-formula.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -402,24 +403,71 @@ test('npm installer rejects a symlinked binary directory before downloading', as
   }
 })
 
+test('Homebrew formula pins immutable verified source and the supported Zig toolchain', () => {
+  const formula = fs.readFileSync(path.join(repositoryRoot, 'Formula/zigcss.rb'), 'utf8')
+  assert.deepEqual(parseHomebrewFormula(formula), {
+    digest: '2fc630a41af5b5fef1d1e4db551604deac048c1b02ff249d5abbb061ebd5c906',
+    sourceCommit: '3fada2359ab1fa262b782a33e9ab2a7bab2c46ca',
+    url: 'https://github.com/vyakymenko/zigcss/archive/3fada2359ab1fa262b782a33e9ab2a7bab2c46ca.tar.gz',
+    version: '0.4.0-rc.1',
+  })
+  assert.match(
+    formula,
+    /^  url "https:\/\/github\.com\/vyakymenko\/zigcss\/archive\/3fada2359ab1fa262b782a33e9ab2a7bab2c46ca\.tar\.gz"$/m,
+  )
+  assert.match(formula, /^  version "0\.4\.0-rc\.1"$/m)
+  assert.match(formula, /^  sha256 "2fc630a41af5b5fef1d1e4db551604deac048c1b02ff249d5abbb061ebd5c906"$/m)
+  assert.match(formula, /^  depends_on "zig@0\.15" => :build$/m)
+  assert.match(
+    formula,
+    /^    system Formula\["zig@0\.15"\]\.opt_bin\/"zig", "build", "-Doptimize=ReleaseFast"$/m,
+  )
+  assert.match(formula, /assert_equal "zigcss #\{version\}\\n", shell_output\("#\{bin\}\/zigcss --version"\)/)
+  assert.match(formula, /assert_equal "\.test\{color:red\}", shell_output\("#\{bin\}\/zigcss test\.css --minify"\)/)
+  assert.doesNotMatch(formula, /^  head /m)
+  assert.doesNotMatch(formula, /^  sha256 ""$/m)
+})
+
+test('Homebrew formula policy rejects mutable sources, missing trust data, and second downloads', () => {
+  const formula = fs.readFileSync(path.join(repositoryRoot, 'Formula/zigcss.rb'), 'utf8')
+  const invalid = [
+    [
+      formula.replace('archive/3fada2359ab1fa262b782a33e9ab2a7bab2c46ca.tar.gz', 'archive/v0.4.0-rc.1.tar.gz'),
+      /full lowercase commit identity/,
+    ],
+    [
+      formula.replace('sha256 "2fc630a41af5b5fef1d1e4db551604deac048c1b02ff249d5abbb061ebd5c906"', 'sha256 ""'),
+      /source SHA-256 must occur exactly once/,
+    ],
+    [formula.replace('  license "MIT"', '  license "MIT"\n  head "https://github.com/vyakymenko/zigcss.git"'), /unverified head build/],
+    [formula.replace('depends_on "zig@0.15"', 'depends_on "zig"'), /Zig 0.15 build dependency/],
+    [formula.replace('  def install', '  def install\n    system "curl", "https://example.invalid/binary"'), /second download/],
+  ]
+  for (const [source, expression] of invalid) assert.throws(() => parseHomebrewFormula(source), expression)
+})
+
 test('npm package runs one installer lifecycle and CI gates it before dependency installation', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   assert.equal(manifest.scripts.install, undefined)
   assert.equal(manifest.scripts.postinstall, 'node install.js')
   assert.equal(manifest.scripts['test:release-consumers'], 'node --test scripts/verify-release-consumers.test.mjs')
   assert.equal(manifest.scripts['test:release-container'], 'node scripts/test-release-container.mjs')
+  assert.equal(manifest.scripts['test:release-homebrew'], 'node scripts/verify-homebrew-formula.mjs --smoke')
 
   const workflow = fs.readFileSync(path.join(repositoryRoot, '.github/workflows/build.yml'), 'utf8')
   const metadata = workflow.indexOf('npm run test:release-metadata && npm run check:release-metadata')
   const consumers = workflow.indexOf('npm run test:release-consumers', metadata)
   const container = workflow.indexOf('npm run test:release-container', consumers)
-  const install = workflow.indexOf('npm ci --ignore-scripts', container)
+  const homebrew = workflow.indexOf('npm run test:release-homebrew', container)
+  const install = workflow.indexOf('npm ci --ignore-scripts', homebrew)
   assert.ok(metadata >= 0)
   assert.ok(consumers > metadata)
   assert.ok(container > consumers)
-  assert.ok(install > container)
+  assert.ok(homebrew > container)
+  assert.ok(install > homebrew)
   assert.equal(workflow.indexOf('npm run test:release-consumers', consumers + 1), -1)
   assert.equal(workflow.indexOf('npm run test:release-container', container + 1), -1)
+  assert.equal(workflow.indexOf('npm run test:release-homebrew', homebrew + 1), -1)
 })
 
 test('release container preparation verifies and confines a local Linux archive', async () => {

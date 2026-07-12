@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url'
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 
+const homebrewSourceCommit = '3fada2359ab1fa262b782a33e9ab2a7bab2c46ca'
+const homebrewSourceSha256 = '2fc630a41af5b5fef1d1e4db551604deac048c1b02ff249d5abbb061ebd5c906'
+
 export const releaseSourcePaths = Object.freeze([
   '.github/workflows/build.yml',
   '.github/workflows/release.yml',
@@ -154,13 +157,26 @@ export function validateReleaseSources(sources) {
   expectContains(sources.get('install.js'), "const VERSION = require('./package.json').version", 'npm installer')
 
   const formula = sources.get('Formula/zigcss.rb')
-  const formulaUrlVersion = singleCapture(formula, /archive\/v([^/]+)\.tar\.gz/g, 'Homebrew source version')
+  const formulaCommit = singleCapture(
+    formula,
+    /url "https:\/\/github\.com\/vyakymenko\/zigcss\/archive\/([0-9a-f]{40})\.tar\.gz"/g,
+    'Homebrew source commit',
+  )
   const formulaVersion = singleCapture(formula, /^\s*version "([^"]+)"$/gm, 'Homebrew formula version')
-  expectEqual(formulaUrlVersion, version, 'Homebrew source version')
+  const formulaSha256 = singleCapture(formula, /^\s*sha256 "([0-9a-f]{64})"$/gm, 'Homebrew source SHA-256')
+  expectEqual(formulaCommit, homebrewSourceCommit, 'Homebrew source commit')
   expectEqual(formulaVersion, version, 'Homebrew formula version')
-  if (!/^\s*sha256 "(?:|[0-9a-f]{64})"$/m.test(formula)) {
-    fail('Homebrew sha256 must remain empty before REL-003 or contain exactly 64 lowercase hex digits')
-  }
+  expectEqual(formulaSha256, homebrewSourceSha256, 'Homebrew source SHA-256')
+  expectLiteralCount(formula, '  depends_on "zig@0.15" => :build', 1, 'Homebrew Zig dependency')
+  expectLiteralCount(
+    formula,
+    '    system Formula["zig@0.15"].opt_bin/"zig", "build", "-Doptimize=ReleaseFast"',
+    1,
+    'Homebrew build command',
+  )
+  expectContains(formula, 'assert_equal "zigcss #{version}\\n", shell_output("#{bin}/zigcss --version")', 'Homebrew version test')
+  expectContains(formula, 'assert_equal ".test{color:red}", shell_output("#{bin}/zigcss test.css --minify")', 'Homebrew compile test')
+  if (/^\s*head\s/m.test(formula)) fail('Homebrew formula must not expose an unverified head build')
 
   for (const filename of ['Dockerfile', 'Dockerfile.docs', 'Dockerfile.release']) {
     const dockerfile = sources.get(filename)

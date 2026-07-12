@@ -36,6 +36,7 @@
     "test:release-metadata": "node --test scripts/generate-release-metadata.test.mjs",
     "test:release-consumers": "node --test scripts/verify-release-consumers.test.mjs",
     "test:release-container": "node scripts/test-release-container.mjs",
+    "test:release-homebrew": "node scripts/verify-homebrew-formula.mjs --smoke",
     "test:zig-package": "node --test scripts/verify-zig-package.test.mjs",
     "test:node-wrapper": "node --test scripts/verify-node-wrapper.test.mjs",
     "test:vscode": "npm --prefix vscode-extension test && npm --prefix vscode-extension run package:check",

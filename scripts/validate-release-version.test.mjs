@@ -77,6 +77,18 @@ test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {
   replace(formula, 'Formula/zigcss.rb', 'version "0.4.0-rc.1"', 'version "0.4.0"')
   assert.throws(() => validateReleaseSources(formula), /Homebrew formula version/)
 
+  const formulaCommit = cloneSources()
+  replace(formulaCommit, 'Formula/zigcss.rb', '3fada2359ab1fa262b782a33e9ab2a7bab2c46ca', '0'.repeat(40))
+  assert.throws(() => validateReleaseSources(formulaCommit), /Homebrew source commit/)
+
+  const formulaHash = cloneSources()
+  replace(formulaHash, 'Formula/zigcss.rb', '2fc630a41af5b5fef1d1e4db551604deac048c1b02ff249d5abbb061ebd5c906', '0'.repeat(64))
+  assert.throws(() => validateReleaseSources(formulaHash), /Homebrew source SHA-256/)
+
+  const formulaToolchain = cloneSources()
+  replace(formulaToolchain, 'Formula/zigcss.rb', 'depends_on "zig@0.15"', 'depends_on "zig"')
+  assert.throws(() => validateReleaseSources(formulaToolchain), /Homebrew Zig dependency/)
+
   const docker = cloneSources()
   replace(docker, 'Dockerfile.docs', 'ARG ZIGCSS_VERSION=0.4.0-rc.1', 'ARG ZIGCSS_VERSION=0.4.0')
   assert.throws(() => validateReleaseSources(docker), /Dockerfile\.docs product version/)
