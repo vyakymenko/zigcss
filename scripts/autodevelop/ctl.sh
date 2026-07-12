@@ -116,22 +116,13 @@ case "$COMMAND" in
       exit 1
     }
     rm -f "$AUTODEVELOP_STOP_FILE" "$AUTODEVELOP_COMPLETE_FILE"
-    if [ "$(uname -s)" = Darwin ] && command -v launchctl >/dev/null 2>&1; then
-      launchctl remove "$AUTODEVELOP_LAUNCH_LABEL" >/dev/null 2>&1 || true
-      LAUNCH_ENV=(/usr/bin/env "HOME=$HOME" "PATH=$PATH")
-      for variable in TMPDIR LANG LC_ALL SHELL USER LOGNAME MACOSX_DEPLOYMENT_TARGET; do
-        value="${!variable:-}"
-        if [ -n "$value" ]; then LAUNCH_ENV+=("$variable=$value"); fi
-      done
-      launchctl submit \
-        -l "$AUTODEVELOP_LAUNCH_LABEL" \
-        -o "$AUTODEVELOP_LOG_DIR/launch.log" \
-        -e "$AUTODEVELOP_LOG_DIR/launch.log" \
-        -- "${LAUNCH_ENV[@]}" /bin/bash "$HERE/loop.sh" || {
-          autodevelop_die "launchctl submit failed"
-          exit 1
-        }
-      STARTED_BY="transient launchd job $AUTODEVELOP_LAUNCH_LABEL"
+    if command -v screen >/dev/null 2>&1; then
+      screen -S "$AUTODEVELOP_SCREEN_NAME" -X quit >/dev/null 2>&1 || true
+      screen -dmS "$AUTODEVELOP_SCREEN_NAME" /bin/bash "$HERE/launch-loop.sh" || {
+        autodevelop_die "detached screen launch failed"
+        exit 1
+      }
+      STARTED_BY="detached screen session $AUTODEVELOP_SCREEN_NAME"
     else
       nohup bash "$HERE/loop.sh" >> "$AUTODEVELOP_LOG_DIR/launch.log" 2>&1 </dev/null &
       STARTED_BY="launcher pid $!"

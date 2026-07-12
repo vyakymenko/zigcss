@@ -18,7 +18,7 @@ scripts/autodevelop/ctl.sh status
 
 The control surface also provides `test` (one foreground pass), `run` (foreground loop), `pause`, `resume`, `stop`, `logs`, and `orient`. `pause` and `stop` are graceful: an active pass finishes first so the runner does not manufacture an unowned half-edit. Use `pause` before starting manual work in the same worktree.
 
-The background process lasts for the current login. On macOS, `start` submits a transient launchd job so the process survives terminal and Codex-task boundaries; it deliberately does not install a LaunchAgent, modify login items, or mutate any system startup surface. Other platforms retain the `nohup` fallback. Ignored `.autodevelop/` storage inside the isolated worktree owns logs, caches, control files, and outcome state.
+The background process lasts for the current login. `start` prefers an installed `screen` command as a detached session so the process survives terminal and Codex-task boundaries while retaining the caller's access to linked-worktree Git metadata. It deliberately does not install a LaunchAgent, modify login items, or mutate any system startup surface; systems without `screen` retain the `nohup` fallback. Ignored `.autodevelop/` storage inside the isolated worktree owns logs, caches, control files, and outcome state.
 
 On macOS, the supervisor prefers the Codex CLI bundled with the current ChatGPT or Codex app before an optional older user-local binary. Each pass writes the agent's final message to a separate file through Codex's `--output-last-message` contract; status markers are read only from that file, while transport diagnostics stay in the ordinary pass log. Echoed prompt text therefore cannot impersonate completion, a blocker, or a rate-limit response.
 

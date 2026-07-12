@@ -8,6 +8,7 @@ import path from 'node:path'
 const repoRoot = path.resolve(import.meta.dirname, '../..')
 const orientScript = path.join(repoRoot, 'scripts/autodevelop/orient.sh')
 const controlScript = path.join(repoRoot, 'scripts/autodevelop/ctl.sh')
+const launchScript = path.join(repoRoot, 'scripts/autodevelop/launch-loop.sh')
 const loopScript = path.join(repoRoot, 'scripts/autodevelop/loop.sh')
 const passScript = path.join(repoRoot, 'scripts/autodevelop/run-pass.sh')
 const pushScript = path.join(repoRoot, 'scripts/autodevelop/push-checkpoint.sh')
@@ -55,7 +56,7 @@ describe('autonomous development operations', () => {
     const loop = fs.readFileSync(loopScript, 'utf8')
     const push = fs.readFileSync(pushScript, 'utf8')
 
-    for (const script of [controlScript, loopScript, passScript, pushScript, selftestScript]) {
+    for (const script of [controlScript, launchScript, loopScript, passScript, pushScript, selftestScript]) {
       expect(fs.statSync(script).mode & 0o111).not.toBe(0)
     }
     expect(after).toBe(before)
@@ -65,8 +66,8 @@ describe('autonomous development operations', () => {
     expect(prompt).toContain('Do not push from this model pass')
     expect(prompt).toContain('ZIGCSS-AUTODEVELOP-STATUS: PROGRESS <short summary>')
     expect(control).toContain('doctor|test|run|start|stop|pause|resume|status|logs|orient')
-    expect(control).toContain('launchctl submit')
-    expect(control).not.toMatch(/Library\/LaunchAgents|launchctl\s+(?:bootstrap|load)|git\s+push|npm\s+publish/)
+    expect(control).toContain('screen -dmS')
+    expect(control).not.toMatch(/Library\/LaunchAgents|launchctl|git\s+push|npm\s+publish/)
     expect(loop).toContain('blocked attempt $BLOCKED_COUNT/3')
     expect(loop).toContain('consecutive-errors')
     expect(loop).toContain('push_green_checkpoint || break')

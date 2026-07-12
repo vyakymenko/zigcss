@@ -16,7 +16,7 @@ scripts/autodevelop/ctl.sh start
 scripts/autodevelop/ctl.sh status
 ```
 
-Use `pause`, `resume`, `stop`, and `logs` through the same control script. One pass may own at most one dependency-eligible roadmap package; the outer loop verifies and pushes each clean checkpoint before continuing, backs off on transient limits, and pauses only after repeated genuine blockers or failures. A rejected push stops the supervisor with the checkpoint safely local. Runtime state, caches, and transcripts live in ignored `.autodevelop/` storage inside this isolated worktree. On macOS, `start` uses a transient per-login launchd job so it survives terminal/task boundaries, but it does not install a LaunchAgent or modify system startup; pause the loop before doing manual work in the same worktree.
+Use `pause`, `resume`, `stop`, and `logs` through the same control script. One pass may own at most one dependency-eligible roadmap package; the outer loop verifies and pushes each clean checkpoint before continuing, backs off on transient limits, and pauses only after repeated genuine blockers or failures. A rejected push stops the supervisor with the checkpoint safely local. Runtime state, caches, and transcripts live in ignored `.autodevelop/` storage inside this isolated worktree. `start` uses an installed `screen` command as a detached per-login session so it survives terminal/task boundaries while retaining access to linked-worktree metadata; it does not install a LaunchAgent or modify system startup. Systems without `screen` retain the `nohup` fallback. Pause the loop before doing manual work in the same worktree.
 
 The separate orientation helper remains read-only and can be run at any time:
 
