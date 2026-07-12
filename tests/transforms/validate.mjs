@@ -74,6 +74,16 @@ const fixtures = [
     warningExpectation: 'none',
   },
   {
+    label: 'verified-optimizer',
+    passId: 'verified-optimizer',
+    input: path.join(scriptDirectory, 'fixtures', 'verified-optimizer.css'),
+    expected: {
+      pretty: path.join(scriptDirectory, 'fixtures', 'verified-optimizer.expected.css'),
+      minified: path.join(scriptDirectory, 'fixtures', 'verified-optimizer.expected.min.css'),
+    },
+    warningExpectation: 'none',
+  },
+  {
     label: 'target-prefix-rewrite',
     passId: 'target-prefix-rewrite',
     input: path.join(scriptDirectory, 'fixtures', 'target-prefix-rewrite.css'),

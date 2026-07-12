@@ -5,7 +5,8 @@ const autoprefixer = @import("autoprefixer.zig");
 const plugin = @import("plugin.zig");
 
 // Transform-bearing fields are retained for source compatibility during the
-// recovery, but generate() rejects them until verified passes exist.
+// recovery, but this legacy-AST generator rejects them. Verified passes belong
+// to the rebuilt CSS pipeline and never call this generator.
 pub const CodegenOptions = struct {
     minify: bool = false,
     optimize: bool = false,
@@ -15,7 +16,7 @@ pub const CodegenOptions = struct {
     plugins: []const plugin.Plugin = &.{},
 };
 
-pub const unsafe_transforms_message = "unsafe optimizer and transform passes are disabled pending safety validation";
+pub const unsafe_transforms_message = "legacy and non-verified transform paths are disabled pending safety validation";
 
 fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
     if (stylesheet.rules.items.len == 0) return 0;

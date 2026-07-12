@@ -10,6 +10,7 @@ const autoprefixer = @import("autoprefixer.zig");
 const profiler = @import("profiler.zig");
 const optimizer = @import("optimizer.zig");
 const lsp = @import("lsp.zig");
+const verified_optimizer = @import("transform/verified_optimizer.zig");
 
 const experimental_notice = "Warning: ZigCSS 0.3 is an experimental recovery build; do not use it for production CSS.\n";
 
@@ -53,6 +54,18 @@ fn setTaskError(
     task.err_owned = true;
 }
 
+fn applyVerifiedOptimizer(
+    allocator: std.mem.Allocator,
+    parsed: *css_pipeline.ParsedStylesheet,
+    minified: bool,
+) !void {
+    try verified_optimizer.applyToFixedPoint(
+        allocator,
+        parsed,
+        if (minified) .minified else .pretty,
+    );
+}
+
 fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     var perf_profiler = try profiler.Profiler.init(allocator, config.profile);
     defer perf_profiler.deinit();
@@ -78,7 +91,12 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
 
     var optimize_timing = try perf_profiler.startTiming("optimize");
     defer optimize_timing.end() catch {};
-    _ = config.optimize;
+    if (config.optimize) {
+        applyVerifiedOptimizer(allocator, &parsed, config.minify) catch |err| {
+            std.debug.print("Error: CSS optimization failed: {s}\n", .{@errorName(err)});
+            return err;
+        };
+    }
     _ = config.autoprefix;
     _ = config.critical_css;
     try optimize_timing.end();
@@ -153,6 +171,7 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
                 .minify = config.minify,
                 .source_map = config.source_map,
                 .autoprefix = config.autoprefix,
+                .critical_css = config.critical_css,
                 .profile = config.profile,
             };
             
@@ -196,7 +215,18 @@ fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
         return;
     }
 
-    _ = task.optimize;
+    if (task.optimize) {
+        applyVerifiedOptimizer(allocator, &parsed, task.minify) catch |err| {
+            setTaskError(
+                task,
+                allocator,
+                "Optimization error: {s}",
+                .{@errorName(err)},
+                "Optimization error",
+            );
+            return;
+        };
+    }
     _ = task.autoprefix;
     _ = task.critical_css;
     var result = parsed.emitResult(allocator, .{
@@ -518,13 +548,14 @@ fn printUsage() void {
     std.debug.print("\nAvailable options:\n", .{});
     std.debug.print("  -o, --output <path>      Output file, or directory with --output-dir\n", .{});
     std.debug.print("  --output-dir             Require batch output under the -o directory\n", .{});
-    std.debug.print("  --minify                 Minify emission without transforming the AST\n", .{});
+    std.debug.print("  --minify                 Emit compact whitespace (independent of --optimize)\n", .{});
+    std.debug.print("  --optimize               Run the closed verified optimizer preset\n", .{});
     std.debug.print("  --watch                  Watch one input file\n", .{});
     std.debug.print("  --profile                Enable performance profiling\n", .{});
     std.debug.print("  --lsp                    Start the experimental LSP server\n", .{});
     std.debug.print("  -h, --help               Show this help\n", .{});
     std.debug.print("\nUnavailable and rejected during recovery:\n", .{});
-    std.debug.print("  --optimize, --source-map, --autoprefix, --browsers, --critical-*\n", .{});
+    std.debug.print("  --source-map, --autoprefix, --browsers, --critical-*\n", .{});
 }
 
 fn determineOutputFile(allocator: std.mem.Allocator, input_file: []const u8, output_dir: ?[]const u8, output_file: ?[]const u8) ![]const u8 {
@@ -584,6 +615,7 @@ pub fn main() !void {
     
     var output_file: ?[]const u8 = null;
     var output_dir_flag = false;
+    var optimize_flag = false;
     var minify_flag = false;
     var watch_flag = false;
     var profile_flag = false;
@@ -598,7 +630,8 @@ pub fn main() !void {
             if (output_dir_flag) exitWithCliError("--output-dir may only be specified once", .{});
             output_dir_flag = true;
         } else if (std.mem.eql(u8, args[i], "--optimize")) {
-            exitWithCliError("--optimize is unavailable: {s}", .{codegen.unsafe_transforms_message});
+            if (optimize_flag) exitWithCliError("--optimize may only be specified once", .{});
+            optimize_flag = true;
         } else if (std.mem.eql(u8, args[i], "--minify")) {
             minify_flag = true;
         } else if (std.mem.eql(u8, args[i], "--source-map")) {
@@ -684,7 +717,7 @@ pub fn main() !void {
         const config = CompileConfig{
             .input_file = input_files.items[0],
             .output_file = output_file,
-            .optimize = false,
+            .optimize = optimize_flag,
             .minify = minify_flag,
             .source_map = false,
             .autoprefix = null,
@@ -696,7 +729,7 @@ pub fn main() !void {
         const config = CompileConfig{
             .input_file = input_files.items[0],
             .output_file = output_file,
-            .optimize = false,
+            .optimize = optimize_flag,
             .minify = minify_flag,
             .source_map = false,
             .autoprefix = null,
@@ -724,7 +757,7 @@ pub fn main() !void {
             try tasks.append(allocator, CompileTask{
                 .input_file = input,
                 .output_file = out_file,
-                .optimize = false,
+                .optimize = optimize_flag,
                 .minify = minify_flag,
                 .source_map = false,
                 .autoprefix = null,
@@ -752,7 +785,7 @@ pub fn main() !void {
     }
 }
 
-test "stable codegen rejects unsafe transforms without mutating the AST" {
+test "legacy codegen rejects transform requests without mutating its AST" {
     const css = ".stable { color: red; }";
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();

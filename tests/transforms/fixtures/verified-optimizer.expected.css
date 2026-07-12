@@ -1,0 +1,75 @@
+:root {
+  --Theme: #ffffff;
+  --theme: calc(1px + 2px);
+  --cycle-a: var(--cycle-b);
+  --cycle-b: var(--cycle-a);
+}
+.scope {
+  --Theme: blue;
+  color: var(--Theme);
+  width: calc(var(--theme) + 1px);
+  margin-top: var(--gap, 1px);
+  margin-right: var(--gap, 1px);
+  margin-bottom: var(--gap, 1px);
+  margin-left: var(--gap, 1px);
+}
+.logical {
+  direction: rtl;
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  margin-inline-start: 3px;
+  border-inline-end-color: #fff;
+  inset-block-start: 0;
+  float: inline-start;
+  text-align: end;
+  margin-top: 1px;
+  margin-right: 1px;
+  margin-inline-end: 4px;
+  margin-bottom: 1px;
+  margin-left: 1px;
+}
+.cleanup {
+  .keep {
+    x: 1;
+  }
+}
+.safe {
+  width: 3px;
+  color: #fff;
+  margin: 1px;
+}
+.fixed-point {
+  width: 0;
+  margin: 1px;
+}
+.merge-a, .merge-b {
+  --token: a/**/b;
+}
+.value-a, .value-b {
+  color: #fff;
+}
+.host {
+  @media all {
+    .m1 {
+      x: 1;
+    }
+    .m2 {
+      y: 2;
+    }
+  }
+}
+@media print {
+  .print-a, .print-b {
+    x: 1;
+  }
+}
+.same {
+  color: red !important;
+  color: blue;
+}
+.between {
+  color: green;
+}
+.same {
+  background: future-value(1 foo);
+}

@@ -42,6 +42,12 @@ Each row maps to a versioned fixture in `tests/compatibility/matrix.json`. For e
 
 The independent parser gate proves that emitted bytes are accepted as CSS syntax by a separate browser-oriented parser. It does not yet prove computed-style equivalence in browsers, validate every property grammar, execute imports, or by itself authorize a pass or stable CLI option. Unknown future at-rules are expected to produce a named Lightning CSS warning while still parsing successfully.
 
+## Verified optimizer composition
+
+The recovery CLI's `--optimize` flag invokes one closed seven-pass preset over verified order-preserving analysis, cleanup, value, declaration, and rule passes. Compatibility rewriting, extraction, experimental passes, custom-property resolution, logical-to-physical conversion, and reorder authority are excluded. Proof-carrying rewrites can reveal another candidate after emission, so execution is bounded to 32 parse-transform-emit rounds and succeeds only when two consecutive emitted byte sequences match.
+
+The reviewed `verified-optimizer` fixture covers cross-pass math-to-zero and math-to-shorthand candidates, cleanup followed by rule merge, value shortening followed by selector merge, and at-rule merge followed by inner selector merge. It also retains custom-property definitions/substitutions/cycles, importance and fallback order, logical RTL/vertical declarations, unsupported future values, nesting, and non-adjacent rule boundaries. Pretty and minified goldens independently canonicalize to the original with Lightning CSS 1.30.1, the minified form falls from 1,143 to 866 bytes, and optimizing the emitted result is byte-identical. This is representative semantic evidence, not general browser computed-style proof.
+
 ## Target compatibility rewrite
 
 A separate `PREFIX-002` acceptance fixture verifies the library-only target pass over the pinned eight-feature subset: `appearance`, `user-select`, `backdrop-filter`, `position: sticky`, `display: flex`, `::placeholder`, `:fullscreen`, and `@keyframes`. Vendor declarations precede the retained standard form; selector variants are separate adjacent rules; prefixed keyframes precede standard keyframes. Layers, media queries, importance, fallback chains, custom properties, logical properties, manual prefixes, unsupported selector shapes, descriptor blocks, and nested declarations are explicit fixture boundaries.
@@ -65,7 +71,7 @@ The fixture has reviewed pretty and minified goldens, reparses byte-idempotently
 
 The dead-code and critical fixtures share one stylesheet but use different complete inventories. Reviewed pretty/minified goldens preserve custom and logical declarations, layers, media/supports groups, nested styles, functional pseudos, attributes, elements, font faces, and keyframes at the documented boundaries. A separate Lightning CSS visitor independently removes only style rules whose every selector has a direct absent class/ID requirement, then canonicalizes the expected subset. Both modes reduce their transform-free baseline, emit no mappings for extracted rules, reject forged proofs, and remain byte-idempotent after reparse.
 
-Source-map generation exists in the library pipeline, but the recovery CLI still rejects `--source-map` until its map-file and comment policy is defined. General optimizer CLI wiring, target/prefix flags, extraction flags, preprocessors, CSS Modules, CSS-in-JS, and the public compile service remain outside the stable grammar/CLI contract.
+Source-map generation exists for ordinary library parse/pass/emit pipelines, but the recovery CLI still rejects `--source-map` until its map-file/comment policy and fixed-point map composition are defined. Target/prefix flags, extraction flags, preprocessors, CSS Modules, CSS-in-JS, and the public compile service remain outside the stable grammar/CLI contract.
 
 To run the independent gate after building the compiler:
 

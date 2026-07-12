@@ -7,10 +7,10 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 | Surface | Status | Current behavior |
 |---|---|---|
 | CSS CLI parsing and emission | Experimental, matrix-tested | The stable CLI uses the new source/token/syntax/typed-parser pipeline; its current grammar boundary is published and independently parsed. |
-| `--minify` | Experimental | Changes whitespace during emission only. It does not enable optimizer transforms. |
+| `--minify` | Experimental | Changes whitespace during emission only; it is independent of `--optimize`. |
 | Output planning | Safety boundary verified | Input/output aliases and multi-file destination collisions are rejected before writes. |
 | `--profile` | Experimental | Reports parse, optimizer-stage, and emission timings without the former lifecycle crash. |
-| General optimizer | Disabled | Unsafe transform paths fail explicitly. |
+| Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs exactly seven verified analysis/cleanup/semantic passes to a bounded byte-stable fixed point; unsafe and separately authorized classes are excluded. |
 | Dead-code and critical-CSS extraction | Experimental, library/test-only | Two bounded passes use complete class/ID inventories and require separate experimental plus extraction authorization; stable CLI flags remain unavailable. |
 | Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property/value/selector/at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
 | Source maps | Experimental, library-only | The library pipeline produces deterministic mappings; the CLI flag remains unavailable until its output policy is defined. |
@@ -23,7 +23,13 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 
 The stable CLI no longer consumes the inherited byte parser. Its typed and lossless grammar boundary is listed in the [CSS compatibility matrix](/guide/css-compatibility), and every emitting fixture is checked in pretty and minified modes by an independent parser with recovery disabled.
 
-Property-specific values are generally preserved as component trees rather than fully validated semantic values. Browser computed-style validation, broader target data and stable CLI prefix exposure, CLI source-map output, the LSP migration, alternate formats, and public untrusted compilation remain later gates. Independent syntax acceptance is evidence, not a complete browser-semantics guarantee.
+Property-specific values are generally preserved as component trees rather than fully validated semantic values. Browser computed-style validation, broader target data and stable CLI prefix exposure, optimized source-map composition, CLI source-map output, the LSP migration, alternate formats, and public untrusted compilation remain later gates. Independent syntax acceptance is evidence, not a complete browser-semantics guarantee.
+
+## Verified optimizer boundary
+
+`--optimize` invokes one static preset: duplicate-declaration analysis, empty-rule cleanup, numeric math folding, typed color/zero shortening, margin shorthand synthesis, adjacent at-rule merge, and adjacent selector-rule merge. Every definition is verified, validator-backed, recursively nested, order-preserving, and independently acceptance-tested. The preset policy grants only cleanup and semantic rewrite; target compatibility, extraction, experimental passes, reorder authority, custom-property resolution, and logical-to-physical conversion have no path into it.
+
+Because one proof-carrying rewrite can expose another safe candidate after emission, the preset runs bounded parse-transform-emit rounds until two consecutive byte sequences match. The 32-round limit fails without partial output. Its combined pretty/minified fixture covers cross-pass candidates, fallback and importance order, custom/logical preservation, nested groups, unsupported values, exact byte idempotence, independent Lightning CSS canonical semantics, and size reduction. Fixed-point source-map composition is not yet exposed; the CLI continues to reject `--source-map`.
 
 ## Experimental extraction boundary
 
@@ -45,7 +51,7 @@ Use the current binary only for contributing, testing, or evaluating the recover
 
 ## Project direction
 
-The approved roadmap has replaced the stable CLI's byte-oriented parser with a tokenizer, source model, syntax tree, standards-oriented parser, and semantics-preserving emitter. It keeps transforms disabled until each pass has stronger semantic evidence. Public performance comparisons remain withdrawn until equivalent output is validated first.
+The approved roadmap has replaced the stable CLI's byte-oriented parser with a tokenizer, source model, syntax tree, standards-oriented parser, and semantics-preserving emitter. It enables only the closed evidence-backed optimizer preset while separately gated or inherited transform paths remain unavailable. Public performance comparisons remain withdrawn until equivalent output is validated first.
 
 - [Build from source](/guide/build-from-source)
 - [Recovery CLI](/guide/recovery-cli)

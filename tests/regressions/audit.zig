@@ -59,10 +59,10 @@ fn expectFailureContaining(result: Child.RunResult, expected: []const u8) !void 
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, expected) != null);
 }
 
-fn expectUnsafeTransformsDisabled(result: Child.RunResult) !void {
+fn expectNonVerifiedTransformsDisabled(result: Child.RunResult) !void {
     try std.testing.expect(!succeeded(result.term));
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
-    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "unsafe optimizer and transform passes are disabled") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "legacy and non-verified transform paths are disabled") != null);
 }
 
 test "stable CLI preserves compound selectors separately from descendants" {
@@ -172,10 +172,10 @@ test "stable CLI reports structured parser diagnostics without partial CSS" {
 test "stable batch CLI compiles each input through the safe pipeline" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.writeFile(.{ .sub_path = "one.css", .data = ".a.b { color: red; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "one.css", .data = ".a.b { color: #ffffff; }" });
     try tmp.dir.writeFile(.{ .sub_path = "two.css", .data = ".card { > .icon { opacity: 1; } }" });
 
-    var result = try runInDir(tmp.dir, &.{ "one.css", "two.css", "-o", "out", "--output-dir", "--minify" });
+    var result = try runInDir(tmp.dir, &.{ "one.css", "two.css", "-o", "out", "--output-dir", "--optimize", "--minify" });
     defer deinitRun(&result);
     try expectSuccess(result);
 
@@ -183,7 +183,7 @@ test "stable batch CLI compiles each input through the safe pipeline" {
     defer allocator.free(first);
     const second = try tmp.dir.readFileAlloc(allocator, "out/two.css", 1024);
     defer allocator.free(second);
-    try std.testing.expectEqualStrings(".a.b{color:red}", first);
+    try std.testing.expectEqualStrings(".a.b{color:#fff}", first);
     try std.testing.expectEqualStrings(".card{>.icon{opacity:1}}", second);
 }
 
@@ -193,32 +193,67 @@ test "stable batch CLI writes no outputs when one input has parser errors" {
     try tmp.dir.writeFile(.{ .sub_path = "valid.css", .data = ".valid { color: green; }" });
     try tmp.dir.writeFile(.{ .sub_path = "broken.css", .data = ".broken { missing; color: red; }" });
 
-    var result = try runInDir(tmp.dir, &.{ "valid.css", "broken.css", "-o", "out", "--output-dir", "--minify" });
+    var result = try runInDir(tmp.dir, &.{ "valid.css", "broken.css", "-o", "out", "--output-dir", "--optimize", "--minify" });
     defer deinitRun(&result);
     try expectFailureContaining(result, "broken.css:1:11: error CSS0007");
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("out/valid.css", .{}));
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("out/broken.css", .{}));
 }
 
-test "optimizer containment: importance and fallback input cannot reach unsafe passes (OPT-001)" {
+test "verified optimizer CLI reaches the reviewed byte-stable fixed point" {
+    const input = ".empty{}.a{color:#ffffff}.b{color:#fff}" ++
+        ".c{width:calc(0px);margin-top:calc(1px + 0px);" ++
+        "margin-right:calc(1px + 0px);margin-bottom:calc(1px + 0px);" ++
+        "margin-left:calc(1px + 0px)}" ++
+        "@media all{.x{z:1}}@media all{.y{z:1}}";
+    var minified = try runCompiler(input, &.{ "--optimize", "--minify" });
+    defer deinitRun(&minified);
+
+    try expectSuccess(minified);
+    try std.testing.expectEqualStrings(
+        ".a,.b{color:#fff}.c{width:0;margin:1px}@media all{.x,.y{z:1}}",
+        minified.stdout,
+    );
+
+    var repeated = try runCompiler(minified.stdout, &.{ "--optimize", "--minify" });
+    defer deinitRun(&repeated);
+    try expectSuccess(repeated);
+    try std.testing.expectEqualStrings(minified.stdout, repeated.stdout);
+}
+
+test "verified optimizer preserves importance and fallback order" {
     var result = try runCompiler(@embedFile("fixtures/important.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectUnsafeTransformsDisabled(result);
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".a{color:red!important;color:blue;color:green!important}",
+        result.stdout,
+    );
 }
 
-test "optimizer containment: empty-rule input cannot reach unsafe passes (OPT-001)" {
+test "verified optimizer removes empty rules without reordering survivors" {
     var result = try runCompiler(@embedFile("fixtures/empty-leading.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectUnsafeTransformsDisabled(result);
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".first{color:red}.second{color:blue}",
+        result.stdout,
+    );
 }
 
-test "optimizer containment: non-adjacent merge input cannot reach unsafe passes (OPT-001)" {
+test "verified optimizer never merges across intervening rules" {
     var result = try runCompiler(@embedFile("fixtures/nonadjacent.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectUnsafeTransformsDisabled(result);
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".keep{color:red}.keep-between{color:green}.keep{background:blue}" ++
+            "@media screen{.a{color:red}}.media-between{color:green}" ++
+            "@media screen{.b{color:blue}}",
+        result.stdout,
+    );
 }
 
 test "stable CLI preserves custom-property cascade without static substitution (CUSTOM-001)" {
@@ -235,11 +270,18 @@ test "stable CLI preserves custom-property cascade without static substitution (
     );
 }
 
-test "stable CLI exposes no custom-property static-resolution mode (CUSTOM-001)" {
+test "verified optimizer does not statically resolve custom properties" {
     var result = try runCompiler(@embedFile("fixtures/custom-logical-reset.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectUnsafeTransformsDisabled(result);
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ":root{--theme:red}.scope{--theme:blue;color:var(--theme)}" ++
+            ".box{margin-inline-start:1px;writing-mode:vertical-rl;direction:rtl;" ++
+            "background-color:red;background-image:url(\"x.png\");font-style:italic;" ++
+            "font-size:16px;font-family:serif}",
+        result.stdout,
+    );
 }
 
 test "stable CLI preserves logical properties across RTL and vertical modes (LOGICAL-001)" {
@@ -255,29 +297,40 @@ test "stable CLI preserves logical properties across RTL and vertical modes (LOG
     );
 }
 
-test "stable CLI exposes no logical-to-physical conversion mode (LOGICAL-001)" {
+test "verified optimizer does not convert logical properties" {
     var result = try runCompiler(@embedFile("fixtures/logical-directions.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectUnsafeTransformsDisabled(result);
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".rtl{direction:rtl;margin-inline-start:1px;inset-inline-end:2px;" ++
+            "text-align:start}.vertical{writing-mode:vertical-rl;text-orientation:upright;" ++
+            "margin-block-start:3px;padding-inline-end:4px;float:inline-end}",
+        result.stdout,
+    );
 }
 
-test "optimizer containment: typed math input cannot reach unsafe folding (OPT-001)" {
+test "verified optimizer folds only dimensionally compatible math" {
     var result = try runCompiler(@embedFile("fixtures/math.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectUnsafeTransformsDisabled(result);
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".a{width:7px;height:calc(1px + 2em)}",
+        result.stdout,
+    );
 }
 
-test "optimizer containment: selector crash input is rejected before optimization (OPT-001)" {
+test "verified optimizer preserves unsupported selector rewrites without crashing" {
     var result = try runCompiler(@embedFile("fixtures/selector-crash.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 
-    try expectUnsafeTransformsDisabled(result);
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings("*>.a{color:red}", result.stdout);
 }
 
 test "profiling lifecycle: each timing ends once and compilation succeeds (PROF-001)" {
-    var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{ "--profile", "--minify" });
+    var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{ "--profile", "--optimize", "--minify" });
     defer deinitRun(&result);
 
     try expectSuccess(result);
@@ -296,15 +349,15 @@ test "CLI strictness: unavailable source maps are rejected explicitly (CLI-002)"
     try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
 }
 
-test "optimizer containment: unverified prefix transforms are unavailable (OPT-001)" {
+test "target prefix CLI remains separate from the verified optimizer preset" {
     const input = @embedFile("fixtures/prefix.css");
     var modern = try runCompiler(input, &.{ "--autoprefix", "--browsers", "chrome120", "--minify" });
     defer deinitRun(&modern);
     var legacy = try runCompiler(input, &.{ "--autoprefix", "--browsers", "ie11", "--minify" });
     defer deinitRun(&legacy);
 
-    try expectUnsafeTransformsDisabled(modern);
-    try expectUnsafeTransformsDisabled(legacy);
+    try expectNonVerifiedTransformsDisabled(modern);
+    try expectNonVerifiedTransformsDisabled(legacy);
 }
 
 test "CLI path safety: input and output identity is rejected without changing the source (CLI-001)" {
@@ -387,11 +440,15 @@ test "CLI strictness: unknown flags and missing values are rejected (CLI-002)" {
     defer deinitRun(&unknown);
     var missing = try runCompiler(input, &.{"-o"});
     defer deinitRun(&missing);
+    var duplicate_optimize = try runCompiler(input, &.{ "--optimize", "--optimize" });
+    defer deinitRun(&duplicate_optimize);
 
     try expectFailureContaining(unknown, "unknown option: --definitely-unknown");
     try expectFailureContaining(missing, "-o requires a value");
+    try expectFailureContaining(duplicate_optimize, "--optimize may only be specified once");
     try std.testing.expectEqual(@as(usize, 0), unknown.stdout.len);
     try std.testing.expectEqual(@as(usize, 0), missing.stdout.len);
+    try std.testing.expectEqual(@as(usize, 0), duplicate_optimize.stdout.len);
 }
 
 test "CLI strictness: valued options diagnose missing values before availability (CLI-002)" {
@@ -432,6 +489,7 @@ test "recovery CLI identifies the current compiler as experimental (SAFE-001)" {
     defer deinitRun(&help);
     try expectSuccess(help);
     try std.testing.expect(std.mem.indexOf(u8, help.stderr, "EXPERIMENTAL") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help.stderr, "--optimize               Run the closed verified optimizer preset") != null);
 
     var compile = try runCompiler(@embedFile("fixtures/simple.css"), &.{"--minify"});
     defer deinitRun(&compile);

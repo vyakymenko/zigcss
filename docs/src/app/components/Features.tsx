@@ -10,7 +10,7 @@ const capabilities = [
   {
     surface: "Compact emission (--minify)",
     status: "Experimental",
-    detail: "Whitespace-only emission mode; it does not run optimizer transforms.",
+    detail: "Whitespace-only emission mode; it remains independent of the explicit --optimize preset.",
   },
   {
     surface: "Output path planning",
@@ -18,9 +18,9 @@ const capabilities = [
     detail: "Rejects input aliases and duplicate batch destinations before writes.",
   },
   {
-    surface: "General optimizer",
-    status: "Disabled",
-    detail: "Known unsafe transforms are unreachable from the recovery CLI and stable code generation path.",
+    surface: "Verified optimizer preset",
+    status: "Experimental / acceptance-gated",
+    detail: "--optimize runs seven verified order-preserving passes to a bounded byte-stable fixed point; legacy and separately authorized transform classes remain unreachable.",
   },
   {
     surface: "Dead-code and critical-CSS extraction",

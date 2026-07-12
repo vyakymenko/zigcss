@@ -23,7 +23,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | `.css` parsing and emission | Experimental, matrix-tested | Stable CLI input uses the rebuilt parser/emitter; the tested grammar boundary is published below. |
 | `--minify` | Experimental | Compacts emitted whitespace without enabling AST transforms. |
 | Output planning | Verified safety boundary | Rejects input/output aliases and duplicate batch destinations before writes. |
-| General optimizer | Disabled | Unsafe transform requests fail explicitly. |
+| Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs a closed seven-pass cleanup/semantic plan to a bounded byte-stable fixed point; legacy, experimental, compatibility, extraction, custom-resolution, logical-conversion, and reorder paths are excluded. |
 | Dead-code and critical-CSS extraction | Experimental, library/test-only | Two bounded passes accept complete class/ID inventories and emit only rules proven possible in a closed selector domain; both require experimental plus extraction authority. |
 | Target prefix rewrite | Experimental, library-only | One verified pass adds closed forms for eight pinned property/value/selector/at-rule features; it is exercised through the pass manager and test driver, not the recovery CLI. |
 | Source maps | Experimental, library-only | Deterministic maps are available from the library pipeline; CLI output policy remains undefined. |
@@ -36,7 +36,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 
 The tested grammar boundary is published in [the CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md) and backed by `tests/compatibility/matrix.json`. Pretty and minified fixture output must parse in pinned Lightning CSS with error recovery disabled.
 
-Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, broader prefix data and stable CLI exposure, element/attribute or dynamic-DOM extraction, CLI source-map output, LSP migration, alternate formats, and resource-bounded public compilation remain incomplete.
+Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, broader prefix data and prefix CLI exposure, element/attribute or dynamic-DOM extraction, optimized source-map composition, CLI source-map output, LSP migration, alternate formats, and resource-bounded public compilation remain incomplete.
 
 Do not use current output in a production pipeline. A successful compile is not yet a standards-compatibility guarantee.
 
@@ -81,11 +81,11 @@ npm run test:transforms
 
 Run `zig-out/bin/zigcss --help` for the authoritative option list.
 
-Available recovery options include output selection, explicit batch output planning, whitespace-only `--minify`, single-file `--watch`, and `--profile`. The experimental `--lsp` server is separately labeled.
+Available recovery options include output selection, explicit batch output planning, whitespace-only `--minify`, the closed verified `--optimize` preset, single-file `--watch`, and `--profile`. The experimental `--lsp` server is separately labeled.
 
-Unavailable options—`--optimize`, `--source-map`, `--autoprefix`, `--browsers`, and `--critical-*`—are rejected with an explanation. Unknown and malformed arguments are also rejected.
+Unavailable options—`--source-map`, `--autoprefix`, `--browsers`, and `--critical-*`—are rejected with an explanation. Unknown and malformed arguments are also rejected.
 
-The rebuilt extraction passes are library/test-driver experiments, not CLI tree shaking. A complete class/ID inventory must describe the whole document snapshot or a closed critical selector-matching tree; missing or dynamic DOM evidence cannot be inferred from CSS.
+The optimizer preset reaches only seven verified order-preserving passes and repeats them under a 32-round safety bound until emitted bytes are stable. The rebuilt extraction passes are separate library/test-driver experiments, not CLI tree shaking and never part of `--optimize`. A complete class/ID inventory must describe the whole document snapshot or a closed critical selector-matching tree; missing or dynamic DOM evidence cannot be inferred from CSS.
 
 ## Performance claims
 

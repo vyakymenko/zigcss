@@ -14,6 +14,7 @@ const RequestedPass = enum {
     shorthand_synthesis,
     selector_rule_merge,
     at_rule_merge,
+    verified_optimizer,
     target_prefix_rewrite,
     dead_code_extraction,
     critical_css_extraction,
@@ -91,7 +92,7 @@ pub fn main() !void {
         input_path = argument;
     }
     const input = input_path orelse return invalidArguments(
-        "usage: zigcss-transform-test-driver <input.css> [--pass <none|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis|adjacent-selector-rule-merge|adjacent-at-rule-merge|target-prefix-rewrite|conservative-dead-code-extraction|conservative-critical-css-extraction>] [--targets <query>] [--complete-classes [--known-class <name>]...] [--complete-ids [--known-id <name>]...] [--minify]",
+        "usage: zigcss-transform-test-driver <input.css> [--pass <none|verified-optimizer|empty-rule-cleanup|typed-color-zero-shortening|numeric-math-folding|margin-shorthand-synthesis|adjacent-selector-rule-merge|adjacent-at-rule-merge|target-prefix-rewrite|conservative-dead-code-extraction|conservative-critical-css-extraction>] [--targets <query>] [--complete-classes [--known-class <name>]...] [--complete-ids [--known-id <name>]...] [--minify]",
         .{},
     );
 
@@ -117,7 +118,17 @@ pub fn main() !void {
     const has_extraction_arguments = complete_classes or complete_ids or
         known_classes.items.len != 0 or known_ids.items.len != 0;
 
-    if (requested_pass == .target_prefix_rewrite) {
+    if (requested_pass == .verified_optimizer) {
+        if (targets != null) return invalidArguments("--targets requires target-prefix-rewrite", .{});
+        if (has_extraction_arguments) {
+            return invalidArguments("inventory arguments require an extraction pass", .{});
+        }
+        try zigcss.transform.verified_optimizer.applyToFixedPoint(
+            allocator,
+            &parsed,
+            if (minified) .minified else .pretty,
+        );
+    } else if (requested_pass == .target_prefix_rewrite) {
         if (has_extraction_arguments) {
             return invalidArguments("inventory arguments require an extraction pass", .{});
         }
@@ -191,6 +202,7 @@ pub fn main() !void {
         };
         const requested_ids = [_][]const u8{switch (requested_pass) {
             .none => unreachable,
+            .verified_optimizer => unreachable,
             .empty_cleanup => zigcss.transform.empty_cleanup.id,
             .color_zero_shortening => zigcss.transform.color_zero_shortening.id,
             .math_folding => zigcss.transform.math_folding.id,
@@ -202,6 +214,7 @@ pub fn main() !void {
         }};
         const policy: zigcss.transform.pass_manager.Policy = switch (requested_pass) {
             .none => unreachable,
+            .verified_optimizer => unreachable,
             .empty_cleanup => .{ .allow_lossless_cleanup = true },
             .color_zero_shortening => .{ .allow_semantic_rewrite = true },
             .math_folding => .{ .allow_semantic_rewrite = true },
@@ -239,6 +252,7 @@ pub fn main() !void {
 
 fn parsePass(value: []const u8) ?RequestedPass {
     if (std.mem.eql(u8, value, "none")) return .none;
+    if (std.mem.eql(u8, value, zigcss.transform.verified_optimizer.id)) return .verified_optimizer;
     if (std.mem.eql(u8, value, zigcss.transform.empty_cleanup.id)) return .empty_cleanup;
     if (std.mem.eql(u8, value, zigcss.transform.color_zero_shortening.id)) return .color_zero_shortening;
     if (std.mem.eql(u8, value, zigcss.transform.math_folding.id)) return .math_folding;

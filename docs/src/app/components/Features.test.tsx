@@ -21,9 +21,9 @@ describe('Features', () => {
     expect(screen.getAllByText(/experimental/i).length).toBeGreaterThan(1)
   })
 
-  it('lists disabled and library-only surfaces explicitly', () => {
+  it('lists acceptance-gated and library-only surfaces explicitly', () => {
     renderFeatures()
-    expect(screen.getByText('General optimizer')).toBeInTheDocument()
+    expect(screen.getByText('Verified optimizer preset')).toBeInTheDocument()
     expect(screen.getByText('Dead-code and critical-CSS extraction')).toBeInTheDocument()
     expect(screen.getByText('Target prefix rewrite')).toBeInTheDocument()
     expect(screen.getByText('Source maps')).toBeInTheDocument()

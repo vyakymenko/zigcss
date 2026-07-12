@@ -10,6 +10,7 @@ pub const value_rewrite = @import("transform/value_rewrite.zig");
 pub const rule_rewrite = @import("transform/rule_rewrite.zig");
 pub const selector_rule_merge = @import("transform/selector_rule_merge.zig");
 pub const selector_extraction = @import("transform/selector_extraction.zig");
+pub const verified_optimizer = @import("transform/verified_optimizer.zig");
 
 test {
     _ = pass_manager;
@@ -24,6 +25,7 @@ test {
     _ = rule_rewrite;
     _ = selector_rule_merge;
     _ = selector_extraction;
+    _ = verified_optimizer;
 }
 
 const std = @import("std");
@@ -47,16 +49,7 @@ test "verified pass composition preserves custom definitions substitutions and c
         ".host{@media all{.m1{x:1}}@media all{.m2{y:2}}}";
     var parsed = try pipeline.parse(std.testing.allocator, "custom-property-passes.css", input);
     defer parsed.deinit();
-    const registry = [_]pass_manager.Pass{
-        at_rule_merge.definition(),
-        selector_rule_merge.definition(),
-        shorthand_synthesis.definition(),
-        color_zero_shortening.definition(),
-        math_folding.definition(),
-        duplicate_declarations.definition(),
-        empty_cleanup.definition(),
-    };
-    for (registry) |pass| {
+    for (verified_optimizer.passDefinitions()) |pass| {
         try std.testing.expectEqual(
             pass_manager.CustomPropertyEffect.preserves,
             pass.metadata.custom_property_effect,
@@ -66,22 +59,7 @@ test "verified pass composition preserves custom definitions substitutions and c
             pass.metadata.logical_property_effect,
         );
     }
-    var plan = try pass_manager.buildPlan(
-        std.testing.allocator,
-        &registry,
-        &.{
-            empty_cleanup.id,
-            math_folding.id,
-            color_zero_shortening.id,
-            shorthand_synthesis.id,
-            selector_rule_merge.id,
-            at_rule_merge.id,
-        },
-        .{
-            .allow_lossless_cleanup = true,
-            .allow_semantic_rewrite = true,
-        },
-    );
+    var plan = try verified_optimizer.buildPlan(std.testing.allocator);
     defer plan.deinit();
     try parsed.applyPassPlan(std.testing.allocator, &plan, .{ .verify_idempotence = true });
 

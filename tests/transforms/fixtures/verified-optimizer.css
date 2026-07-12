@@ -1,0 +1,74 @@
+:root {
+  --Theme: #ffffff;
+  --theme: calc(1px + 2px);
+  --cycle-a: var(--cycle-b);
+  --cycle-b: var(--cycle-a);
+}
+
+.scope {
+  --Theme: blue;
+  color: var(--Theme);
+  width: calc(var(--theme) + 1px);
+  margin-top: var(--gap, 1px);
+  margin-right: var(--gap, 1px);
+  margin-bottom: var(--gap, 1px);
+  margin-left: var(--gap, 1px);
+}
+
+.logical {
+  direction: rtl;
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  margin-inline-start: calc(1px + 2px);
+  border-inline-end-color: #ffffff;
+  inset-block-start: 0px;
+  float: inline-start;
+  text-align: end;
+  margin-top: 1px;
+  margin-right: 1px;
+  margin-inline-end: 4px;
+  margin-bottom: 1px;
+  margin-left: 1px;
+}
+
+.cleanup {
+  .empty {}
+  .keep { x: 1; }
+}
+
+.safe {
+  width: calc(1px + 2px);
+  color: #ffffff;
+  margin-top: 1px;
+  margin-right: 1px;
+  margin-bottom: 1px;
+  margin-left: 1px;
+}
+
+.top-empty {}
+
+.fixed-point {
+  width: calc(0px);
+  margin-top: calc(1px + 0px);
+  margin-right: calc(1px + 0px);
+  margin-bottom: calc(1px + 0px);
+  margin-left: calc(1px + 0px);
+}
+
+.merge-a { --token: a/**/b; }
+.merge-b { --token: a/**/b; }
+
+.value-a { color: #ffffff; }
+.value-b { color: #fff; }
+
+.host {
+  @media all { .m1 { x: 1; } }
+  @media all { .m2 { y: 2; } }
+}
+
+@media print { .print-a { x: 1; } }
+@media print { .print-b { x: 1; } }
+
+.same { color: red !important; color: blue; }
+.between { color: green; }
+.same { background: future-value(1 foo); }
