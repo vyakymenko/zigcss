@@ -34,8 +34,9 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | Browser target queries | Experimental, library-only | A strict explicit-minimum grammar and pinned BCD 8.0.0 subset deterministically configure the verified rewrite; `--browsers` and `--autoprefix` remain unavailable pending later public CLI wiring. |
 | CSS Modules | Experimental, Zig-library-only native subset | Explicit `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references/dependencies, and local values with owned results. The CLI/LSP still reject `.module.css`; imported values, raw ICSS, and ambiguous forms are strict errors. |
 | SCSS, SASS, LESS, Stylus, PostCSS, CSS-in-JS, Tailwind-like `@apply` | Unavailable | The executable rejects every alternate extension before output. The compiler's SCSS/SASS, LESS, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like adapter sources are removed; the [format matrix](docs/src/content/docs/guide/format-compatibility.md) records the containment evidence. |
-| LSP | Experimental, stress-tested | Bounded framing, standard JSON-RPC, lifecycle/full-sync state, UTF-16 positions, compiler pull diagnostics, and syntax-aware editor features operate over deterministic indexes of currently open CSS documents. Protocol transcript, large-document, Unicode, malformed-request, and leak gates pass; editor publication and Neovim validation remain later work. |
+| LSP | Experimental, stress-tested | Bounded framing, standard JSON-RPC, lifecycle/full-sync state, UTF-16 positions, compiler pull diagnostics, and syntax-aware editor features operate over deterministic indexes of currently open CSS documents. Protocol transcript, large-document, Unicode, malformed-request, leak, and local editor-integration gates pass; editor publication remains later work. |
 | VS Code extension | Experimental, package-tested | Version 0.3.0 has an exact lockfile, CSS-only activation, trust boundaries, deterministic executable discovery, 13 tests, a pinned CI workflow, and a verified five-file pre-release VSIX including dependency notices. No binary is bundled and no extension is published. |
+| Neovim configuration | Experimental, integration-tested | The [CSS-only built-in config](neovim-config/README.md) uses `vim.lsp.config`/`vim.lsp.enable`, resolves one trusted absolute executable, and is smoke-tested with exact Neovim 0.11.7 and 0.12.4 against the real server command, capabilities, hover request, and shutdown. No plugin or binary is bundled. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 pending bounded isolation. |
 
 ## Experimental Zig compile API
@@ -86,7 +87,7 @@ pub fn main() !void {
 
 The tested grammar boundary is published in [the CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md) and backed by `tests/compatibility/matrix.json`. Pretty and minified fixture output must parse in pinned Lightning CSS with error recovery disabled.
 
-Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, broader prefix data and prefix CLI exposure, element/attribute or dynamic-DOM extraction, optimized source-map composition, CLI source-map output, filesystem-backed LSP workspace loading, editor publication/binary distribution, Neovim validation, CSS Modules ID/keyframe scoping, imported values/raw ICSS, other alternate formats, and resource-bounded public compilation remain incomplete.
+Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, broader prefix data and prefix CLI exposure, element/attribute or dynamic-DOM extraction, optimized source-map composition, CLI source-map output, filesystem-backed LSP workspace loading, editor publication/binary distribution, CSS Modules ID/keyframe scoping, imported values/raw ICSS, other alternate formats, and resource-bounded public compilation remain incomplete.
 
 Do not use current output in a production pipeline. A successful compile is not yet a standards-compatibility guarantee.
 
@@ -126,6 +127,7 @@ npm run test:prefix-data
 npm run check:prefix-data
 npm run test:zig-package
 npm run test:vscode
+NVIM=/absolute/path/to/nvim npm run test:neovim
 npm run test:compat
 npm run test:transforms
 ```

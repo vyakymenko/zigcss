@@ -108,6 +108,27 @@ jobs:
       - name: Run Tests
         run: zig build test --summary all
 
+      - name: Install pinned Neovim clients
+        run: |
+          install_neovim() {
+            version="$1"
+            checksum="$2"
+            archive="$RUNNER_TEMP/nvim-$version.tar.gz"
+            destination="$RUNNER_TEMP/nvim-$version"
+            curl --fail --location --retry 3 --output "$archive" \
+              "https://github.com/neovim/neovim/releases/download/v$version/nvim-linux-x86_64.tar.gz"
+            echo "$checksum  $archive" | sha256sum --check
+            mkdir --parents "$destination"
+            tar --extract --gzip --strip-components=1 --file "$archive" --directory "$destination"
+          }
+          install_neovim 0.11.7 38a7c6317f94503841096c00e8fde05ef04b9472fc9d7d62b6e033cecd6f7991
+          install_neovim 0.12.4 012bf3fcac5ade43914df3f174668bf64d05e049a4f032a388c027b1ebd78628
+
+      - name: Validate Neovim configuration and LSP integration
+        run: |
+          NVIM="$RUNNER_TEMP/nvim-0.11.7/bin/nvim" NEOVIM_TEST_VERSION=0.11.7 npm run test:neovim
+          NVIM="$RUNNER_TEMP/nvim-0.12.4/bin/nvim" NEOVIM_TEST_VERSION=0.12.4 npm run test:neovim
+
       - name: Verify Zig package metadata
         run: npm run test:zig-package
 
