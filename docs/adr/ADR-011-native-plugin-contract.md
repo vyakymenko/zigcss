@@ -1,4 +1,4 @@
-# ADR-005: Experimental native plugin contract
+# ADR-011: Experimental native plugin contract
 
 - Status: Accepted
 - Date: 2026-07-12

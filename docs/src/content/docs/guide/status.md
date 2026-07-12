@@ -19,7 +19,7 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 | Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property/value/selector/at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
 | Source maps | Experimental, library-only | The library pipeline produces deterministic mappings; the CLI flag remains unavailable until its output policy is defined. |
 | Browser target queries | Experimental, library-only | The Zig API accepts a strict explicit-minimum grammar over six browsers and deterministically configures the verified rewrite from pinned BCD 8.0.0 data; CLI flags remain unavailable pending public option wiring. |
-| SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS | Experimental and CLI-disabled | Legacy adapters remain internal pending a compatibility contract and dedicated test suites. |
+| SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS, Tailwind-like `@apply` | Unavailable | Every extension is rejected before output and absent from the public syntax enum. The [format compatibility matrix](/guide/format-compatibility) publishes the characterized legacy boundary and accepted strategy for each adapter. |
 | LSP | Experimental | Shares the legacy parser and is not a stable editor contract. |
 | Public compile API and playground | Disabled | Public routes return HTTP 503 until bounded isolation is implemented. |
 
@@ -41,7 +41,7 @@ Native plugins reuse the immutable pass contract; the inherited mutable `PluginR
 
 The outer `.experimental` tag does not grant transform authority by itself. `PluginPolicy` still defaults to verified analysis only; experimental maturity and each output-changing safety class require their own exact booleans. Invalid registries or policy return owned `API0002` diagnostics before callbacks or dependency collection. Callback/validator failure rolls back the compiler root and plan diagnostics, returns owned `API0003` without CSS, and retains already discovered import facts. Caller-owned `user_data` side effects are not reversible. Warnings survive only when the whole plan succeeds.
 
-This is trusted in-process Zig code, not a sandbox or stable ABI. A panic, nontermination, process exit, undefined behavior, or malicious mutation cannot be recovered. Plugins remain unavailable from the recovery CLI and disabled public compiler routes. The complete source contract is recorded in `docs/adr/ADR-005-native-plugin-contract.md`.
+This is trusted in-process Zig code, not a sandbox or stable ABI. A panic, nontermination, process exit, undefined behavior, or malicious mutation cannot be recovered. Plugins remain unavailable from the recovery CLI and disabled public compiler routes. The complete source contract is recorded in `docs/adr/ADR-011-native-plugin-contract.md`.
 
 Property-specific values are generally preserved as component trees rather than fully validated semantic values. Browser computed-style validation, broader target data and stable CLI prefix exposure, optimized source-map composition, CLI source-map output, the LSP migration, alternate formats, and public untrusted compilation remain later gates. Independent syntax acceptance is evidence, not a complete browser-semantics guarantee.
 

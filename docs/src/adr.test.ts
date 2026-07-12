@@ -17,10 +17,11 @@ describe('foundational architecture decisions', () => {
     'ADR-002-tokenizer-and-syntax-tree.md',
     'ADR-003-memory-and-result-ownership.md',
     'ADR-004-transform-safety-classes.md',
-    'ADR-005-native-plugin-contract.md',
+    'ADR-005-preprocessor-strategy.md',
     'ADR-006-browser-target-query-language.md',
     'ADR-007-source-map-policy-for-generated-nodes.md',
     'ADR-010-autonomous-model-requirement.md',
+    'ADR-011-native-plugin-contract.md',
   ]
 
   test.each(decisions)('%s is accepted and records consequences', name => {
@@ -105,7 +106,7 @@ describe('foundational architecture decisions', () => {
   })
 
   test('keeps native plugins deterministic borrowed transactional and experimental', () => {
-    const adr = read('ADR-005-native-plugin-contract.md')
+    const adr = read('ADR-011-native-plugin-contract.md')
 
     expect(adr).toContain('trusted, Zig-only, in-process callback contract')
     expect(adr).toContain('must begin with `plugin.`')
@@ -115,6 +116,27 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('API0003')
     expect(adr).toContain('publishes no candidate root')
     expect(adr).toContain('not a stable plugin ABI')
+  })
+
+  test('chooses one strict strategy for every inherited format adapter', () => {
+    const adr = read('ADR-005-preprocessor-strategy.md')
+
+    expect(adr).toContain('structured diagnostic and no partial CSS')
+    expect(adr).toContain('must not feed transformed bytes into the inherited parser')
+    expect(adr).toContain('`limited-native-subset`')
+    expect(adr).toContain('`remove-until-funded`')
+    for (const id of [
+      'scss',
+      'sass',
+      'less',
+      'stylus',
+      'css-modules',
+      'css-in-js',
+      'postcss',
+      'tailwind',
+    ]) {
+      expect(adr).toContain(`| \`${id}\` |`)
+    }
   })
 
   test('defines deterministic explicit targets and pinned generated compatibility data', () => {

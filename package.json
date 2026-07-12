@@ -23,6 +23,7 @@
     "test:prefix-data": "node --test scripts/generate-prefix-data.test.mjs",
     "test:zig-package": "node --test scripts/verify-zig-package.test.mjs",
     "test:node-wrapper": "node --test scripts/verify-node-wrapper.test.mjs",
+    "test:formats": "node tests/formats/validate.mjs",
     "test:compat": "node tests/compatibility/validate.mjs",
     "test:transforms": "node tests/transforms/validate.mjs"
   },

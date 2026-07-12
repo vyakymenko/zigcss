@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "availabilityDefinitions": {
+    "Unavailable": "Rejected by the recovery CLI before output and absent from the public compile syntax enum."
+  },
+  "compatibilityDefinitions": {
+    "Unverified": "Legacy characterization is not a compatibility contract or supported subset."
+  },
+  "strategyDefinitions": {
+    "limited-native-subset": "Implement only a closed named grammar with strict errors outside it.",
+    "remove-until-funded": "Expose no adapter or ecosystem claim unless a later funded program accepts a new decision."
+  },
+  "adapters": [
+    {
+      "id": "scss",
+      "displayName": "SCSS",
+      "cliDisplayName": "SCSS",
+      "formatTag": "scss",
+      "extensions": [".scss"],
+      "availability": "Unavailable",
+      "compatibility": "Unverified",
+      "strategy": "remove-until-funded",
+      "ownerPackages": ["SCSS-001", "SCSS-002"],
+      "sourceFiles": ["src/formats/scss.zig"],
+      "currentBoundary": "Heuristic multi-pass byte preprocessing for variables, mixins, functions, control flow, nesting, placeholders, and selected built-ins before the inherited CSS parser.",
+      "knownRisks": [
+        "Imports and selected directives are stripped without dependency or diagnostic output.",
+        "Brace, selector, comment, interpolation, and expression scans are not a canonical Sass lexer or evaluator."
+      ],
+      "probe": "$color: red;\n.card { color: $color; }\n",
+      "sourceEvidence": [
+        { "file": "src/formats/scss.zig", "contains": "fn removeDirectives" },
+        { "file": "src/formats/scss.zig", "contains": "fn expandControlFlow" },
+        { "file": "src/formats/scss.zig", "contains": "fn flattenNesting" }
+      ]
+    },
+    {
+      "id": "sass",
+      "displayName": "SASS",
+      "cliDisplayName": "SASS",
+      "formatTag": "sass",
+      "extensions": [".sass"],
+      "availability": "Unavailable",
+      "compatibility": "Unverified",
+      "strategy": "remove-until-funded",
+      "ownerPackages": ["SCSS-001", "SCSS-002"],
+      "sourceFiles": ["src/formats/sass.zig"],
+      "currentBoundary": "Line-oriented indentation conversion and dollar-variable substitution before the inherited CSS parser.",
+      "knownRisks": [
+        "Selector versus property classification is inferred from punctuation instead of the indented Sass grammar.",
+        "Scope, modules, comments, strings, interpolation, and expression semantics are not modeled."
+      ],
+      "probe": "$color: red\n.card\n  color: $color\n",
+      "sourceEvidence": [
+        { "file": "src/formats/sass.zig", "contains": "fn convertToCSS" },
+        { "file": "src/formats/sass.zig", "contains": "fn isSelector" },
+        { "file": "src/formats/sass.zig", "contains": "fn processVariablesInLine" }
+      ]
+    },
+    {
+      "id": "less",
+      "displayName": "LESS",
+      "cliDisplayName": "LESS",
+      "formatTag": "less",
+      "extensions": [".less"],
+      "availability": "Unavailable",
+      "compatibility": "Unverified",
+      "strategy": "remove-until-funded",
+      "ownerPackages": ["LESS-001"],
+      "sourceFiles": ["src/formats/less.zig"],
+      "currentBoundary": "Leading at-variable collection, textual declaration removal, and global byte substitution before the inherited CSS parser.",
+      "knownRisks": [
+        "Variable and CSS at-rule identity is inferred from a short hard-coded name list.",
+        "Lexical scope, lazy evaluation, mixins, nesting, imports, strings, comments, and arithmetic are not a closed subset."
+      ],
+      "probe": "@color: red;\n.card { color: @color; }\n",
+      "sourceEvidence": [
+        { "file": "src/formats/less.zig", "contains": "fn removeVariables" },
+        { "file": "src/formats/less.zig", "contains": "fn processVariables" },
+        { "file": "src/formats/less.zig", "contains": "potential_var_name" }
+      ]
+    },
+    {
+      "id": "stylus",
+      "displayName": "Stylus",
+      "cliDisplayName": "Stylus",
+      "formatTag": "stylus",
+      "extensions": [".styl"],
+      "availability": "Unavailable",
+      "compatibility": "Unverified",
+      "strategy": "remove-until-funded",
+      "ownerPackages": ["STYLUS-001"],
+      "sourceFiles": ["src/formats/stylus.zig"],
+      "currentBoundary": "Line-oriented indentation conversion and global dollar-variable replacement before the inherited CSS parser.",
+      "knownRisks": [
+        "Optional punctuation and selector/property ambiguity are guessed from colons and leading bytes.",
+        "Variable parse errors are swallowed during scanning and unsupported constructs can disappear."
+      ],
+      "probe": "$color = red\n.card\n  color: $color\n",
+      "sourceEvidence": [
+        { "file": "src/formats/stylus.zig", "contains": "fn convertToCSS" },
+        { "file": "src/formats/stylus.zig", "contains": "self.parseVariable() catch {};" },
+        { "file": "src/formats/stylus.zig", "contains": "fn substituteVariables" }
+      ]
+    },
+    {
+      "id": "css-modules",
+      "displayName": "CSS Modules",
+      "cliDisplayName": "CSS Modules",
+      "formatTag": "css_modules",
+      "extensions": [".module.css"],
+      "availability": "Unavailable",
+      "compatibility": "Unverified",
+      "strategy": "limited-native-subset",
+      "ownerPackages": ["MODULE-001", "MODULE-002"],
+      "sourceFiles": ["src/formats/css_modules.zig"],
+      "currentBoundary": "Rewrites encountered legacy-AST class selectors with a name-only FNV-1a suffix.",
+      "knownRisks": [
+        "Names are not file-specific and no owned module export mapping is produced.",
+        "Local/global scope, composition, values, dependencies, nested coverage, and collision policy are absent."
+      ],
+      "probe": ".card { color: red; }\n",
+      "sourceEvidence": [
+        { "file": "src/formats/css_modules.zig", "contains": "fn scopeClassNames" },
+        { "file": "src/formats/css_modules.zig", "contains": "std.hash.Fnv1a_32" },
+        { "file": "src/formats/css_modules.zig", "contains": "fn getScopedClassName" }
+      ]
+    },
+    {
+      "id": "css-in-js",
+      "displayName": "CSS-in-JS",
+      "cliDisplayName": "CSS-in-JS",
+      "formatTag": "css_in_js",
+      "extensions": [".css.js", ".css.ts"],
+      "availability": "Unavailable",
+      "compatibility": "Unverified",
+      "strategy": "remove-until-funded",
+      "ownerPackages": ["JS-001"],
+      "sourceFiles": ["src/formats/css_in_js.zig"],
+      "currentBoundary": "Byte-scans backtick regions and object-like braces, deletes interpolation expressions, and sends the remaining bytes to the inherited CSS parser.",
+      "knownRisks": [
+        "JavaScript and TypeScript lexical states, tagged-template identity, escapes, comments, regex literals, and nested expressions are not parsed.",
+        "Dynamic expressions are removed rather than represented or rejected."
+      ],
+      "probe": "const styles = `\n.card { color: ${theme.color}; }\n`;\n",
+      "sourceEvidence": [
+        { "file": "src/formats/css_in_js.zig", "contains": "fn extractCSS" },
+        { "file": "src/formats/css_in_js.zig", "contains": "var expr_depth: usize = 1;" },
+        { "file": "src/formats/css_in_js.zig", "contains": "in_template_string = !in_template_string" }
+      ]
+    },
+    {
+      "id": "postcss",
+      "displayName": "PostCSS",
+      "cliDisplayName": "PostCSS",
+      "formatTag": "postcss",
+      "extensions": [".postcss"],
+      "availability": "Unavailable",
+      "compatibility": "Unverified",
+      "strategy": "remove-until-funded",
+      "ownerPackages": ["POSTCSS-001"],
+      "sourceFiles": ["src/formats/postcss.zig"],
+      "currentBoundary": "Fixed byte scanning for @apply plus deletion of selected at-rules before the inherited CSS parser; there is no JavaScript plugin host.",
+      "knownRisks": [
+        "@custom-media and @nest constructs are skipped without a diagnostic or semantic expansion.",
+        "No plugin discovery, configuration, ordering, lifecycle, dependency, or source-map contract exists."
+      ],
+      "probe": "@custom-media --narrow (width < 40rem);\n.card { color: red; }\n",
+      "sourceEvidence": [
+        { "file": "src/formats/postcss.zig", "contains": "fn processPostCSS" },
+        { "file": "src/formats/postcss.zig", "contains": "self.matchAt(i, \"@custom-media\")" },
+        { "file": "src/formats/postcss.zig", "contains": "i = try self.skipAtRule(i);" }
+      ]
+    },
+    {
+      "id": "tailwind",
+      "displayName": "Tailwind-like @apply",
+      "cliDisplayName": "PostCSS",
+      "formatTag": null,
+      "extensions": [".postcss"],
+      "availability": "Unavailable",
+      "compatibility": "Unverified",
+      "strategy": "remove-until-funded",
+      "ownerPackages": ["TAILWIND-001"],
+      "sourceFiles": ["src/tailwind.zig", "src/formats/postcss.zig"],
+      "currentBoundary": "A fixed in-memory utility table expands whitespace-separated names only when encountered by the PostCSS-like @apply scanner.",
+      "knownRisks": [
+        "Unknown utilities are silently omitted from the expansion.",
+        "Content scanning, configuration, versions, variants, plugins, arbitrary values, ordering, and canonical Tailwind semantics are absent."
+      ],
+      "probe": ".card { @apply p-4 unknown-utility; }\n",
+      "sourceEvidence": [
+        { "file": "src/tailwind.zig", "contains": "pub const TailwindRegistry" },
+        { "file": "src/tailwind.zig", "contains": "fn registerDefaults" },
+        { "file": "src/tailwind.zig", "contains": "if (self.expandUtility(utility)) |decls|" }
+      ]
+    }
+  ]
+}

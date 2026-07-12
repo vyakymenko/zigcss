@@ -42,7 +42,7 @@ The library has a verified target-prefix pass for a pinned eight-feature subset,
 
 The library also has two experimental conservative extraction passes over complete class/ID inventories. They require explicit experimental and extraction policy grants, and are not wired to `--optimize` or `--critical-*`; rejected CLI requests cannot reach the inherited or rebuilt implementations.
 
-The recovery CLI also rejects legacy preprocessor and alternate-format extensions. Those adapters are experimental internals until each language has a compatibility decision, strict unsupported-syntax diagnostics, and dedicated evidence.
+The recovery CLI also rejects legacy preprocessor and alternate-format extensions. The [format compatibility matrix](/guide/format-compatibility) records every recognized extension, its characterized internal boundary, and the accepted removal or limited-subset strategy. None is silently parsed as CSS.
 
 ## Watch behavior
 
