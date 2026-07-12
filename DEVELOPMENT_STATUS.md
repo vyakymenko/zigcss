@@ -15,10 +15,10 @@ Last updated: 2026-07-13
 ## Current work
 
 - Milestone: Milestone 8 — credible benchmark and performance program
-- Work package: `BENCH-001` deterministic versioned corpora with recorded complexity
+- Work package: `BENCH-002` pinned and preinstalled competitor binaries
 - State: `NOT_STARTED`
-- Active phase: Milestone 7 is verified; `REL-005` closes its native archive and npm installation smoke boundary
-- Next eligible package: `BENCH-001`
+- Active phase: `BENCH-001` is verified with a generated, closed, versioned corpus contract
+- Next eligible package: `BENCH-002`
 
 ## Milestone 0 package ledger
 
@@ -322,6 +322,12 @@ Milestone 7 is `PASS` at implementation checkpoint `db4ab56`. The public compile
 | Compiler regression surface | `PASS`; Debug and ReleaseSafe each complete 34/34 steps and 489/489 tests. Production Zig code is unchanged by `REL-005`. |
 | Publication boundary | `PASS`; the release job must finish metadata, native smoke, attestation, local binding, and cryptographic verification for all five matrix entries before release creation or npm publication becomes reachable. Nothing was published in this recovery run. |
 
+## Milestone 8 package ledger
+
+| Package | State | Evidence / decision | Commit |
+|---|---|---|---|
+| `BENCH-001` | `VERIFIED` | Added one dependency-free generated `v1` inventory containing exact 95-byte, 12,383-byte, and 198,366-byte flat CSS corpora. The manifest binds every path to its SHA-256 and mechanically derived qualified-rule, at-rule, declaration, and maximum-depth counts: 210,844 bytes, 2,177 qualified rules, and 10,885 declarations in total. Six regressions prove byte-for-byte generation, exact recorded complexity, recovery-disabled parsing by pinned Lightning CSS 1.30.1, closed inventory/content/manifest checks, symlink rejection, active Zig embedding, and command output. The benchmark smoke consumes only those three embedded files and reports actual byte counts; CI checks generation before running it. Debug and ReleaseSafe each pass 489/489 across 34/34 and both builds pass 3/3; the benchmark smoke, 21-feature compatibility gate, ten transform differentials, workflow/dependency/package policy, 126/126 docs tests/build, documentation integrity, YAML/JSON/JavaScript/diff checks, and a five-file/44,275-byte npm dry run pass. Formatting the package-owned benchmark source reduces inherited repository formatting debt from 12 to 11 files. Competitor installation, output acceptance, execution-mode separation, statistics, scheduling, and publication remain owned by `BENCH-002` through `BENCH-007`; no timing is accepted or publishable yet. | `9035398` |
+
 ## Completed work packages
 
 - `SEC-001`: static serving is contained within the configured real root and malformed URL encoding is handled without a process crash. Focused result: 7/7 security tests; integration result: 44/44 docs tests plus successful Vite build.
@@ -402,6 +408,8 @@ Milestone 7 is `PASS` at implementation checkpoint `db4ab56`. The public compile
 - `REL-004`: every workflow defaults to no token authority, each job receives its exact minimum grant, and every external action is a full reviewed commit pin guarded by a closed dependency-free policy before npm installation.
 
 - `REL-005`: every release archive is executed on a matching architecture before attestation, and the same checksum-bound bytes must survive an offline real npm pack/postinstall/wrapper lifecycle without network fallback or residue before publication can become reachable.
+
+- `BENCH-001`: benchmark inputs now come from one generated versioned inventory whose exact bytes, hashes, rule/declaration complexity, file types, and active Zig embedding are checked in CI; changing corpus identity is an explicit reviewed input change rather than runtime generation.
 
 ## Active blockers
 
@@ -530,7 +538,11 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 - `REL-005` treats header inspection as necessary but insufficient release evidence. Each target must run on a host whose Node platform/architecture exactly matches the artifact, execute the extracted archive, and then prove the packaged npm postinstall plus wrapper using only repository-local checksum-bound assets. The smoke preload is test-only, excluded from the npm package, admits exactly the expected archive and manifest URLs, and blocks every other HTTPS request. A failed target prevents attestation/upload and therefore prevents release creation and npm publication.
 
+- `BENCH-001` treats corpus identity as generated source evidence. Version `v1` is a closed regular-file inventory with exact bytes, lowercase SHA-256, and mechanically derived rule complexity; the active Zig smoke embeds those files and cannot substitute approximate or runtime-generated inputs. The historical competitor script and archived result JSON are not evidence. Binary pinning, output validation, mode comparability, raw samples, statistical reporting, controlled execution, and public claims remain separate dependency-ordered packages.
+
 ## Last full validation
+
+`BENCH-001` is verified at implementation checkpoint `9035398`. Six focused regressions and the read-only generator check prove three exact `v1` corpora totaling 210,844 bytes, 2,177 qualified rules, and 10,885 declarations; each file parses with recovery disabled under pinned Lightning CSS 1.30.1, and content, manifest, extra-file, symlink, hash, and active-embedding drift fail closed. The Zig benchmark smoke consumes the exact 95-byte, 12,383-byte, and 198,366-byte inputs and reports those actual sizes. Debug and ReleaseSafe each pass 489/489 across 34/34, both builds pass 3/3, and the compatibility, transform, workflow, dependency, Zig-package, documentation-integrity, YAML/JSON/JavaScript, formatting, and diff gates pass. Documentation remains 126/126 plus the production build; the npm dry run remains five files/44,275 unpacked bytes. Timing samples remain invalid for publication until `BENCH-002` through `BENCH-007` close competitor, output, mode, statistics, environment, and archival requirements. No external state was changed.
 
 `REL-005` is verified at implementation checkpoint `db4ab56`. Four focused regressions prove the exact five-target native runner map, closed CLI arguments, two-URL-only offline npm lifecycle preload, and required build/tag workflow ordering. The host-native aarch64-macOS ReleaseFast binary was archived with generated SHA-256/SPDX metadata, extracted and executed for exact version/CSS/warning output, then packed as the exact npm surface and installed through the real postinstall; the installed binary matched source bytes and the wrapper produced the same exact output with no residue. The workflow makes those same checks mandatory on x86_64/aarch64 Linux, x86_64/aarch64 macOS, and x86_64 Windows before attestation. Debug and ReleaseSafe each pass 489/489 across 34/34. Sixteen release-consumer, five release-metadata, five workflow-policy, six version, seven capability, and four dependency-policy tests plus all associated checks pass. Documentation passes 126/126 and builds; its integrity gate covers 31 Markdown files, 60 fences/50 executable, 41 links, and 24 routes. Production audits remain 0/0/0, workflow policy owns 22 pinned actions, capability metadata owns 20 rows/18 gates, YAML/JavaScript/diff checks pass, and npm remains five files/44,011 unpacked bytes. No tag, artifact, release, npm package, image, formula, deployment, or other external state was created.
 
