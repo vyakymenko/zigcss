@@ -30,7 +30,7 @@ const manifest = {
       includesProcessStartup: true,
       timed: true,
       warmupIterations: 0,
-      measuredIterations: 1,
+      measuredIterations: 20,
     },
     {
       id: 'warm-cli',
@@ -41,7 +41,7 @@ const manifest = {
       includesProcessStartup: true,
       timed: true,
       warmupIterations: 1,
-      measuredIterations: 1,
+      measuredIterations: 20,
     },
     {
       id: 'in-process-api',
@@ -51,7 +51,7 @@ const manifest = {
       includesProcessStartup: false,
       timed: true,
       warmupIterations: 1,
-      measuredIterations: 1,
+      measuredIterations: 20,
     },
     {
       id: 'memory',
@@ -61,7 +61,7 @@ const manifest = {
       includesProcessStartup: false,
       timed: false,
       warmupIterations: 0,
-      measuredIterations: 1,
+      measuredIterations: 20,
       fields: [
         'totalAllocatedBytes',
         'totalFreedBytes',
@@ -80,7 +80,7 @@ const manifest = {
       includesProcessStartup: false,
       timed: true,
       warmupIterations: 1,
-      measuredIterations: 2,
+      measuredIterations: 20,
     },
   ],
 }
@@ -146,18 +146,18 @@ export function admitThroughputSample(samples, durationNanoseconds, operations) 
   samples.push(durationNanoseconds)
 }
 
-function runCliModes(root, compiler, corpora, files, temporary) {
+function runCliModes(root, compiler, corpora, files, temporary, measuredIterations) {
   const outputManifest = validateBenchmarkOutputContract(root)
   const tools = new Map(outputManifest.tools.map(tool => [tool.id, tool]))
   const executables = resolveBenchmarkExecutables(root, compiler)
-  const accepted = { cold: 0, warm: 0 }
+  const series = []
 
   for (const mode of manifest.modes.slice(0, 2)) {
-    const destination = []
     for (const corpus of corpora) {
       const inputPath = path.join(root, corpus.path)
       const input = Buffer.from(files.get(path.basename(corpus.path)))
       for (const toolId of mode.tools) {
+        const destination = []
         const tool = tools.get(toolId)
         const executable = executables.get(toolId)
         if (tool === undefined || executable === undefined) fail(`missing CLI contract for ${toolId}`)
@@ -166,39 +166,69 @@ function runCliModes(root, compiler, corpora, files, temporary) {
           const warm = runBenchmarkCli(root, tool, executable, inputPath, outputPath)
           validateOutput(input, warm.output, `${mode.id}/${corpus.id}/${toolId}/warmup`)
         }
-        const measured = runBenchmarkCli(
-          root,
-          tool,
-          executable,
-          inputPath,
-          outputPath,
-          process.hrtime.bigint,
-        )
-        admitTimingSample(
-          destination,
-          measured.durationNanoseconds,
-          input,
-          measured.output,
-          `${mode.id}/${corpus.id}/${toolId}`,
-        )
+        for (let iteration = 0; iteration < measuredIterations; iteration += 1) {
+          const measured = runBenchmarkCli(
+            root,
+            tool,
+            executable,
+            inputPath,
+            outputPath,
+            process.hrtime.bigint,
+          )
+          admitTimingSample(
+            destination,
+            measured.durationNanoseconds,
+            input,
+            measured.output,
+            `${mode.id}/${corpus.id}/${toolId}/${iteration}`,
+          )
+        }
+        series.push({
+          mode: mode.id,
+          metric: mode.metric,
+          tool: toolId,
+          corpus: corpus.id,
+          unit: 'nanoseconds',
+          samples: destination,
+        })
       }
     }
-    if (mode.id === 'cold-cli') accepted.cold = destination.length
-    else accepted.warm = destination.length
   }
-  return accepted
+  return series
 }
 
-export function runBenchmarkModeSmoke(root = repositoryRoot, compiler) {
+export function collectBenchmarkCliSeries(
+  root = repositoryRoot,
+  compiler,
+  measuredIterations = manifest.modes[0].measuredIterations,
+) {
+  if (!Number.isSafeInteger(measuredIterations) || measuredIterations < 1 || measuredIterations > 20) {
+    fail('measured CLI iterations must be an integer from 1 through 20')
+  }
   validateBenchmarkModeContract(root)
   validateCorpora(root)
   const expected = expectedCorpus()
   const files = new Map(expected.files.map(file => [file.name, file.content]))
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-benchmark-modes-'))
   try {
-    return runCliModes(root, compiler, expected.manifest.corpora, files, temporary)
+    return runCliModes(
+      root,
+      compiler,
+      expected.manifest.corpora,
+      files,
+      temporary,
+      measuredIterations,
+    )
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
+  }
+}
+
+export function runBenchmarkModeSmoke(root = repositoryRoot, compiler) {
+  const series = collectBenchmarkCliSeries(root, compiler, 1)
+  return {
+    cold: series.filter(entry => entry.mode === 'cold-cli').reduce((count, entry) => count + entry.samples.length, 0),
+    warm: series.filter(entry => entry.mode === 'warm-cli').reduce((count, entry) => count + entry.samples.length, 0),
   }
 }
 

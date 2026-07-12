@@ -16,7 +16,7 @@
       "includesProcessStartup": true,
       "timed": true,
       "warmupIterations": 0,
-      "measuredIterations": 1
+      "measuredIterations": 20
     },
     {
       "id": "warm-cli",
@@ -31,7 +31,7 @@
       "includesProcessStartup": true,
       "timed": true,
       "warmupIterations": 1,
-      "measuredIterations": 1
+      "measuredIterations": 20
     },
     {
       "id": "in-process-api",
@@ -43,7 +43,7 @@
       "includesProcessStartup": false,
       "timed": true,
       "warmupIterations": 1,
-      "measuredIterations": 1
+      "measuredIterations": 20
     },
     {
       "id": "memory",
@@ -55,7 +55,7 @@
       "includesProcessStartup": false,
       "timed": false,
       "warmupIterations": 0,
-      "measuredIterations": 1,
+      "measuredIterations": 20,
       "fields": [
         "totalAllocatedBytes",
         "totalFreedBytes",
@@ -76,7 +76,7 @@
       "includesProcessStartup": false,
       "timed": true,
       "warmupIterations": 1,
-      "measuredIterations": 2
+      "measuredIterations": 20
     }
   ]
 }

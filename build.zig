@@ -237,6 +237,12 @@ pub fn build(b: *std.Build) void {
         .name = "zigcss-bench",
         .root_module = bench_module,
     });
+    const install_bench = b.addInstallArtifact(bench_exe, .{});
+    const install_bench_step = b.step(
+        "install-benchmark-runner",
+        "Install the private benchmark measurement runner",
+    );
+    install_bench_step.dependOn(&install_bench.step);
     const bench_tests = b.addTest(.{ .root_module = bench_module });
     const run_bench_tests = b.addRunArtifact(bench_tests);
     test_step.dependOn(&run_bench_tests.step);

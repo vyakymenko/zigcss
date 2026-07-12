@@ -269,3 +269,11 @@ jobs:
 
       - name: Run validated benchmark smoke
         run: zig build bench
+
+      - name: Build optimized benchmark executables
+        run: |
+          zig build -Doptimize=ReleaseFast
+          zig build install-benchmark-runner -Doptimize=ReleaseFast
+
+      - name: Validate benchmark statistics
+        run: npm run test:benchmark-statistics && npm run check:benchmark-statistics

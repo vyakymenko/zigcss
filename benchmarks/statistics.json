@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "sampleCount": 20,
+  "rawSamples": "required",
+  "sampleEncoding": "unsigned-decimal-string",
+  "statistics": {
+    "median": "sorted-middle-average",
+    "p95": "nearest-rank",
+    "variance": "population"
+  },
+  "environment": [
+    "platform",
+    "release",
+    "architecture",
+    "cpuModel",
+    "logicalCpuCount",
+    "totalMemoryBytes",
+    "nodeVersion",
+    "zigVersion",
+    "optimizationMode",
+    "clock",
+    "runnerExecutableSha256",
+    "tools"
+  ],
+  "memoryFields": {
+    "totalAllocatedBytes": "bytes",
+    "totalFreedBytes": "bytes",
+    "peakLiveBytes": "bytes",
+    "retainedResultBytes": "bytes",
+    "allocationCount": "count",
+    "deallocationCount": "count",
+    "resizeCount": "count"
+  }
+}
