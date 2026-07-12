@@ -150,7 +150,7 @@ export function validateReleaseSources(sources) {
   expectContains(main, '"Warning: ZigCSS {s} is an experimental release candidate', 'CLI warning')
   expectContains(main, 'std.fmt.comptimePrint("ZigCSS {s} recovery CLI', 'CLI help')
   expectContains(sources.get('tests/regressions/audit.zig'), `"zigcss ${version}\\n"`, 'CLI version regression')
-  expectContains(sources.get('install.js'), "const VERSION = require('./package.json').version;", 'npm installer')
+  expectContains(sources.get('install.js'), "const VERSION = require('./package.json').version", 'npm installer')
 
   const formula = sources.get('Formula/zigcss.rb')
   const formulaUrlVersion = singleCapture(formula, /archive\/v([^/]+)\.tar\.gz/g, 'Homebrew source version')
