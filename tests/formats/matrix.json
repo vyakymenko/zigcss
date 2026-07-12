@@ -1,5 +1,9 @@
 {
   "schemaVersion": 1,
+  "implementationDefinitions": {
+    "LegacyCharacterized": "Heuristic adapter source remains only behind the test-only legacy boundary.",
+    "Removed": "No adapter parser source or legacy Format tag remains; filename handling exists only to reject the unavailable input."
+  },
   "availabilityDefinitions": {
     "Unavailable": "Rejected by the recovery CLI before output and absent from the public compile syntax enum."
   },
@@ -15,46 +19,52 @@
       "id": "scss",
       "displayName": "SCSS",
       "cliDisplayName": "SCSS",
-      "formatTag": "scss",
+      "formatTag": null,
       "extensions": [".scss"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
+      "implementation": "Removed",
       "strategy": "remove-until-funded",
       "ownerPackages": ["SCSS-001", "SCSS-002"],
-      "sourceFiles": ["src/formats/scss.zig"],
-      "currentBoundary": "Heuristic multi-pass byte preprocessing for variables, mixins, functions, control flow, nesting, placeholders, and selected built-ins before the inherited CSS parser.",
+      "removedBy": "SCSS-001",
+      "removedSourceFiles": ["src/formats/scss.zig"],
+      "sourceFiles": [],
+      "currentBoundary": "No SCSS parser implementation remains; .scss is classified only for explicit CLI rejection and a null legacy detector result.",
       "knownRisks": [
-        "Imports and selected directives are stripped without dependency or diagnostic output.",
-        "Brace, selector, comment, interpolation, and expression scans are not a canonical Sass lexer or evaluator."
+        "Reintroducing byte preprocessing without a canonical lexer, evaluator, dependency model, and strict errors would recreate the removed corruption boundary."
       ],
       "probe": "$color: red;\n.card { color: $color; }\n",
-      "sourceEvidence": [
-        { "file": "src/formats/scss.zig", "contains": "fn removeDirectives" },
-        { "file": "src/formats/scss.zig", "contains": "fn expandControlFlow" },
-        { "file": "src/formats/scss.zig", "contains": "fn flattenNesting" }
+      "containmentEvidence": [
+        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".scss\")" },
+        { "file": "src/main.zig", "contains": "return \"SCSS\";" },
+        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".scss\") or" },
+        { "file": "src/lsp.zig", "contains": "Unsupported or removed stylesheet format" }
       ]
     },
     {
       "id": "sass",
       "displayName": "SASS",
       "cliDisplayName": "SASS",
-      "formatTag": "sass",
+      "formatTag": null,
       "extensions": [".sass"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
+      "implementation": "Removed",
       "strategy": "remove-until-funded",
       "ownerPackages": ["SCSS-001", "SCSS-002"],
-      "sourceFiles": ["src/formats/sass.zig"],
-      "currentBoundary": "Line-oriented indentation conversion and dollar-variable substitution before the inherited CSS parser.",
+      "removedBy": "SCSS-001",
+      "removedSourceFiles": ["src/formats/sass.zig"],
+      "sourceFiles": [],
+      "currentBoundary": "No indented Sass parser implementation remains; .sass is classified only for explicit CLI rejection and a null legacy detector result.",
       "knownRisks": [
-        "Selector versus property classification is inferred from punctuation instead of the indented Sass grammar.",
-        "Scope, modules, comments, strings, interpolation, and expression semantics are not modeled."
+        "Reintroducing line/indent conversion without canonical Sass lexical, scope, module, interpolation, and expression behavior would recreate the removed guessing boundary."
       ],
       "probe": "$color: red\n.card\n  color: $color\n",
-      "sourceEvidence": [
-        { "file": "src/formats/sass.zig", "contains": "fn convertToCSS" },
-        { "file": "src/formats/sass.zig", "contains": "fn isSelector" },
-        { "file": "src/formats/sass.zig", "contains": "fn processVariablesInLine" }
+      "containmentEvidence": [
+        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".sass\")" },
+        { "file": "src/main.zig", "contains": "return \"SASS\";" },
+        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".sass\")" },
+        { "file": "src/lsp.zig", "contains": "Unsupported or removed stylesheet format" }
       ]
     },
     {
@@ -65,6 +75,7 @@
       "extensions": [".less"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
+      "implementation": "LegacyCharacterized",
       "strategy": "remove-until-funded",
       "ownerPackages": ["LESS-001"],
       "sourceFiles": ["src/formats/less.zig"],
@@ -88,6 +99,7 @@
       "extensions": [".styl"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
+      "implementation": "LegacyCharacterized",
       "strategy": "remove-until-funded",
       "ownerPackages": ["STYLUS-001"],
       "sourceFiles": ["src/formats/stylus.zig"],
@@ -111,6 +123,7 @@
       "extensions": [".module.css"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
+      "implementation": "LegacyCharacterized",
       "strategy": "limited-native-subset",
       "ownerPackages": ["MODULE-001", "MODULE-002"],
       "sourceFiles": ["src/formats/css_modules.zig"],
@@ -134,6 +147,7 @@
       "extensions": [".css.js", ".css.ts"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
+      "implementation": "LegacyCharacterized",
       "strategy": "remove-until-funded",
       "ownerPackages": ["JS-001"],
       "sourceFiles": ["src/formats/css_in_js.zig"],
@@ -157,6 +171,7 @@
       "extensions": [".postcss"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
+      "implementation": "LegacyCharacterized",
       "strategy": "remove-until-funded",
       "ownerPackages": ["POSTCSS-001"],
       "sourceFiles": ["src/formats/postcss.zig"],
@@ -180,6 +195,7 @@
       "extensions": [".postcss"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
+      "implementation": "LegacyCharacterized",
       "strategy": "remove-until-funded",
       "ownerPackages": ["TAILWIND-001"],
       "sourceFiles": ["src/tailwind.zig", "src/formats/postcss.zig"],

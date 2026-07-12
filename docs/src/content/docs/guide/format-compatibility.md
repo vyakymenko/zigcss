@@ -2,7 +2,7 @@
 
 ZigCSS currently supports only CSS through its public compile API and recovery CLI. Every inherited alternate-format adapter is **Unavailable**: the CLI rejects its extension with exit status `2` before creating output, and the public `Syntax` enum has no matching tag. Internal legacy code and positive prototype tests are characterization evidence, not a supported subset or upstream compatibility claim.
 
-The machine-readable authority is `tests/formats/matrix.json`. `npm run test:formats` checks that it covers every legacy source and format tag, matches ADR-005, and exact-tests nine extension probes against the real executable.
+The machine-readable authority is `tests/formats/matrix.json`. `npm run test:formats` checks every remaining legacy source and format tag, proves files recorded as removed are absent, matches ADR-005, and exact-tests nine extension probes against the real executable.
 
 ## Status and strategy meanings
 
@@ -10,28 +10,30 @@ The machine-readable authority is `tests/formats/matrix.json`. `npm run test:for
 |---|---|
 | Unavailable | Rejected by the recovery CLI before output and absent from the public compile syntax enum. |
 | Unverified | Legacy characterization is not a compatibility contract or supported subset. |
+| LegacyCharacterized | Heuristic adapter source remains only behind the test-only legacy boundary. |
+| Removed | No adapter parser source or legacy `Format` tag remains; filename handling exists only to reject the unavailable input. |
 | `limited-native-subset` | Implement only a closed, clearly named grammar with strict errors outside it. |
 | `remove-until-funded` | Expose no adapter or ecosystem claim unless a later funded program accepts a new decision. |
 
 ## Adapter matrix
 
-| Adapter ID | Recognized extension | Availability | Compatibility | Accepted strategy | Owning package |
-|---|---|---|---|---|---|
-| `scss` | `.scss` | Unavailable | Unverified | `remove-until-funded` | `SCSS-001`, `SCSS-002` |
-| `sass` | `.sass` | Unavailable | Unverified | `remove-until-funded` | `SCSS-001`, `SCSS-002` |
-| `less` | `.less` | Unavailable | Unverified | `remove-until-funded` | `LESS-001` |
-| `stylus` | `.styl` | Unavailable | Unverified | `remove-until-funded` | `STYLUS-001` |
-| `css-modules` | `.module.css` | Unavailable | Unverified | `limited-native-subset` | `MODULE-001`, `MODULE-002` |
-| `css-in-js` | `.css.js`, `.css.ts` | Unavailable | Unverified | `remove-until-funded` | `JS-001` |
-| `postcss` | `.postcss` | Unavailable | Unverified | `remove-until-funded` | `POSTCSS-001` |
-| `tailwind` | `.postcss` (`@apply` path) | Unavailable | Unverified | `remove-until-funded` | `TAILWIND-001` |
+| Adapter ID | Recognized extension | Availability | Compatibility | Implementation | Accepted strategy | Owning package |
+|---|---|---|---|---|---|---|
+| `scss` | `.scss` | Unavailable | Unverified | Removed | `remove-until-funded` | `SCSS-001`, `SCSS-002` |
+| `sass` | `.sass` | Unavailable | Unverified | Removed | `remove-until-funded` | `SCSS-001`, `SCSS-002` |
+| `less` | `.less` | Unavailable | Unverified | LegacyCharacterized | `remove-until-funded` | `LESS-001` |
+| `stylus` | `.styl` | Unavailable | Unverified | LegacyCharacterized | `remove-until-funded` | `STYLUS-001` |
+| `css-modules` | `.module.css` | Unavailable | Unverified | LegacyCharacterized | `limited-native-subset` | `MODULE-001`, `MODULE-002` |
+| `css-in-js` | `.css.js`, `.css.ts` | Unavailable | Unverified | LegacyCharacterized | `remove-until-funded` | `JS-001` |
+| `postcss` | `.postcss` | Unavailable | Unverified | LegacyCharacterized | `remove-until-funded` | `POSTCSS-001` |
+| `tailwind` | `.postcss` (`@apply` path) | Unavailable | Unverified | LegacyCharacterized | `remove-until-funded` | `TAILWIND-001` |
 
 ## What the inherited code actually does
 
 | Adapter | Characterized internal boundary | Why it is not compatibility evidence |
 |---|---|---|
-| SCSS | Runs heuristic byte passes for variables, mixins/functions, control flow, nesting, placeholders, and selected built-ins, then invokes the inherited CSS parser. | Imports and selected directives are stripped; scans do not implement canonical Sass lexical, scope, module, interpolation, or evaluation rules. |
-| Indented Sass | Converts lines and indentation to brace CSS and performs dollar-variable substitution. | Selector/property identity is guessed from punctuation; comments, strings, modules, scope, interpolation, and expressions are not modeled. |
+| SCSS | Removed by `SCSS-001`; no parser or legacy `Format` dispatch remains. | The former byte passes stripped imports/directives and did not implement canonical Sass lexical, scope, module, interpolation, or evaluation rules. |
+| Indented Sass | Removed with SCSS by `SCSS-001`; no line converter or legacy `Format` dispatch remains. | The former converter guessed selector/property identity and did not model comments, strings, modules, scope, interpolation, or expressions. |
 | Less | Collects leading at-variables, removes their declarations, and performs global byte substitution. | A short name list distinguishes CSS at-rules; scope, lazy evaluation, mixins, nesting, imports, strings, comments, and arithmetic have no closed grammar. |
 | Stylus | Converts indentation to braces and substitutes dollar variables. | Optional punctuation is guessed from colons and leading bytes, and variable parse errors are swallowed during scanning. |
 | CSS Modules | Rewrites encountered legacy-AST class selectors with a name-only FNV-1a suffix. | Names are not file-specific, no export map is returned, and local/global scope, composition, values, dependencies, nested coverage, and collision policy are absent. |
@@ -41,7 +43,7 @@ The machine-readable authority is `tests/formats/matrix.json`. `npm run test:for
 
 ## Accepted direction
 
-ADR-005 chooses removal until a dedicated program is funded for SCSS/Sass, Less, Stylus, CSS-in-JS, PostCSS-like behavior, and Tailwind-like behavior. “Removal” means no public syntax tag, CLI option, package claim, or fallback to CSS. Verified native transforms keep ZigCSS-specific names rather than borrowing PostCSS or Tailwind branding.
+ADR-005 chooses removal until a dedicated program is funded for SCSS/Sass, Less, Stylus, CSS-in-JS, PostCSS-like behavior, and Tailwind-like behavior. `SCSS-001` has applied that decision to both Sass syntaxes by deleting their heuristic parser sources and legacy dispatch tags while retaining explicit CLI rejection. “Removal” means no public syntax tag, CLI option, package claim, or fallback to CSS. Verified native transforms keep ZigCSS-specific names rather than borrowing PostCSS or Tailwind branding.
 
 CSS Modules is the one accepted limited-native direction. `MODULE-001` must first produce file-specific deterministic names and owned export mappings. `MODULE-002` may then add an explicitly bounded grammar for local/global scope, composition, values, and dependencies. Any construct outside that published grammar must fail with a structured diagnostic and no partial CSS.
 

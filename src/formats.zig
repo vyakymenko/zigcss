@@ -3,8 +3,6 @@ const ast = @import("ast.zig");
 
 pub const Format = enum {
     css,
-    scss,
-    sass,
     less,
     css_modules,
     css_in_js,
@@ -21,8 +19,6 @@ pub fn isExperimental(format: Format) bool {
 pub fn displayName(format: Format) []const u8 {
     return switch (format) {
         .css => "CSS",
-        .scss => "SCSS",
-        .sass => "SASS",
         .less => "LESS",
         .css_modules => "CSS Modules",
         .css_in_js => "CSS-in-JS",
@@ -31,11 +27,11 @@ pub fn displayName(format: Format) []const u8 {
     };
 }
 
-pub fn detectFormat(filename: []const u8) Format {
-    if (std.mem.endsWith(u8, filename, ".scss")) {
-        return .scss;
-    } else if (std.mem.endsWith(u8, filename, ".sass")) {
-        return .sass;
+pub fn detectFormat(filename: []const u8) ?Format {
+    if (std.mem.endsWith(u8, filename, ".scss") or
+        std.mem.endsWith(u8, filename, ".sass"))
+    {
+        return null;
     } else if (std.mem.endsWith(u8, filename, ".less")) {
         return .less;
     } else if (std.mem.endsWith(u8, filename, ".module.css")) {
@@ -46,8 +42,10 @@ pub fn detectFormat(filename: []const u8) Format {
         return .postcss;
     } else if (std.mem.endsWith(u8, filename, ".styl")) {
         return .stylus;
-    } else {
+    } else if (std.mem.endsWith(u8, filename, ".css")) {
         return .css;
+    } else {
+        return null;
     }
 }
 
@@ -58,8 +56,6 @@ pub const ParserTrait = struct {
 pub fn getParser(format: Format) ParserTrait {
     return switch (format) {
         .css => .{ .parseFn = parseCSS },
-        .scss => .{ .parseFn = parseSCSS },
-        .sass => .{ .parseFn = parseSASS },
         .less => .{ .parseFn = parseLESS },
         .css_modules => .{ .parseFn = parseCSSModules },
         .css_in_js => .{ .parseFn = parseCSSInJS },
@@ -71,20 +67,6 @@ pub fn getParser(format: Format) ParserTrait {
 fn parseCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
     const css_parser = @import("parser.zig");
     var p = css_parser.Parser.init(allocator, input);
-    return try p.parse();
-}
-
-fn parseSCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    const scss_parser = @import("formats/scss.zig");
-    var p = scss_parser.Parser.init(allocator, input);
-    defer p.deinit();
-    return try p.parse();
-}
-
-fn parseSASS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    const sass_parser = @import("formats/sass.zig");
-    var p = try sass_parser.Parser.init(allocator, input);
-    defer p.deinit();
     return try p.parse();
 }
 
@@ -124,15 +106,16 @@ fn parseStylus(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet 
 }
 
 test "detect format from filename" {
-    try std.testing.expect(detectFormat("style.css") == .css);
-    try std.testing.expect(detectFormat("style.scss") == .scss);
-    try std.testing.expect(detectFormat("style.sass") == .sass);
-    try std.testing.expect(detectFormat("style.less") == .less);
-    try std.testing.expect(detectFormat("style.module.css") == .css_modules);
-    try std.testing.expect(detectFormat("style.css.js") == .css_in_js);
-    try std.testing.expect(detectFormat("style.css.ts") == .css_in_js);
-    try std.testing.expect(detectFormat("style.postcss") == .postcss);
-    try std.testing.expect(detectFormat("style.styl") == .stylus);
+    try std.testing.expectEqual(Format.css, detectFormat("style.css").?);
+    try std.testing.expectEqual(Format.less, detectFormat("style.less").?);
+    try std.testing.expectEqual(Format.css_modules, detectFormat("style.module.css").?);
+    try std.testing.expectEqual(Format.css_in_js, detectFormat("style.css.js").?);
+    try std.testing.expectEqual(Format.css_in_js, detectFormat("style.css.ts").?);
+    try std.testing.expectEqual(Format.postcss, detectFormat("style.postcss").?);
+    try std.testing.expectEqual(Format.stylus, detectFormat("style.styl").?);
+    try std.testing.expect(detectFormat("style.scss") == null);
+    try std.testing.expect(detectFormat("style.sass") == null);
+    try std.testing.expect(detectFormat("style.unknown") == null);
 }
 
 test "non-CSS format adapters are classified as experimental" {

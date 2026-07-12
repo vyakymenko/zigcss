@@ -29,6 +29,7 @@ describe('published experimental format matrix', () => {
       expect(row).toBeDefined()
       expect(row).toContain(`| ${adapter.availability} |`)
       expect(row).toContain(`| ${adapter.compatibility} |`)
+      expect(row).toContain(`| ${adapter.implementation} |`)
       expect(row).toContain(`| \`${adapter.strategy}\` |`)
       for (const extension of adapter.extensions) expect(row).toContain(`\`${extension}\``)
       for (const owner of adapter.ownerPackages) expect(row).toContain(`\`${owner}\``)

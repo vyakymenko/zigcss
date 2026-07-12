@@ -64,8 +64,8 @@ const capabilities = [
   },
   {
     surface: "Alternate format adapters",
-    status: "Experimental / CLI-disabled",
-    detail: "Legacy SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, and CSS-in-JS adapters remain internal.",
+    status: "Unavailable",
+    detail: "SCSS and SASS parser sources are removed; remaining legacy adapters stay internal and unavailable.",
   },
   {
     surface: "LSP",

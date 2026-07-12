@@ -4,6 +4,7 @@ const formats = @import("formats.zig");
 const error_module = @import("error.zig");
 const ast = @import("ast.zig");
 
+const unsupported_format_message = "Unsupported or removed stylesheet format";
 
 pub const LspServer = struct {
     allocator: std.mem.Allocator,
@@ -11,8 +12,8 @@ pub const LspServer = struct {
     root_uri: ?[]const u8 = null,
     documents: std.StringHashMap(Document),
     
+    // The hash-map key is the sole owned URI copy.
     const Document = struct {
-        uri: []const u8,
         version: i32,
         text: []const u8,
     };
@@ -29,7 +30,6 @@ pub const LspServer = struct {
         var it = self.documents.iterator();
         while (it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*.uri);
             self.allocator.free(entry.value_ptr.*.text);
         }
         self.documents.deinit();
@@ -161,7 +161,6 @@ pub const LspServer = struct {
         errdefer self.allocator.free(text_copy);
         
         try self.documents.put(uri_copy, .{
-            .uri = uri_copy,
             .version = @intCast(version),
             .text = text_copy,
         });
@@ -191,7 +190,6 @@ pub const LspServer = struct {
                 errdefer self.allocator.free(text_copy);
                 
                 try self.documents.put(uri_copy, .{
-                    .uri = uri_copy,
                     .version = @intCast(version),
                     .text = text_copy,
                 });
@@ -218,7 +216,13 @@ pub const LspServer = struct {
         var first = true;
         
         const format = formats.detectFormat(uri.string);
-        if (format == .css) {
+        if (format == null) {
+            if (!first) try diagnostics.append(self.allocator, ',');
+            first = false;
+            try diagnostics.writer(self.allocator).print(
+                "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":1}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zigcss\"}}",
+                .{unsupported_format_message});
+        } else if (format.? == .css) {
             var css_parser = parser.Parser.init(self.allocator, doc.text);
             defer if (css_parser.owns_pool) {
                 css_parser.string_pool.deinit();
@@ -244,7 +248,7 @@ pub const LspServer = struct {
                 },
             }
         } else {
-            const parser_trait = formats.getParser(format);
+            const parser_trait = formats.getParser(format.?);
             if (parser_trait.parseFn(self.allocator, doc.text)) |stylesheet_result| {
                 var stylesheet = stylesheet_result;
                 defer stylesheet.deinit();
@@ -725,3 +729,46 @@ test "LSP handle initialize request" {
     try std.testing.expect(std.mem.containsAtLeast(u8, response, 1, "textDocumentSync"));
 }
 
+test "LSP diagnostics reject removed Sass formats without CSS fallback" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    const cases = [_]struct {
+        open: []const u8,
+        diagnostics: []const u8,
+    }{
+        .{
+            .open =
+            \\{"jsonrpc":"2.0","id":1,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.scss","version":1,"text":"$color: red;"}}}
+            ,
+            .diagnostics =
+            \\{"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.scss"}}}
+            ,
+        },
+        .{
+            .open =
+            \\{"jsonrpc":"2.0","id":3,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.sass","version":1,"text":"$color: red"}}}
+            ,
+            .diagnostics =
+            \\{"jsonrpc":"2.0","id":4,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.sass"}}}
+            ,
+        },
+    };
+
+    for (cases) |case| {
+        const opened = try server.handleRequest(case.open);
+        defer allocator.free(opened);
+        const diagnostics = try server.handleRequest(case.diagnostics);
+        defer allocator.free(diagnostics);
+        try std.testing.expect(std.mem.containsAtLeast(
+            u8,
+            diagnostics,
+            1,
+            unsupported_format_message,
+        ));
+    }
+}

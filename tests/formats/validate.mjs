@@ -51,11 +51,16 @@ function expectExactSet(actual, expected, label) {
   }
 }
 
-function repositoryFile(relativePath) {
+function repositoryPath(relativePath) {
   const resolved = path.resolve(repositoryRoot, relativePath)
   if (!resolved.startsWith(`${repositoryRoot}${path.sep}`)) {
     fail(`path escapes repository: ${relativePath}`)
   }
+  return resolved
+}
+
+function repositoryFile(relativePath) {
+  const resolved = repositoryPath(relativePath)
   if (!fs.statSync(resolved).isFile()) fail(`not a file: ${relativePath}`)
   return resolved
 }
@@ -74,8 +79,14 @@ function validateMatrix() {
   if (matrix.schemaVersion !== 1) fail(`unsupported matrix schema: ${matrix.schemaVersion}`)
   const availability = new Set(Object.keys(matrix.availabilityDefinitions ?? {}))
   const compatibility = new Set(Object.keys(matrix.compatibilityDefinitions ?? {}))
+  const implementations = new Set(Object.keys(matrix.implementationDefinitions ?? {}))
   const strategies = new Set(Object.keys(matrix.strategyDefinitions ?? {}))
-  if (availability.size === 0 || compatibility.size === 0 || strategies.size === 0) {
+  if (
+    availability.size === 0 ||
+    compatibility.size === 0 ||
+    implementations.size === 0 ||
+    strategies.size === 0
+  ) {
     fail('matrix definitions must be nonempty')
   }
   if (!Array.isArray(matrix.adapters) || matrix.adapters.length === 0) {
@@ -101,6 +112,9 @@ function validateMatrix() {
     if (!compatibility.has(adapter.compatibility)) {
       fail(`${adapter.id}: unknown compatibility ${adapter.compatibility}`)
     }
+    if (!implementations.has(adapter.implementation)) {
+      fail(`${adapter.id}: unknown implementation ${adapter.implementation}`)
+    }
     if (!strategies.has(adapter.strategy)) fail(`${adapter.id}: unknown strategy ${adapter.strategy}`)
     if (!Array.isArray(adapter.extensions) || adapter.extensions.length === 0) {
       fail(`${adapter.id}: extensions must be nonempty`)
@@ -123,26 +137,45 @@ function validateMatrix() {
     if (typeof adapter.probe !== 'string' || adapter.probe.length === 0) {
       fail(`${adapter.id}: probe must be nonempty`)
     }
-    if (!Array.isArray(adapter.sourceFiles) || adapter.sourceFiles.length === 0) {
-      fail(`${adapter.id}: sourceFiles must be nonempty`)
-    }
+    if (!Array.isArray(adapter.sourceFiles)) fail(`${adapter.id}: sourceFiles must be an array`)
     for (const sourceFile of adapter.sourceFiles) {
       repositoryFile(sourceFile)
       coveredSources.add(sourceFile)
     }
-    if (!Array.isArray(adapter.sourceEvidence) || adapter.sourceEvidence.length === 0) {
-      fail(`${adapter.id}: sourceEvidence must be nonempty`)
-    }
-    for (const evidence of adapter.sourceEvidence) {
-      if (!adapter.sourceFiles.includes(evidence.file)) {
-        fail(`${adapter.id}: evidence file is outside sourceFiles: ${evidence.file}`)
+    if (adapter.implementation === 'LegacyCharacterized') {
+      if (adapter.sourceFiles.length === 0) fail(`${adapter.id}: legacy sourceFiles must be nonempty`)
+      if (!Array.isArray(adapter.sourceEvidence) || adapter.sourceEvidence.length === 0) {
+        fail(`${adapter.id}: sourceEvidence must be nonempty`)
       }
-      if (typeof evidence.contains !== 'string' || evidence.contains.length === 0) {
-        fail(`${adapter.id}: evidence anchor must be nonempty`)
+      for (const evidence of adapter.sourceEvidence) {
+        if (!adapter.sourceFiles.includes(evidence.file)) {
+          fail(`${adapter.id}: evidence file is outside sourceFiles: ${evidence.file}`)
+        }
+        validateEvidence(adapter.id, evidence)
       }
-      const source = fs.readFileSync(repositoryFile(evidence.file), 'utf8')
-      if (!source.includes(evidence.contains)) {
-        fail(`${adapter.id}: missing source evidence ${JSON.stringify(evidence.contains)}`)
+      if (adapter.removedBy !== undefined || adapter.removedSourceFiles !== undefined) {
+        fail(`${adapter.id}: legacy implementation cannot claim removal metadata`)
+      }
+    } else if (adapter.implementation === 'Removed') {
+      if (adapter.formatTag !== null) fail(`${adapter.id}: removed implementation retains a Format tag`)
+      if (adapter.sourceFiles.length !== 0) fail(`${adapter.id}: removed implementation retains sourceFiles`)
+      if (!adapter.ownerPackages.includes(adapter.removedBy)) {
+        fail(`${adapter.id}: removedBy must name an owner package`)
+      }
+      if (!Array.isArray(adapter.removedSourceFiles) || adapter.removedSourceFiles.length === 0) {
+        fail(`${adapter.id}: removedSourceFiles must be nonempty`)
+      }
+      for (const removedSource of adapter.removedSourceFiles) {
+        if (fs.existsSync(repositoryPath(removedSource))) {
+          fail(`${adapter.id}: removed source still exists: ${removedSource}`)
+        }
+      }
+      if (!Array.isArray(adapter.containmentEvidence) || adapter.containmentEvidence.length === 0) {
+        fail(`${adapter.id}: containmentEvidence must be nonempty`)
+      }
+      for (const evidence of adapter.containmentEvidence) validateEvidence(adapter.id, evidence)
+      if (adapter.sourceEvidence !== undefined) {
+        fail(`${adapter.id}: removed implementation must not retain sourceEvidence`)
       }
     }
     const strategyRow = `| \`${adapter.id}\` | \`${adapter.strategy}\` |`
@@ -185,6 +218,16 @@ function validateMatrix() {
   return matrix
 }
 
+function validateEvidence(adapterId, evidence) {
+  if (typeof evidence.contains !== 'string' || evidence.contains.length === 0) {
+    fail(`${adapterId}: evidence anchor must be nonempty`)
+  }
+  const source = fs.readFileSync(repositoryFile(evidence.file), 'utf8')
+  if (!source.includes(evidence.contains)) {
+    fail(`${adapterId}: missing source evidence ${JSON.stringify(evidence.contains)}`)
+  }
+}
+
 function validateCliRejections(compiler, matrix) {
   fs.accessSync(compiler, fs.constants.X_OK)
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-format-matrix-'))
@@ -224,6 +267,7 @@ function validateCliRejections(compiler, matrix) {
 const compiler = compilerFromArguments(process.argv.slice(2))
 const matrix = validateMatrix()
 const rejectionCount = validateCliRejections(compiler, matrix)
+const removedCount = matrix.adapters.filter(adapter => adapter.implementation === 'Removed').length
 console.log(
-  `Format matrix verified: ${matrix.adapters.length} adapters, ${rejectionCount} rejected extension probes, complete legacy-source coverage.`,
+  `Format matrix verified: ${matrix.adapters.length} adapters, ${removedCount} removed implementations, ${rejectionCount} rejected extension probes, complete legacy-source coverage.`,
 )

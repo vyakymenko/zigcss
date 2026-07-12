@@ -32,7 +32,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | Target prefix rewrite | Experimental, library-only | One verified pass adds closed forms for eight pinned property/value/selector/at-rule features; it is exercised through the pass manager and test driver, not the recovery CLI. |
 | Source maps | Experimental, library-only | Deterministic maps are available from the library pipeline; CLI output policy remains undefined. |
 | Browser target queries | Experimental, library-only | A strict explicit-minimum grammar and pinned BCD 8.0.0 subset deterministically configure the verified rewrite; `--browsers` and `--autoprefix` remain unavailable pending later public CLI wiring. |
-| SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS, Tailwind-like `@apply` | Unavailable | The executable rejects every alternate extension before output. The [format matrix](docs/src/content/docs/guide/format-compatibility.md) records each legacy boundary and accepted strategy. |
+| SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS, Tailwind-like `@apply` | Unavailable | The executable rejects every alternate extension before output. SCSS/SASS parser sources are removed; the [format matrix](docs/src/content/docs/guide/format-compatibility.md) distinguishes removed and characterized implementations. |
 | LSP | Experimental | Still consumes the legacy parser. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 pending bounded isolation. |
 
