@@ -53,7 +53,7 @@ pub fn main() !void {
 
 ## Local Zig package dependency
 
-The root `build.zig.zon` declares package `zigcss` 0.3.0, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. It exports only `build.zig`, `build.zig.zon`, `src`, `README.md`, and `LICENSE`. The unsupported legacy build helper, tests, docs, package-manager wrappers, and editor files are not part of the Zig package.
+The root `build.zig.zon` declares package `zigcss` 0.3.0, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. It exports only `build.zig`, `build.zig.zon`, supported `build_helpers.zig`, `src`, `README.md`, and `LICENSE`. Tests, docs, package-manager wrappers, and editor files are not part of the Zig package.
 
 `tests/package-consumer` declares the repository as a path dependency, requests `zigcss.module("zigcss")`, and compiles the owned API from outside the package. Run its exact consumer gate with:
 
@@ -62,7 +62,15 @@ cd tests/package-consumer
 zig build test --summary all
 ```
 
-The package is also verified through a fresh `zig fetch .` cache so the allowlisted copy—not only the full checkout—can satisfy a consumer. A remote URL/hash is intentionally not documented before an artifact is published. `build_helpers.zig` will enter the allowlist only after `BUILD-002` replaces its unsupported build APIs.
+The package is also verified through a fresh `zig fetch .` cache so the allowlisted copy—not only the full checkout—can satisfy a consumer. A remote URL/hash is intentionally not documented before an artifact is published.
+
+## Cached CSS build helper
+
+A dependency build script imports `const zigcss_build = @import("zigcss")`, obtains the executable with `b.dependency("zigcss", ...).artifact("zigcss")`, and calls `zigcss_build.helpers.addCssCompile`. The exact working form is the committed `tests/package-consumer/build.zig`; its test runs in CI rather than relying on an uncompiled documentation fragment.
+
+Each call declares one CSS input as `std.Build.LazyPath` and one generated output through a portable `.css` basename of at most 128 bytes. The returned `getOutput()` path can feed `b.addCheckFile`, `b.addInstallFile`, or another step. Optional `optimize` and `minify` fields map only to the accepted CLI features. Source maps, browser targeting, prefixing, arbitrary extra arguments, batch output directories, and alternate syntaxes are absent while their CLI contracts remain unavailable.
+
+The executable passed to the helper must run on the build host. A cross-target project must obtain a separate host-target ZigCSS artifact for this run step instead of attempting to execute its application-target binary. The helper's file/output arguments make unchanged builds cacheable; the package fixture proves a second run is cached and a source-byte change reruns compilation while preserving exact output.
 
 The independent parser gate additionally requires Node.js. After the Zig build has produced the executable, run:
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+pub const helpers = @import("build_helpers.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -109,6 +110,32 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&public_api_example.step);
     test_step.dependOn(&run_audit_tests.step);
     test_step.dependOn(&install_transform_driver.step);
+
+    const helper_compilation = helpers.addCssCompile(b, exe, .{
+        .input = b.path("tests/build-helpers/input.css"),
+        .output_name = "build-helper.css",
+        .optimize = true,
+        .minify = true,
+    });
+    const check_helper_output = b.addCheckFile(helper_compilation.getOutput(), .{
+        .expected_exact = ".card{width:3px;color:#fff}",
+    });
+    check_helper_output.setName("verify build-helper CSS output");
+    const helper_test_module = b.createModule(.{
+        .root_source_file = b.path("build_helpers.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const helper_unit_tests = b.addTest(.{ .root_module = helper_test_module });
+    const run_helper_unit_tests = b.addRunArtifact(helper_unit_tests);
+    const helper_test_step = b.step(
+        "test-build-helpers",
+        "Test declared ZigCSS build inputs and outputs",
+    );
+    helper_test_step.dependOn(&check_helper_output.step);
+    helper_test_step.dependOn(&run_helper_unit_tests.step);
+    test_step.dependOn(&check_helper_output.step);
+    test_step.dependOn(&run_helper_unit_tests.step);
 
     const bench_module = b.addModule("zigcss-bench", .{
         .root_source_file = b.path("src/benchmarks.zig"),

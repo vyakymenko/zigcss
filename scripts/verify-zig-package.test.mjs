@@ -39,13 +39,29 @@ test('Zig package contents are an explicit minimal allowlist', () => {
   assert.deepEqual(paths, [
     'build.zig',
     'build.zig.zon',
+    'build_helpers.zig',
     'src',
     'README.md',
     'LICENSE',
   ])
-  assert.ok(!paths.includes('build_helpers.zig'))
   assert.ok(!paths.includes('tests'))
   assert.ok(!paths.includes('docs'))
+})
+
+test('build helpers declare cacheable inputs and outputs without custom make logic', () => {
+  const helper = read('build_helpers.zig')
+  const build = read('build.zig')
+
+  assert.match(helper, /pub fn addCssCompile\(/)
+  assert.match(helper, /run\.addFileArg\(options\.input\)/)
+  assert.match(helper, /run\.addOutputFileArg\(options\.output_name\)/)
+  assert.match(helper, /pub fn getOutput\(self: CssCompile\) Build\.LazyPath/)
+  assert.match(helper, /run\.stdio_limit = \.limited\(1024 \* 1024\)/)
+  assert.doesNotMatch(helper, /makeFn|@fieldParentPtr|\.step\.make|ArrayList/)
+  assert.doesNotMatch(helper, /source_map|autoprefix|browsers/i)
+  assert.match(build, /test-build-helpers/)
+  assert.match(build, /pub const helpers = @import\("build_helpers\.zig"\)/)
+  assert.match(build, /b\.addCheckFile\(helper_compilation\.getOutput\(\)/)
 })
 
 test('the committed consumer uses the package manager rather than a relative source import', () => {
@@ -57,6 +73,8 @@ test('the committed consumer uses the package manager rather than a relative sou
   assert.match(manifest, /\.zigcss\s*=\s*\.\{\s*\.path\s*=\s*"\.\.\/\.\."\s*\}/)
   assert.match(build, /b\.dependency\("zigcss"/)
   assert.match(build, /zigcss\.module\("zigcss"\)/)
+  assert.match(build, /@import\("zigcss"\)/)
+  assert.match(build, /zigcss_build\.helpers\.addCssCompile/)
   assert.match(consumer, /@import\("zigcss"\)/)
   assert.doesNotMatch(consumer, /@import\("\.\.\//)
 })
@@ -75,6 +93,7 @@ test('active source and CI surfaces agree on the Zig 0.15.2 baseline', () => {
   assert.match(read('Dockerfile'), /ARG ZIG_VERSION=0\.15\.2/)
   assert.match(read('README.md'), /Use Zig 0\.15\.2:/)
   assert.match(read('README.md'), /`build\.zig\.zon` gives the source package stable identity/)
+  assert.match(read('README.md'), /helpers\.addCssCompile/)
   assert.match(read('docs/src/content/docs/guide/build-from-source.md'), /- Zig 0\.15\.2/)
   assert.match(read('docs/src/content/docs/guide/build-from-source.md'), /tests\/package-consumer/)
   assert.match(read('docs/src/app/components/GettingStarted.tsx'), /Use Zig 0\.15\.2 and run:/)

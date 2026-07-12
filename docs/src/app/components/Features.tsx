@@ -18,6 +18,11 @@ const capabilities = [
     detail: "Package zigcss 0.3.0 pins minimum Zig 0.15.2 and a minimal source allowlist; path and freshly fetched consumers resolve the public module.",
   },
   {
+    surface: "Zig build helper",
+    status: "Experimental / consumer-tested",
+    detail: "The dependency build module creates cached host-tool runs with declared LazyPath inputs and generated CSS outputs; unavailable CLI options are excluded.",
+  },
+  {
     surface: "Native plugins",
     status: "Experimental / trusted library-only",
     detail: "Borrowed plugin.-namespaced Zig callbacks use deterministic transactional pass plans; there is no stable ABI, sandbox, CLI, or HTTP path.",

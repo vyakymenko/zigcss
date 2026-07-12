@@ -19,6 +19,7 @@ describe('Features', () => {
     expect(screen.getByText('Basic CSS parsing and emission')).toBeInTheDocument()
     expect(screen.getByText('Zig compile API')).toBeInTheDocument()
     expect(screen.getByText('Zig package metadata')).toBeInTheDocument()
+    expect(screen.getByText('Zig build helper')).toBeInTheDocument()
     expect(screen.getByText('Native plugins')).toBeInTheDocument()
     expect(screen.getByText('Alternate format adapters')).toBeInTheDocument()
     expect(screen.getAllByText(/experimental/i).length).toBeGreaterThan(1)

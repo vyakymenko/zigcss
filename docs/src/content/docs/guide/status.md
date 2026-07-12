@@ -9,6 +9,7 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 | CSS CLI parsing and emission | Experimental, matrix-tested | The stable CLI uses the new source/token/syntax/typed-parser pipeline; its current grammar boundary is published and independently parsed. |
 | Zig compile API | Experimental, consumer-tested | `zigcss.compile` returns owned CSS/maps, located diagnostics, ordered decoded imports, and optional module-export state; accepted transforms and borrowed canonical targets are explicit options. |
 | Zig package metadata | Experimental, consumer-tested | Package `zigcss` 0.3.0 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`. |
+| Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` uses declared lazy file inputs/outputs and a host compiler artifact; unavailable CLI features are not represented. |
 | Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed `plugin.`-namespaced Zig callbacks through bounded deterministic pass plans; there is no stable ABI, sandbox, CLI, or HTTP path. |
 | `--minify` | Experimental | Changes whitespace during emission only; it is independent of `--optimize`. |
 | Output planning | Safety boundary verified | Input/output aliases and multi-file destination collisions are rejected before writes. |
@@ -30,7 +31,9 @@ The build registers `src/lib.zig` as the external `zigcss` module. A separate co
 
 `CompileOptions` currently admits only CSS, pretty/minified output, separate maps, the closed optimizer preset, the verified target-prefix pass with a borrowed canonical query, and explicitly experimental trusted native plugins. Targets without prefixing, prefixing without targets, forged queries, optimized source maps, and active plugin source maps return `API0001` diagnostics without CSS. Stable CSS returns no module exports. Remote package publication, build helpers, and CSS Modules remain later packages.
 
-The Zig manifest pins package identity, project version 0.3.0, and minimum Zig 0.15.2. Its allowlist contains only the build entry point, manifest, compiler sources, README, and license. A path dependency and an isolated `zig fetch .` copy both compile the public module. Tests, docs, wrappers, editor files, and the unsupported legacy build helper are not exported; no remote URL/hash is claimed before publication.
+The Zig manifest pins package identity, project version 0.3.0, and minimum Zig 0.15.2. Its allowlist contains only the build entry point, manifest, supported build helper, compiler sources, README, and license. A path dependency and an isolated `zig fetch .` copy both compile the public module. Tests, docs, wrappers, and editor files are not exported; no remote URL/hash is claimed before publication.
+
+The dependency's build module exports `helpers.addCssCompile`. It configures an ordinary cached run step during graph construction, accepts one declared input `LazyPath`, creates one generated CSS output path, and exposes only the stable CLI's optimize/minify choices. A downstream `CheckFile` proves exact output, repeated runs are cached, and changing only the input bytes reruns compilation. Output names are bounded portable `.css` basenames. The caller must supply a host-runnable ZigCSS artifact; source maps, prefix/target options, alternate formats, arbitrary arguments, and batch directories remain absent.
 
 ## Experimental native plugin boundary
 

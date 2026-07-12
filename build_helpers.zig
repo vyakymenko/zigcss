@@ -1,148 +1,102 @@
 const std = @import("std");
 const Build = std.Build;
 
-pub const CssCompileStep = struct {
-    step: Build.Step,
-    builder: *Build,
-    zigcss_exe: *Build.Step.Compile,
-    input_files: std.ArrayList([]const u8),
-    output_dir: []const u8,
-    optimize: bool,
-    minify: bool,
-    source_map: bool,
-    autoprefix: bool,
-    browsers: std.ArrayList([]const u8),
+pub const max_output_name_bytes: usize = 128;
 
-    pub fn init(
-        builder: *Build,
-        zigcss_exe: *Build.Step.Compile,
-        output_dir: []const u8,
-    ) *CssCompileStep {
-        const self = builder.allocator.create(CssCompileStep) catch @panic("OOM");
-        self.* = .{
-            .step = Build.Step.init(.{
-                .id = .custom,
-                .name = "compile-css",
-                .owner = builder,
-                .makeFn = make,
-            }),
-            .builder = builder,
-            .zigcss_exe = zigcss_exe,
-            .input_files = std.ArrayList([]const u8).init(builder.allocator),
-            .output_dir = output_dir,
-            .optimize = false,
-            .minify = false,
-            .source_map = false,
-            .autoprefix = false,
-            .browsers = std.ArrayList([]const u8).init(builder.allocator),
-        };
-        return self;
+/// One cacheable CSS compiler invocation. The input is a declared `LazyPath`
+/// and `output_name` is a portable basename used for the generated `LazyPath`.
+/// The executable must be runnable on the build host.
+pub const CompileOptions = struct {
+    input: Build.LazyPath,
+    output_name: []const u8,
+    optimize: bool = false,
+    minify: bool = false,
+};
+
+/// A configured run step plus its declared generated CSS file. Downstream
+/// build steps should consume `output` rather than guessing a cache path.
+pub const CssCompile = struct {
+    step_handle: *Build.Step,
+    output: Build.LazyPath,
+
+    pub fn step(self: CssCompile) *Build.Step {
+        return self.step_handle;
     }
 
-    pub fn addInputFile(self: *CssCompileStep, file: []const u8) void {
-        self.input_files.append(self.builder.allocator, file) catch @panic("OOM");
-    }
-
-    pub fn addInputFiles(self: *CssCompileStep, files: []const []const u8) void {
-        for (files) |file| {
-            self.addInputFile(file);
-        }
-    }
-
-    pub fn setOptimize(self: *CssCompileStep, optimize: bool) void {
-        self.optimize = optimize;
-    }
-
-    pub fn setMinify(self: *CssCompileStep, minify: bool) void {
-        self.minify = minify;
-    }
-
-    pub fn setSourceMap(self: *CssCompileStep, source_map: bool) void {
-        self.source_map = source_map;
-    }
-
-    pub fn setAutoprefix(self: *CssCompileStep, autoprefix: bool) void {
-        self.autoprefix = autoprefix;
-    }
-
-    pub fn addBrowser(self: *CssCompileStep, browser: []const u8) void {
-        self.browsers.append(self.builder.allocator, browser) catch @panic("OOM");
-    }
-
-    pub fn addBrowsers(self: *CssCompileStep, browsers: []const []const u8) void {
-        for (browsers) |browser| {
-            self.addBrowser(browser);
-        }
-    }
-
-    fn make(step: *Build.Step, progress: *std.Progress.Node) !void {
-        _ = progress;
-        const self = @fieldParentPtr(CssCompileStep, "step", step);
-
-        const run_cmd = self.builder.addRunArtifact(self.zigcss_exe);
-        run_cmd.step.dependOn(&self.zigcss_exe.step);
-
-        if (self.input_files.items.len == 0) {
-            return error.NoInputFiles;
-        }
-
-        for (self.input_files.items) |input_file| {
-            run_cmd.addArg(input_file);
-        }
-
-        if (self.output_dir.len > 0) {
-            run_cmd.addArg("-o");
-            run_cmd.addArg(self.output_dir);
-            run_cmd.addArg("--output-dir");
-        }
-
-        if (self.optimize) {
-            run_cmd.addArg("--optimize");
-        }
-
-        if (self.minify) {
-            run_cmd.addArg("--minify");
-        }
-
-        if (self.source_map) {
-            run_cmd.addArg("--source-map");
-        }
-
-        if (self.autoprefix) {
-            run_cmd.addArg("--autoprefix");
-            if (self.browsers.items.len > 0) {
-                run_cmd.addArg("--browsers");
-                var browsers_str = std.ArrayList(u8).init(self.builder.allocator);
-                defer browsers_str.deinit();
-                for (self.browsers.items, 0..) |browser, i| {
-                    if (i > 0) {
-                        browsers_str.appendSlice(self.builder.allocator, ",") catch @panic("OOM");
-                    }
-                    browsers_str.appendSlice(self.builder.allocator, browser) catch @panic("OOM");
-                }
-                run_cmd.addArg(browsers_str.items);
-            }
-        }
-
-        try run_cmd.step.make(step, progress);
+    pub fn getOutput(self: CssCompile) Build.LazyPath {
+        return self.output;
     }
 };
 
-pub fn addCssCompileStep(
-    builder: *Build,
+pub fn addCssCompile(
+    b: *Build,
     zigcss_exe: *Build.Step.Compile,
-    output_dir: []const u8,
-) *CssCompileStep {
-    return CssCompileStep.init(builder, zigcss_exe, output_dir);
+    options: CompileOptions,
+) CssCompile {
+    if (!isValidOutputName(options.output_name)) {
+        std.debug.panic(
+            "ZigCSS output_name must be a portable .css basename of at most {d} bytes, got '{s}'",
+            .{ max_output_name_bytes, options.output_name },
+        );
+    }
+
+    const run = b.addRunArtifact(zigcss_exe);
+    run.setName(b.fmt("compile CSS ({s})", .{options.output_name}));
+    run.stdio_limit = .limited(1024 * 1024);
+    run.addFileArg(options.input);
+    run.addArg("-o");
+    const output = run.addOutputFileArg(options.output_name);
+    if (options.optimize) run.addArg("--optimize");
+    if (options.minify) run.addArg("--minify");
+    return .{ .step_handle = &run.step, .output = output };
 }
 
-pub fn addCssCompileStepTo(
-    builder: *Build,
+pub fn addCssCompileTo(
+    b: *Build,
     zigcss_exe: *Build.Step.Compile,
-    output_dir: []const u8,
-    step: *Build.Step,
-) *CssCompileStep {
-    const css_step = addCssCompileStep(builder, zigcss_exe, output_dir);
-    step.dependOn(&css_step.step);
-    return css_step;
+    options: CompileOptions,
+    parent: *Build.Step,
+) CssCompile {
+    const compilation = addCssCompile(b, zigcss_exe, options);
+    parent.dependOn(compilation.step());
+    return compilation;
+}
+
+pub fn isValidOutputName(name: []const u8) bool {
+    if (name.len == 0 or name.len > max_output_name_bytes) return false;
+    if (!std.mem.endsWith(u8, name, ".css")) return false;
+    if (std.mem.eql(u8, name, ".css")) return false;
+    for (name) |byte| {
+        if (!(std.ascii.isAlphanumeric(byte) or byte == '.' or byte == '-' or byte == '_')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+test "generated CSS output names are portable bounded basenames" {
+    const valid = [_][]const u8{
+        "app.css",
+        "app.min.css",
+        "theme-dark_2.css",
+    };
+    for (valid) |name| try std.testing.expect(isValidOutputName(name));
+
+    const invalid = [_][]const u8{
+        "",
+        ".css",
+        "app.CSS",
+        "app.css.map",
+        "nested/app.css",
+        "nested\\app.css",
+        "../app.css",
+        "app style.css",
+        "app\x00.css",
+        "é.css",
+    };
+    for (invalid) |name| try std.testing.expect(!isValidOutputName(name));
+
+    var too_long = [_]u8{'a'} ** (max_output_name_bytes + 1);
+    @memcpy(too_long[too_long.len - 4 ..], ".css");
+    try std.testing.expect(!isValidOutputName(&too_long));
 }
