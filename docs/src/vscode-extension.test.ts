@@ -14,7 +14,8 @@ describe('experimental VS Code extension package', () => {
     const extension = JSON.parse(read('vscode-extension/package.json'))
     const lock = JSON.parse(read('vscode-extension/package-lock.json'))
 
-    expect(extension.version).toBe(root.version)
+    expect(extension.version).toBe(root.version.split('-')[0])
+    expect(extension.preview).toBe(true)
     expect(root.scripts['test:vscode']).toContain('vscode-extension')
     expect(read('build.zig.zon')).toContain(`.version = "${root.version}"`)
     expect(lock.packages[''].version).toBe(extension.version)

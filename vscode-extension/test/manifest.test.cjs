@@ -24,8 +24,10 @@ test('extension identity and dependency versions are synchronized and exact', ()
     ),
   )
 
-  assert.equal(manifest.version, rootManifest.version)
-  assert.match(zigManifest, new RegExp(`\\.version = "${manifest.version.replaceAll('.', '\\.')}"`))
+  assert.equal(manifest.version, rootManifest.version.split('-')[0])
+  assert.equal(manifest.preview, true)
+  assert.match(read('scripts/verify-package.mjs'), /'--pre-release'/)
+  assert.match(zigManifest, new RegExp(`\\.version = "${rootManifest.version.replaceAll('.', '\\.')}"`))
   assert.equal(lock.packages[''].version, manifest.version)
   assert.equal(manifest.engines.vscode, languageClient.engines.vscode)
   for (const version of [

@@ -11,7 +11,7 @@ describe('Home', () => {
   it('identifies the recovery build as experimental', () => {
     renderHome()
     expect(screen.getByRole('heading', { name: 'ZigCSS' })).toBeInTheDocument()
-    expect(screen.getByText(/experimental recovery build/i)).toBeInTheDocument()
+    expect(screen.getByText(/experimental release candidate/i)).toBeInTheDocument()
     expect(screen.getByText(/not production use/i)).toBeInTheDocument()
   })
 

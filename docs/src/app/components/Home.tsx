@@ -10,7 +10,7 @@ export function Home() {
           <div className="max-w-4xl">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-100 text-amber-900 mb-6">
               <AlertTriangle className="size-4" />
-              <span className="text-sm font-semibold">Experimental recovery build</span>
+              <span className="text-sm font-semibold">Experimental release candidate</span>
             </div>
 
             <h1 className="text-5xl md:text-7xl mb-6 bg-gradient-to-r from-indigo-700 to-purple-700 bg-clip-text text-transparent">
@@ -21,7 +21,7 @@ export function Home() {
               A CSS compiler prototype being rebuilt around security, standards parsing, and semantic preservation.
             </p>
             <p className="text-lg text-slate-600 mb-10">
-              The 0.3 recovery compiler has a tested grammar boundary, but browser semantics and later product gates remain incomplete. It is for development and evaluation, not production use.
+              The 0.4.0-rc.1 recovery compiler has a tested grammar boundary, but browser semantics and later product gates remain incomplete. It is for development and evaluation, not production use.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4">

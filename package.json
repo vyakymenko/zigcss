@@ -1,6 +1,6 @@
 {
   "name": "zigcss",
-  "version": "0.3.0",
+  "version": "0.4.0-rc.1",
   "description": "Experimental Zig CSS compiler prototype under correctness-first recovery",
   "main": "index.js",
   "bin": {
@@ -31,6 +31,8 @@
     "audit:production": "node scripts/audit-production-dependencies.mjs --audit",
     "check:workflows": "node scripts/validate-workflows.mjs --check",
     "test:workflows": "node --test scripts/validate-workflows.test.mjs",
+    "check:version": "node scripts/validate-release-version.mjs --check",
+    "test:version": "node --test scripts/validate-release-version.test.mjs",
     "test:zig-package": "node --test scripts/verify-zig-package.test.mjs",
     "test:node-wrapper": "node --test scripts/verify-node-wrapper.test.mjs",
     "test:vscode": "npm --prefix vscode-extension test && npm --prefix vscode-extension run package:check",

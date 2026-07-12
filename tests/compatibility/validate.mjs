@@ -13,6 +13,7 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const repositoryRoot = path.resolve(scriptDirectory, '../..')
 const fixturesRoot = path.join(scriptDirectory, 'fixtures')
 const matrixPath = path.join(scriptDirectory, 'matrix.json')
+const releaseVersion = fs.readFileSync(path.join(repositoryRoot, 'VERSION'), 'utf8').trim()
 
 function fail(message) {
   throw new Error(message)
@@ -112,8 +113,9 @@ function validateEmission(testCase, mode, result, validatorOptions) {
     fail(`${testCase.id}/${mode}: compiler exited ${result.status}\n${result.stderr}`)
   }
   if (result.stdout.length === 0) fail(`${testCase.id}/${mode}: compiler emitted empty CSS`)
-  if (!result.stderr.includes('experimental recovery build')) {
-    fail(`${testCase.id}/${mode}: recovery boundary warning is missing`)
+  const expectedWarning = `Warning: ZigCSS ${releaseVersion} is an experimental release candidate;`
+  if (!result.stderr.includes(expectedWarning)) {
+    fail(`${testCase.id}/${mode}: release boundary warning is missing`)
   }
   for (const fragment of testCase.requiredFragments?.[mode] ?? []) {
     if (!result.stdout.includes(fragment)) {

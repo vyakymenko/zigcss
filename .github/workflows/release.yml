@@ -57,6 +57,10 @@ jobs:
         with:
           node-version: 20
 
+      - name: Verify synchronized release version
+        shell: bash
+        run: npm run check:version -- --tag "$GITHUB_REF_NAME"
+
       - name: Build Release Binary
         run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
 
@@ -120,7 +124,7 @@ jobs:
 
             Experimental recovery binaries for development and evaluation only.
 
-            ZigCSS 0.3 has a tested experimental grammar boundary but is not suitable for production stylesheets.
+            This prerelease has a tested experimental grammar boundary but is not suitable for production stylesheets.
 
             ### Installation
 

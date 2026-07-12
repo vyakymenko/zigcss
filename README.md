@@ -1,6 +1,6 @@
 # ZigCSS
 
-> **Experimental recovery status:** ZigCSS 0.3 is an ambitious compiler prototype undergoing a correctness-first rebuild. It is not suitable for production stylesheets.
+> **Experimental recovery status:** ZigCSS 0.4.0-rc.1 is an unpublished release candidate produced by a correctness-first rebuild. It is not suitable for production stylesheets.
 
 The repository contains a rebuilt CSS source/token/syntax/parser/emitter pipeline alongside inherited prototype transforms, format adapters, an LSP, documentation, packaging, and benchmarks. The stable CLI delegates compilation to the owned public `zigcss.compile` facade over the rebuilt pipeline, while the remaining program still prioritizes security and semantics before features or speed.
 
@@ -23,7 +23,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 |---|---|---|
 | .css parsing and emission | Experimental, matrix-tested | Strict file/stdin and file/stdout modes delegate to `zigcss.compile`; version, syntax, options, and 0/1/2 exit statuses are executable contracts. |
 | Zig compile API | Experimental, consumer-tested | `zigcss.compile` returns owned CSS, maps, located diagnostics, ordered imports, optional module exports, and metrics; accepted transforms and borrowed canonical targets are explicit options. |
-| Zig package metadata | Experimental, consumer-tested | Package `zigcss` 0.3.0 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`. |
+| Zig package metadata | Experimental, consumer-tested | Package `zigcss` 0.4.0-rc.1 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`. |
 | Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` uses declared lazy inputs and generated outputs with a host compiler artifact; unavailable CLI features have no helper path. |
 | Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed `plugin.`-namespaced Zig callbacks through bounded deterministic pass plans; there is no stable ABI, sandbox, CLI, or HTTP path. |
 | --minify | Experimental | Compacts emitted whitespace without enabling AST transforms and remains independent of `--optimize`. |
@@ -37,7 +37,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | CSS Modules | Experimental, Zig-library-only native subset | Explicit `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references and dependencies, and local values with owned results; CLI and LSP exposure remain unavailable. |
 | Alternate format adapters | Unavailable | SCSS, Sass, Less, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like compiler adapters are removed; their extensions are rejected before output. |
 | LSP | Experimental, stress-tested | Bounded framing, JSON-RPC lifecycle, full sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features pass large-document, Unicode, malformed-request, leak, and editor-integration gates. |
-| VS Code extension | Experimental, package-tested | Version 0.3.0 has an exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and a verified five-file pre-release VSIX; no binary is bundled or published. |
+| VS Code extension | Experimental, package-tested | Marketplace version 0.4.0 maps to core 0.4.0-rc.1 and packages only with the pre-release marker; its exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and five-file VSIX are verified; no binary is bundled or published. |
 | Neovim configuration | Experimental, integration-tested | The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 until bounded process and request isolation is implemented. |
 <!-- capability-status:end -->
@@ -52,7 +52,7 @@ The stable CSS path returns `module_exports = null`. Explicit `.syntax = .css_mo
 
 With `.profile = true`, the result includes one monotonic end-to-end duration plus measured parse, validation, dependency, optimizer, plugin/prefix transform, emit, result-promotion, and cleanup stages. A forwarding allocator records successful allocation/free/resize events, cumulative requested/freed bytes, peak live requested bytes, and result bytes retained after compiler cleanup. These are allocator-requested byte metrics, not operating-system RSS. Profiling-disabled calls install no wrapper; an unavailable monotonic timer fails explicitly instead of returning invented zeroes.
 
-`build.zig.zon` gives the source package stable identity `zigcss`, version 0.3.0, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. Its allowlist contains only `build.zig`, the manifest, supported `build_helpers.zig`, `src`, README, and license. `tests/package-consumer` is a real path dependency that resolves `zigcss.module("zigcss")`; an isolated `zig fetch .` copy with only allowlisted files passes the same API smoke. No remote package URL is published.
+`build.zig.zon` gives the source package stable identity `zigcss`, version 0.4.0-rc.1, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. Its allowlist contains only `build.zig`, the manifest, supported `build_helpers.zig`, `src`, README, and license. `tests/package-consumer` is a real path dependency that resolves `zigcss.module("zigcss")`; an isolated `zig fetch .` copy with only allowlisted files passes the same API smoke. No remote package URL is published.
 
 The dependency build module exports `helpers.addCssCompile`. Each call accepts one input `std.Build.LazyPath`, a bounded portable `.css` output basename, and optional `optimize`/`minify` booleans. It returns the generated output `LazyPath` for checks, installs, or other downstream steps. The helper uses `addFileArg` and `addOutputFileArg`, so unchanged runs are cached and source-byte changes invalidate them. It never mutates the graph during execution and exposes no source-map, autoprefix, browser, arbitrary-argument, or output-directory escape hatch. The supplied compiler artifact must run on the build host; cross-target projects need a separate host-tool dependency instance.
 

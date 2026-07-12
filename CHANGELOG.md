@@ -1,6 +1,6 @@
 # Changelog
 
-> Recovery note: entries below describe prototype implementation history, not current compatibility guarantees. ZigCSS 0.3 and its format adapters are experimental; see `README.md` for the active contract.
+> Recovery note: entries below describe prototype implementation history, not current compatibility guarantees. ZigCSS prereleases and their experimental adapters follow the active contract in `README.md`.
 
 All notable changes to this project will be documented in this file.
 
@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+Target release: `0.4.0-rc.1` (not published).
+
+### Changed
+
+- Replace the prototype's stable CSS path with the tested tokenizer, typed parser/emitter, bounded CLI/API, verified transform plan, LSP/editor integrations, and release-integrity gates described by the generated capability matrix.
+- Keep alternate format adapters, native plugins, extraction passes, editor packages, and the public compile service explicitly experimental, unpublished, or disabled according to their tested boundaries.
 
 ## [0.3.0] - 2026-03-20
 

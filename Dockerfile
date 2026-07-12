@@ -1,5 +1,10 @@
 FROM node:22-bookworm-slim
 
+ARG ZIGCSS_VERSION=0.4.0-rc.1
+LABEL org.opencontainers.image.title="ZigCSS" \
+      org.opencontainers.image.version="${ZIGCSS_VERSION}" \
+      org.opencontainers.image.source="https://github.com/vyakymenko/zigcss"
+
 # ── Install Zig ──────────────────────────────────────────────────────────────
 ARG ZIG_VERSION=0.15.2
 RUN apt-get update && apt-get install -y --no-install-recommends \

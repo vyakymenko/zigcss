@@ -40,7 +40,9 @@ test('Zig package identity version and minimum toolchain are pinned', () => {
     /\.fingerprint\s*=\s*0xae272a4871e93d07,\s*\/\/ Changing this has security and trust implications\./,
   )
   assert.equal(field(manifest, 'version'), npmManifest.version)
-  assert.equal(vscodeManifest.version, npmManifest.version)
+  assert.equal(vscodeManifest.version, npmManifest.version.split('-')[0])
+  assert.equal(vscodeManifest.preview, true)
+  assert.match(read('vscode-extension/scripts/verify-package.mjs'), /'--pre-release'/)
   assert.equal(field(manifest, 'minimum_zig_version'), '0.15.2')
   assert.match(manifest, /\.dependencies\s*=\s*\.\{\},/)
   assert.match(main, new RegExp(`const version = "${npmManifest.version.replaceAll('.', '\\.')}";`))

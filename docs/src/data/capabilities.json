@@ -181,6 +181,19 @@
           "contains": ["package-ecosystem: \"npm\"", "package-ecosystem: \"github-actions\"", "open-pull-requests-limit"]
         }
       ]
+    },
+    "release-version": {
+      "command": "npm run check:version",
+      "anchors": [
+        {
+          "path": "VERSION",
+          "contains": ["0.4.0-rc.1"]
+        },
+        {
+          "path": "scripts/validate-release-version.mjs",
+          "contains": ["validateReleaseSources", "VS Code Marketplace", "release tag must be"]
+        }
+      ]
     }
   },
   "capabilities": [
@@ -205,8 +218,8 @@
       "surface": "Zig package metadata",
       "status": "Experimental, consumer-tested",
       "statusKind": "experimental",
-      "behavior": "Package `zigcss` 0.3.0 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`.",
-      "evidence": ["zig-package", "public-api"]
+      "behavior": "Package `zigcss` 0.4.0-rc.1 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`.",
+      "evidence": ["zig-package", "public-api", "release-version"]
     },
     {
       "id": "build-helper",
@@ -317,8 +330,8 @@
       "surface": "VS Code extension",
       "status": "Experimental, package-tested",
       "statusKind": "experimental",
-      "behavior": "Version 0.3.0 has an exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and a verified five-file pre-release VSIX; no binary is bundled or published.",
-      "evidence": ["vscode", "lsp", "dependencies"]
+      "behavior": "Marketplace version 0.4.0 maps to core 0.4.0-rc.1 and packages only with the pre-release marker; its exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and five-file VSIX are verified; no binary is bundled or published.",
+      "evidence": ["vscode", "lsp", "dependencies", "release-version"]
     },
     {
       "id": "neovim",

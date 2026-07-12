@@ -97,6 +97,9 @@ jobs:
       - name: Verify workflow security policy
         run: npm run test:workflows && npm run check:workflows
 
+      - name: Verify release version policy
+        run: npm run test:version && npm run check:version
+
       - name: Install independent validator
         run: npm ci --ignore-scripts
 

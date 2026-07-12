@@ -1341,7 +1341,7 @@ test "CLI informational and failure modes have stable streams and exit codes (CL
     var version = try runInDir(tmp.dir, &.{"--version"});
     defer deinitRun(&version);
     try expectExitCode(version, 0);
-    try std.testing.expectEqualStrings("zigcss 0.3.0\n", version.stdout);
+    try std.testing.expectEqualStrings("zigcss 0.4.0-rc.1\n", version.stdout);
     try std.testing.expectEqual(@as(usize, 0), version.stderr.len);
 
     var no_input = try runInDir(tmp.dir, &.{});
@@ -1413,7 +1413,7 @@ test "CLI stdin and explicit stdout share the public compile contract (CLI-011)"
     defer deinitRun(&stream);
     try expectExitCode(stream, 0);
     try std.testing.expectEqualStrings(".stream{width:3px;color:#fff}", stream.stdout);
-    try std.testing.expect(std.mem.indexOf(u8, stream.stderr, "experimental recovery build") != null);
+    try std.testing.expect(std.mem.indexOf(u8, stream.stderr, "experimental release candidate") != null);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1864,7 +1864,7 @@ test "recovery CLI identifies the current compiler as experimental (SAFE-001)" {
     var compile = try runCompiler(@embedFile("fixtures/simple.css"), &.{"--minify"});
     defer deinitRun(&compile);
     try expectSuccess(compile);
-    try std.testing.expect(std.mem.indexOf(u8, compile.stderr, "experimental recovery build") != null);
+    try std.testing.expect(std.mem.indexOf(u8, compile.stderr, "experimental release candidate") != null);
 }
 
 test "recovery CLI rejects experimental format adapters before writing (SAFE-001)" {

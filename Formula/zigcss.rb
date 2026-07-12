@@ -1,7 +1,8 @@
 class Zigcss < Formula
   desc "Experimental CSS compiler prototype built with Zig"
   homepage "https://github.com/vyakymenko/zigcss"
-  url "https://github.com/vyakymenko/zigcss/archive/v0.1.0.tar.gz"
+  url "https://github.com/vyakymenko/zigcss/archive/v0.4.0-rc.1.tar.gz"
+  version "0.4.0-rc.1"
   sha256 ""
   license "MIT"
   head "https://github.com/vyakymenko/zigcss.git", branch: "development"

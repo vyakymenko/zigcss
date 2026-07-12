@@ -4,8 +4,11 @@ const zigcss = @import("zigcss");
 const lsp = @import("lsp.zig");
 const lsp_transport = @import("lsp_transport.zig");
 
-const version = "0.3.0";
-const experimental_notice = "Warning: ZigCSS 0.3 is an experimental recovery build; do not use it for production CSS.\n";
+const version = "0.4.0-rc.1";
+const experimental_notice = std.fmt.comptimePrint(
+    "Warning: ZigCSS {s} is an experimental release candidate; do not use it for production CSS.\n",
+    .{version},
+);
 const unsafe_transforms_message = "legacy and non-verified transform paths are disabled pending safety validation";
 const max_input_bytes = 10 * 1024 * 1024;
 const max_batch_output_basename_bytes = 128;
@@ -869,7 +872,7 @@ fn requireOptionValue(args: []const []const u8, index: usize, option: []const u8
 
 fn printUsage() !void {
     try writeStdout(
-        "ZigCSS 0.3 recovery CLI — EXPERIMENTAL, not production-ready\n\n" ++
+        std.fmt.comptimePrint("ZigCSS {s} recovery CLI — EXPERIMENTAL, not production-ready\n\n", .{version}) ++
             "Usage: zigcss <input.css|-> [-o <output.css|->] [options]\n" ++
             "       zigcss <input1.css> <input2.css> ... -o <output-dir> --output-dir [options]\n" ++
             "       zigcss --lsp          Start experimental Language Server Protocol server\n" ++
