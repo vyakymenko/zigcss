@@ -1,9 +1,24 @@
 const std = @import("std");
 const compiler = @import("zigcss");
 const formats = @import("formats.zig");
+const lsp_index = @import("lsp_index.zig");
 const lsp_position = @import("lsp_position.zig");
 
 const unsupported_format_message = "Unsupported or removed stylesheet format";
+const max_workspace_query_storage: usize = 4096;
+
+const ServerLimits = struct {
+    max_workspace_documents: usize = 4096,
+    max_workspace_text_bytes: usize = 256 * 1024 * 1024,
+    max_workspace_uri_bytes: usize = 16 * 1024 * 1024,
+    max_workspace_index_bytes: usize = 128 * 1024 * 1024,
+    max_document_uri_bytes: usize = 64 * 1024,
+    max_workspace_results: usize = 100_000,
+    max_editor_response_bytes: usize = 16 * 1024 * 1024,
+    max_workspace_query_bytes: usize = 256,
+    max_rename_name_bytes: usize = 4096,
+    index: lsp_index.Limits = .{},
+};
 
 pub const ExitStatus = enum {
     success,
@@ -21,6 +36,10 @@ pub const LspServer = struct {
     lifecycle: Lifecycle,
     root_uri: ?[]const u8 = null,
     documents: std.StringHashMap(Document),
+    workspace_text_bytes: usize,
+    workspace_uri_bytes: usize,
+    workspace_index_bytes: usize,
+    limits: ServerLimits,
 
     const Lifecycle = enum {
         pre_initialize,
@@ -32,28 +51,35 @@ pub const LspServer = struct {
     const Document = struct {
         version: i32,
         text: []const u8,
+        index: ?lsp_index.DocumentIndex = null,
     };
-    
+
     pub fn init(allocator: std.mem.Allocator) LspServer {
         return .{
             .allocator = allocator,
             .lifecycle = .pre_initialize,
             .documents = std.StringHashMap(Document).init(allocator),
+            .workspace_text_bytes = 0,
+            .workspace_uri_bytes = 0,
+            .workspace_index_bytes = 0,
+            .limits = .{},
         };
     }
-    
+
     pub fn deinit(self: *LspServer) void {
         var it = self.documents.iterator();
         while (it.next()) |entry| {
+            self.clearDocumentIndex(entry.value_ptr);
             self.allocator.free(entry.key_ptr.*);
             self.allocator.free(entry.value_ptr.*.text);
         }
+        std.debug.assert(self.workspace_index_bytes == 0);
         self.documents.deinit();
         if (self.root_uri) |uri| {
             self.allocator.free(uri);
         }
     }
-    
+
     const JsonWriter = std.json.Stringify;
     const JsonObject = std.json.ObjectMap;
     const DispatchResponse = struct {
@@ -207,6 +233,10 @@ pub const LspServer = struct {
             try self.handleHover(json, root);
         } else if (std.mem.eql(u8, method, "textDocument/completion")) {
             try self.handleCompletion(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/documentSymbol")) {
+            try self.handleDocumentSymbols(json, root);
+        } else if (std.mem.eql(u8, method, "workspace/symbol")) {
+            try self.handleWorkspaceSymbols(json, root);
         } else if (std.mem.eql(u8, method, "textDocument/definition")) {
             try self.handleDefinition(json, root);
         } else if (std.mem.eql(u8, method, "textDocument/references")) {
@@ -354,6 +384,14 @@ pub const LspServer = struct {
         };
     }
 
+    fn requireBooleanField(object: JsonObject, name: []const u8) !bool {
+        const value = object.get(name) orelse return error.InvalidParams;
+        return switch (value) {
+            .bool => |result| result,
+            else => error.InvalidParams,
+        };
+    }
+
     fn optionalStringField(object: JsonObject, name: []const u8) !?[]const u8 {
         const value = object.get(name) orelse return null;
         return switch (value) {
@@ -420,26 +458,95 @@ pub const LspServer = struct {
         return utf16Range(text, 0, end);
     }
 
-    fn lineStartAtByteOffset(text: []const u8, offset: usize) usize {
-        var index = offset;
-        while (index > 0) {
-            const previous = text[index - 1];
-            if (previous == '\r' or previous == '\n') return index;
-            index -= 1;
+    const WorkspaceDocument = struct {
+        uri: []const u8,
+        document: *Document,
+    };
+
+    fn workspaceDocuments(self: *LspServer) ![]WorkspaceDocument {
+        if (self.documents.count() > self.limits.max_workspace_documents) {
+            return error.RequestFailed;
         }
-        return 0;
+        const documents = try self.allocator.alloc(
+            WorkspaceDocument,
+            self.documents.count(),
+        );
+        var count: usize = 0;
+        var iterator = self.documents.iterator();
+        while (iterator.next()) |entry| : (count += 1) {
+            documents[count] = .{
+                .uri = entry.key_ptr.*,
+                .document = entry.value_ptr,
+            };
+        }
+
+        std.mem.sort(WorkspaceDocument, documents, {}, workspaceDocumentLessThan);
+        return documents;
     }
-    
+
+    fn workspaceDocumentLessThan(
+        _: void,
+        left: WorkspaceDocument,
+        right: WorkspaceDocument,
+    ) bool {
+        return std.mem.order(u8, left.uri, right.uri) == .lt;
+    }
+
+    fn ensureIndex(
+        self: *LspServer,
+        uri: []const u8,
+        document: *Document,
+    ) !*const lsp_index.DocumentIndex {
+        if (formats.detectFormat(uri) != .css) return error.InvalidParams;
+        if (document.index == null) {
+            var index = lsp_index.DocumentIndex.build(
+                self.allocator,
+                uri,
+                document.text,
+                self.limits.index,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.RequestFailed,
+            };
+            const next_index_bytes = std.math.add(
+                usize,
+                self.workspace_index_bytes,
+                index.ownedBytes(),
+            ) catch {
+                index.deinit();
+                return error.RequestFailed;
+            };
+            if (next_index_bytes > self.limits.max_workspace_index_bytes) {
+                index.deinit();
+                return error.RequestFailed;
+            }
+            document.index = index;
+            self.workspace_index_bytes = next_index_bytes;
+        }
+        return if (document.index) |*index| index else unreachable;
+    }
+
+    fn clearDocumentIndex(self: *LspServer, document: *Document) void {
+        if (document.index) |*index| {
+            self.workspace_index_bytes -= index.ownedBytes();
+            index.deinit();
+            document.index = null;
+        }
+    }
+
     fn handleInitialize(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         _ = try requireObjectField(params, "capabilities");
         if (params.get("rootUri")) |root_uri| {
             const replacement: ?[]u8 = switch (root_uri) {
                 .null => null,
-                .string => |value| if (value.len == 0)
-                    null
-                else
-                    try self.allocator.dupe(u8, value),
+                .string => |value| blk: {
+                    if (value.len == 0) break :blk null;
+                    if (value.len > self.limits.max_document_uri_bytes) {
+                        return error.InvalidParams;
+                    }
+                    break :blk try self.allocator.dupe(u8, value);
+                },
                 else => return error.InvalidParams,
             };
             if (self.root_uri) |old| self.allocator.free(old);
@@ -468,6 +575,21 @@ pub const LspServer = struct {
         try json.objectField("workspaceDiagnostics");
         try json.write(false);
         try json.endObject();
+        try json.objectField("hoverProvider");
+        try json.write(true);
+        try json.objectField("completionProvider");
+        try json.beginObject();
+        try json.endObject();
+        try json.objectField("documentSymbolProvider");
+        try json.write(true);
+        try json.objectField("workspaceSymbolProvider");
+        try json.write(true);
+        try json.objectField("definitionProvider");
+        try json.write(true);
+        try json.objectField("referencesProvider");
+        try json.write(true);
+        try json.objectField("renameProvider");
+        try json.write(true);
         try json.endObject();
         try json.endObject();
     }
@@ -479,15 +601,42 @@ pub const LspServer = struct {
         _ = try requireStringField(text_document, "languageId");
         const text = try requireStringField(text_document, "text");
         const version = try integerToI32(try requireIntegerField(text_document, "version"));
-        if (self.documents.contains(uri)) return error.InvalidParams;
+        if (uri.len == 0 or uri.len > self.limits.max_document_uri_bytes or
+            self.documents.contains(uri) or
+            self.documents.count() >= self.limits.max_workspace_documents)
+        {
+            return error.InvalidParams;
+        }
+        const next_workspace_bytes = std.math.add(
+            usize,
+            self.workspace_text_bytes,
+            text.len,
+        ) catch return error.InvalidParams;
+        if (next_workspace_bytes > self.limits.max_workspace_text_bytes) {
+            return error.InvalidParams;
+        }
+        const next_workspace_uri_bytes = std.math.add(
+            usize,
+            self.workspace_uri_bytes,
+            uri.len,
+        ) catch return error.InvalidParams;
+        if (next_workspace_uri_bytes > self.limits.max_workspace_uri_bytes) {
+            return error.InvalidParams;
+        }
 
         {
             const text_copy = try self.allocator.dupe(u8, text);
             errdefer self.allocator.free(text_copy);
             const uri_copy = try self.allocator.dupe(u8, uri);
             errdefer self.allocator.free(uri_copy);
-            try self.documents.put(uri_copy, .{ .version = version, .text = text_copy });
+            try self.documents.put(uri_copy, .{
+                .version = version,
+                .text = text_copy,
+                .index = null,
+            });
         }
+        self.workspace_text_bytes = next_workspace_bytes;
+        self.workspace_uri_bytes = next_workspace_uri_bytes;
     }
 
     fn handleDidChange(self: *LspServer, root: JsonObject) !void {
@@ -506,9 +655,20 @@ pub const LspServer = struct {
             return error.InvalidParams;
         }
         const text = try requireStringField(change, "text");
+        const retained_bytes = self.workspace_text_bytes - document.text.len;
+        const next_workspace_bytes = std.math.add(
+            usize,
+            retained_bytes,
+            text.len,
+        ) catch return error.InvalidParams;
+        if (next_workspace_bytes > self.limits.max_workspace_text_bytes) {
+            return error.InvalidParams;
+        }
         const text_copy = try self.allocator.dupe(u8, text);
+        self.clearDocumentIndex(document);
         self.allocator.free(document.text);
-        document.* = .{ .version = version, .text = text_copy };
+        document.* = .{ .version = version, .text = text_copy, .index = null };
+        self.workspace_text_bytes = next_workspace_bytes;
     }
 
     fn handleDidClose(self: *LspServer, root: JsonObject) !void {
@@ -516,10 +676,14 @@ pub const LspServer = struct {
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const removed = self.documents.fetchRemove(uri) orelse return error.InvalidParams;
+        var document = removed.value;
+        self.clearDocumentIndex(&document);
+        self.workspace_uri_bytes -= removed.key.len;
         self.allocator.free(removed.key);
-        self.allocator.free(removed.value.text);
+        self.workspace_text_bytes -= document.text.len;
+        self.allocator.free(document.text);
     }
-    
+
     fn handleDocumentDiagnostic(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
@@ -590,83 +754,391 @@ pub const LspServer = struct {
         try json.endArray();
         try json.endObject();
     }
-    
+
     fn handleHover(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
 
-        const doc = self.documents.get(uri) orelse {
-            try json.objectField("result");
-            try json.write(null);
-            return;
-        };
+        const document = self.documents.getPtr(uri) orelse return error.InvalidParams;
+        const offset = try byteOffsetAtPosition(document.text, position);
+        if (formats.detectFormat(uri) != .css) return writeNullResult(json);
+        const index = try self.ensureIndex(uri, document);
 
-        const offset = try byteOffsetAtPosition(doc.text, position);
-        if (self.getSymbolAtPosition(doc.text, offset)) |symbol| {
-            if (self.getCssPropertyInfo(symbol.text)) |info| {
-                try json.objectField("result");
-                try json.write(.{
-                    .contents = .{ .kind = "markdown", .value = info },
-                    .range = try utf16Range(doc.text, symbol.start, symbol.end),
-                });
-                return;
+        var info: ?[]const u8 = null;
+        var span: ?compiler.Span = null;
+        if (index.propertyAt(offset)) |property| {
+            info = getCssPropertyInfo(property.name);
+            if (info == null and std.mem.startsWith(u8, property.name, "--")) {
+                info = "**CSS custom property** - An authored case-sensitive custom property definition.";
+            }
+            if (info != null) span = property.name_span;
+        }
+        if (info == null) {
+            if (index.symbolAt(offset)) |symbol| {
+                info = symbolHoverInfo(symbol.kind);
+                span = symbol.selection_span;
             }
         }
+        if (info == null) return writeNullResult(json);
 
+        const range = try utf16Range(document.text, span.?.start, span.?.end);
+        try json.objectField("result");
+        try json.write(.{
+            .contents = .{ .kind = "markdown", .value = info.? },
+            .range = range,
+        });
+    }
+
+    fn writeNullResult(json: *JsonWriter) !void {
         try json.objectField("result");
         try json.write(null);
     }
-    
+
     fn handleCompletion(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
 
+        const document = self.documents.getPtr(uri) orelse return error.InvalidParams;
+        const offset = try byteOffsetAtPosition(document.text, position);
+        const prefix = if (formats.detectFormat(uri) == .css)
+            (try self.ensureIndex(uri, document)).completionPrefix(document.text, offset)
+        else
+            null;
+        const replace_range = if (prefix) |value|
+            try utf16Range(
+                document.text,
+                value.replace_span.start,
+                value.replace_span.end,
+            )
+        else
+            null;
+
         try json.objectField("result");
         try json.beginObject();
+        try json.objectField("isIncomplete");
+        try json.write(false);
         try json.objectField("items");
         try json.beginArray();
-        const doc = self.documents.get(uri) orelse {
-            try json.endArray();
-            try json.endObject();
-            return;
-        };
-
-        const offset = try byteOffsetAtPosition(doc.text, position);
-        const prefix = doc.text[lineStartAtByteOffset(doc.text, offset)..offset];
-        for (COMMON_CSS_PROPERTIES) |prop| {
-            if (std.mem.startsWith(u8, prop, prefix)) {
+        if (prefix) |value| for (COMMON_CSS_PROPERTIES) |property| {
+            if (startsWithAsciiIgnoreCase(property, value.value)) {
                 try json.write(.{
-                    .label = prop,
+                    .label = property,
                     .kind = @as(i32, 10),
                     .detail = "CSS Property",
-                    .insertText = prop,
+                    .textEdit = .{
+                        .range = replace_range.?,
+                        .newText = property,
+                    },
                 });
             }
-        }
+        };
 
         try json.endArray();
         try json.endObject();
     }
-    
-    fn getCssPropertyInfo(self: *LspServer, property: []const u8) ?[]const u8 {
-        _ = self;
+
+    fn getCssPropertyInfo(property: []const u8) ?[]const u8 {
         for (CSS_PROPERTY_INFO) |info| {
-            if (std.mem.eql(u8, info.property, property)) {
+            if (std.ascii.eqlIgnoreCase(info.property, property)) {
                 return info.description;
             }
         }
         return null;
     }
-    
+
+    fn startsWithAsciiIgnoreCase(value: []const u8, prefix: []const u8) bool {
+        return prefix.len <= value.len and std.ascii.eqlIgnoreCase(
+            value[0..prefix.len],
+            prefix,
+        );
+    }
+
+    const WorkspaceQueryMatcher = struct {
+        query: []const u8,
+        failure: [max_workspace_query_storage]usize,
+
+        fn init(query: []const u8, max_query_bytes: usize) !WorkspaceQueryMatcher {
+            if (query.len > max_query_bytes or
+                query.len > max_workspace_query_storage)
+            {
+                return error.InvalidParams;
+            }
+
+            var matcher = WorkspaceQueryMatcher{
+                .query = query,
+                .failure = undefined,
+            };
+            if (query.len == 0) return matcher;
+            matcher.failure[0] = 0;
+
+            var prefix_len: usize = 0;
+            var index: usize = 1;
+            while (index < query.len) {
+                if (asciiBytesEqual(query[index], query[prefix_len])) {
+                    prefix_len += 1;
+                    matcher.failure[index] = prefix_len;
+                    index += 1;
+                } else if (prefix_len > 0) {
+                    prefix_len = matcher.failure[prefix_len - 1];
+                } else {
+                    matcher.failure[index] = 0;
+                    index += 1;
+                }
+            }
+            return matcher;
+        }
+
+        fn contains(self: *const WorkspaceQueryMatcher, value: []const u8) bool {
+            if (self.query.len == 0) return true;
+            var matched: usize = 0;
+            for (value) |byte| {
+                while (matched > 0 and
+                    !asciiBytesEqual(byte, self.query[matched]))
+                {
+                    matched = self.failure[matched - 1];
+                }
+                if (asciiBytesEqual(byte, self.query[matched])) matched += 1;
+                if (matched == self.query.len) return true;
+            }
+            return false;
+        }
+
+        fn asciiBytesEqual(left: u8, right: u8) bool {
+            return std.ascii.toLower(left) == std.ascii.toLower(right);
+        }
+    };
+
+    const EditorResponseBudget = struct {
+        used: usize = 0,
+        max: usize,
+
+        fn add(
+            self: *EditorResponseBudget,
+            dynamic_string_bytes: usize,
+            fixed_bytes: usize,
+        ) !void {
+            const escaped_bytes = std.math.mul(
+                usize,
+                dynamic_string_bytes,
+                6,
+            ) catch return error.RequestFailed;
+            const item_bytes = std.math.add(
+                usize,
+                escaped_bytes,
+                fixed_bytes,
+            ) catch return error.RequestFailed;
+            const next = std.math.add(usize, self.used, item_bytes) catch
+                return error.RequestFailed;
+            if (next > self.max) return error.RequestFailed;
+            self.used = next;
+        }
+    };
+
+    fn handleDocumentSymbols(
+        self: *LspServer,
+        json: *JsonWriter,
+        root: JsonObject,
+    ) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const document = self.documents.getPtr(uri) orelse return error.InvalidParams;
+        const index = if (formats.detectFormat(uri) == .css)
+            try self.ensureIndex(uri, document)
+        else
+            null;
+
+        var response_budget = EditorResponseBudget{
+            .max = self.limits.max_editor_response_bytes,
+        };
+        if (index) |document_index| for (document_index.symbols) |symbol| {
+            if (!isDocumentSymbol(symbol)) continue;
+            try response_budget.add(symbol.name.len, 512);
+            _ = try utf16Range(
+                document.text,
+                symbol.container_span.start,
+                symbol.container_span.end,
+            );
+            _ = try utf16Range(
+                document.text,
+                symbol.selection_span.start,
+                symbol.selection_span.end,
+            );
+        };
+
+        try json.objectField("result");
+        try json.beginArray();
+        if (index) |document_index| for (document_index.symbols) |symbol| {
+            if (!isDocumentSymbol(symbol)) continue;
+            try json.write(.{
+                .name = symbol.name,
+                .detail = symbolDetail(symbol.kind),
+                .kind = symbolKind(symbol.kind),
+                .range = utf16Range(
+                    document.text,
+                    symbol.container_span.start,
+                    symbol.container_span.end,
+                ) catch unreachable,
+                .selectionRange = utf16Range(
+                    document.text,
+                    symbol.selection_span.start,
+                    symbol.selection_span.end,
+                ) catch unreachable,
+            });
+        };
+        try json.endArray();
+    }
+
+    fn handleWorkspaceSymbols(
+        self: *LspServer,
+        json: *JsonWriter,
+        root: JsonObject,
+    ) !void {
+        const params = try requireObjectField(root, "params");
+        const query = try requireStringField(params, "query");
+        const matcher = try WorkspaceQueryMatcher.init(
+            query,
+            self.limits.max_workspace_query_bytes,
+        );
+        const documents = try self.workspaceDocuments();
+        defer self.allocator.free(documents);
+
+        var result_count: usize = 0;
+        var response_budget = EditorResponseBudget{
+            .max = self.limits.max_editor_response_bytes,
+        };
+        for (documents) |entry| {
+            if (formats.detectFormat(entry.uri) != .css) continue;
+            const index = try self.ensureIndex(entry.uri, entry.document);
+            for (index.symbols) |symbol| {
+                if (!isDocumentSymbol(symbol) or
+                    !matcher.contains(symbol.name))
+                {
+                    continue;
+                }
+                result_count += 1;
+                if (result_count > self.limits.max_workspace_results) {
+                    return error.RequestFailed;
+                }
+                try response_budget.add(symbol.name.len, 512);
+                try response_budget.add(entry.uri.len, 0);
+                _ = try utf16Range(
+                    entry.document.text,
+                    symbol.selection_span.start,
+                    symbol.selection_span.end,
+                );
+            }
+        }
+
+        try json.objectField("result");
+        try json.beginArray();
+        for (documents) |entry| {
+            if (formats.detectFormat(entry.uri) != .css) continue;
+            const index = &entry.document.index.?;
+            for (index.symbols) |symbol| {
+                if (!isDocumentSymbol(symbol) or
+                    !matcher.contains(symbol.name))
+                {
+                    continue;
+                }
+                try json.write(.{
+                    .name = symbol.name,
+                    .kind = symbolKind(symbol.kind),
+                    .location = .{
+                        .uri = entry.uri,
+                        .range = utf16Range(
+                            entry.document.text,
+                            symbol.selection_span.start,
+                            symbol.selection_span.end,
+                        ) catch unreachable,
+                    },
+                });
+            }
+        }
+        try json.endArray();
+    }
+
+    fn symbolHoverInfo(kind: lsp_index.SymbolKind) []const u8 {
+        return switch (kind) {
+            .class => "**CSS class selector** - A syntax-indexed class selector in an open stylesheet.",
+            .id => "**CSS ID selector** - A syntax-indexed ID selector in an open stylesheet.",
+            .custom_property => "**CSS custom property** - A syntax-indexed definition or var() reference.",
+            .keyframes => "**CSS keyframes name** - A syntax-indexed keyframes definition or animation-name reference.",
+        };
+    }
+
+    fn symbolKind(kind: lsp_index.SymbolKind) i32 {
+        return switch (kind) {
+            .class => 5,
+            .id => 20,
+            .custom_property => 13,
+            .keyframes => 12,
+        };
+    }
+
+    fn symbolDetail(kind: lsp_index.SymbolKind) []const u8 {
+        return switch (kind) {
+            .class => "CSS class selector",
+            .id => "CSS ID selector",
+            .custom_property => "CSS custom property",
+            .keyframes => "CSS keyframes",
+        };
+    }
+
+    fn isDocumentSymbol(symbol: lsp_index.Symbol) bool {
+        return symbol.role == .definition or
+            symbol.kind == .class or
+            symbol.kind == .id;
+    }
+
+    fn symbolMatches(left: lsp_index.Symbol, right: lsp_index.Symbol) bool {
+        return left.kind == right.kind and std.mem.eql(u8, left.name, right.name);
+    }
+
+    fn validRenameName(
+        self: *const LspServer,
+        kind: lsp_index.SymbolKind,
+        name: []const u8,
+    ) bool {
+        if (name.len == 0 or name.len > self.limits.max_rename_name_bytes) {
+            return false;
+        }
+        if (!std.unicode.utf8ValidateSlice(name) or
+            std.mem.indexOfScalar(u8, name, 0) != null)
+        {
+            return false;
+        }
+        return switch (kind) {
+            .custom_property => std.mem.startsWith(u8, name, "--"),
+            .keyframes => !isReservedKeyframesName(name),
+            .class, .id => true,
+        };
+    }
+
+    fn isReservedKeyframesName(name: []const u8) bool {
+        const reserved = [_][]const u8{
+            "none",
+            "initial",
+            "inherit",
+            "unset",
+            "revert",
+            "revert-layer",
+        };
+        for (reserved) |keyword| {
+            if (std.ascii.eqlIgnoreCase(name, keyword)) return true;
+        }
+        return false;
+    }
+
     const CssPropertyInfo = struct {
         property: []const u8,
         description: []const u8,
     };
-    
+
     const CSS_PROPERTY_INFO = [_]CssPropertyInfo{
         .{ .property = "color", .description = "**color** - Sets the text color\n\nValues: `<color>` | `inherit` | `initial` | `unset`" },
         .{ .property = "background-color", .description = "**background-color** - Sets the background color\n\nValues: `<color>` | `transparent` | `inherit` | `initial` | `unset`" },
@@ -679,77 +1151,136 @@ pub const LspServer = struct {
         .{ .property = "font-weight", .description = "**font-weight** - Sets the font weight\n\nValues: `normal` | `bold` | `bolder` | `lighter` | `100-900` | `inherit` | `initial` | `unset`" },
         .{ .property = "border", .description = "**border** - Sets border on all sides\n\nValues: `<border-width>` `<border-style>` `<border-color>` | `inherit` | `initial` | `unset`" },
     };
-    
+
     fn handleDefinition(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
 
-        const doc = self.documents.get(uri) orelse {
-            try json.objectField("result");
-            try json.write(null);
-            return;
-        };
+        const document = self.documents.getPtr(uri) orelse return error.InvalidParams;
+        const offset = try byteOffsetAtPosition(document.text, position);
+        if (formats.detectFormat(uri) != .css) return writeNullResult(json);
+        const source_index = try self.ensureIndex(uri, document);
+        const selected = source_index.symbolAt(offset) orelse return writeNullResult(json);
 
-        const pos = try byteOffsetAtPosition(doc.text, position);
-        const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
-            try json.objectField("result");
-            try json.write(null);
-            return;
+        const documents = try self.workspaceDocuments();
+        defer self.allocator.free(documents);
+        var result_count: usize = 0;
+        var response_budget = EditorResponseBudget{
+            .max = self.limits.max_editor_response_bytes,
         };
-
-        const definition_pos = self.findDefinition(doc.text, symbol.text) orelse {
-            try json.objectField("result");
-            try json.write(null);
-            return;
-        };
+        for (documents) |entry| {
+            if (formats.detectFormat(entry.uri) != .css) continue;
+            const index = try self.ensureIndex(entry.uri, entry.document);
+            for (index.symbols) |symbol| {
+                if (!symbolMatches(selected.*, symbol) or symbol.role != .definition) continue;
+                result_count += 1;
+                if (result_count > self.limits.max_workspace_results) {
+                    return error.RequestFailed;
+                }
+                try response_budget.add(entry.uri.len, 256);
+                _ = try utf16Range(
+                    entry.document.text,
+                    symbol.selection_span.start,
+                    symbol.selection_span.end,
+                );
+            }
+        }
+        if (result_count == 0) return writeNullResult(json);
 
         try json.objectField("result");
-        try json.write(.{
-            .uri = uri,
-            .range = try utf16Range(
-                doc.text,
-                definition_pos,
-                definition_pos + symbol.text.len,
-            ),
-        });
+        try json.beginArray();
+        for (documents) |entry| {
+            if (formats.detectFormat(entry.uri) != .css) continue;
+            const index = &entry.document.index.?;
+            for (index.symbols) |symbol| {
+                if (!symbolMatches(selected.*, symbol) or symbol.role != .definition) continue;
+                try json.write(.{
+                    .uri = entry.uri,
+                    .range = utf16Range(
+                        entry.document.text,
+                        symbol.selection_span.start,
+                        symbol.selection_span.end,
+                    ) catch unreachable,
+                });
+            }
+        }
+        try json.endArray();
     }
-    
+
     fn handleReferences(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const position = try requireObjectField(params, "position");
+        const context = try requireObjectField(params, "context");
+        const include_declaration = try requireBooleanField(context, "includeDeclaration");
+        const document = self.documents.getPtr(uri) orelse return error.InvalidParams;
+        const offset = try byteOffsetAtPosition(document.text, position);
+        if (formats.detectFormat(uri) != .css) return writeEmptyArrayResult(json);
+        const source_index = try self.ensureIndex(uri, document);
+        const selected = source_index.symbolAt(offset) orelse
+            return writeEmptyArrayResult(json);
+
+        const documents = try self.workspaceDocuments();
+        defer self.allocator.free(documents);
+        var result_count: usize = 0;
+        var response_budget = EditorResponseBudget{
+            .max = self.limits.max_editor_response_bytes,
+        };
+        for (documents) |entry| {
+            if (formats.detectFormat(entry.uri) != .css) continue;
+            const index = try self.ensureIndex(entry.uri, entry.document);
+            for (index.symbols) |symbol| {
+                if (!symbolMatches(selected.*, symbol) or
+                    (!include_declaration and symbol.role == .definition))
+                {
+                    continue;
+                }
+                result_count += 1;
+                if (result_count > self.limits.max_workspace_results) {
+                    return error.RequestFailed;
+                }
+                try response_budget.add(entry.uri.len, 256);
+                _ = try utf16Range(
+                    entry.document.text,
+                    symbol.selection_span.start,
+                    symbol.selection_span.end,
+                );
+            }
+        }
 
         try json.objectField("result");
         try json.beginArray();
-        const doc = self.documents.get(uri) orelse {
-            try json.endArray();
-            return;
-        };
-
-        const pos = try byteOffsetAtPosition(doc.text, position);
-        const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
-            try json.endArray();
-            return;
-        };
-
-        var search_pos: usize = 0;
-        while (self.findNextReference(doc.text, symbol.text, &search_pos)) |ref_pos| {
-            try json.write(.{
-                .uri = uri,
-                .range = try utf16Range(
-                    doc.text,
-                    ref_pos,
-                    ref_pos + symbol.text.len,
-                ),
-            });
+        for (documents) |entry| {
+            if (formats.detectFormat(entry.uri) != .css) continue;
+            const index = &entry.document.index.?;
+            for (index.symbols) |symbol| {
+                if (!symbolMatches(selected.*, symbol) or
+                    (!include_declaration and symbol.role == .definition))
+                {
+                    continue;
+                }
+                try json.write(.{
+                    .uri = entry.uri,
+                    .range = utf16Range(
+                        entry.document.text,
+                        symbol.selection_span.start,
+                        symbol.selection_span.end,
+                    ) catch unreachable,
+                });
+            }
         }
-
         try json.endArray();
     }
-    
+
+    fn writeEmptyArrayResult(json: *JsonWriter) !void {
+        try json.objectField("result");
+        try json.beginArray();
+        try json.endArray();
+    }
+
     fn handleRename(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
@@ -757,114 +1288,78 @@ pub const LspServer = struct {
         const position = try requireObjectField(params, "position");
         const new_name = try requireStringField(params, "newName");
 
-        const doc = self.documents.get(uri) orelse {
-            try writeErrorField(json, -32602, "Document not found");
-            return;
+        const document = self.documents.getPtr(uri) orelse return error.InvalidParams;
+        const offset = try byteOffsetAtPosition(document.text, position);
+        if (formats.detectFormat(uri) != .css) return error.InvalidParams;
+        const source_index = try self.ensureIndex(uri, document);
+        const selected = source_index.symbolAt(offset) orelse return error.InvalidParams;
+        if (!self.validRenameName(selected.kind, new_name)) return error.InvalidParams;
+        const serialized_name = compiler.css.emitter.serializeIdentifierAlloc(
+            self.allocator,
+            new_name,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidParams,
         };
+        defer self.allocator.free(serialized_name);
 
-        const pos = try byteOffsetAtPosition(doc.text, position);
-        const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
-            try writeErrorField(json, -32602, "Symbol not found");
-            return;
+        const documents = try self.workspaceDocuments();
+        defer self.allocator.free(documents);
+        var result_count: usize = 0;
+        var response_budget = EditorResponseBudget{
+            .max = self.limits.max_editor_response_bytes,
         };
+        for (documents) |entry| {
+            if (formats.detectFormat(entry.uri) != .css) continue;
+            const index = try self.ensureIndex(entry.uri, entry.document);
+            for (index.symbols) |symbol| {
+                if (!symbolMatches(selected.*, symbol)) continue;
+                result_count += 1;
+                if (result_count > self.limits.max_workspace_results) {
+                    return error.RequestFailed;
+                }
+                try response_budget.add(entry.uri.len, 512);
+                try response_budget.add(serialized_name.len, 0);
+                _ = try utf16Range(
+                    entry.document.text,
+                    symbol.selection_span.start,
+                    symbol.selection_span.end,
+                );
+            }
+        }
+        if (result_count == 0) return error.InvalidParams;
 
         try json.objectField("result");
         try json.beginObject();
         try json.objectField("changes");
         try json.beginObject();
-        try json.objectField(uri);
-        try json.beginArray();
-        var search_pos: usize = 0;
-        while (self.findNextReference(doc.text, symbol.text, &search_pos)) |ref_pos| {
-            try json.write(.{
-                .range = try utf16Range(
-                    doc.text,
-                    ref_pos,
-                    ref_pos + symbol.text.len,
-                ),
-                .newText = new_name,
-            });
+        for (documents) |entry| {
+            if (formats.detectFormat(entry.uri) != .css) continue;
+            const index = &entry.document.index.?;
+            var document_count: usize = 0;
+            for (index.symbols) |symbol| {
+                if (symbolMatches(selected.*, symbol)) document_count += 1;
+            }
+            if (document_count == 0) continue;
+            try json.objectField(entry.uri);
+            try json.beginArray();
+            for (index.symbols) |symbol| {
+                if (!symbolMatches(selected.*, symbol)) continue;
+                try json.write(.{
+                    .range = utf16Range(
+                        entry.document.text,
+                        symbol.selection_span.start,
+                        symbol.selection_span.end,
+                    ) catch unreachable,
+                    .newText = serialized_name,
+                });
+            }
+            try json.endArray();
         }
-
-        try json.endArray();
         try json.endObject();
         try json.endObject();
     }
-    
-    const SymbolAtPosition = struct {
-        text: []const u8,
-        start: usize,
-        end: usize,
-    };
 
-    fn getSymbolAtPosition(self: *LspServer, text: []const u8, pos: usize) ?SymbolAtPosition {
-        _ = self;
-        if (pos >= text.len) return null;
-        
-        var start = pos;
-        while (start > 0 and (std.ascii.isAlphanumeric(text[start - 1]) or text[start - 1] == '-' or text[start - 1] == '_')) {
-            start -= 1;
-        }
-        
-        var end = pos;
-        while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '-' or text[end] == '_')) {
-            end += 1;
-        }
-        
-        if (start < end) {
-            return .{ .text = text[start..end], .start = start, .end = end };
-        }
-        return null;
-    }
-    
-    fn findDefinition(self: *LspServer, text: []const u8, symbol: []const u8) ?usize {
-        _ = self;
-        var pos: usize = 0;
-        while (pos < text.len) {
-            if (std.mem.startsWith(u8, text[pos..], ".") and pos + 1 < text.len) {
-                const class_start = pos + 1;
-                var class_end = class_start;
-                while (class_end < text.len and (std.ascii.isAlphanumeric(text[class_end]) or text[class_end] == '-' or text[class_end] == '_')) {
-                    class_end += 1;
-                }
-                if (std.mem.eql(u8, text[class_start..class_end], symbol)) {
-                    return class_start;
-                }
-                pos = class_end;
-            } else if (std.mem.startsWith(u8, text[pos..], "#") and pos + 1 < text.len) {
-                const id_start = pos + 1;
-                var id_end = id_start;
-                while (id_end < text.len and (std.ascii.isAlphanumeric(text[id_end]) or text[id_end] == '-' or text[id_end] == '_')) {
-                    id_end += 1;
-                }
-                if (std.mem.eql(u8, text[id_start..id_end], symbol)) {
-                    return id_start;
-                }
-                pos = id_end;
-            } else {
-                pos += 1;
-            }
-        }
-        return null;
-    }
-    
-    fn findNextReference(self: *LspServer, text: []const u8, symbol: []const u8, search_pos: *usize) ?usize {
-        _ = self;
-        while (search_pos.* < text.len) {
-            const found = std.mem.indexOfPos(u8, text, search_pos.*, symbol) orelse return null;
-            search_pos.* = found + symbol.len;
-            
-            const before = if (found > 0) text[found - 1] else ' ';
-            const after = if (found + symbol.len < text.len) text[found + symbol.len] else ' ';
-            
-            if ((before == '.' or before == '#' or before == ' ' or before == '\n' or before == '\t' or before == '{' or before == ',' or before == ':') and
-                (after == ' ' or after == '\n' or after == '\t' or after == '{' or after == '}' or after == ',' or after == ';' or after == ':' or after == ')')) {
-                return found;
-            }
-        }
-        return null;
-    }
-    
     const COMMON_CSS_PROPERTIES = [_][]const u8{
         "color",
         "background-color",
@@ -948,6 +1443,26 @@ fn expectJsonRange(
     try std.testing.expectEqual(end_character, end.get("character").?.integer);
 }
 
+fn expectJsonRpcError(
+    server: *LspServer,
+    request: []const u8,
+    expected_code: i64,
+) !void {
+    const response = try server.handleRequest(request);
+    defer server.allocator.free(response);
+    var parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        server.allocator,
+        response,
+        .{},
+    );
+    defer parsed.deinit();
+    try std.testing.expectEqual(
+        expected_code,
+        parsed.value.object.get("error").?.object.get("code").?.integer,
+    );
+}
+
 test "LSP server initialization" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -958,6 +1473,9 @@ test "LSP server initialization" {
 
     try std.testing.expectEqual(LspServer.Lifecycle.pre_initialize, server.lifecycle);
     try std.testing.expect(server.root_uri == null);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_text_bytes);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_uri_bytes);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_index_bytes);
 }
 
 test "LSP handle initialize request" {
@@ -988,8 +1506,13 @@ test "LSP handle initialize request" {
     const synchronization = capabilities.get("textDocumentSync").?.object;
     try std.testing.expect(synchronization.get("openClose").?.bool);
     try std.testing.expectEqual(@as(i64, 1), synchronization.get("change").?.integer);
-    try std.testing.expect(capabilities.get("hoverProvider") == null);
-    try std.testing.expect(capabilities.get("completionProvider") == null);
+    try std.testing.expect(capabilities.get("hoverProvider").?.bool);
+    try std.testing.expect(capabilities.get("completionProvider").? == .object);
+    try std.testing.expect(capabilities.get("documentSymbolProvider").?.bool);
+    try std.testing.expect(capabilities.get("workspaceSymbolProvider").?.bool);
+    try std.testing.expect(capabilities.get("definitionProvider").?.bool);
+    try std.testing.expect(capabilities.get("referencesProvider").?.bool);
+    try std.testing.expect(capabilities.get("renameProvider").?.bool);
     const diagnostic_provider = capabilities.get("diagnosticProvider").?.object;
     try std.testing.expectEqualStrings(
         "zigcss",
@@ -1110,7 +1633,7 @@ test "LSP serializer escapes handler strings and dynamic object fields" {
         .get(uri).?.array.items;
     try std.testing.expectEqual(@as(usize, 2), edits.len);
     try std.testing.expectEqualStrings(
-        "renamed\nname",
+        "renamed\\a name",
         edits[0].object.get("newText").?.string,
     );
 }
@@ -1123,21 +1646,22 @@ test "LSP positions use UTF-16 across non-BMP text and CRLF" {
     try initializeTestServer(&server);
     try expectNoResponse(
         &server,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\",\"languageId\":\"css\",\"version\":1,\"text\":\"😀.foo{color:red}\\r\\nα .foo{}\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\",\"languageId\":\"css\",\"version\":1,\"text\":\"😀:root{--foo:red}\\r\\nα .x{color:var(--foo)}\"}}}",
     );
 
     const response = try server.handleRequest(
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":3}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":17}}}",
     );
     defer allocator.free(response);
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
     defer parsed.deinit();
     const result = parsed.value.object.get("result").?;
-    try std.testing.expect(result == .object);
-    try expectJsonRange(result.object.get("range").?, 0, 3, 0, 6);
+    try std.testing.expect(result == .array);
+    try std.testing.expectEqual(@as(usize, 1), result.array.items.len);
+    try expectJsonRange(result.array.items[0].object.get("range").?, 0, 8, 0, 13);
 
     const references_response = try server.handleRequest(
-        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":3}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":17},\"context\":{\"includeDeclaration\":true}}}",
     );
     defer allocator.free(references_response);
     var parsed_references = try std.json.parseFromSlice(
@@ -1149,11 +1673,11 @@ test "LSP positions use UTF-16 across non-BMP text and CRLF" {
     defer parsed_references.deinit();
     const references = parsed_references.value.object.get("result").?.array.items;
     try std.testing.expectEqual(@as(usize, 2), references.len);
-    try expectJsonRange(references[0].object.get("range").?, 0, 3, 0, 6);
-    try expectJsonRange(references[1].object.get("range").?, 1, 3, 1, 6);
+    try expectJsonRange(references[0].object.get("range").?, 0, 8, 0, 13);
+    try expectJsonRange(references[1].object.get("range").?, 1, 15, 1, 20);
 
     const hover_response = try server.handleRequest(
-        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":0,\"character\":7}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":7}}}",
     );
     defer allocator.free(hover_response);
     var parsed_hover = try std.json.parseFromSlice(
@@ -1165,10 +1689,10 @@ test "LSP positions use UTF-16 across non-BMP text and CRLF" {
     defer parsed_hover.deinit();
     try expectJsonRange(
         parsed_hover.value.object.get("result").?.object.get("range").?,
-        0,
-        7,
-        0,
-        12,
+        1,
+        5,
+        1,
+        10,
     );
 
     const invalid_positions = [_][]const u8{
@@ -1215,6 +1739,323 @@ test "LSP positions use UTF-16 across non-BMP text and CRLF" {
         diagnostics[0].object.get("code").?.string,
     );
     try expectJsonRange(diagnostics[0].object.get("range").?, 0, 0, 0, 2);
+}
+
+test "LSP syntax index powers deterministic workspace editor features" {
+    const allocator = std.testing.allocator;
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    try initializeTestServer(&server);
+    // Open in reverse URI order so workspace results prove their explicit sort.
+    try expectNoResponse(&server,
+        \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///b.css","languageId":"css","version":1,"text":".hero { color: var(--theme); animation-name: pulse; }\n.card { color: blue; }\n/* --theme pulse */"}}}
+    );
+    try expectNoResponse(&server,
+        \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///a.css","languageId":"css","version":1,"text":":root { --theme: red; }\n.card { color: var(--theme); content: \"--theme\"; }\n@keyframes pulse { from { opacity: 0; } to { opacity: 1; } }\n.new { ba }\n/* --theme */"}}}
+    );
+
+    const hover_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":20,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":1,"character":10}}}
+    );
+    defer allocator.free(hover_response);
+    var hover = try std.json.parseFromSlice(std.json.Value, allocator, hover_response, .{});
+    defer hover.deinit();
+    const hover_result = hover.value.object.get("result").?.object;
+    try expectJsonRange(hover_result.get("range").?, 1, 8, 1, 13);
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            hover_result.get("contents").?.object.get("value").?.string,
+            "Sets the text color",
+        ) != null,
+    );
+
+    const opaque_hover_requests = [_][]const u8{
+        \\{"jsonrpc":"2.0","id":21,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":1,"character":42}}}
+        ,
+        \\{"jsonrpc":"2.0","id":22,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":4,"character":5}}}
+        ,
+    };
+    for (opaque_hover_requests) |request| {
+        const response = try server.handleRequest(request);
+        defer allocator.free(response);
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
+        defer parsed.deinit();
+        try std.testing.expect(parsed.value.object.get("result").? == .null);
+    }
+
+    const completion_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":23,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":3,"character":9}}}
+    );
+    defer allocator.free(completion_response);
+    var completion = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        completion_response,
+        .{},
+    );
+    defer completion.deinit();
+    const completion_result = completion.value.object.get("result").?.object;
+    try std.testing.expect(!completion_result.get("isIncomplete").?.bool);
+    const completion_items = completion_result.get("items").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), completion_items.len);
+    try std.testing.expectEqualStrings(
+        "background-color",
+        completion_items[0].object.get("label").?.string,
+    );
+    try expectJsonRange(
+        completion_items[0].object.get("textEdit").?.object.get("range").?,
+        3,
+        7,
+        3,
+        9,
+    );
+
+    const closed_completion_requests = [_][]const u8{
+        \\{"jsonrpc":"2.0","id":24,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":1,"character":2}}}
+        ,
+        \\{"jsonrpc":"2.0","id":25,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":1,"character":20}}}
+        ,
+        \\{"jsonrpc":"2.0","id":26,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":1,"character":42}}}
+        ,
+    };
+    for (closed_completion_requests) |request| {
+        const response = try server.handleRequest(request);
+        defer allocator.free(response);
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
+        defer parsed.deinit();
+        try std.testing.expectEqual(
+            @as(usize, 0),
+            parsed.value.object.get("result").?.object.get("items").?.array.items.len,
+        );
+    }
+
+    const document_symbols_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":27,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file:///a.css"}}}
+    );
+    defer allocator.free(document_symbols_response);
+    var document_symbols = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        document_symbols_response,
+        .{},
+    );
+    defer document_symbols.deinit();
+    const symbol_items = document_symbols.value.object.get("result").?.array.items;
+    const expected_symbol_names = [_][]const u8{ "--theme", "card", "pulse", "new" };
+    try std.testing.expectEqual(expected_symbol_names.len, symbol_items.len);
+    for (symbol_items, expected_symbol_names) |item, expected_name| {
+        try std.testing.expectEqualStrings(expected_name, item.object.get("name").?.string);
+    }
+
+    const workspace_symbols_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":28,"method":"workspace/symbol","params":{"query":"CaRd"}}
+    );
+    defer allocator.free(workspace_symbols_response);
+    var workspace_symbols = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        workspace_symbols_response,
+        .{},
+    );
+    defer workspace_symbols.deinit();
+    const workspace_items = workspace_symbols.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), workspace_items.len);
+    try std.testing.expectEqualStrings(
+        "file:///a.css",
+        workspace_items[0].object.get("location").?.object.get("uri").?.string,
+    );
+    try std.testing.expectEqualStrings(
+        "file:///b.css",
+        workspace_items[1].object.get("location").?.object.get("uri").?.string,
+    );
+
+    const definition_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":29,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20}}}
+    );
+    defer allocator.free(definition_response);
+    var definition = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        definition_response,
+        .{},
+    );
+    defer definition.deinit();
+    const definitions = definition.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), definitions.len);
+    try std.testing.expectEqualStrings(
+        "file:///a.css",
+        definitions[0].object.get("uri").?.string,
+    );
+    try expectJsonRange(definitions[0].object.get("range").?, 0, 8, 0, 15);
+
+    const class_definition_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":30,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":1,"character":2}}}
+    );
+    defer allocator.free(class_definition_response);
+    var class_definition = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        class_definition_response,
+        .{},
+    );
+    defer class_definition.deinit();
+    try std.testing.expect(class_definition.value.object.get("result").? == .null);
+
+    const references_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":31,"method":"textDocument/references","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"context":{"includeDeclaration":false}}}
+    );
+    defer allocator.free(references_response);
+    var references = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        references_response,
+        .{},
+    );
+    defer references.deinit();
+    const reference_items = references.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), reference_items.len);
+    try std.testing.expectEqualStrings(
+        "file:///a.css",
+        reference_items[0].object.get("uri").?.string,
+    );
+    try expectJsonRange(reference_items[0].object.get("range").?, 1, 19, 1, 26);
+    try std.testing.expectEqualStrings(
+        "file:///b.css",
+        reference_items[1].object.get("uri").?.string,
+    );
+    try expectJsonRange(reference_items[1].object.get("range").?, 0, 19, 0, 26);
+
+    const all_references_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":32,"method":"textDocument/references","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"context":{"includeDeclaration":true}}}
+    );
+    defer allocator.free(all_references_response);
+    var all_references = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        all_references_response,
+        .{},
+    );
+    defer all_references.deinit();
+    const all_reference_items = all_references.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 3), all_reference_items.len);
+    try expectJsonRange(all_reference_items[0].object.get("range").?, 0, 8, 0, 15);
+    try expectJsonRange(all_reference_items[1].object.get("range").?, 1, 19, 1, 26);
+    try expectJsonRange(all_reference_items[2].object.get("range").?, 0, 19, 0, 26);
+
+    const rename_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":33,"method":"textDocument/rename","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"newName":"--renamed\nname"}}
+    );
+    defer allocator.free(rename_response);
+    var rename = try std.json.parseFromSlice(std.json.Value, allocator, rename_response, .{});
+    defer rename.deinit();
+    const changes = rename.value.object.get("result").?.object.get("changes").?.object;
+    const a_edits = changes.get("file:///a.css").?.array.items;
+    const b_edits = changes.get("file:///b.css").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), a_edits.len);
+    try std.testing.expectEqual(@as(usize, 1), b_edits.len);
+    for (a_edits) |edit| {
+        try std.testing.expectEqualStrings(
+            "--renamed\\a name",
+            edit.object.get("newText").?.string,
+        );
+    }
+    try std.testing.expectEqualStrings(
+        "--renamed\\a name",
+        b_edits[0].object.get("newText").?.string,
+    );
+
+    try expectJsonRpcError(
+        &server,
+        \\{"jsonrpc":"2.0","id":34,"method":"textDocument/rename","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"newName":"theme"}}
+    ,
+        -32602,
+    );
+    try expectJsonRpcError(
+        &server,
+        \\{"jsonrpc":"2.0","id":35,"method":"textDocument/rename","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":2,"character":13},"newName":"none"}}
+    ,
+        -32602,
+    );
+    try expectJsonRpcError(
+        &server,
+        \\{"jsonrpc":"2.0","id":36,"method":"textDocument/references","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20}}}
+    ,
+        -32602,
+    );
+    try expectJsonRpcError(
+        &server,
+        \\{"jsonrpc":"2.0","id":361,"method":"textDocument/rename","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"newName":"--bad\u0000"}}
+    ,
+        -32602,
+    );
+
+    try expectNoResponse(&server,
+        \\{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///a.css","version":2},"contentChanges":[{"text":":root { --other: red; }\n.new { pad }"}]}}
+    );
+    try std.testing.expect(server.documents.get("file:///a.css").?.index == null);
+
+    const refreshed_symbols_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":37,"method":"workspace/symbol","params":{"query":"theme"}}
+    );
+    defer allocator.free(refreshed_symbols_response);
+    var refreshed_symbols = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        refreshed_symbols_response,
+        .{},
+    );
+    defer refreshed_symbols.deinit();
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        refreshed_symbols.value.object.get("result").?.array.items.len,
+    );
+
+    const refreshed_completion_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":38,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":1,"character":10}}}
+    );
+    defer allocator.free(refreshed_completion_response);
+    var refreshed_completion = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        refreshed_completion_response,
+        .{},
+    );
+    defer refreshed_completion.deinit();
+    const refreshed_items = refreshed_completion.value.object
+        .get("result").?.object.get("items").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), refreshed_items.len);
+    try std.testing.expectEqualStrings(
+        "padding",
+        refreshed_items[0].object.get("label").?.string,
+    );
+    try expectJsonRange(
+        refreshed_items[0].object.get("textEdit").?.object.get("range").?,
+        1,
+        7,
+        1,
+        10,
+    );
+
+    try expectNoResponse(&server,
+        \\{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///b.css"}}}
+    );
+    const closed_workspace_response = try server.handleRequest(
+        \\{"jsonrpc":"2.0","id":39,"method":"workspace/symbol","params":{"query":"hero"}}
+    );
+    defer allocator.free(closed_workspace_response);
+    var closed_workspace = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        closed_workspace_response,
+        .{},
+    );
+    defer closed_workspace.deinit();
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        closed_workspace.value.object.get("result").?.array.items.len,
+    );
 }
 
 test "LSP pull diagnostics expose recoverable compiler diagnostics" {
@@ -1387,7 +2228,7 @@ test "LSP serializes every handler response as complete JSON" {
         "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":6}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":0}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2}}}",
-        "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2},\"context\":{\"includeDeclaration\":true}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2},\"newName\":\"bar\"}}",
     };
 
@@ -1415,6 +2256,10 @@ test "LSP document synchronization is balanced full and version ordered" {
     );
     try std.testing.expectEqual(@as(i32, 5), server.documents.get("file:///versions.css").?.version);
     try std.testing.expectEqualStrings(".v5{}", server.documents.get("file:///versions.css").?.text);
+    try std.testing.expectEqual(
+        server.documents.get("file:///versions.css").?.text.len,
+        server.workspace_text_bytes,
+    );
 
     try expectNoResponse(
         &server,
@@ -1448,6 +2293,8 @@ test "LSP document synchronization is balanced full and version ordered" {
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\"}}}",
     );
     try std.testing.expect(server.documents.get("file:///versions.css") == null);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_text_bytes);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_uri_bytes);
 
     try expectNoResponse(
         &server,
@@ -1465,6 +2312,138 @@ test "LSP document synchronization is balanced full and version ordered" {
     );
     try std.testing.expectEqual(@as(i32, 1), server.documents.get("file:///versions.css").?.version);
     try std.testing.expectEqualStrings(".reopened{}", server.documents.get("file:///versions.css").?.text);
+    try std.testing.expectEqual(
+        server.documents.get("file:///versions.css").?.text.len,
+        server.workspace_text_bytes,
+    );
+    try std.testing.expectEqual(
+        "file:///versions.css".len,
+        server.workspace_uri_bytes,
+    );
+}
+
+test "LSP workspace state and indexed requests enforce resource budgets" {
+    const allocator = std.testing.allocator;
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+    server.limits.max_workspace_documents = 2;
+    server.limits.max_workspace_text_bytes = 8;
+    server.limits.max_workspace_uri_bytes = "file:///a.css".len;
+    server.limits.max_document_uri_bytes = 32;
+    server.limits.max_workspace_results = 1;
+    server.limits.max_workspace_query_bytes = 3;
+    server.limits.max_rename_name_bytes = 2;
+
+    try initializeTestServer(&server);
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".a{}\"}}}",
+    );
+    try std.testing.expectEqual(@as(usize, 1), server.documents.count());
+    try std.testing.expectEqual(@as(usize, 4), server.workspace_text_bytes);
+    try std.testing.expectEqual("file:///a.css".len, server.workspace_uri_bytes);
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///b.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".b{}\"}}}",
+    );
+    try std.testing.expect(server.documents.get("file:///b.css") == null);
+    try std.testing.expectEqual(@as(usize, 4), server.workspace_text_bytes);
+    try std.testing.expectEqual("file:///a.css".len, server.workspace_uri_bytes);
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\",\"version\":2},\"contentChanges\":[{\"text\":\".oversize{}\"}]}}",
+    );
+    try std.testing.expectEqual(@as(i32, 1), server.documents.get("file:///a.css").?.version);
+    try std.testing.expectEqualStrings(".a{}", server.documents.get("file:///a.css").?.text);
+    try std.testing.expectEqual(@as(usize, 4), server.workspace_text_bytes);
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\",\"version\":3},\"contentChanges\":[{\"text\":\".b{}.b{}\"}]}}",
+    );
+    try std.testing.expectEqual(@as(i32, 3), server.documents.get("file:///a.css").?.version);
+    try std.testing.expectEqual(@as(usize, 8), server.workspace_text_bytes);
+
+    try expectJsonRpcError(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"id\":40,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"bbbb\"}}",
+        -32602,
+    );
+    try expectJsonRpcError(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"id\":41,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"b\"}}",
+        -32803,
+    );
+    try std.testing.expect(server.documents.get("file:///a.css").?.index != null);
+    try std.testing.expect(server.workspace_index_bytes > 0);
+    server.limits.max_editor_response_bytes = 1;
+    try expectJsonRpcError(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"id\":411,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\"}}}",
+        -32803,
+    );
+    server.limits.max_editor_response_bytes = 16 * 1024 * 1024;
+    try expectJsonRpcError(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\"},\"position\":{\"line\":0,\"character\":1},\"newName\":\"long\"}}",
+        -32602,
+    );
+
+    const matcher = try LspServer.WorkspaceQueryMatcher.init("aab", 3);
+    try std.testing.expect(matcher.contains("xxAAAByy"));
+    try std.testing.expect(!matcher.contains("aaaaac"));
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\"}}}",
+    );
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_text_bytes);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_uri_bytes);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_index_bytes);
+
+    server.limits.max_workspace_index_bytes = 1;
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\",\"languageId\":\"css\",\"version\":4,\"text\":\".a{}\"}}}",
+    );
+    try expectJsonRpcError(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"id\":43,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\"}}}",
+        -32803,
+    );
+    try std.testing.expect(server.documents.get("file:///a.css").?.index == null);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_index_bytes);
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\"}}}",
+    );
+
+    server.limits.max_workspace_documents = 1;
+    server.limits.max_workspace_uri_bytes = 100;
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\",\"languageId\":\"css\",\"version\":4,\"text\":\".a{}\"}}}",
+    );
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///b.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".b{}\"}}}",
+    );
+    try std.testing.expectEqual(@as(usize, 1), server.documents.count());
+    try std.testing.expect(server.documents.get("file:///b.css") == null);
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.css\"}}}",
+    );
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///this-uri-is-definitely-too-long.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".x{}\"}}}",
+    );
+    try std.testing.expectEqual(@as(usize, 0), server.documents.count());
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_text_bytes);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_uri_bytes);
+    try std.testing.expectEqual(@as(usize, 0), server.workspace_index_bytes);
 }
 
 fn exerciseLspJsonAllocationFailures(allocator: std.mem.Allocator) !void {
@@ -1508,6 +2487,41 @@ fn exerciseLspDocumentAllocationFailures(allocator: std.mem.Allocator) !void {
     );
 }
 
+fn exerciseLspEditorAllocationFailures(allocator: std.mem.Allocator) !void {
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    try initializeTestServer(&server);
+    try expectNoResponse(&server,
+        \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///b.css","languageId":"css","version":1,"text":".hero { color: var(--theme); animation-name: pulse; }\n.card { color: blue; }"}}}
+    );
+    try expectNoResponse(&server,
+        \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///a.css","languageId":"css","version":1,"text":":root { --theme: red; }\n.card { color: var(--theme); }\n@keyframes pulse { to { opacity: 1; } }\n.new { ba }"}}}
+    );
+
+    const requests = [_][]const u8{
+        \\{"jsonrpc":"2.0","id":1,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":1,"character":10}}}
+        ,
+        \\{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":3,"character":9}}}
+        ,
+        \\{"jsonrpc":"2.0","id":3,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file:///a.css"}}}
+        ,
+        \\{"jsonrpc":"2.0","id":4,"method":"workspace/symbol","params":{"query":"card"}}
+        ,
+        \\{"jsonrpc":"2.0","id":5,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20}}}
+        ,
+        \\{"jsonrpc":"2.0","id":6,"method":"textDocument/references","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"context":{"includeDeclaration":true}}}
+        ,
+        \\{"jsonrpc":"2.0","id":7,"method":"textDocument/rename","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"newName":"--renamed"}}
+        ,
+    };
+    for (requests) |request| {
+        const response = try server.handleRequest(request);
+        defer allocator.free(response);
+        try std.testing.expect(response.len > 0);
+    }
+}
+
 fn exerciseLspLifecycleAllocationFailures(allocator: std.mem.Allocator) !void {
     var server = LspServer.init(allocator);
     defer server.deinit();
@@ -1541,6 +2555,11 @@ test "LSP JSON parsing and responses handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseLspDocumentAllocationFailures,
+        .{},
+    );
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLspEditorAllocationFailures,
         .{},
     );
     try std.testing.checkAllAllocationFailures(

@@ -408,8 +408,8 @@ test "LSP exit without shutdown returns failure without a response (LSP-003)" {
 test "LSP executable converts non-BMP byte spans to UTF-16 positions (LSP-004)" {
     const messages = [_][]const u8{
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
-        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\",\"languageId\":\"css\",\"version\":1,\"text\":\"😀.foo{}\\r\\nα .foo{}\"}}}",
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":3}}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\",\"languageId\":\"css\",\"version\":1,\"text\":\"😀:root{--foo:red}\\r\\nα .x{color:var(--foo)}\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///utf16.css\"},\"position\":{\"line\":1,\"character\":17}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"shutdown\"}",
         "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}",
     };
@@ -450,14 +450,14 @@ test "LSP executable converts non-BMP byte spans to UTF-16 positions (LSP-004)" 
     );
     defer definition.deinit();
     const range = definition.value.object
-        .get("result").?.object
+        .get("result").?.array.items[0].object
         .get("range").?.object;
     const start = range.get("start").?.object;
     const end = range.get("end").?.object;
     try std.testing.expectEqual(@as(i64, 0), start.get("line").?.integer);
-    try std.testing.expectEqual(@as(i64, 3), start.get("character").?.integer);
+    try std.testing.expectEqual(@as(i64, 8), start.get("character").?.integer);
     try std.testing.expectEqual(@as(i64, 0), end.get("line").?.integer);
-    try std.testing.expectEqual(@as(i64, 6), end.get("character").?.integer);
+    try std.testing.expectEqual(@as(i64, 13), end.get("character").?.integer);
 
     var shutdown = try std.json.parseFromSlice(
         std.json.Value,
@@ -531,6 +531,187 @@ test "LSP executable returns full recoverable compiler diagnostics (LSP-005)" {
     try std.testing.expectEqual(@as(i64, 17), first_start.get("character").?.integer);
     try std.testing.expectEqual(@as(i64, 0), first_end.get("line").?.integer);
     try std.testing.expectEqual(@as(i64, 22), first_end.get("character").?.integer);
+
+    var shutdown = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        shutdown_body,
+        .{},
+    );
+    defer shutdown.deinit();
+    try std.testing.expect(shutdown.value.object.get("result").? == .null);
+}
+
+test "LSP executable serves syntax-aware deterministic workspace features (LSP-006)" {
+    const messages = [_][]const u8{
+        \\{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///","capabilities":{}}}
+        ,
+        \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///b.css","languageId":"css","version":1,"text":".hero { color: var(--theme); animation-name: pulse; }\n.card { color: blue; }\n/* --theme pulse */"}}}
+        ,
+        \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///a.css","languageId":"css","version":1,"text":":root { --theme: red; }\n.card { color: var(--theme); content: \"--theme\"; }\n@keyframes pulse { from { opacity: 0; } to { opacity: 1; } }\n.new { ba }\n/* --theme */"}}}
+        ,
+        \\{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":1,"character":10}}}
+        ,
+        \\{"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///a.css"},"position":{"line":3,"character":9}}}
+        ,
+        \\{"jsonrpc":"2.0","id":4,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file:///a.css"}}}
+        ,
+        \\{"jsonrpc":"2.0","id":5,"method":"workspace/symbol","params":{"query":"CaRd"}}
+        ,
+        \\{"jsonrpc":"2.0","id":6,"method":"textDocument/definition","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20}}}
+        ,
+        \\{"jsonrpc":"2.0","id":7,"method":"textDocument/references","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"context":{"includeDeclaration":false}}}
+        ,
+        \\{"jsonrpc":"2.0","id":8,"method":"textDocument/rename","params":{"textDocument":{"uri":"file:///b.css"},"position":{"line":0,"character":20},"newName":"--next"}}
+        ,
+        \\{"jsonrpc":"2.0","id":9,"method":"shutdown"}
+        ,
+        \\{"jsonrpc":"2.0","method":"exit"}
+        ,
+    };
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    for (messages) |message| try appendLspFrame(&transcript, message);
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectExitCode(result, 0);
+
+    var offset: usize = 0;
+    const initialize_body = try nextLspFrame(result.stdout, &offset);
+    const hover_body = try nextLspFrame(result.stdout, &offset);
+    const completion_body = try nextLspFrame(result.stdout, &offset);
+    const document_symbols_body = try nextLspFrame(result.stdout, &offset);
+    const workspace_symbols_body = try nextLspFrame(result.stdout, &offset);
+    const definition_body = try nextLspFrame(result.stdout, &offset);
+    const references_body = try nextLspFrame(result.stdout, &offset);
+    const rename_body = try nextLspFrame(result.stdout, &offset);
+    const shutdown_body = try nextLspFrame(result.stdout, &offset);
+    try std.testing.expectEqual(result.stdout.len, offset);
+
+    var initialized = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        initialize_body,
+        .{},
+    );
+    defer initialized.deinit();
+    const capabilities = initialized.value.object
+        .get("result").?.object
+        .get("capabilities").?.object;
+    try std.testing.expect(capabilities.get("hoverProvider").?.bool);
+    try std.testing.expect(capabilities.get("completionProvider").? == .object);
+    try std.testing.expect(capabilities.get("documentSymbolProvider").?.bool);
+    try std.testing.expect(capabilities.get("workspaceSymbolProvider").?.bool);
+    try std.testing.expect(capabilities.get("definitionProvider").?.bool);
+    try std.testing.expect(capabilities.get("referencesProvider").?.bool);
+    try std.testing.expect(capabilities.get("renameProvider").?.bool);
+
+    var hover = try std.json.parseFromSlice(std.json.Value, allocator, hover_body, .{});
+    defer hover.deinit();
+    const hover_result = hover.value.object.get("result").?.object;
+    try std.testing.expect(
+        std.mem.indexOf(
+            u8,
+            hover_result.get("contents").?.object.get("value").?.string,
+            "Sets the text color",
+        ) != null,
+    );
+
+    var completion = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        completion_body,
+        .{},
+    );
+    defer completion.deinit();
+    const completion_items = completion.value.object
+        .get("result").?.object
+        .get("items").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), completion_items.len);
+    try std.testing.expectEqualStrings(
+        "background-color",
+        completion_items[0].object.get("label").?.string,
+    );
+
+    var document_symbols = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        document_symbols_body,
+        .{},
+    );
+    defer document_symbols.deinit();
+    const document_items = document_symbols.value.object.get("result").?.array.items;
+    const expected_names = [_][]const u8{ "--theme", "card", "pulse", "new" };
+    try std.testing.expectEqual(expected_names.len, document_items.len);
+    for (document_items, expected_names) |item, expected_name| {
+        try std.testing.expectEqualStrings(expected_name, item.object.get("name").?.string);
+    }
+
+    var workspace_symbols = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        workspace_symbols_body,
+        .{},
+    );
+    defer workspace_symbols.deinit();
+    const workspace_items = workspace_symbols.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), workspace_items.len);
+    try std.testing.expectEqualStrings(
+        "file:///a.css",
+        workspace_items[0].object.get("location").?.object.get("uri").?.string,
+    );
+    try std.testing.expectEqualStrings(
+        "file:///b.css",
+        workspace_items[1].object.get("location").?.object.get("uri").?.string,
+    );
+
+    var definition = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        definition_body,
+        .{},
+    );
+    defer definition.deinit();
+    const definitions = definition.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), definitions.len);
+    try std.testing.expectEqualStrings(
+        "file:///a.css",
+        definitions[0].object.get("uri").?.string,
+    );
+
+    var references = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        references_body,
+        .{},
+    );
+    defer references.deinit();
+    const reference_items = references.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), reference_items.len);
+    try std.testing.expectEqualStrings(
+        "file:///a.css",
+        reference_items[0].object.get("uri").?.string,
+    );
+    try std.testing.expectEqualStrings(
+        "file:///b.css",
+        reference_items[1].object.get("uri").?.string,
+    );
+
+    var rename = try std.json.parseFromSlice(std.json.Value, allocator, rename_body, .{});
+    defer rename.deinit();
+    const changes = rename.value.object.get("result").?.object.get("changes").?.object;
+    const a_edits = changes.get("file:///a.css").?.array.items;
+    const b_edits = changes.get("file:///b.css").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), a_edits.len);
+    try std.testing.expectEqual(@as(usize, 1), b_edits.len);
+    for (a_edits) |edit| {
+        try std.testing.expectEqualStrings("--next", edit.object.get("newText").?.string);
+    }
+    try std.testing.expectEqualStrings(
+        "--next",
+        b_edits[0].object.get("newText").?.string,
+    );
 
     var shutdown = try std.json.parseFromSlice(
         std.json.Value,

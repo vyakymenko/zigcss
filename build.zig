@@ -72,6 +72,15 @@ pub fn build(b: *std.Build) void {
     const lsp_position_tests = b.addTest(.{ .root_module = lsp_position_test_module });
     const run_lsp_position_tests = b.addRunArtifact(lsp_position_tests);
 
+    const lsp_index_test_module = b.createModule(.{
+        .root_source_file = b.path("src/lsp_index.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    lsp_index_test_module.addImport("zigcss", library_module);
+    const lsp_index_tests = b.addTest(.{ .root_module = lsp_index_test_module });
+    const run_lsp_index_tests = b.addRunArtifact(lsp_index_tests);
+
     const core_tests = b.addTest(.{
         .root_module = library_module,
     });
@@ -151,6 +160,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lsp_tests.step);
     test_step.dependOn(&run_lsp_transport_tests.step);
     test_step.dependOn(&run_lsp_position_tests.step);
+    test_step.dependOn(&run_lsp_index_tests.step);
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
     test_step.dependOn(&public_api_example.step);

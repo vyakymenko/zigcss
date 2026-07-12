@@ -1,6 +1,6 @@
 # zigcss VSCode Extension
 
-> Experimental: this client is not a stable editor package. CSS diagnostics use the rebuilt public compiler, while syntax-aware editor features and extension packaging remain incomplete.
+> Experimental: this client is not a stable editor package. CSS diagnostics and syntax-aware features use rebuilt compiler data, while protocol stress coverage and extension packaging remain incomplete.
 
 VSCode client prototype for ZigCSS Language Server Protocol development.
 
@@ -9,7 +9,8 @@ VSCode client prototype for ZigCSS Language Server Protocol development.
 - **Compiler-backed diagnostics** - LSP 3.17 pull reports expose recoverable CSS diagnostics with codes and UTF-16 ranges
 - **Full document synchronization** - Open documents and strictly versioned complete replacements share one owned server state
 - **Explicit format containment** - Removed and library-only stylesheet formats receive an unavailable-format diagnostic instead of CSS fallback
-- **Prototype language activation** - Hover, completion, symbols, and navigation are not advertised until their syntax-aware implementations are complete
+- **Syntax-aware editing** - Hover, property completion, document/workspace symbols, definition, references, and rename use typed indexes rather than unrestricted text matching
+- **Bounded open-document workspace** - Cross-file results cover currently open CSS documents in deterministic URI/source order; the server does not scan the filesystem or resolve an unopened project graph
 
 ## Installation
 
