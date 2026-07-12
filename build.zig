@@ -222,6 +222,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    bench_module.addAnonymousImport("benchmark-small-css", .{
+        .root_source_file = b.path("benchmarks/corpora/v1/small.css"),
+    });
+    bench_module.addAnonymousImport("benchmark-medium-css", .{
+        .root_source_file = b.path("benchmarks/corpora/v1/medium.css"),
+    });
+    bench_module.addAnonymousImport("benchmark-large-css", .{
+        .root_source_file = b.path("benchmarks/corpora/v1/large.css"),
+    });
 
     const bench_exe = b.addExecutable(.{
         .name = "zigcss-bench",

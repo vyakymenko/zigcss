@@ -4,7 +4,11 @@ const parser = @import("parser.zig");
 const codegen = @import("codegen.zig");
 const optimizer = @import("optimizer.zig");
 
-const test_css = 
+const small_css = @embedFile("benchmark-small-css");
+const medium_css = @embedFile("benchmark-medium-css");
+const large_css = @embedFile("benchmark-large-css");
+
+const test_css =
     \\.header { color: #333; background: white; padding: 20px; margin: 10px; }
     \\.footer { color: #666; background: #f0f0f0; padding: 15px; margin: 5px; }
     \\.sidebar { width: 250px; float: left; background: #fff; }
@@ -249,7 +253,7 @@ pub fn main() !void {
     std.debug.print("Running benchmarks...\n\n", .{});
 
     const iterations = 100;
-    const result = try profiler.benchmarkCompilation(allocator, test_css, iterations);
+    const result = try profiler.benchmarkCompilation(allocator, medium_css, iterations);
     result.print();
 
     std.debug.print("Running detailed benchmark...\n\n", .{});
@@ -257,32 +261,20 @@ pub fn main() !void {
 }
 
 fn runDetailedBenchmark(allocator: std.mem.Allocator) !void {
-    const small_css = ".container { color: red; background: white; padding: 10px; margin: 5px; }";
-    const medium_css = test_css;
-    
-    var large_css_buf = try std.ArrayList(u8).initCapacity(allocator, 1024 * 1024);
-    defer large_css_buf.deinit(allocator);
-    var writer = large_css_buf.writer(allocator);
-    for (0..1000) |i| {
-        try writer.print(".class-{d} {{ color: #{x:0>6}; padding: {d}px; margin: {d}px; }}\n", .{ i, i * 1000, i * 2, i * 3 });
-    }
-    const large_css = try large_css_buf.toOwnedSlice(allocator);
-    defer allocator.free(large_css);
-    
     const test_cases = [_]struct { name: []const u8, css: []const u8 }{
-        .{ .name = "Small CSS (~100 bytes)", .css = small_css },
-        .{ .name = "Medium CSS (~10KB)", .css = medium_css },
-        .{ .name = "Large CSS (~100KB)", .css = large_css },
+        .{ .name = "Small CSS", .css = small_css },
+        .{ .name = "Medium CSS", .css = medium_css },
+        .{ .name = "Large CSS", .css = large_css },
     };
 
     for (test_cases) |test_case| {
-        std.debug.print("Benchmarking: {s}\n", .{test_case.name});
-        
+        std.debug.print("Benchmarking: {s} ({d} bytes)\n", .{ test_case.name, test_case.css.len });
+
         var total_parse: u64 = 0;
         var total_optimize: u64 = 0;
         var total_codegen: u64 = 0;
         const runs = 50;
-        
+
         for (0..runs) |_| {
             const parse_start = std.time.nanoTimestamp();
             var css_parser = parser.Parser.init(allocator, test_case.css);
@@ -290,23 +282,23 @@ fn runDetailedBenchmark(allocator: std.mem.Allocator) !void {
                 css_parser.string_pool.deinit();
                 allocator.destroy(css_parser.string_pool);
             };
-            
+
             var parse_result = css_parser.parseWithErrorInfo();
             const parse_end = std.time.nanoTimestamp();
-            
+
             switch (parse_result) {
                 .success => |*stylesheet_ptr| {
                     const stylesheet = @constCast(stylesheet_ptr);
                     defer stylesheet.deinit();
-                    
+
                     total_parse += @as(u64, @intCast(@abs(parse_end - parse_start)));
-                    
+
                     const optimize_start = std.time.nanoTimestamp();
                     var opt = optimizer.Optimizer.init(allocator);
                     try opt.optimize(stylesheet);
                     const optimize_end = std.time.nanoTimestamp();
                     total_optimize += @as(u64, @intCast(@abs(optimize_end - optimize_start)));
-                    
+
                     const codegen_start = std.time.nanoTimestamp();
                     const result = try codegen.generate(allocator, stylesheet, .{ .minify = true });
                     defer allocator.free(result);
@@ -316,13 +308,13 @@ fn runDetailedBenchmark(allocator: std.mem.Allocator) !void {
                 .parse_error => return error.ParseError,
             }
         }
-        
+
         const avg_parse = @as(f64, @floatFromInt(total_parse)) / @as(f64, @floatFromInt(runs)) / 1_000_000.0;
         const avg_optimize = @as(f64, @floatFromInt(total_optimize)) / @as(f64, @floatFromInt(runs)) / 1_000_000.0;
         const avg_codegen = @as(f64, @floatFromInt(total_codegen)) / @as(f64, @floatFromInt(runs)) / 1_000_000.0;
         const total = avg_parse + avg_optimize + avg_codegen;
         const throughput = if (total > 0) (@as(f64, @floatFromInt(test_case.css.len)) / total) / 1024.0 / 1024.0 else 0.0;
-        
+
         std.debug.print("  Parse:    {d:.3} ms\n", .{avg_parse});
         std.debug.print("  Optimize: {d:.3} ms\n", .{avg_optimize});
         std.debug.print("  Codegen:  {d:.3} ms\n", .{avg_codegen});

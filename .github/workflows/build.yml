@@ -255,5 +255,8 @@ jobs:
       - name: Validate transforms independently
         run: npm run test:transforms
 
+      - name: Validate benchmark corpora
+        run: npm run test:benchmark-corpora && npm run check:benchmark-corpora
+
       - name: Run Benchmarks
         run: zig build bench

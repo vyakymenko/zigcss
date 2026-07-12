@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": "v1",
+  "generator": "scripts/generate-benchmark-corpora.mjs",
+  "measurement": {
+    "bytes": "Exact UTF-8 file length, including the final LF.",
+    "sha256": "Lowercase SHA-256 of the exact file bytes.",
+    "complexity": {
+      "qualifiedRules": "Qualified style-rule blocks.",
+      "atRules": "At-rule statements and blocks.",
+      "declarations": "Declarations inside qualified and at-rule blocks.",
+      "maxRuleDepth": "Maximum nested rule depth; a top-level rule has depth 1."
+    }
+  },
+  "corpora": [
+    {
+      "id": "small-flat",
+      "path": "benchmarks/corpora/v1/small.css",
+      "bytes": 95,
+      "sha256": "2ee04192724f8c8dcd871b6208338bd04ba5a4dd678be77856dc6010eee7cd39",
+      "complexity": {
+        "qualifiedRules": 1,
+        "atRules": 0,
+        "declarations": 5,
+        "maxRuleDepth": 1
+      }
+    },
+    {
+      "id": "medium-flat",
+      "path": "benchmarks/corpora/v1/medium.css",
+      "bytes": 12383,
+      "sha256": "248a873052c6b6e360b09a75123426c4ed04d6a804b3938427b7d39479d75c45",
+      "complexity": {
+        "qualifiedRules": 128,
+        "atRules": 0,
+        "declarations": 640,
+        "maxRuleDepth": 1
+      }
+    },
+    {
+      "id": "large-flat",
+      "path": "benchmarks/corpora/v1/large.css",
+      "bytes": 198366,
+      "sha256": "48d0567f80ec33f8d1893aca7ebfb62bff10994d7e03b99965507e2349334041",
+      "complexity": {
+        "qualifiedRules": 2048,
+        "atRules": 0,
+        "declarations": 10240,
+        "maxRuleDepth": 1
+      }
+    }
+  ]
+}
