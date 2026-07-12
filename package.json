@@ -31,6 +31,8 @@
     "generate:benchmark-corpora": "node scripts/generate-benchmark-corpora.mjs --write",
     "check:benchmark-corpora": "node scripts/generate-benchmark-corpora.mjs --check",
     "test:benchmark-corpora": "node --test scripts/generate-benchmark-corpora.test.mjs",
+    "check:benchmark-tools": "node scripts/validate-benchmark-toolchain.mjs --check",
+    "test:benchmark-tools": "node --test scripts/validate-benchmark-toolchain.test.mjs",
     "check:workflows": "node scripts/validate-workflows.mjs --check",
     "test:workflows": "node --test scripts/validate-workflows.test.mjs",
     "check:version": "node scripts/validate-release-version.mjs --check",
@@ -80,6 +82,8 @@
   ],
   "devDependencies": {
     "@mdn/browser-compat-data": "8.0.0",
-    "lightningcss": "1.30.1"
+    "esbuild": "0.28.1",
+    "lightningcss": "1.30.1",
+    "lightningcss-cli": "1.30.1"
   }
 }

@@ -258,5 +258,8 @@ jobs:
       - name: Validate benchmark corpora
         run: npm run test:benchmark-corpora && npm run check:benchmark-corpora
 
+      - name: Validate benchmark toolchain
+        run: npm run test:benchmark-tools && npm run check:benchmark-tools
+
       - name: Run Benchmarks
         run: zig build bench
