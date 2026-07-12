@@ -6,14 +6,14 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 
 | Surface | Status | Current behavior |
 |---|---|---|
-| CSS CLI parsing and emission | Experimental, matrix-tested | The stable CLI uses the new source/token/syntax/typed-parser pipeline; its current grammar boundary is published and independently parsed. |
+| CSS CLI parsing and emission | Experimental, matrix-tested | The stable CLI delegates to `zigcss.compile` over the new source/token/syntax/typed-parser pipeline; its grammar boundary is published and independently parsed. |
 | Zig compile API | Experimental, consumer-tested | `zigcss.compile` returns owned CSS/maps, located diagnostics, ordered decoded imports, and optional module-export state; accepted transforms and borrowed canonical targets are explicit options. |
 | Zig package metadata | Experimental, consumer-tested | Package `zigcss` 0.3.0 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`. |
 | Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` uses declared lazy file inputs/outputs and a host compiler artifact; unavailable CLI features are not represented. |
 | Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed `plugin.`-namespaced Zig callbacks through bounded deterministic pass plans; there is no stable ABI, sandbox, CLI, or HTTP path. |
 | `--minify` | Experimental | Changes whitespace during emission only; it is independent of `--optimize`. |
 | Output planning | Safety boundary verified | Input/output aliases and multi-file destination collisions are rejected before writes. |
-| `--profile` | Experimental | Reports parse, optimizer-stage, and emission timings without the former lifecycle crash. |
+| `--profile` | Experimental | Reports one end-to-end public compile-call timing without the former lifecycle crash. Accurate internal stage and allocator metrics remain deferred to `PROF-010`. |
 | Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs exactly seven verified analysis/cleanup/semantic passes to a bounded byte-stable fixed point; unsafe and separately authorized classes are excluded. |
 | Dead-code and critical-CSS extraction | Experimental, library/test-only | Two bounded passes use complete class/ID inventories and require separate experimental plus extraction authorization; stable CLI flags remain unavailable. |
 | Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property/value/selector/at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
@@ -25,7 +25,7 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 
 ## Current boundaries
 
-The stable CLI no longer consumes the inherited byte parser. Its typed and lossless grammar boundary is listed in the [CSS compatibility matrix](/guide/css-compatibility), and every emitting fixture is checked in pretty and minified modes by an independent parser with recovery disabled.
+The stable CLI no longer consumes the inherited byte parser or duplicates the rebuilt pipeline. Single-file, watch, and batch compilation construct public options and consume owned results through one `zigcss.compile` call site; runtime code retains only argument parsing, path planning, file I/O, diagnostic rendering, and writes. Its typed and lossless grammar boundary is listed in the [CSS compatibility matrix](/guide/css-compatibility), and every emitting fixture is checked in pretty and minified modes by an independent parser with recovery disabled.
 
 The build registers `src/lib.zig` as the external `zigcss` module. A separate consumer test imports that name rather than testing from inside the root, then calls the owned high-level compile facade. Results retain CSS, optional map bytes, source names and line/column locations for diagnostics, ordered decoded top-level `@import` dependencies, and optional module-export state after compilation cleanup. Duplicate imports remain ordered; malformed or dynamic import preludes do not become guessed dependencies; count/owned-byte limits fail with a structured resource diagnostic and no partial facts.
 

@@ -116,6 +116,22 @@ test('every Zig example has an executable build gate', () => {
   assert.match(workflow, /zig build test -Doptimize=ReleaseSafe --summary all/)
 })
 
+test('the installed executable delegates CSS compilation to the public facade', () => {
+  const build = read('build.zig')
+  const main = read('src/main.zig')
+  const runtime = main.split('\ntest "')[0]
+
+  assert.match(runtime, /const zigcss = @import\("zigcss"\)/)
+  assert.equal([...runtime.matchAll(/zigcss\.compile\(/g)].length, 1)
+  assert.doesNotMatch(
+    runtime,
+    /css\/pipeline|verified_optimizer|const (?:formats|codegen|parser|optimizer|autoprefixer) =/,
+  )
+  assert.match(build, /executable_module\.addImport\("zigcss", library_module\)/)
+  assert.match(build, /test_module\.addImport\("zigcss", library_module\)/)
+  assert.match(build, /audit_test_module\.addImport\("zigcss", library_module\)/)
+})
+
 test('active source and CI surfaces agree on the Zig 0.15.2 baseline', () => {
   const buildWorkflow = read('.github/workflows/build.yml')
   const releaseWorkflow = read('.github/workflows/release.yml')

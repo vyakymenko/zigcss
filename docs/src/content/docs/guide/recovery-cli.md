@@ -2,6 +2,8 @@
 
 The current command-line interface is experimental. Run `zigcss --help` for its authoritative option list.
 
+All supported CSS modes delegate to one public `zigcss.compile` call site. The CLI owns arguments, path safety, file I/O, diagnostic rendering, and writes, while parsing, verified optimization, and emission remain inside the same owned library contract used by Zig consumers.
+
 ## Available options
 
 | Option | Behavior |
@@ -11,7 +13,7 @@ The current command-line interface is experimental. Run `zigcss --help` for its 
 | `--minify` | Emit compact whitespace; this is independent of `--optimize`. |
 | `--optimize` | Run the closed verified cleanup/semantic preset to a bounded byte-stable fixed point. |
 | `--watch` | Recompile one input when its content changes. |
-| `--profile` | Print stage timings. |
+| `--profile` | Print one end-to-end public compile-call timing; accurate internal stage and allocator metrics belong to `PROF-010`. |
 | `--lsp` | Start the experimental language server. |
 | `-h`, `--help` | Print the current contract. |
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const audit_options = @import("audit_options");
+const zigcss = @import("zigcss");
 
 const Child = std.process.Child;
 const allocator = std.testing.allocator;
@@ -159,6 +160,38 @@ test "stable CLI uses deterministic pretty emission by default" {
             "}\n",
         result.stdout,
     );
+}
+
+test "CLI output is the public compile result in every stable transform mode (CLI-010)" {
+    const input = ".empty{}.a{width:calc(1px + 2px);color:#ffffff}";
+    const cases = [_]struct {
+        args: []const []const u8,
+        options: zigcss.CompileOptions,
+    }{
+        .{ .args = &.{}, .options = .{} },
+        .{
+            .args = &.{"--minify"},
+            .options = .{ .format = .minified },
+        },
+        .{
+            .args = &.{ "--optimize", "--minify" },
+            .options = .{
+                .format = .minified,
+                .transforms = .{ .optimize = true },
+            },
+        },
+    };
+
+    for (cases) |case| {
+        var expected = try zigcss.compile(allocator, "input.css", input, case.options);
+        defer expected.deinit();
+        try std.testing.expectEqual(@as(usize, 0), expected.diagnostics.len);
+
+        var actual = try runCompiler(input, case.args);
+        defer deinitRun(&actual);
+        try expectSuccess(actual);
+        try std.testing.expectEqualStrings(expected.css, actual.stdout);
+    }
 }
 
 test "stable CLI reports structured parser diagnostics without partial CSS" {
@@ -329,16 +362,16 @@ test "verified optimizer preserves unsupported selector rewrites without crashin
     try std.testing.expectEqualStrings("*>.a{color:red}", result.stdout);
 }
 
-test "profiling lifecycle: each timing ends once and compilation succeeds (PROF-001)" {
+test "profiling lifecycle: the public compile call ends once and succeeds (PROF-001)" {
     var result = try runCompiler(@embedFile("fixtures/simple.css"), &.{ "--profile", "--optimize", "--minify" });
     defer deinitRun(&result);
 
     try expectSuccess(result);
     try std.testing.expectEqualStrings(".simple{color:red}", result.stdout);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Performance Profile") != null);
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "parse"));
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "optimize"));
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "codegen"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, result.stderr, "compile"));
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, result.stderr, "parse"));
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, result.stderr, "codegen"));
 }
 
 test "CLI strictness: unavailable source maps are rejected explicitly (CLI-002)" {

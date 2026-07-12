@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    executable_module.addImport("zigcss", library_module);
 
     const exe = b.addExecutable(.{
         .name = "zigcss",
@@ -38,6 +39,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    test_module.addImport("zigcss", library_module);
 
     const unit_tests = b.addTest(.{
         .root_module = test_module,
@@ -82,6 +84,7 @@ pub fn build(b: *std.Build) void {
     const audit_options = b.addOptions();
     audit_options.addOption([]const u8, "compiler_path", b.getInstallPath(.bin, "zigcss"));
     audit_test_module.addOptions("audit_options", audit_options);
+    audit_test_module.addImport("zigcss", library_module);
 
     const audit_tests = b.addTest(.{
         .root_module = audit_test_module,

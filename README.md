@@ -2,7 +2,7 @@
 
 > **Experimental recovery status:** ZigCSS 0.3 is an ambitious compiler prototype undergoing a correctness-first rebuild. It is not suitable for production stylesheets.
 
-The repository contains a rebuilt CSS source/token/syntax/parser/emitter pipeline alongside inherited prototype transforms, format adapters, an LSP, documentation, packaging, and benchmarks. The stable CLI now uses the rebuilt pipeline, while the remaining program still prioritizes security and semantics before features or speed.
+The repository contains a rebuilt CSS source/token/syntax/parser/emitter pipeline alongside inherited prototype transforms, format adapters, an LSP, documentation, packaging, and benchmarks. The stable CLI delegates compilation to the owned public `zigcss.compile` facade over the rebuilt pipeline, while the remaining program still prioritizes security and semantics before features or speed.
 
 The authoritative roadmap is [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Execution evidence and package state are tracked in [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md).
 
@@ -20,7 +20,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 
 | Surface | Status | Behavior |
 |---|---|---|
-| `.css` parsing and emission | Experimental, matrix-tested | Stable CLI input uses the rebuilt parser/emitter; the tested grammar boundary is published below. |
+| `.css` parsing and emission | Experimental, matrix-tested | Stable CLI input calls the public compile facade over the rebuilt parser/emitter; the tested grammar boundary is published below. |
 | Zig compile API | Experimental, consumer-tested | The `zigcss` module exposes owned compile options/results, located structured diagnostics, ordered `@import` dependencies, maps, accepted transforms, and target queries. |
 | Zig package metadata | Experimental, consumer-tested | `build.zig.zon` declares package `zigcss` 0.3.0 with minimum Zig 0.15.2; path and freshly fetched package consumers compile against module `zigcss`. |
 | Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` declares one `LazyPath` input and generated CSS output per cached host-tool run; only minification and the verified optimizer are exposed. |
@@ -130,6 +130,8 @@ npm run test:transforms
 Run `zig-out/bin/zigcss --help` for the authoritative option list.
 
 Available recovery options include output selection, explicit batch output planning, whitespace-only `--minify`, the closed verified `--optimize` preset, single-file `--watch`, and `--profile`. The experimental `--lsp` server is separately labeled.
+
+Single-file, watch, and batch CSS compilation all construct public `CompileOptions` and consume owned `CompileResult` values from one `zigcss.compile` call site. The executable retains argument parsing, path planning, file I/O, diagnostic rendering, and writes; it has no runtime import or parallel implementation of the parser, emitter, optimizer, alternate-format adapters, or autoprefixer.
 
 Unavailable options—`--source-map`, `--autoprefix`, `--browsers`, and `--critical-*`—are rejected with an explanation. Unknown and malformed arguments are also rejected.
 

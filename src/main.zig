@@ -1,27 +1,18 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const formats = @import("formats.zig");
-const ast = @import("ast.zig");
-const codegen = @import("codegen.zig");
-const css_pipeline = @import("css/pipeline.zig");
-const error_module = @import("error.zig");
-const parser = @import("parser.zig");
-const autoprefixer = @import("autoprefixer.zig");
+const zigcss = @import("zigcss");
 const profiler = @import("profiler.zig");
-const optimizer = @import("optimizer.zig");
 const lsp = @import("lsp.zig");
-const verified_optimizer = @import("transform/verified_optimizer.zig");
 
 const experimental_notice = "Warning: ZigCSS 0.3 is an experimental recovery build; do not use it for production CSS.\n";
+const unsafe_transforms_message = "legacy and non-verified transform paths are disabled pending safety validation";
+const max_input_bytes = 10 * 1024 * 1024;
 
 const CompileConfig = struct {
     input_file: []const u8,
     output_file: ?[]const u8,
     optimize: bool,
     minify: bool,
-    source_map: bool,
-    autoprefix: ?autoprefixer.AutoprefixOptions = null,
-    critical_css: ?optimizer.CriticalCssOptions = null,
     profile: bool = false,
 };
 
@@ -30,11 +21,7 @@ const CompileTask = struct {
     output_file: []const u8,
     optimize: bool,
     minify: bool,
-    source_map: bool,
-    autoprefix: ?autoprefixer.AutoprefixOptions,
-    critical_css: ?optimizer.CriticalCssOptions,
-    profile: bool,
-    result: ?css_pipeline.CompileResult = null,
+    result: ?zigcss.CompileResult = null,
     err: ?[]const u8 = null,
     err_owned: bool = false,
 };
@@ -54,67 +41,82 @@ fn setTaskError(
     task.err_owned = true;
 }
 
-fn applyVerifiedOptimizer(
+fn compileCss(
     allocator: std.mem.Allocator,
-    parsed: *css_pipeline.ParsedStylesheet,
-    minified: bool,
-) !void {
-    try verified_optimizer.applyToFixedPoint(
+    source_name: []const u8,
+    input: []const u8,
+    optimize: bool,
+    minify: bool,
+) zigcss.CompileError!zigcss.CompileResult {
+    return zigcss.compile(
         allocator,
-        parsed,
-        if (minified) .minified else .pretty,
+        source_name,
+        input,
+        .{
+            .syntax = .css,
+            .format = if (minify) .minified else .pretty,
+            .transforms = .{ .optimize = optimize },
+        },
     );
+}
+
+fn hasErrorDiagnostics(diagnostics: []const zigcss.Diagnostic) bool {
+    for (diagnostics) |diagnostic| {
+        if (diagnostic.severity == .err) return true;
+    }
+    return false;
+}
+
+fn severityLabel(severity: zigcss.DiagnosticSeverity) []const u8 {
+    return switch (severity) {
+        .err => "error",
+        .warning => "warning",
+        .note => "note",
+    };
+}
+
+fn printDiagnostics(diagnostics: []const zigcss.Diagnostic) void {
+    for (diagnostics) |diagnostic| {
+        std.debug.print(
+            "{s}:{d}:{d}: {s} {s}: {s}\n",
+            .{
+                diagnostic.source_name,
+                diagnostic.start.line,
+                diagnostic.start.column,
+                severityLabel(diagnostic.severity),
+                diagnostic.code.label(),
+                diagnostic.message,
+            },
+        );
+    }
 }
 
 fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     var perf_profiler = try profiler.Profiler.init(allocator, config.profile);
     defer perf_profiler.deinit();
-    
-    var parse_timing = try perf_profiler.startTiming("parse");
-    defer parse_timing.end() catch {};
-    
-    const input = try std.fs.cwd().readFileAlloc(allocator, config.input_file, 10 * 1024 * 1024);
+
+    const input = try std.fs.cwd().readFileAlloc(allocator, config.input_file, max_input_bytes);
     defer allocator.free(input);
 
-    const format = formats.detectFormat(config.input_file);
-    if (format != .css) return error.ExperimentalFormatUnavailable;
-    var parsed = try css_pipeline.parse(allocator, config.input_file, input);
-    defer parsed.deinit();
-    try parse_timing.end();
-
-    if (parsed.hasErrors()) {
-        const formatted = try parsed.formatDiagnostics(allocator);
-        defer allocator.free(formatted);
-        std.debug.print("{s}", .{formatted});
-        return error.ParseError;
-    }
-
-    var optimize_timing = try perf_profiler.startTiming("optimize");
-    defer optimize_timing.end() catch {};
-    if (config.optimize) {
-        applyVerifiedOptimizer(allocator, &parsed, config.minify) catch |err| {
-            std.debug.print("Error: CSS optimization failed: {s}\n", .{@errorName(err)});
-            return err;
-        };
-    }
-    _ = config.autoprefix;
-    _ = config.critical_css;
-    try optimize_timing.end();
-
-    var codegen_timing = try perf_profiler.startTiming("codegen");
-    defer codegen_timing.end() catch {};
-
-    var result = parsed.emitResult(allocator, .{
-        .mode = if (config.minify) .minified else .pretty,
-        .source_map = if (config.source_map) .{
-            .generated_file = config.output_file,
-        } else null,
-    }) catch |err| {
-        std.debug.print("Error: CSS emission failed: {s}\n", .{@errorName(err)});
+    var compile_timing = try perf_profiler.startTiming("compile");
+    defer compile_timing.end() catch {};
+    var result = compileCss(
+        allocator,
+        config.input_file,
+        input,
+        config.optimize,
+        config.minify,
+    ) catch |err| {
+        std.debug.print("Error: CSS compilation failed: {s}\n", .{@errorName(err)});
         return err;
     };
     defer result.deinit();
-    try codegen_timing.end();
+    try compile_timing.end();
+
+    if (hasErrorDiagnostics(result.diagnostics)) {
+        printDiagnostics(result.diagnostics);
+        return error.CompileError;
+    }
 
     if (config.output_file) |out| {
         try std.fs.cwd().writeFile(.{ .sub_path = out, .data = result.css });
@@ -127,13 +129,11 @@ fn compileFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
         try stdout.writeAll(result.css);
         try stdout.flush();
     }
-    
+
     if (config.profile) {
         perf_profiler.printReport();
     }
 }
-
-const ParseError = error{ParseError};
 
 fn computeFileHash(content: []const u8) u64 {
     var hasher = std.hash.XxHash64.init(0);
@@ -150,7 +150,7 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     var first_compile = true;
     
     while (true) {
-        const input = cwd.readFileAlloc(allocator, config.input_file, 10 * 1024 * 1024) catch |err| {
+        const input = cwd.readFileAlloc(allocator, config.input_file, max_input_bytes) catch |err| {
             std.debug.print("Error reading file: {}\n", .{err});
             std.Thread.sleep(500 * std.time.ns_per_ms);
             continue;
@@ -169,9 +169,6 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
                 .output_file = config.output_file,
                 .optimize = config.optimize,
                 .minify = config.minify,
-                .source_map = config.source_map,
-                .autoprefix = config.autoprefix,
-                .critical_css = config.critical_css,
                 .profile = config.profile,
             };
             
@@ -190,54 +187,39 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
 }
 
 fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
-    const input = std.fs.cwd().readFileAlloc(allocator, task.input_file, 10 * 1024 * 1024) catch |err| {
+    const input = std.fs.cwd().readFileAlloc(allocator, task.input_file, max_input_bytes) catch |err| {
         setTaskError(task, allocator, "Failed to read {s}: {s}", .{ task.input_file, @errorName(err) }, "Read error");
         return;
     };
     defer allocator.free(input);
 
-    const format = formats.detectFormat(task.input_file);
-    if (format != .css) {
-        setTaskError(task, allocator, "Unsupported format: {s}", .{formats.displayName(format)}, "Unsupported format");
-        return;
-    }
-    var parsed = css_pipeline.parse(allocator, task.input_file, input) catch |err| {
-        setTaskError(task, allocator, "Parse error: {s}", .{@errorName(err)}, "Parse error");
-        return;
-    };
-    defer parsed.deinit();
-    if (parsed.hasErrors()) {
-        task.err = parsed.formatDiagnostics(allocator) catch {
-            task.err = "Parse error";
-            return;
-        };
-        task.err_owned = true;
-        return;
-    }
-
-    if (task.optimize) {
-        applyVerifiedOptimizer(allocator, &parsed, task.minify) catch |err| {
-            setTaskError(
-                task,
-                allocator,
-                "Optimization error: {s}",
-                .{@errorName(err)},
-                "Optimization error",
-            );
-            return;
-        };
-    }
-    _ = task.autoprefix;
-    _ = task.critical_css;
-    var result = parsed.emitResult(allocator, .{
-        .mode = if (task.minify) .minified else .pretty,
-        .source_map = if (task.source_map) .{ .generated_file = task.output_file } else null,
-    }) catch |err| {
-        setTaskError(task, allocator, "Emission error: {s}", .{@errorName(err)}, "Emission error");
+    var result = compileCss(
+        allocator,
+        task.input_file,
+        input,
+        task.optimize,
+        task.minify,
+    ) catch |err| {
+        setTaskError(task, allocator, "Compilation error: {s}", .{@errorName(err)}, "Compilation error");
         return;
     };
     task.result = result.take();
     result.deinit();
+}
+
+fn taskFailed(task: *const CompileTask) bool {
+    if (task.err != null or task.result == null) return true;
+    return hasErrorDiagnostics(task.result.?.diagnostics);
+}
+
+fn printTaskFailure(task: *const CompileTask) void {
+    if (task.err) |err| {
+        std.debug.print("Error compiling {s}: {s}\n", .{ task.input_file, err });
+        return;
+    }
+    if (task.result != null and hasErrorDiagnostics(task.result.?.diagnostics)) {
+        printDiagnostics(task.result.?.diagnostics);
+    }
 }
 
 fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !void {
@@ -245,14 +227,12 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
     
     if (tasks.len == 1) {
         compileTask(&tasks[0], allocator);
-        if (tasks[0].err) |err| {
-            std.debug.print("Error: {s}\n", .{err});
+        if (taskFailed(&tasks[0])) {
+            printTaskFailure(&tasks[0]);
             return error.CompileError;
         }
-        if (tasks[0].result) |result| {
-            try std.fs.cwd().writeFile(.{ .sub_path = tasks[0].output_file, .data = result.css });
-            std.debug.print("Compiled: {s} -> {s}\n", .{ tasks[0].input_file, tasks[0].output_file });
-        }
+        try std.fs.cwd().writeFile(.{ .sub_path = tasks[0].output_file, .data = tasks[0].result.?.css });
+        std.debug.print("Compiled: {s} -> {s}\n", .{ tasks[0].input_file, tasks[0].output_file });
         return;
     }
 
@@ -279,9 +259,7 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
                     
                     mtx.lock();
                     done.* += 1;
-                    if (task.err) |_| {
-                        err.* = true;
-                    }
+                    if (taskFailed(task)) err.* = true;
                     mtx.unlock();
                 }
             }
@@ -296,18 +274,14 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
 
     if (has_error) {
         for (tasks) |*task| {
-            if (task.err) |err| {
-                std.debug.print("Error compiling {s}: {s}\n", .{ task.input_file, err });
-            }
+            if (taskFailed(task)) printTaskFailure(task);
         }
         return error.CompileError;
     }
 
     for (tasks) |*task| {
-        if (task.result) |result| {
-            try std.fs.cwd().writeFile(.{ .sub_path = task.output_file, .data = result.css });
-            std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
-        }
+        try std.fs.cwd().writeFile(.{ .sub_path = task.output_file, .data = task.result.?.css });
+        std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
     }
 }
 
@@ -551,7 +525,7 @@ fn printUsage() void {
     std.debug.print("  --minify                 Emit compact whitespace (independent of --optimize)\n", .{});
     std.debug.print("  --optimize               Run the closed verified optimizer preset\n", .{});
     std.debug.print("  --watch                  Watch one input file\n", .{});
-    std.debug.print("  --profile                Enable performance profiling\n", .{});
+    std.debug.print("  --profile                Time the end-to-end public compile call\n", .{});
     std.debug.print("  --lsp                    Start the experimental LSP server\n", .{});
     std.debug.print("  -h, --help               Show this help\n", .{});
     std.debug.print("\nUnavailable and rejected during recovery:\n", .{});
@@ -583,6 +557,18 @@ fn determineOutputFile(allocator: std.mem.Allocator, input_file: []const u8, out
         else if (std.mem.eql(u8, ext, ".postcss")) ".css"
         else ext;
     return try std.fmt.allocPrint(allocator, "{s}{s}", .{ name_without_ext, output_ext });
+}
+
+fn experimentalFormatName(filename: []const u8) ?[]const u8 {
+    if (std.mem.endsWith(u8, filename, ".scss")) return "SCSS";
+    if (std.mem.endsWith(u8, filename, ".sass")) return "SASS";
+    if (std.mem.endsWith(u8, filename, ".less")) return "LESS";
+    if (std.mem.endsWith(u8, filename, ".module.css")) return "CSS Modules";
+    if (std.mem.endsWith(u8, filename, ".css.js") or
+        std.mem.endsWith(u8, filename, ".css.ts")) return "CSS-in-JS";
+    if (std.mem.endsWith(u8, filename, ".postcss")) return "PostCSS";
+    if (std.mem.endsWith(u8, filename, ".styl")) return "Stylus";
+    return null;
 }
 
 pub fn main() !void {
@@ -639,7 +625,7 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, args[i], "--watch")) {
             watch_flag = true;
         } else if (std.mem.eql(u8, args[i], "--autoprefix")) {
-            exitWithCliError("--autoprefix is unavailable: {s}", .{codegen.unsafe_transforms_message});
+            exitWithCliError("--autoprefix is unavailable: {s}", .{unsafe_transforms_message});
         } else if (std.mem.eql(u8, args[i], "--profile")) {
             profile_flag = true;
         } else if (std.mem.eql(u8, args[i], "--browsers")) {
@@ -689,11 +675,10 @@ pub fn main() !void {
     }
 
     for (input_files.items) |input_file| {
-        const format = formats.detectFormat(input_file);
-        if (formats.isExperimental(format)) {
+        if (experimentalFormatName(input_file)) |format_name| {
             exitWithCliError(
                 "{s} format adapter is experimental and unavailable in the recovery CLI",
-                .{formats.displayName(format)},
+                .{format_name},
             );
         }
     }
@@ -719,9 +704,6 @@ pub fn main() !void {
             .output_file = output_file,
             .optimize = optimize_flag,
             .minify = minify_flag,
-            .source_map = false,
-            .autoprefix = null,
-            .critical_css = null,
             .profile = profile_flag,
         };
         try watchFile(allocator, config);
@@ -731,9 +713,6 @@ pub fn main() !void {
             .output_file = output_file,
             .optimize = optimize_flag,
             .minify = minify_flag,
-            .source_map = false,
-            .autoprefix = null,
-            .critical_css = null,
             .profile = profile_flag,
         };
         compileFile(allocator, config) catch {
@@ -759,10 +738,6 @@ pub fn main() !void {
                 .output_file = out_file,
                 .optimize = optimize_flag,
                 .minify = minify_flag,
-                .source_map = false,
-                .autoprefix = null,
-                .critical_css = null,
-                .profile = profile_flag,
             });
         }
 
@@ -784,6 +759,34 @@ pub fn main() !void {
         };
     }
 }
+
+test "CLI format boundary rejects every experimental extension without importing adapters" {
+    const cases = [_]struct { filename: []const u8, name: []const u8 }{
+        .{ .filename = "input.scss", .name = "SCSS" },
+        .{ .filename = "input.sass", .name = "SASS" },
+        .{ .filename = "input.less", .name = "LESS" },
+        .{ .filename = "input.module.css", .name = "CSS Modules" },
+        .{ .filename = "input.css.js", .name = "CSS-in-JS" },
+        .{ .filename = "input.css.ts", .name = "CSS-in-JS" },
+        .{ .filename = "input.postcss", .name = "PostCSS" },
+        .{ .filename = "input.styl", .name = "Stylus" },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqualStrings(case.name, experimentalFormatName(case.filename).?);
+    }
+    try std.testing.expect(experimentalFormatName("input.css") == null);
+    try std.testing.expect(experimentalFormatName("input.unknown") == null);
+}
+
+test "legacy compiler imports remain test-only" {
+    _ = formats;
+    _ = codegen;
+    _ = optimizer;
+}
+
+const formats = @import("formats.zig");
+const codegen = @import("codegen.zig");
+const optimizer = @import("optimizer.zig");
 
 test "legacy codegen rejects transform requests without mutating its AST" {
     const css = ".stable { color: red; }";

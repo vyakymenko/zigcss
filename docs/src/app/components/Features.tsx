@@ -5,7 +5,7 @@ const capabilities = [
   {
     surface: "Basic CSS parsing and emission",
     status: "Experimental",
-    detail: "The stable CLI uses the new parser and emitter; its published grammar matrix is independently parsed in both output modes.",
+    detail: "The stable CLI delegates to the owned public compile facade over the new parser and emitter; its grammar matrix is independently parsed in both output modes.",
   },
   {
     surface: "Zig compile API",
