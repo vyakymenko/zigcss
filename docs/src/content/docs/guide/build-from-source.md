@@ -14,9 +14,12 @@ git clone https://github.com/vyakymenko/zigcss.git
 cd zigcss
 zig build
 zig build test --summary all
+zig build test-public-api --summary all
 ```
 
 The executable is written to `zig-out/bin/zigcss`.
+
+`test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the current experimental foundation exports without claiming the final high-level compile facade or package-manager integration, which remain later Milestone 4 work.
 
 The independent parser gate additionally requires Node.js. After the Zig build has produced the executable, run:
 

@@ -17,6 +17,7 @@ describe('Features', () => {
   it('marks the core compiler and format adapters experimental', () => {
     renderFeatures()
     expect(screen.getByText('Basic CSS parsing and emission')).toBeInTheDocument()
+    expect(screen.getByText('Zig library foundation')).toBeInTheDocument()
     expect(screen.getByText('Alternate format adapters')).toBeInTheDocument()
     expect(screen.getAllByText(/experimental/i).length).toBeGreaterThan(1)
   })

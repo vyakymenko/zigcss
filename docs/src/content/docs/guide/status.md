@@ -7,6 +7,7 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 | Surface | Status | Current behavior |
 |---|---|---|
 | CSS CLI parsing and emission | Experimental, matrix-tested | The stable CLI uses the new source/token/syntax/typed-parser pipeline; its current grammar boundary is published and independently parsed. |
+| Zig library foundation | Experimental, consumer-tested | The external `zigcss` module exposes owned source/diagnostic/compilation, tokenizer/syntax/CSS, source-map, transform, and target-query foundations; the final high-level compile facade is still pending. |
 | `--minify` | Experimental | Changes whitespace during emission only; it is independent of `--optimize`. |
 | Output planning | Safety boundary verified | Input/output aliases and multi-file destination collisions are rejected before writes. |
 | `--profile` | Experimental | Reports parse, optimizer-stage, and emission timings without the former lifecycle crash. |
@@ -22,6 +23,8 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 ## Current boundaries
 
 The stable CLI no longer consumes the inherited byte parser. Its typed and lossless grammar boundary is listed in the [CSS compatibility matrix](/guide/css-compatibility), and every emitting fixture is checked in pretty and minified modes by an independent parser with recovery disabled.
+
+The build registers `src/lib.zig` as the external `zigcss` module. A separate consumer test imports that name rather than testing from inside the root, then verifies independently owned CSS/maps/diagnostics, the accepted optimizer preset, and strict target-query access. Final `CompileOptions`, dependency/module-export results, plugins, package metadata, and consumer installation remain Milestone 4 work.
 
 Property-specific values are generally preserved as component trees rather than fully validated semantic values. Browser computed-style validation, broader target data and stable CLI prefix exposure, optimized source-map composition, CLI source-map output, the LSP migration, alternate formats, and public untrusted compilation remain later gates. Independent syntax acceptance is evidence, not a complete browser-semantics guarantee.
 

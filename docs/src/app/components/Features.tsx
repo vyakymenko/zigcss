@@ -8,6 +8,11 @@ const capabilities = [
     detail: "The stable CLI uses the new parser and emitter; its published grammar matrix is independently parsed in both output modes.",
   },
   {
+    surface: "Zig library foundation",
+    status: "Experimental / consumer-tested",
+    detail: "A separate consumer imports the zigcss module and verifies owned results, maps, accepted transforms, and target queries; the final high-level compile facade is still pending.",
+  },
+  {
     surface: "Compact emission (--minify)",
     status: "Experimental",
     detail: "Whitespace-only emission mode; it remains independent of the explicit --optimize preset.",
