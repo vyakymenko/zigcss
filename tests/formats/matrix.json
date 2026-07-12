@@ -135,9 +135,9 @@
       "strategy": "limited-native-subset",
       "ownerPackages": ["MODULE-001", "MODULE-002"],
       "sourceFiles": ["src/css_modules.zig", "src/css/module_names.zig"],
-      "currentBoundary": "The Zig library scopes local-by-default authored classes with versioned SHA-256 names derived from normalized source identity and decoded class name, and returns unique first-seen owned exports. CLI and LSP exposure remain disabled.",
+      "currentBoundary": "The Zig library scopes local-by-default authored classes with versioned SHA-256 names, supports occurrence-sensitive functional :local(...) and :global(...) wrappers, and returns unique first-seen owned exports. CLI and LSP exposure remain disabled.",
       "knownRisks": [
-        "Explicit :local/:global, composition, @value, module imports/exports, and their dependency semantics remain strict errors until MODULE-002.",
+        "Bare or structurally ambiguous scope switches, composition, @value, module imports/exports, and their dependency semantics remain strict errors until the remaining MODULE-002 slices complete.",
         "Untyped functional pseudos, selector-bearing or unknown at-rules, optimizer/prefix transforms, and native plugins remain outside the initial subset."
       ],
       "probe": ".card { color: red; }\n",

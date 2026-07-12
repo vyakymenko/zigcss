@@ -103,7 +103,7 @@ function validateSuccess(result, sourceName, mode) {
     }
   }
   const expectedCss =
-    `@import "theme.css";.${names.card},.${names.card}:hover{color:red}` +
+    `@import "theme.css";.card,.${names.card}:hover{color:red}` +
     `@media all{.${names.icon}:is(.${names.card},.${names.badge}){display:block}}` +
     `.${names['🔥']}{opacity:1}`
   const actualCanonical = canonicalize(payload.css, `css-modules-${mode}-actual`)
@@ -128,10 +128,10 @@ export function validateCssModules(driver) {
   const invalid = path.join(temporary, 'invalid.css')
   fs.writeFileSync(
     input,
-    '@import "theme.css";.card,.card:hover{color:red}' +
+    '@import "theme.css";:global(.card),:local(.card):hover{color:red}' +
       '@media all{.icon:is(.card,.badge){display:block}}.🔥{opacity:1}',
   )
-  fs.writeFileSync(invalid, ':local(.card){color:red}')
+  fs.writeFileSync(invalid, ':local .card{color:red}')
 
   try {
     const prettyResult = runDriver(driver, input, sourceName, false)

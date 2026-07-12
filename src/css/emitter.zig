@@ -25,6 +25,11 @@ pub const Options = struct {
     /// Internal generated-identifier view. A non-null slice must be strictly
     /// sorted and contain every class selector reached during emission.
     class_names: ?[]const module_names.Entry = null,
+    /// Occurrence-sensitive class rewrites used by explicit CSS Modules scope.
+    class_rewrites: ?[]const module_names.Occurrence = null,
+    /// Functional scope wrappers removed after their replacement compound is
+    /// validated by the CSS Modules adapter.
+    scope_rewrites: ?[]const module_names.Scope = null,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -83,8 +88,18 @@ fn emitInternal(
     options: Options,
     source_map_builder: ?*sourcemap.Builder,
 ) Error![]u8 {
+    if (options.class_names != null and options.class_rewrites != null) {
+        return error.InvalidMappings;
+    }
     if (options.class_names) |entries| {
         module_names.validate(entries) catch return error.InvalidMappings;
+    }
+    if (options.class_rewrites) |entries| {
+        module_names.validateOccurrences(entries) catch return error.InvalidMappings;
+    }
+    if (options.scope_rewrites) |entries| {
+        if (options.class_rewrites == null) return error.InvalidMappings;
+        module_names.validateScopes(entries) catch return error.InvalidMappings;
     }
     rules.validate() catch return error.InvalidAst;
     if (!rules.span.source.eql(file.id)) return error.SourceMismatch;
@@ -509,15 +524,29 @@ const Emitter = struct {
             },
             .class => |selector| {
                 try self.appendByte('.');
-                const name = if (self.options.class_names) |entries|
-                    module_names.find(entries, selector.name.value) orelse return error.InvalidMappings
+                const name = if (self.options.class_rewrites) |entries|
+                    module_names.findOccurrence(entries, selector.span) orelse
+                        return error.InvalidMappings
+                else if (self.options.class_names) |entries|
+                    module_names.find(entries, selector.name.value) orelse
+                        return error.InvalidMappings
                 else
                     selector.name.value;
                 try self.writeIdentifier(name);
             },
             .attribute => |selector| try self.writeAttributeSelector(selector),
-            .pseudo_class => |selector| try self.writePseudo(selector.name, selector.arguments, false),
-            .pseudo_element => |selector| try self.writePseudo(selector.name, selector.arguments, true),
+            .pseudo_class => |selector| try self.writePseudo(
+                selector.name,
+                selector.arguments,
+                selector.span,
+                false,
+            ),
+            .pseudo_element => |selector| try self.writePseudo(
+                selector.name,
+                selector.arguments,
+                selector.span,
+                true,
+            ),
             .nesting => try self.appendByte('&'),
         }
     }
@@ -569,13 +598,21 @@ const Emitter = struct {
         self: *Emitter,
         name: ast.Identifier,
         arguments: ?ast.PseudoArguments,
+        span: source.Span,
         element: bool,
     ) Error!void {
+        if (self.options.scope_rewrites) |entries| {
+            if (module_names.findScope(entries, span)) |compound| {
+                if (element) return error.InvalidMappings;
+                try self.writeCompoundSelector(compound.*);
+                return;
+            }
+        }
         try self.appendSlice(if (element) "::" else ":");
         try self.writeIdentifier(name.value);
         if (arguments) |value| {
             try self.appendByte('(');
-            if (self.options.class_names != null) {
+            if (self.hasClassMappings()) {
                 const parsed = value.parsed orelse return error.InvalidMappings;
                 switch (parsed) {
                     .selector_list => |list| try self.writeSelectorListMode(
@@ -589,6 +626,10 @@ const Emitter = struct {
             }
             try self.appendByte(')');
         }
+    }
+
+    fn hasClassMappings(self: *const Emitter) bool {
+        return self.options.class_names != null or self.options.class_rewrites != null;
     }
 
     fn writeAtRule(self: *Emitter, rule: *const ast.AtRule, depth: usize) Error!void {

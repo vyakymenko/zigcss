@@ -469,9 +469,13 @@ fn pipelineOptions(
                 .include_sources_content = map.include_sources_content,
             },
         },
-        .class_names = switch (options.syntax) {
+        .class_rewrites = switch (options.syntax) {
             .css => null,
-            .css_modules => prepared_modules.lookup(),
+            .css_modules => prepared_modules.classes(),
+        },
+        .scope_rewrites = switch (options.syntax) {
+            .css => null,
+            .css_modules => prepared_modules.scopes(),
         },
     };
 }
@@ -1279,6 +1283,79 @@ test "CSS Modules scopes decoded classes through the closed nested grammar" {
     try std.testing.expect(!reparsed.hasErrors());
 }
 
+test "CSS Modules functional scope is occurrence-sensitive and strips wrappers" {
+    const input =
+        ":local(.card).shell :global(.reset)," ++
+        ":global(.shared) .shared:is(:local(.icon),:global(.legacy)){color:red}";
+    var result = try compile(
+        std.testing.allocator,
+        "scopes.module.css",
+        input,
+        .{
+            .syntax = .css_modules,
+            .format = .minified,
+            .source_map = .{ .external = .{} },
+        },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    const entries = result.module_exports.?.entries;
+    const expected = [_][]const u8{ "card", "shell", "shared", "icon" };
+    try std.testing.expectEqual(expected.len, entries.len);
+    for (entries, expected) |entry, name| {
+        try std.testing.expectEqualStrings(name, entry.name);
+        try std.testing.expect(std.mem.indexOf(u8, result.css, entry.value) != null);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ":local") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ":global") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ".reset") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ".shared") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ".legacy") != null);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        std.mem.count(u8, result.css, entries[2].value),
+    );
+    var map_json = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        result.source_map.?,
+        .{},
+    );
+    defer map_json.deinit();
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        map_json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    const card_start = std.mem.indexOf(u8, input, ".card").?;
+    var found_inner_class_mapping = false;
+    for (mappings) |mapping| {
+        if (mapping.original_line == 0 and mapping.original_column == card_start) {
+            found_inner_class_mapping = true;
+        }
+    }
+    try std.testing.expect(found_inner_class_mapping);
+
+    var reparsed = try pipeline.parse(std.testing.allocator, "scopes-output.css", result.css);
+    defer reparsed.deinit();
+    try std.testing.expect(!reparsed.hasErrors());
+}
+
+test "CSS Modules global-only scope publishes an owned empty export set" {
+    var result = try compile(
+        std.testing.allocator,
+        "global.module.css",
+        ":global(.shared){color:red}",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 0), result.module_exports.?.entries.len);
+    try std.testing.expectEqualStrings(".shared{color:red}", result.css);
+}
+
 test "CSS Modules exports survive explicit moves and repeated cleanup" {
     var original = try compile(
         std.testing.allocator,
@@ -1301,17 +1378,23 @@ test "CSS Modules exports survive explicit moves and repeated cleanup" {
     try std.testing.expect(moved.module_exports == null);
 }
 
-test "CSS Modules rejects deferred semantics and unscoped selector containers" {
+test "CSS Modules rejects deferred semantics and unsafe scope containers" {
     const cases = [_][]const u8{
-        ":local(.card){x:1}",
+        ":local .card{x:1}",
         ":global .card{x:1}",
+        ":local(.card,.icon){x:1}",
+        ":global(.card .icon){x:1}",
+        ":local(:global(.card)){x:1}",
+        ":local(#card){x:1}",
+        ":local(:hover){x:1}",
+        "::global(.card){x:1}",
         ":export{token:red}",
         ".card{composes:base}",
         "@value color:red;.card{x:1}",
         ".card:nth-child(2n of .item){x:1}",
         "@supports selector(.card){.card{x:1}}",
         "@unknown{.card{x:1}}",
-        "@import \"theme.css\";:local(.card){x:1}",
+        "@import \"theme.css\";:local .card{x:1}",
     };
     for (cases) |input| {
         var result = try compile(
@@ -1321,7 +1404,10 @@ test "CSS Modules rejects deferred semantics and unscoped selector containers" {
             .{ .syntax = .css_modules, .format = .minified },
         );
         defer result.deinit();
-        try std.testing.expectEqual(@as(usize, 0), result.css.len);
+        if (result.css.len != 0) {
+            std.debug.print("unexpected CSS Modules success for {s}: {s}\n", .{ input, result.css });
+            return error.UnexpectedModuleSuccess;
+        }
         try std.testing.expectEqual(@as(usize, 0), result.dependencies.len);
         try std.testing.expect(result.module_exports == null);
         try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
@@ -1392,6 +1478,23 @@ test "CSS Modules validates identity limits and incompatible transforms" {
     try std.testing.expectEqual(diagnostics.Code.resource_limit, identity_limited.diagnostics[0].code);
     try std.testing.expect(identity_limited.module_exports == null);
 
+    var rewrite_limited = try compile(
+        std.testing.allocator,
+        "rewrite-limited.module.css",
+        ".a,.b{x:1}",
+        .{
+            .syntax = .css_modules,
+            .module_limits = .{ .max_rewrites = 1 },
+        },
+    );
+    defer rewrite_limited.deinit();
+    try std.testing.expectEqual(@as(usize, 0), rewrite_limited.css.len);
+    try std.testing.expect(rewrite_limited.module_exports == null);
+    try std.testing.expectEqual(
+        diagnostics.Code.resource_limit,
+        rewrite_limited.diagnostics[0].code,
+    );
+
     var dependency_limited = try compile(
         std.testing.allocator,
         "dependency-limited.module.css",
@@ -1425,7 +1528,7 @@ fn exerciseCssModulesAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
         "oom/components.module.css",
-        "@import \"theme.css\";.card:is(.icon,.card){color:red}",
+        "@import \"theme.css\";.card:is(:local(.icon),:global(.reset),.card){color:red}",
         .{
             .syntax = .css_modules,
             .format = .minified,

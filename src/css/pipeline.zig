@@ -16,6 +16,8 @@ pub const Options = struct {
     mode: emitter.Mode = .pretty,
     source_map: ?sourcemap.Options = null,
     class_names: ?[]const module_names.Entry = null,
+    class_rewrites: ?[]const module_names.Occurrence = null,
+    scope_rewrites: ?[]const module_names.Scope = null,
 };
 
 /// Owns compilation-lifetime syntax and typed AST data. Emitted results are
@@ -56,7 +58,12 @@ pub const ParsedStylesheet = struct {
                 result_allocator,
                 self.file(),
                 self.rules,
-                .{ .mode = options.mode, .class_names = options.class_names },
+                .{
+                    .mode = options.mode,
+                    .class_names = options.class_names,
+                    .class_rewrites = options.class_rewrites,
+                    .scope_rewrites = options.scope_rewrites,
+                },
                 source_map_options,
             );
             defer output.deinit();
@@ -72,7 +79,12 @@ pub const ParsedStylesheet = struct {
             result_allocator,
             self.file(),
             self.rules,
-            .{ .mode = options.mode, .class_names = options.class_names },
+            .{
+                .mode = options.mode,
+                .class_names = options.class_names,
+                .class_rewrites = options.class_rewrites,
+                .scope_rewrites = options.scope_rewrites,
+            },
         );
         defer if (css.len > 0) result_allocator.free(css);
         return CompileResult.init(result_allocator, css, null, diagnostic_items);

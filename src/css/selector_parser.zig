@@ -31,7 +31,17 @@ pub fn parseWithOptions(
     input: ast.ComponentValueList,
     options: Options,
 ) Error!*const ast.SelectorList {
-    return parseInternal(context, source_id, input, options, .{});
+    return parseInternal(context, source_id, input, options, .{}, false);
+}
+
+/// Parses an adapter-owned selector fragment without publishing ordinary CSS
+/// grammar diagnostics. Resource and internal failures remain observable.
+pub fn parseSilently(
+    context: *compilation.Compilation,
+    source_id: source.SourceId,
+    input: ast.ComponentValueList,
+) Error!*const ast.SelectorList {
+    return parseInternal(context, source_id, input, .{}, .{}, true);
 }
 
 pub fn parseNested(
@@ -51,7 +61,7 @@ pub fn parseNestedWithOptions(
     return parseInternal(context, source_id, input, options, .{
         .allow_relative = true,
         .nested_rule = true,
-    });
+    }, false);
 }
 
 fn parseInternal(
@@ -60,6 +70,7 @@ fn parseInternal(
     input: ast.ComponentValueList,
     options: Options,
     selector_context: SelectorContext,
+    suppress_diagnostics: bool,
 ) Error!*const ast.SelectorList {
     const file = try context.sources.get(source_id);
     if (!input.span.source.eql(source_id)) return error.InvalidSelector;
@@ -69,7 +80,7 @@ fn parseInternal(
         .context = context,
         .file = file,
         .options = options,
-        .suppressed_diagnostics = 0,
+        .suppressed_diagnostics = @intFromBool(suppress_diagnostics),
     };
     return parser.parseList(input.values, input.span, 0, selector_context);
 }
@@ -1194,6 +1205,17 @@ test "nested strict selector failures emit one synchronized diagnostic" {
         try std.testing.expectEqual(@as(usize, 1), context.diagnostics.items().len);
         try std.testing.expectEqualStrings("empty selector in selector list", context.diagnostics.items()[0].message);
     }
+}
+
+test "silent adapter selector parsing does not publish ordinary grammar diagnostics" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const id = try context.addSource("silent-selector.css", ".a,");
+    const document = try syntax.parse(&context, id);
+    const values = try ast.ComponentValueList.init(document.span, document.values);
+
+    try std.testing.expectError(error.InvalidSelector, parseSilently(&context, id, values));
+    try std.testing.expectEqual(@as(usize, 0), context.diagnostics.items().len);
 }
 
 test "selector recursion is bounded independently of component parsing" {

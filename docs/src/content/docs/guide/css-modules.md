@@ -37,6 +37,10 @@ Every authored class selector is local by default. ZigCSS rewrites classes in:
 - native nested style rules and nested conditional groups;
 - typed selector arguments for `:is()`, `:where()`, `:not()`, and `:has()`.
 
+Canonical functional scope wrappers are supported for class selectors. `:local(...)` keeps the enclosed class occurrences local, while `:global(...)` preserves their decoded authored names and does not add exports. The wrapper itself is removed from generated CSS. Scope is occurrence-sensitive, so `:global(.shared), .shared` preserves the first occurrence and scopes the second even though both have the same decoded name.
+
+Each wrapper must contain exactly one inline-safe compound with at least one class. Classes in typed selector pseudos inside that compound inherit the wrapper mode. Bare mode switches, selector lists or combinators inside a wrapper, nested scope wrappers, pseudo-element scope functions, and ID-only or type-leading wrapper arguments return `CSS0009`. This closed functional grammar avoids the ambiguous selector-state behavior of bare `:local` and `:global`.
+
 Type, universal, ID, attribute, nesting, non-functional pseudo-class, and pseudo-element selectors are preserved. Forgiving `:is()` and `:where()` lists are emitted from their accepted typed alternatives, so a discarded invalid alternative does not leak unscoped class text.
 
 The initial at-rule allowlist is `@charset`, `@import`, `@namespace`, `@media`, `@container`, `@layer`, `@starting-style`, `@font-face`, `@property`, `@keyframes`, `@-webkit-keyframes`, and `@-moz-keyframes`. Rule blocks recurse and keyframe/descriptor declarations remain ordered. Other at-rules are rejected because an unknown prelude or raw block could contain selector semantics that the adapter cannot safely scope. In particular, `@supports`, `@scope`, `@page`, custom selector definitions, and unknown at-rules are not accepted by this package.
@@ -59,19 +63,19 @@ The full digest includes both module identity and class name, so the same input 
 
 The following deferred semantics return one structured `CSS0009` diagnostic and no CSS or partial export map:
 
-- `:local`, `:global`, `:import`, and `:export`;
+- `:import` and `:export`;
 - `composes` and `composes-with` declarations;
 - `@value`;
 - untyped functional pseudos such as `:nth-child(...)`, `:lang(...)`, and functional pseudo-elements;
 - any at-rule outside the allowlist or any raw at-rule block.
 
-These are owned by `MODULE-002`; ZigCSS does not delete, guess, or treat them as ordinary CSS. Parser errors similarly produce no CSS. An empty module identity returns `API0001`.
+Composition, value, and module-import/export behavior remain owned by the later slices of `MODULE-002`; ZigCSS does not delete, guess, or treat them as ordinary CSS. Invalid or ambiguous explicit-scope forms fail under the same no-partial-output rule. Parser errors similarly produce no CSS. An empty module identity returns `API0001`.
 
-`CssModuleLimits` defaults to 100,000 unique exports, 64 MiB of owned export name/value bytes, and a 64 KiB source identity. Limit exhaustion returns `CSS0008`, discards all prepared exports, and emits no CSS. Internal lookup is hash-based during collection and byte-sorted for bounded binary lookup during emission.
+`CssModuleLimits` defaults to 100,000 unique exports, 64 MiB of owned export name/value bytes, a 64 KiB source identity, and 1,000,000 combined class/scope rewrite records. Limit exhaustion returns `CSS0008`, discards all prepared exports, and emits no CSS. Export lookup is hash-based during collection; emission uses source-span-sorted occurrence and wrapper arrays with bounded binary lookup.
 
 ## Compatible result features
 
-Pretty and minified output, separate source maps, decoded top-level CSS `@import` dependency facts, and measured profiling are supported. A generated selector mapping is anchored at the authored class selector span; no fabricated per-character source positions are emitted. Generated CSS is reparsed by the stable pipeline and independently canonicalized with recovery-disabled Lightning CSS 1.30.1 in both modes. The format oracle separately recomputes version-1 names with Node's SHA-256 implementation.
+Pretty and minified output, separate source maps, decoded top-level CSS `@import` dependency facts, and measured profiling are supported. Generated and preserved selector mappings are anchored at the authored class selector span, including classes inside functional scope wrappers; no fabricated per-character source positions are emitted. Generated CSS is reparsed by the stable pipeline and independently canonicalized with recovery-disabled Lightning CSS 1.30.1 in both modes. The format oracle separately recomputes version-1 names with Node's SHA-256 implementation and exercises one decoded name in both global and local occurrences.
 
 Optimizer, target-prefix, and native-plugin composition are intentionally rejected with `API0001` for this initial subset. Those features can alter or inspect selectors and require their own CSS Modules semantic-composition evidence before admission.
 
