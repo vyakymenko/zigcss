@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "clock": "monotonic-nanoseconds",
+  "outputValidation": "after-timing-before-admission",
+  "modes": [
+    {
+      "id": "cold-cli",
+      "metric": "latency-nanoseconds",
+      "tools": [
+        "zigcss",
+        "esbuild",
+        "lightningcss"
+      ],
+      "processLifecycle": "new-process-per-iteration",
+      "cachePreparation": "no-mode-local-warmup",
+      "includesProcessStartup": true,
+      "timed": true,
+      "warmupIterations": 0,
+      "measuredIterations": 1
+    },
+    {
+      "id": "warm-cli",
+      "metric": "latency-nanoseconds",
+      "tools": [
+        "zigcss",
+        "esbuild",
+        "lightningcss"
+      ],
+      "processLifecycle": "new-process-per-iteration",
+      "cachePreparation": "one-validated-mode-local-warmup",
+      "includesProcessStartup": true,
+      "timed": true,
+      "warmupIterations": 1,
+      "measuredIterations": 1
+    },
+    {
+      "id": "in-process-api",
+      "metric": "latency-nanoseconds",
+      "tools": [
+        "zigcss"
+      ],
+      "processLifecycle": "in-process-zig-api",
+      "includesProcessStartup": false,
+      "timed": true,
+      "warmupIterations": 1,
+      "measuredIterations": 1
+    },
+    {
+      "id": "memory",
+      "metric": "allocator-requested-bytes",
+      "tools": [
+        "zigcss"
+      ],
+      "processLifecycle": "in-process-zig-api",
+      "includesProcessStartup": false,
+      "timed": false,
+      "warmupIterations": 0,
+      "measuredIterations": 1,
+      "fields": [
+        "totalAllocatedBytes",
+        "totalFreedBytes",
+        "peakLiveBytes",
+        "retainedResultBytes",
+        "allocationCount",
+        "deallocationCount",
+        "resizeCount"
+      ]
+    },
+    {
+      "id": "throughput",
+      "metric": "input-bytes-per-second",
+      "tools": [
+        "zigcss"
+      ],
+      "processLifecycle": "in-process-zig-api",
+      "includesProcessStartup": false,
+      "timed": true,
+      "warmupIterations": 1,
+      "measuredIterations": 2
+    }
+  ]
+}

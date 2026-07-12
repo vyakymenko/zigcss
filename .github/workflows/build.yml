@@ -264,5 +264,8 @@ jobs:
       - name: Validate benchmark outputs
         run: npm run test:benchmark-output && npm run check:benchmark-output
 
+      - name: Validate benchmark modes
+        run: npm run test:benchmark-modes && npm run check:benchmark-modes
+
       - name: Run validated benchmark smoke
         run: zig build bench

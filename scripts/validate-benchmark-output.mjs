@@ -205,7 +205,9 @@ function validateStderr(tool, stderr, input, output) {
   }
 }
 
-function runTool(root, tool, executable, input, output) {
+export function runBenchmarkCli(root, tool, executable, input, output, clock) {
+  fs.rmSync(output, { force: true })
+  const started = clock?.()
   const result = spawnSync(executable, renderArguments(tool.arguments, input, output), {
     cwd: root,
     encoding: 'utf8',
@@ -213,18 +215,22 @@ function runTool(root, tool, executable, input, output) {
     maxBuffer: manifest.limits.stdioBytes,
     timeout: manifest.limits.timeoutMilliseconds,
   })
+  const finished = clock?.()
   if (result.error) fail(`${tool.id} failed to run: ${result.error.message}`)
   if (result.signal !== null) fail(`${tool.id} terminated by ${result.signal}`)
   if (result.status !== 0) fail(`${tool.id} exited ${result.status}: ${JSON.stringify(result.stderr)}`)
   if (result.stdout !== '') fail(`${tool.id} emitted unexpected stdout: ${JSON.stringify(result.stdout)}`)
   validateStderr(tool, result.stderr, input, output)
   requireRegularFile(output, `${tool.id} output`)
-  return fs.readFileSync(output)
+  const outputBytes = fs.readFileSync(output)
+  return {
+    output: outputBytes,
+    durationNanoseconds:
+      started === undefined || finished === undefined ? undefined : finished - started,
+  }
 }
 
-export function validateBenchmarkOutputs(root = repositoryRoot, compilerArgument) {
-  validateBenchmarkOutputContract(root)
-  validateCorpora(root)
+export function resolveBenchmarkExecutables(root = repositoryRoot, compilerArgument) {
   if (compilerArgument !== undefined && !path.isAbsolute(compilerArgument)) {
     fail('zigcss benchmark executable argument must be absolute')
   }
@@ -236,6 +242,13 @@ export function validateBenchmarkOutputs(root = repositoryRoot, compilerArgument
   const installed = verifyInstalledToolchain(root)
   const executables = new Map(installed.map(tool => [tool.id, tool.executable]))
   executables.set('zigcss', compiler)
+  return executables
+}
+
+export function validateBenchmarkOutputs(root = repositoryRoot, compilerArgument) {
+  validateBenchmarkOutputContract(root)
+  validateCorpora(root)
+  const executables = resolveBenchmarkExecutables(root, compilerArgument)
 
   const expected = expectedCorpus()
   const files = new Map(expected.files.map(file => [file.name, file.content]))
@@ -250,8 +263,8 @@ export function validateBenchmarkOutputs(root = repositoryRoot, compilerArgument
         const executable = executables.get(tool.id)
         if (executable === undefined) fail(`missing executable for ${tool.id}`)
         const output = path.join(temporary, `${corpus.id}-${tool.id}.css`)
-        const outputBytes = runTool(root, tool, executable, input, output)
-        validateOutput(inputBytes, outputBytes, `${corpus.id}/${tool.id}`)
+        const result = runBenchmarkCli(root, tool, executable, input, output)
+        validateOutput(inputBytes, result.output, `${corpus.id}/${tool.id}`)
         outputs += 1
       }
     }

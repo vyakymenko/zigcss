@@ -242,6 +242,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_bench_tests.step);
 
     const run_bench = b.addRunArtifact(bench_exe);
-    const bench_step = b.step("bench", "Validate benchmark compiler outputs before timing");
+    const bench_step = b.step("bench", "Smoke separated validated benchmark modes");
     bench_step.dependOn(&run_bench.step);
 }
