@@ -207,6 +207,19 @@
           "contains": ["Attest Release Provenance", "Attest Release SBOM", "gh attestation verify"]
         }
       ]
+    },
+    "release-smoke": {
+      "command": "npm run test:release-smoke",
+      "anchors": [
+        {
+          "path": "scripts/smoke-release-artifact.mjs",
+          "contains": ["nativeSmokeTargets", "npm postinstall smoke", "npm-installed binary differs"]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "contains": ["ubuntu-24.04-arm", "macos-15-intel", "Smoke Native Archive and npm Installation"]
+        }
+      ]
     }
   },
   "capabilities": [
@@ -357,10 +370,10 @@
     {
       "id": "release-artifacts",
       "surface": "Release archives",
-      "status": "Experimental, workflow-gated",
+      "status": "Experimental, native-smoke-gated",
       "statusKind": "experimental",
-      "behavior": "The tag workflow gates five target archives behind SHA-256 manifests, deterministic SPDX 2.3 SBOMs, local Sigstore subject/predicate checks, and cryptographic verification of signed SLSA provenance and SBOM bundles before upload; this recovery run has not published a release.",
-      "evidence": ["release-version", "release-artifacts"]
+      "behavior": "The tag workflow builds on five architecture-matched runners, then executes each archive directly and through an offline real npm pack/postinstall/wrapper lifecycle before attestation; SHA-256 manifests, deterministic SPDX 2.3 SBOMs, and signed SLSA/SBOM verification remain mandatory before upload. This recovery run has not published a release.",
+      "evidence": ["release-version", "release-artifacts", "release-smoke"]
     },
     {
       "id": "public-compile",

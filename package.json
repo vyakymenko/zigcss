@@ -34,6 +34,7 @@
     "test:version": "node --test scripts/validate-release-version.test.mjs",
     "check:release-metadata": "node scripts/generate-release-metadata.mjs --check-workflow",
     "test:release-metadata": "node --test scripts/generate-release-metadata.test.mjs",
+    "test:release-smoke": "node --test scripts/smoke-release-artifact.test.mjs",
     "test:release-consumers": "node --test scripts/verify-release-consumers.test.mjs",
     "test:release-container": "node scripts/test-release-container.mjs",
     "test:release-homebrew": "node scripts/verify-homebrew-formula.mjs --smoke",

@@ -36,10 +36,10 @@ describe('native artifact workflows', () => {
     const workflows = [buildWorkflow, releaseWorkflow, fs.readFileSync(path.join(workflowsDir, 'docs.yml'), 'utf8')].join('\n')
 
     expect(workflows.match(/^permissions: \{\}$/gm)).toHaveLength(3)
-    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(21)
+    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(22)
     expect(workflows).not.toMatch(/\n\s+uses: [^\n]+@(?![0-9a-f]{40} # v)/)
     expect(statusGuide).toContain('Their seven jobs declare only the access they use')
-    expect(statusGuide).toContain('All 21 action invocations are pinned')
+    expect(statusGuide).toContain('All 22 action invocations are pinned')
     expect(statusGuide).toContain('release build job receives attestation and OIDC write access')
   })
 

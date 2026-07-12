@@ -18,8 +18,8 @@ const maximumSourceDateEpoch = 253_402_300_799
 
 export const releaseTargets = Object.freeze([
   Object.freeze({ target: 'x86_64-linux', os: 'ubuntu-latest', arch: 'x86_64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
-  Object.freeze({ target: 'aarch64-linux', os: 'ubuntu-latest', arch: 'aarch64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
-  Object.freeze({ target: 'x86_64-macos', os: 'macos-latest', arch: 'x86_64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
+  Object.freeze({ target: 'aarch64-linux', os: 'ubuntu-24.04-arm', arch: 'aarch64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
+  Object.freeze({ target: 'x86_64-macos', os: 'macos-15-intel', arch: 'x86_64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
   Object.freeze({ target: 'aarch64-macos', os: 'macos-latest', arch: 'aarch64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
   Object.freeze({ target: 'x86_64-windows', os: 'windows-latest', arch: 'x86_64', binaryName: 'zigcss.exe', archiveExtension: 'zip' }),
 ])
@@ -533,6 +533,8 @@ export function validateReleaseWorkflowSource(source) {
   expectLiteralCount(source, 'node scripts/generate-release-metadata.mjs --check \\\n', 1, 'release metadata verification')
   expectLiteralCount(source, 'node scripts/generate-release-metadata.mjs --check-bundles', 1, 'local attestation binding check')
   expectLiteralCount(source, 'npm run check:release-metadata', 1, 'release workflow self-check')
+  expectLiteralCount(source, '- name: Smoke Native Archive and npm Installation', 1, 'native release smoke step')
+  expectLiteralCount(source, 'node scripts/smoke-release-artifact.mjs \\', 1, 'native release smoke command')
 
   expectOrdered(source, [
     '- name: Verify synchronized release version',
@@ -542,6 +544,7 @@ export function validateReleaseWorkflowSource(source) {
     '- name: Create Archive',
     '- name: Generate SHA-256 Manifest and SPDX SBOM',
     '- name: Verify Release Metadata',
+    '- name: Smoke Native Archive and npm Installation',
     '- name: Attest Release Provenance',
     '- name: Attest Release SBOM',
     '- name: Preserve Signed Attestation Bundles',
@@ -556,6 +559,7 @@ export function validateReleaseWorkflowSource(source) {
   return {
     targets: actualTargets.length,
     assetsPerTarget: 5,
+    nativeSmokes: 1,
     attestations: 2,
     signatureVerifications: 2,
   }
@@ -571,6 +575,7 @@ export function validateReleaseBuildGate(source) {
     'release metadata CI command',
   )
   expectLiteralCount(source, '- name: Test release consumer paths', 1, 'release consumer CI step')
+  expectLiteralCount(source, 'npm run test:release-smoke', 1, 'release smoke policy CI command')
   expectLiteralCount(source, 'npm run test:release-consumers', 1, 'release consumer CI command')
   expectLiteralCount(source, 'npm run test:release-container', 1, 'release container CI command')
   expectLiteralCount(source, 'npm run test:release-homebrew', 1, 'Homebrew release CI command')
@@ -634,7 +639,7 @@ function main() {
   if (same(args, ['--check-workflow'])) {
     const result = validateReleaseWorkflow()
     process.stdout.write(
-      `Release workflow metadata verified: ${result.targets} targets, ${result.assetsPerTarget} assets each, ${result.attestations} signed attestations, ${result.signatureVerifications} cryptographic verifications.\n`,
+      `Release workflow metadata verified: ${result.targets} native-smoked targets, ${result.assetsPerTarget} assets each, ${result.attestations} signed attestations, ${result.signatureVerifications} cryptographic verifications.\n`,
     )
     return
   }

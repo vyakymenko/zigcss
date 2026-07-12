@@ -15,6 +15,7 @@ Target release: `0.4.0-rc.1` (not published).
 
 - Replace the prototype's stable CSS path with the tested tokenizer, typed parser/emitter, bounded CLI/API, verified transform plan, LSP/editor integrations, and release-integrity gates described by the generated capability matrix.
 - Keep alternate format adapters, native plugins, extraction passes, editor packages, and the public compile service explicitly experimental, unpublished, or disabled according to their tested boundaries.
+- Execute every release archive on an architecture-matched runner and prove the same bytes through an offline npm pack, postinstall, and wrapper smoke before attestation or publication can proceed.
 
 ## [0.3.0] - 2026-03-20
 

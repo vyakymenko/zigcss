@@ -50,7 +50,7 @@ export const workflowPolicy = Object.freeze({
   'build.yml': Object.freeze({
     build: Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),
-      actions: Object.freeze(['actions/checkout', 'mlugg/setup-zig', 'actions/upload-artifact']),
+      actions: Object.freeze(['actions/checkout', 'mlugg/setup-zig', 'actions/setup-node', 'actions/upload-artifact']),
     }),
     test: Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),

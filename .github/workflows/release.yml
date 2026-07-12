@@ -25,13 +25,13 @@ jobs:
             archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             arch: aarch64
             target: aarch64-linux
             archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
-          - os: macos-latest
+          - os: macos-15-intel
             arch: x86_64
             target: x86_64-macos
             archive-extension: tar.gz
@@ -126,6 +126,15 @@ jobs:
             --version "$RELEASE_VERSION" \
             --commit "$GITHUB_SHA" \
             --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Smoke Native Archive and npm Installation
+        shell: bash
+        run: |
+          node scripts/smoke-release-artifact.mjs \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION"
 
       - name: Attest Release Provenance
         id: provenance

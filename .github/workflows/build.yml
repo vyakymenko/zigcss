@@ -22,26 +22,31 @@ jobs:
           - os: ubuntu-latest
             arch: x86_64
             target: x86_64-linux
+            archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             arch: aarch64
             target: aarch64-linux
+            archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
-          - os: macos-latest
+          - os: macos-15-intel
             arch: x86_64
             target: x86_64-macos
+            archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
           - os: macos-latest
             arch: aarch64
             target: aarch64-macos
+            archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
           - os: windows-latest
             arch: x86_64
             target: x86_64-windows
+            archive-extension: zip
             zig-version: 0.15.2
             binary-name: zigcss.exe
 
@@ -54,6 +59,11 @@ jobs:
         with:
           version: ${{ matrix.zig-version }}
 
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
       - name: Run Native Tests
         run: zig build test --summary all
 
@@ -62,6 +72,66 @@ jobs:
 
       - name: Verify Target Architecture
         run: node scripts/verify-artifact-target.mjs zig-out/bin/${{ matrix.binary-name }} ${{ matrix.target }}
+
+      - name: Build Native Release Binary
+        run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
+
+      - name: Verify Native Release Architecture
+        run: node scripts/verify-artifact-target.mjs zig-out/bin/${{ matrix.binary-name }} ${{ matrix.target }}
+
+      - name: Plan Native Smoke Assets
+        shell: bash
+        run: |
+          version="$(cat VERSION)"
+          base="zigcss-v${version}-${{ matrix.target }}"
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+
+      - name: Create Native Smoke Archive
+        shell: bash
+        run: |
+          mkdir -p release-assets/staging
+          cp "zig-out/bin/${{ matrix.binary-name }}" release-assets/staging/
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            (
+              cd release-assets/staging
+              powershell -NoProfile -Command "Compress-Archive -LiteralPath '${{ matrix.binary-name }}' -DestinationPath '../$RELEASE_ARCHIVE' -Force"
+            )
+          else
+            COPYFILE_DISABLE=1 tar -czf "release-assets/$RELEASE_ARCHIVE" \
+              -C release-assets/staging "${{ matrix.binary-name }}"
+          fi
+          rm -rf release-assets/staging
+
+      - name: Generate Native Smoke Metadata
+        shell: bash
+        run: |
+          node scripts/generate-release-metadata.mjs --write \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --output-directory release-assets \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+          node scripts/generate-release-metadata.mjs --check \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --output-directory release-assets \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Smoke Native Archive and npm Installation
+        shell: bash
+        run: |
+          node scripts/smoke-release-artifact.mjs \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -104,7 +174,7 @@ jobs:
         run: npm run test:release-metadata && npm run check:release-metadata
 
       - name: Test release consumer paths
-        run: npm run test:release-consumers && npm run test:release-container && npm run test:release-homebrew
+        run: npm run test:release-smoke && npm run test:release-consumers && npm run test:release-container && npm run test:release-homebrew
 
       - name: Install independent validator
         run: npm ci --ignore-scripts

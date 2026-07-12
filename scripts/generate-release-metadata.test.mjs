@@ -233,6 +233,7 @@ test('release workflow generates, signs, verifies, and uploads the closed five-t
   assert.deepEqual(validateReleaseWorkflow(), {
     targets: 5,
     assetsPerTarget: 5,
+    nativeSmokes: 1,
     attestations: 2,
     signatureVerifications: 2,
   })
@@ -255,6 +256,10 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     /cryptographic verification/,
   )
   assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace('- name: Smoke Native Archive and npm Installation', '- name: Removed native smoke')),
+    /native release smoke step/,
+  )
+  assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace('          path: release-assets/*', '          path: .')),
     /closed release asset upload/,
   )
@@ -265,6 +270,10 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('- name: Test release consumer paths', '- name: Removed release consumer paths')),
     /release consumer CI step/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-smoke', 'npm run removed:release-smoke')),
+    /release smoke policy CI command/,
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-container', 'npm run removed:release-container')),
