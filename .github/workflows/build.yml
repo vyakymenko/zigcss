@@ -100,6 +100,9 @@ jobs:
       - name: Verify release version policy
         run: npm run test:version && npm run check:version
 
+      - name: Verify release artifact metadata policy
+        run: npm run test:release-metadata && npm run check:release-metadata
+
       - name: Install independent validator
         run: npm ci --ignore-scripts
 

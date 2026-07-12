@@ -194,6 +194,19 @@
           "contains": ["validateReleaseSources", "VS Code Marketplace", "release tag must be"]
         }
       ]
+    },
+    "release-artifacts": {
+      "command": "npm run check:release-metadata",
+      "anchors": [
+        {
+          "path": "scripts/generate-release-metadata.mjs",
+          "contains": ["SPDX-2.3", "checkReleaseAttestationBundles", "validateReleaseWorkflowSource"]
+        },
+        {
+          "path": ".github/workflows/release.yml",
+          "contains": ["Attest Release Provenance", "Attest Release SBOM", "gh attestation verify"]
+        }
+      ]
     }
   },
   "capabilities": [
@@ -340,6 +353,14 @@
       "statusKind": "experimental",
       "behavior": "The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled.",
       "evidence": ["neovim", "lsp", "documentation"]
+    },
+    {
+      "id": "release-artifacts",
+      "surface": "Release archives",
+      "status": "Experimental, workflow-gated",
+      "statusKind": "experimental",
+      "behavior": "The tag workflow gates five target archives behind SHA-256 manifests, deterministic SPDX 2.3 SBOMs, local Sigstore subject/predicate checks, and cryptographic verification of signed SLSA provenance and SBOM bundles before upload; this recovery run has not published a release.",
+      "evidence": ["release-version", "release-artifacts"]
     },
     {
       "id": "public-compile",

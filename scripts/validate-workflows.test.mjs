@@ -12,7 +12,7 @@ function cloneSources() {
 }
 
 test('all workflow jobs use explicit least privilege and immutable reviewed actions', () => {
-  assert.deepEqual(validateWorkflows(), { workflows: 3, jobs: 7, actions: 19 })
+  assert.deepEqual(validateWorkflows(), { workflows: 3, jobs: 7, actions: 21 })
 })
 
 test('mutable, malformed, unknown, and stale action references fail closed', () => {
@@ -52,17 +52,17 @@ test('workflow and job permission expansion fails closed', () => {
 
   const expanded = cloneSources()
   expanded.set('release.yml', expanded.get('release.yml').replace(
-    '    permissions:\n      contents: read',
-    '    permissions:\n      contents: write',
+    '    permissions:\n      attestations: write\n      contents: read\n      id-token: write',
+    '    permissions:\n      attestations: write\n      contents: write\n      id-token: write',
   ))
   assert.throws(() => validateWorkflowSources(expanded), /job release permissions changed/)
 
-  const oidc = cloneSources()
-  oidc.set('release.yml', oidc.get('release.yml').replace(
-    '      contents: read',
-    '      contents: read\n      id-token: write',
+  const packages = cloneSources()
+  packages.set('release.yml', packages.get('release.yml').replace(
+    '      id-token: write',
+    '      id-token: write\n      packages: write',
   ))
-  assert.throws(() => validateWorkflowSources(oidc), /job release permissions changed/)
+  assert.throws(() => validateWorkflowSources(packages), /job release permissions changed/)
 })
 
 test('new workflows, jobs, and action placements require an explicit policy update', () => {

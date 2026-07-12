@@ -12,7 +12,9 @@ jobs:
     name: Release ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     permissions:
+      attestations: write
       contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -20,26 +22,31 @@ jobs:
           - os: ubuntu-latest
             arch: x86_64
             target: x86_64-linux
+            archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
           - os: ubuntu-latest
             arch: aarch64
             target: aarch64-linux
+            archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
           - os: macos-latest
             arch: x86_64
             target: x86_64-macos
+            archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
           - os: macos-latest
             arch: aarch64
             target: aarch64-macos
+            archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
           - os: windows-latest
             arch: x86_64
             target: x86_64-windows
+            archive-extension: zip
             zig-version: 0.15.2
             binary-name: zigcss.exe
 
@@ -59,7 +66,9 @@ jobs:
 
       - name: Verify synchronized release version
         shell: bash
-        run: npm run check:version -- --tag "$GITHUB_REF_NAME"
+        run: |
+          npm run check:version -- --tag "$GITHUB_REF_NAME"
+          npm run check:release-metadata
 
       - name: Build Release Binary
         run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }}
@@ -67,33 +76,109 @@ jobs:
       - name: Verify Target Architecture
         run: node scripts/verify-artifact-target.mjs zig-out/bin/${{ matrix.binary-name }} ${{ matrix.target }}
 
-      - name: Get Version
-        id: version
+      - name: Plan Release Assets
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          base="zigcss-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          echo "RELEASE_BASE=$base" >> "$GITHUB_ENV"
+          echo "RELEASE_ARCHIVE=$base.${{ matrix.archive-extension }}" >> "$GITHUB_ENV"
+          echo "RELEASE_SBOM=$base.spdx.json" >> "$GITHUB_ENV"
+          echo "RELEASE_CHECKSUMS=$base.sha256" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
 
       - name: Create Archive
         shell: bash
         run: |
+          mkdir -p release-assets/staging
+          cp "zig-out/bin/${{ matrix.binary-name }}" release-assets/staging/
           if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            mkdir -p release
-            cp zig-out/bin/${{ matrix.binary-name }} release/
-            cd release
-            powershell -Command "Compress-Archive -Path '${{ matrix.binary-name }}' -DestinationPath '../zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.zip' -Force"
-            cd ..
+            (
+              cd release-assets/staging
+              powershell -NoProfile -Command "Compress-Archive -LiteralPath '${{ matrix.binary-name }}' -DestinationPath '../$RELEASE_ARCHIVE' -Force"
+            )
           else
-            mkdir -p release
-            cp zig-out/bin/${{ matrix.binary-name }} release/
-            cd release
-            tar czf ../zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.tar.gz ${{ matrix.binary-name }}
-            cd ..
+            COPYFILE_DISABLE=1 tar -czf "release-assets/$RELEASE_ARCHIVE" \
+              -C release-assets/staging "${{ matrix.binary-name }}"
           fi
+          rm -rf release-assets/staging
 
-      - name: Upload Release Asset
+      - name: Generate SHA-256 Manifest and SPDX SBOM
+        shell: bash
+        run: |
+          node scripts/generate-release-metadata.mjs --write \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --output-directory release-assets \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Verify Release Metadata
+        shell: bash
+        run: |
+          node scripts/generate-release-metadata.mjs --check \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --output-directory release-assets \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+
+      - name: Attest Release Provenance
+        id: provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: |
+            release-assets/${{ env.RELEASE_ARCHIVE }}
+            release-assets/${{ env.RELEASE_SBOM }}
+            release-assets/${{ env.RELEASE_CHECKSUMS }}
+
+      - name: Attest Release SBOM
+        id: sbom-attestation
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: release-assets/${{ env.RELEASE_ARCHIVE }}
+          sbom-path: release-assets/${{ env.RELEASE_SBOM }}
+
+      - name: Preserve Signed Attestation Bundles
+        shell: bash
+        run: |
+          cp "${{ steps.provenance.outputs.bundle-path }}" \
+            "release-assets/${RELEASE_BASE}.provenance.sigstore.jsonl"
+          cp "${{ steps.sbom-attestation.outputs.bundle-path }}" \
+            "release-assets/${RELEASE_BASE}.sbom.sigstore.jsonl"
+
+      - name: Verify Signed Attestation Bundles
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/generate-release-metadata.mjs --check-bundles \
+            --archive "release-assets/$RELEASE_ARCHIVE" \
+            --binary "zig-out/bin/${{ matrix.binary-name }}" \
+            --output-directory release-assets \
+            --target "${{ matrix.target }}" \
+            --version "$RELEASE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+          gh attestation verify "release-assets/$RELEASE_ARCHIVE" \
+            -R "$GITHUB_REPOSITORY" \
+            --bundle "release-assets/${RELEASE_BASE}.provenance.sigstore.jsonl"
+          gh attestation verify "release-assets/$RELEASE_ARCHIVE" \
+            -R "$GITHUB_REPOSITORY" \
+            --bundle "release-assets/${RELEASE_BASE}.sbom.sigstore.jsonl" \
+            --predicate-type https://spdx.dev/Document/v2.3
+
+      - name: Upload Release Assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: zigcss-${{ matrix.target }}
-          path: zigcss-${{ steps.version.outputs.VERSION }}-${{ matrix.target }}.*
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
 
   create-release:
     name: Create Release
@@ -125,6 +210,8 @@ jobs:
             Experimental recovery binaries for development and evaluation only.
 
             This prerelease has a tested experimental grammar boundary but is not suitable for production stylesheets.
+
+            Each platform archive is accompanied by a SHA-256 manifest, an SPDX 2.3 SBOM, a Sigstore-signed SLSA provenance bundle, and a signed SBOM bundle. Verify the downloaded archive against both its checksum manifest and GitHub artifact attestation before use.
 
             ### Installation
 

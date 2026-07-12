@@ -39,6 +39,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | LSP | Experimental, stress-tested | Bounded framing, JSON-RPC lifecycle, full sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features pass large-document, Unicode, malformed-request, leak, and editor-integration gates. |
 | VS Code extension | Experimental, package-tested | Marketplace version 0.4.0 maps to core 0.4.0-rc.1 and packages only with the pre-release marker; its exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and five-file VSIX are verified; no binary is bundled or published. |
 | Neovim configuration | Experimental, integration-tested | The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled. |
+| Release archives | Experimental, workflow-gated | The tag workflow gates five target archives behind SHA-256 manifests, deterministic SPDX 2.3 SBOMs, local Sigstore subject/predicate checks, and cryptographic verification of signed SLSA provenance and SBOM bundles before upload; this recovery run has not published a release. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 until bounded process and request isolation is implemented. |
 <!-- capability-status:end -->
 

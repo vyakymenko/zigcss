@@ -33,6 +33,8 @@
     "test:workflows": "node --test scripts/validate-workflows.test.mjs",
     "check:version": "node scripts/validate-release-version.mjs --check",
     "test:version": "node --test scripts/validate-release-version.test.mjs",
+    "check:release-metadata": "node scripts/generate-release-metadata.mjs --check-workflow",
+    "test:release-metadata": "node --test scripts/generate-release-metadata.test.mjs",
     "test:zig-package": "node --test scripts/verify-zig-package.test.mjs",
     "test:node-wrapper": "node --test scripts/verify-node-wrapper.test.mjs",
     "test:vscode": "npm --prefix vscode-extension test && npm --prefix vscode-extension run package:check",

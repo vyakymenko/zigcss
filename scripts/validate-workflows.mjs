@@ -36,6 +36,10 @@ export const actionPins = Object.freeze({
     sha: 'd3f86a106a0bac45b974a628896c90dbdf5c8093',
     version: 'v4.3.0',
   }),
+  'actions/attest': Object.freeze({
+    sha: 'a1948c3f048ba23858d222213b7c278aabede763',
+    version: 'v4.1.1',
+  }),
   'softprops/action-gh-release': Object.freeze({
     sha: 'de2c0eb89ae2a093876385947365aca7b0e5f844',
     version: 'v1',
@@ -65,11 +69,13 @@ export const workflowPolicy = Object.freeze({
   }),
   'release.yml': Object.freeze({
     release: Object.freeze({
-      permissions: Object.freeze({ contents: 'read' }),
+      permissions: Object.freeze({ attestations: 'write', contents: 'read', 'id-token': 'write' }),
       actions: Object.freeze([
         'actions/checkout',
         'mlugg/setup-zig',
         'actions/setup-node',
+        'actions/attest',
+        'actions/attest',
         'actions/upload-artifact',
       ]),
     }),
