@@ -46,6 +46,14 @@ assert_equal "$(autodevelop_classify_pass 0 "$TMP/complete")" COMPLETE 'complete
 fixture prompt-echo 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <reason>'
 assert_equal "$(autodevelop_classify_pass 1 "$TMP/prompt-echo")" ERROR 'prompt marker ignored'
 
+fixture echoed-runtime-error 'user
+Do not sleep or wait for rate limits.
+ZIGCSS-AUTODEVELOP-STATUS: COMPLETE
+ERROR: The selected model requires a newer version of Codex.'
+fixture empty-final ''
+assert_equal "$(autodevelop_extract_status "$TMP/empty-final")" '' 'empty final message has no status'
+assert_equal "$(autodevelop_classify_pass 1 "$TMP/echoed-runtime-error" "$TMP/empty-final")" ERROR 'echoed prompt cannot classify operational failure'
+
 fixture rate 'Usage limit reached. Try again in 30 minutes.'
 assert_equal "$(autodevelop_classify_pass 1 "$TMP/rate")" RATE_LIMIT 'rate classification'
 assert_equal "$(autodevelop_rate_limit_delay "$TMP/rate")" 1800 'rate delay'
@@ -62,7 +70,13 @@ FAKE_ARGS="$TMP/fake-args"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "%s\n" "$@" > "$ZIGCSS_FAKE_ARGS"' \
-  'printf "ZIGCSS-AUTODEVELOP-STATUS: BLOCKED synthetic-test-blocker\n"' \
+  'final_message=""' \
+  'while [ "$#" -gt 0 ]; do' \
+  '  if [ "$1" = "--output-last-message" ]; then shift; final_message="$1"; fi' \
+  '  shift' \
+  'done' \
+  'test -n "$final_message"' \
+  'printf "ZIGCSS-AUTODEVELOP-STATUS: BLOCKED synthetic-test-blocker\n" > "$final_message"' \
   > "$FAKE_CODEX"
 chmod +x "$FAKE_CODEX"
 PASS_HOME="$TMP/pass-state"
@@ -73,6 +87,7 @@ ZIGCSS_FAKE_ARGS="$FAKE_ARGS" \
   bash "$HERE/run-pass.sh" > "$TMP/fake-pass.log" 2>&1
 assert_equal "$(grep '^CLASS=' "$PASS_HOME/state/last-run.env" | cut -d= -f2)" BLOCKED 'fake pass classification'
 assert_equal "$(grep -xc -- '--ephemeral' "$FAKE_ARGS")" 1 'ephemeral CLI flag'
+assert_equal "$(grep -xc -- '--output-last-message' "$FAKE_ARGS")" 1 'isolated final-message CLI flag'
 assert_equal "$(grep -xc -- 'gpt-5.6-sol' "$FAKE_ARGS")" 1 'fixed model argument'
 assert_equal "$(grep -xc -- 'model_reasoning_effort="ultra"' "$FAKE_ARGS")" 1 'fixed reasoning argument'
 assert_equal "$(cat "$PASS_HOME/state/resume-wip")" "$(autodevelop_dirty_fingerprint)" 'interrupted WIP fingerprint'

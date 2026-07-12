@@ -55,7 +55,10 @@ BEFORE_HEAD="$(git rev-parse HEAD)" || exit 1
 BEFORE_STATUS="$(autodevelop_git_status)"
 PASS_ID="$(date +%Y%m%d-%H%M%S)"
 OUTPUT="$AUTODEVELOP_LOG_DIR/pass-$PASS_ID.log"
+FINAL_MESSAGE="$AUTODEVELOP_LOG_DIR/pass-$PASS_ID.final.txt"
 ln -sfn "$OUTPUT" "$AUTODEVELOP_LOG_DIR/pass-latest.log"
+ln -sfn "$FINAL_MESSAGE" "$AUTODEVELOP_LOG_DIR/pass-latest.final.txt"
+rm -f "$FINAL_MESSAGE"
 
 export ZIG_GLOBAL_CACHE_DIR="$AUTODEVELOP_CACHE_DIR/zig-global"
 export npm_config_cache="$AUTODEVELOP_CACHE_DIR/npm"
@@ -70,15 +73,17 @@ autodevelop_run_with_timeout "$AUTODEVELOP_PASS_TIMEOUT_SECS" \
   --cd "$AUTODEVELOP_ROOT" \
   --sandbox workspace-write \
   --model "$AUTODEVELOP_MODEL" \
+  --output-last-message "$FINAL_MESSAGE" \
   -c "model_reasoning_effort=\"$AUTODEVELOP_REASONING\"" \
   -c 'approval_policy="never"' \
   -c 'sandbox_workspace_write.network_access=true' \
   -c "sandbox_workspace_write.writable_roots=[\"$GIT_DIR\",\"$GIT_COMMON_DIR\"]" \
   "$PROMPT" </dev/null >"$OUTPUT" 2>&1 || RAW_RC=$?
 
-CLASS="$(autodevelop_classify_pass "$RAW_RC" "$OUTPUT")"
-STATUS="$(autodevelop_extract_status "$OUTPUT")"
-REASON="$(autodevelop_extract_reason "$OUTPUT")"
+[ -f "$FINAL_MESSAGE" ] || : > "$FINAL_MESSAGE"
+CLASS="$(autodevelop_classify_pass "$RAW_RC" "$OUTPUT" "$FINAL_MESSAGE")"
+STATUS="$(autodevelop_extract_status "$FINAL_MESSAGE")"
+REASON="$(autodevelop_extract_reason "$FINAL_MESSAGE")"
 AFTER_HEAD="$(git rev-parse HEAD 2>/dev/null || printf 'unavailable')"
 AFTER_STATUS="$(autodevelop_git_status)"
 
@@ -108,6 +113,7 @@ LAST_RUN_TMP="$AUTODEVELOP_STATE_DIR/.last-run.$$"
   printf 'BEFORE_HEAD=%s\n' "$BEFORE_HEAD"
   printf 'AFTER_HEAD=%s\n' "$AFTER_HEAD"
   printf 'OUTPUT=%s\n' "$OUTPUT"
+  printf 'FINAL_MESSAGE=%s\n' "$FINAL_MESSAGE"
 } > "$LAST_RUN_TMP"
 mv "$LAST_RUN_TMP" "$AUTODEVELOP_STATE_DIR/last-run.env"
 printf '%s' "$REASON" > "$AUTODEVELOP_STATE_DIR/last-run.reason"

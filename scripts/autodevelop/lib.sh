@@ -66,9 +66,9 @@ autodevelop_resolve_codex() {
     return
   fi
   for candidate in \
-    "$HOME/.local/bin/codex" \
     "/Applications/ChatGPT.app/Contents/Resources/codex" \
-    "/Applications/Codex.app/Contents/Resources/codex"; do
+    "/Applications/Codex.app/Contents/Resources/codex" \
+    "$HOME/.local/bin/codex"; do
     if [ -x "$candidate" ]; then
       printf '%s\n' "$candidate"
       return
@@ -178,14 +178,14 @@ autodevelop_extract_status() {
   tail -80 "$1" 2>/dev/null \
     | grep -v '<short summary>' \
     | grep -v '<reason>' \
-    | sed -nE 's/.*ZIGCSS-AUTODEVELOP-STATUS:[[:space:]]*(PROGRESS|BLOCKED|COMPLETE).*/\1/p' \
+    | sed -nE 's/^[[:space:]]*ZIGCSS-AUTODEVELOP-STATUS:[[:space:]]*(PROGRESS|BLOCKED|COMPLETE)([[:space:]].*)?$/\1/p' \
     | tail -1
 }
 
 autodevelop_extract_reason() {
   tail -80 "$1" 2>/dev/null \
     | grep -v '<reason>' \
-    | sed -nE 's/.*ZIGCSS-AUTODEVELOP-STATUS:[[:space:]]*BLOCKED[[:space:]]*//p' \
+    | sed -nE 's/^[[:space:]]*ZIGCSS-AUTODEVELOP-STATUS:[[:space:]]*BLOCKED[[:space:]]*//p' \
     | tail -1 \
     | cut -c1-500
 }
@@ -193,8 +193,9 @@ autodevelop_extract_reason() {
 autodevelop_classify_pass() {
   local rc="$1"
   local output="$2"
+  local final_message="${3:-$output}"
   local status size
-  status="$(autodevelop_extract_status "$output")"
+  status="$(autodevelop_extract_status "$final_message")"
   if [ "$rc" -eq 0 ] && [ -n "$status" ]; then
     printf '%s\n' "$status"
     return
@@ -210,7 +211,7 @@ autodevelop_classify_pass() {
     return
   fi
   if [ "$rc" -ne 0 ] \
-     && tail -100 "$output" 2>/dev/null | grep -Eiq 'usage limit|rate.?limit|too many requests|error 429|status 429|quota exceeded|insufficient_quota|weekly limit|limit reached|you.?ve (hit|reached) your'; then
+     && tail -100 "$output" 2>/dev/null | grep -Eiq 'usage limit (reached|exceeded)|rate.?limit.?((was )?(reached|exceeded)|error)|too many requests|error 429|status 429|quota exceeded|insufficient_quota|weekly limit (reached|exceeded)|you.?ve (hit|reached) your'; then
     printf 'RATE_LIMIT\n'
     return
   fi

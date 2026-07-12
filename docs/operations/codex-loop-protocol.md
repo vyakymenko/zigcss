@@ -20,6 +20,8 @@ The control surface also provides `test` (one foreground pass), `run` (foregroun
 
 The background process lasts for the current login. It deliberately does not install a LaunchAgent, modify login items, or mutate any system startup surface. Ignored `.autodevelop/` storage inside the isolated worktree owns logs, caches, control files, and outcome state.
 
+On macOS, the supervisor prefers the Codex CLI bundled with the current ChatGPT or Codex app before an optional older user-local binary. Each pass writes the agent's final message to a separate file through Codex's `--output-last-message` contract; status markers are read only from that file, while transport diagnostics stay in the ordinary pass log. Echoed prompt text therefore cannot impersonate completion, a blocker, or a rate-limit response.
+
 The orientation helper itself remains intentionally read-only: it reconstructs repository facts so every fresh pass starts from durable evidence instead of conversational memory. Run it directly with:
 
 ```bash
@@ -159,4 +161,4 @@ Its output is orientation evidence, not a scheduler and not a substitute for the
 - rate limits use bounded backoff, authentication failure pauses immediately, five consecutive tool failures pause, and the same reported blocker must recur three times before the supervisor pauses as blocked;
 - `COMPLETE` stops the loop for operator review; it does not publish, push, or mark an external release complete.
 
-`scripts/autodevelop/selftest.sh` tests classification, prompt-echo rejection, rate-limit parsing, timeout precedence, authentication detection, and atomic state counters without a model call or repository mutation. The control script exposes no install/deploy/publish command.
+`scripts/autodevelop/selftest.sh` tests isolated final-message classification, prompt-echo rejection, rate-limit parsing, timeout precedence, authentication detection, exact CLI arguments, and atomic state counters without a model call or repository mutation. The control script exposes no install/deploy/publish command.
