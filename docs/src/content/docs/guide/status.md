@@ -4,27 +4,31 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 
 ## Current contract
 
+<!-- capability-status:start -->
 | Surface | Status | Current behavior |
 |---|---|---|
-| CSS CLI parsing and emission | Experimental, matrix-tested | Strict file/stdin and file/stdout modes delegate to `zigcss.compile`; version/syntax/options and 0/1/2 exit statuses are executable contracts. |
-| Zig compile API | Experimental, consumer-tested | `zigcss.compile` returns owned CSS/maps, located diagnostics, ordered decoded imports, and optional module-export state; accepted transforms and borrowed canonical targets are explicit options. |
+| .css parsing and emission | Experimental, matrix-tested | Strict file/stdin and file/stdout modes delegate to `zigcss.compile`; version, syntax, options, and 0/1/2 exit statuses are executable contracts. |
+| Zig compile API | Experimental, consumer-tested | `zigcss.compile` returns owned CSS, maps, located diagnostics, ordered imports, optional module exports, and metrics; accepted transforms and borrowed canonical targets are explicit options. |
 | Zig package metadata | Experimental, consumer-tested | Package `zigcss` 0.3.0 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`. |
-| Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` uses declared lazy file inputs/outputs and a host compiler artifact; unavailable CLI features are not represented. |
+| Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` uses declared lazy inputs and generated outputs with a host compiler artifact; unavailable CLI features have no helper path. |
 | Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed `plugin.`-namespaced Zig callbacks through bounded deterministic pass plans; there is no stable ABI, sandbox, CLI, or HTTP path. |
-| `--minify` | Experimental | Changes whitespace during emission only; it is independent of `--optimize`. |
-| Output planning | Safety boundary verified | Input/output aliases and duplicate final destinations are rejected; batch names are deterministic and every file destination is atomically replaced. |
-| `--profile` | Experimental, measured | Reports one monotonic public compile total, actual stage intervals, and allocator-requested allocation/live/retained metrics from the owned API result. |
-| Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs exactly seven verified analysis/cleanup/semantic passes to a bounded byte-stable fixed point; unsafe and separately authorized classes are excluded. |
-| Dead-code and critical-CSS extraction | Experimental, library/test-only | Two bounded passes use complete class/ID inventories and require separate experimental plus extraction authorization; stable CLI flags remain unavailable. |
-| Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property/value/selector/at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
-| Source maps | Experimental, library-only | The library pipeline produces deterministic mappings; the CLI flag remains unavailable until its output policy is defined. |
-| Browser target queries | Experimental, library-only | The Zig API accepts a strict explicit-minimum grammar over six browsers and deterministically configures the verified rewrite from pinned BCD 8.0.0 data; CLI flags remain unavailable pending public option wiring. |
-| CSS Modules | Experimental, Zig-library-only native subset | `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references/dependencies, and local values with owned results. CLI/LSP reject `.module.css`; imported values, raw ICSS, and ambiguous forms are strict errors. |
-| SCSS, SASS, LESS, Stylus, PostCSS, CSS-in-JS, Tailwind-like `@apply` | Unavailable | Every extension is rejected before output and absent from the public syntax enum. The compiler's SCSS/Sass, Less, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like adapter sources are removed; the [format compatibility matrix](/guide/format-compatibility) publishes each accepted strategy and containment boundary. |
-| LSP | Experimental, stress-tested | Bounded framing, standard JSON-RPC, lifecycle/full-sync state, UTF-16 positions, compiler pull diagnostics, and syntax-aware editor features operate over deterministic indexes of currently open CSS documents. Protocol transcript, large-document, Unicode, malformed-request, leak, and local editor-integration gates pass; editor publication remains later work. |
-| VS Code extension | Experimental, package-tested | Version 0.3.0 has an exact lockfile, CSS-only activation, trust boundaries, deterministic executable discovery, 13 tests, a pinned CI workflow, and a verified five-file pre-release VSIX including dependency notices. No binary is bundled and no extension is published. |
-| Neovim configuration | Experimental, integration-tested | The CSS-only built-in config uses `vim.lsp.config`/`vim.lsp.enable`, resolves one trusted absolute executable, and is smoke-tested with exact Neovim 0.11.7 and 0.12.4 against the real server command, capability table, hover request, and shutdown. No plugin or binary is bundled. |
-| Public compile API and playground | Disabled | Public routes return HTTP 503 until bounded isolation is implemented. |
+| --minify | Experimental | Compacts emitted whitespace without enabling AST transforms and remains independent of `--optimize`. |
+| Output planning | Safety boundary verified | Rejects input/output aliases and duplicate final destinations; batch names are deterministic and every file destination is atomically replaced. |
+| --profile | Experimental, measured | Reports one monotonic public compile total, actual stage intervals, and allocator-requested allocation, live, and retained metrics from the owned API result. |
+| Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs exactly seven verified analysis, cleanup, and semantic passes to a bounded byte-stable fixed point; separately authorized classes remain excluded. |
+| Dead-code and critical-CSS extraction | Experimental, library/test-only | Two bounded passes use complete class/ID inventories and require separate experimental plus extraction authority; stable CLI flags remain unavailable. |
+| Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property, value, selector, and at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
+| Source maps | Experimental, library-only | The library pipeline produces deterministic separately owned mappings; the CLI output policy remains unavailable. |
+| Browser target queries | Experimental, library-only | A strict explicit-minimum grammar over six browsers configures pinned BCD 8.0.0 data; `--browsers` and `--autoprefix` remain unavailable in the CLI. |
+| CSS Modules | Experimental, Zig-library-only native subset | Explicit `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references and dependencies, and local values with owned results; CLI and LSP exposure remain unavailable. |
+| Alternate format adapters | Unavailable | SCSS, Sass, Less, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like compiler adapters are removed; their extensions are rejected before output. |
+| LSP | Experimental, stress-tested | Bounded framing, JSON-RPC lifecycle, full sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features pass large-document, Unicode, malformed-request, leak, and editor-integration gates. |
+| VS Code extension | Experimental, package-tested | Version 0.3.0 has an exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and a verified five-file pre-release VSIX; no binary is bundled or published. |
+| Neovim configuration | Experimental, integration-tested | The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled. |
+| Public compile API and playground | Disabled | Public compile routes return HTTP 503 until bounded process and request isolation is implemented. |
+<!-- capability-status:end -->
+
+This table, the repository README, and the site feature page consume `docs/src/data/capabilities.json`. Every row names executable evidence gates, and the capability generator rejects unknown statuses, missing anchors, duplicate surfaces, and generated-table drift.
 
 ## Current boundaries
 

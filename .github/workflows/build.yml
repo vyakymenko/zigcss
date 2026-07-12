@@ -105,6 +105,9 @@ jobs:
       - name: Verify generated prefix compatibility data
         run: npm run check:prefix-data
 
+      - name: Test and verify generated capability status
+        run: npm run test:capability-status && npm run check:capability-status
+
       - name: Run Tests
         run: zig build test --summary all
 

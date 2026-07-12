@@ -168,7 +168,7 @@ describe('experimental LSP transport', () => {
     expect(status).toContain('synchronizes more than 1 MiB of CSS')
     expect(status).toContain('response output remains below 64 KiB')
     expect(status).toContain('return to zero after every cycle')
-    expect(readme).toContain('Protocol transcript, large-document, Unicode, malformed-request')
+    expect(readme).toContain('pass large-document, Unicode, malformed-request, leak, and editor-integration gates')
     expect(extension).toContain('Protocol stress coverage')
   })
 })

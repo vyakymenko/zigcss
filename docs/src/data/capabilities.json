@@ -1,0 +1,314 @@
+{
+  "schemaVersion": 1,
+  "statusKinds": [
+    "experimental",
+    "verified",
+    "unavailable",
+    "disabled"
+  ],
+  "gates": {
+    "compatibility": {
+      "command": "npm run test:compat",
+      "anchors": [
+        {
+          "path": "tests/compatibility/validate.mjs",
+          "contains": ["Compatibility matrix verified"]
+        },
+        {
+          "path": "tests/compatibility/matrix.json",
+          "contains": ["\"errorRecovery\": false", "\"features\""]
+        }
+      ]
+    },
+    "public-api": {
+      "command": "zig build test-public-api --summary all",
+      "anchors": [
+        {
+          "path": "build.zig",
+          "contains": ["test-public-api", "tests/public-api/consumer.zig"]
+        },
+        {
+          "path": "tests/public-api/consumer.zig",
+          "contains": ["zigcss.compile(", ".source_map =", ".profile = true"]
+        }
+      ]
+    },
+    "zig-package": {
+      "command": "npm run test:zig-package",
+      "anchors": [
+        {
+          "path": "scripts/verify-zig-package.test.mjs",
+          "contains": ["Zig package identity version and minimum toolchain are pinned", "explicit minimal allowlist"]
+        }
+      ]
+    },
+    "build-helper": {
+      "command": "zig build test --summary all",
+      "anchors": [
+        {
+          "path": "tests/package-consumer/build.zig",
+          "contains": ["helpers.addCssCompile", "addCheckFile"]
+        }
+      ]
+    },
+    "plugins": {
+      "command": "zig build test --summary all",
+      "anchors": [
+        {
+          "path": "src/plugins.zig",
+          "contains": ["pub const id_namespace = \"plugin.\"", "pub const Policy"]
+        },
+        {
+          "path": "tests/public-api/consumer.zig",
+          "contains": ["plugin.external-analysis", "PluginPolicy"]
+        }
+      ]
+    },
+    "cli-safety": {
+      "command": "zig build test --summary all",
+      "anchors": [
+        {
+          "path": "src/main.zig",
+          "contains": ["atomicFile", "--minify may only be specified once", "--profile"]
+        },
+        {
+          "path": "tests/regressions/audit.zig",
+          "contains": ["runWithStdin", "--lsp"]
+        }
+      ]
+    },
+    "transforms": {
+      "command": "npm run test:transforms",
+      "anchors": [
+        {
+          "path": "tests/transforms/validate.mjs",
+          "contains": ["verified-optimizer", "conservative-dead-code-extraction", "conservative-critical-css-extraction", "target-prefix-rewrite"]
+        }
+      ]
+    },
+    "prefix-data": {
+      "command": "npm run check:prefix-data",
+      "anchors": [
+        {
+          "path": "scripts/generate-prefix-data.mjs",
+          "contains": ["Prefix compatibility data verified against BCD", "--check"]
+        },
+        {
+          "path": "tests/public-api/consumer.zig",
+          "contains": ["prefixing.target_query.parse"]
+        }
+      ]
+    },
+    "format-matrix": {
+      "command": "npm run test:formats",
+      "anchors": [
+        {
+          "path": "tests/formats/validate.mjs",
+          "contains": ["Format matrix verified", "validateCssModules"]
+        }
+      ]
+    },
+    "lsp": {
+      "command": "zig build test --summary all",
+      "anchors": [
+        {
+          "path": "src/lsp.zig",
+          "contains": ["diagnosticProvider", "hoverProvider", "workspaceSymbolProvider", "positionEncoding"]
+        },
+        {
+          "path": "tests/regressions/audit.zig",
+          "contains": ["Content-Length", "--lsp"]
+        }
+      ]
+    },
+    "vscode": {
+      "command": "npm run test:vscode",
+      "anchors": [
+        {
+          "path": "vscode-extension/test/manifest.test.cjs",
+          "contains": ["manifest activates only the supported CSS surface", "CI installs from the lockfile"]
+        },
+        {
+          "path": "vscode-extension/scripts/verify-package.mjs",
+          "contains": ["VS Code package verified", "expectedFiles"]
+        }
+      ]
+    },
+    "neovim": {
+      "command": "npm run test:neovim",
+      "anchors": [
+        {
+          "path": "scripts/verify-neovim-config.test.mjs",
+          "contains": ["built-in CSS-only LSP configuration API", "binary selection is absolute executable and fail-closed"]
+        },
+        {
+          "path": "scripts/test-neovim-integration.mjs",
+          "contains": ["NEOVIM_REJECTION_PASS", "NEOVIM_SMOKE_PASS"]
+        }
+      ]
+    },
+    "docs-server": {
+      "command": "npm --prefix docs test -- --run",
+      "anchors": [
+        {
+          "path": "docs/src/server.test.ts",
+          "contains": ["expect(response.status).toBe(503)"]
+        }
+      ]
+    }
+  },
+  "capabilities": [
+    {
+      "id": "css-cli",
+      "surface": ".css parsing and emission",
+      "status": "Experimental, matrix-tested",
+      "statusKind": "experimental",
+      "behavior": "Strict file/stdin and file/stdout modes delegate to `zigcss.compile`; version, syntax, options, and 0/1/2 exit statuses are executable contracts.",
+      "evidence": ["compatibility", "cli-safety"]
+    },
+    {
+      "id": "compile-api",
+      "surface": "Zig compile API",
+      "status": "Experimental, consumer-tested",
+      "statusKind": "experimental",
+      "behavior": "`zigcss.compile` returns owned CSS, maps, located diagnostics, ordered imports, optional module exports, and metrics; accepted transforms and borrowed canonical targets are explicit options.",
+      "evidence": ["public-api"]
+    },
+    {
+      "id": "zig-package",
+      "surface": "Zig package metadata",
+      "status": "Experimental, consumer-tested",
+      "statusKind": "experimental",
+      "behavior": "Package `zigcss` 0.3.0 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`.",
+      "evidence": ["zig-package", "public-api"]
+    },
+    {
+      "id": "build-helper",
+      "surface": "Zig build helper",
+      "status": "Experimental, consumer-tested",
+      "statusKind": "experimental",
+      "behavior": "`@import(\"zigcss\").helpers.addCssCompile` uses declared lazy inputs and generated outputs with a host compiler artifact; unavailable CLI features have no helper path.",
+      "evidence": ["build-helper", "zig-package"]
+    },
+    {
+      "id": "native-plugins",
+      "surface": "Native plugins",
+      "status": "Experimental, trusted/library-only",
+      "statusKind": "experimental",
+      "behavior": "Explicit `.experimental` options run borrowed `plugin.`-namespaced Zig callbacks through bounded deterministic pass plans; there is no stable ABI, sandbox, CLI, or HTTP path.",
+      "evidence": ["plugins", "public-api"]
+    },
+    {
+      "id": "minify",
+      "surface": "--minify",
+      "status": "Experimental",
+      "statusKind": "experimental",
+      "behavior": "Compacts emitted whitespace without enabling AST transforms and remains independent of `--optimize`.",
+      "evidence": ["compatibility", "cli-safety"]
+    },
+    {
+      "id": "output-planning",
+      "surface": "Output planning",
+      "status": "Safety boundary verified",
+      "statusKind": "verified",
+      "behavior": "Rejects input/output aliases and duplicate final destinations; batch names are deterministic and every file destination is atomically replaced.",
+      "evidence": ["cli-safety"]
+    },
+    {
+      "id": "profiling",
+      "surface": "--profile",
+      "status": "Experimental, measured",
+      "statusKind": "experimental",
+      "behavior": "Reports one monotonic public compile total, actual stage intervals, and allocator-requested allocation, live, and retained metrics from the owned API result.",
+      "evidence": ["public-api", "cli-safety"]
+    },
+    {
+      "id": "optimizer",
+      "surface": "Verified optimizer preset",
+      "status": "Experimental, acceptance-gated",
+      "statusKind": "experimental",
+      "behavior": "`--optimize` runs exactly seven verified analysis, cleanup, and semantic passes to a bounded byte-stable fixed point; separately authorized classes remain excluded.",
+      "evidence": ["transforms", "cli-safety"]
+    },
+    {
+      "id": "extraction",
+      "surface": "Dead-code and critical-CSS extraction",
+      "status": "Experimental, library/test-only",
+      "statusKind": "experimental",
+      "behavior": "Two bounded passes use complete class/ID inventories and require separate experimental plus extraction authority; stable CLI flags remain unavailable.",
+      "evidence": ["transforms"]
+    },
+    {
+      "id": "target-prefix",
+      "surface": "Target prefix rewrite",
+      "status": "Experimental, library-only",
+      "statusKind": "experimental",
+      "behavior": "One verified pass covers eight pinned property, value, selector, and at-rule features through the pass manager and test driver; it is not a general autoprefixer.",
+      "evidence": ["transforms", "prefix-data"]
+    },
+    {
+      "id": "source-maps",
+      "surface": "Source maps",
+      "status": "Experimental, library-only",
+      "statusKind": "experimental",
+      "behavior": "The library pipeline produces deterministic separately owned mappings; the CLI output policy remains unavailable.",
+      "evidence": ["public-api", "compatibility"]
+    },
+    {
+      "id": "browser-targets",
+      "surface": "Browser target queries",
+      "status": "Experimental, library-only",
+      "statusKind": "experimental",
+      "behavior": "A strict explicit-minimum grammar over six browsers configures pinned BCD 8.0.0 data; `--browsers` and `--autoprefix` remain unavailable in the CLI.",
+      "evidence": ["prefix-data", "transforms", "public-api"]
+    },
+    {
+      "id": "css-modules",
+      "surface": "CSS Modules",
+      "status": "Experimental, Zig-library-only native subset",
+      "statusKind": "experimental",
+      "behavior": "Explicit `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references and dependencies, and local values with owned results; CLI and LSP exposure remain unavailable.",
+      "evidence": ["format-matrix", "public-api"]
+    },
+    {
+      "id": "alternate-formats",
+      "surface": "Alternate format adapters",
+      "status": "Unavailable",
+      "statusKind": "unavailable",
+      "behavior": "SCSS, Sass, Less, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like compiler adapters are removed; their extensions are rejected before output.",
+      "evidence": ["format-matrix", "cli-safety"]
+    },
+    {
+      "id": "lsp",
+      "surface": "LSP",
+      "status": "Experimental, stress-tested",
+      "statusKind": "experimental",
+      "behavior": "Bounded framing, JSON-RPC lifecycle, full sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features pass large-document, Unicode, malformed-request, leak, and editor-integration gates.",
+      "evidence": ["lsp", "neovim", "vscode"]
+    },
+    {
+      "id": "vscode",
+      "surface": "VS Code extension",
+      "status": "Experimental, package-tested",
+      "statusKind": "experimental",
+      "behavior": "Version 0.3.0 has an exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and a verified five-file pre-release VSIX; no binary is bundled or published.",
+      "evidence": ["vscode", "lsp"]
+    },
+    {
+      "id": "neovim",
+      "surface": "Neovim configuration",
+      "status": "Experimental, integration-tested",
+      "statusKind": "experimental",
+      "behavior": "The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled.",
+      "evidence": ["neovim", "lsp"]
+    },
+    {
+      "id": "public-compile",
+      "surface": "Public compile API and playground",
+      "status": "Disabled",
+      "statusKind": "disabled",
+      "behavior": "Public compile routes return HTTP 503 until bounded process and request isolation is implemented.",
+      "evidence": ["docs-server"]
+    }
+  ]
+}

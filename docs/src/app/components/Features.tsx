@@ -1,88 +1,21 @@
 import { Link } from "react-router";
 import { AlertTriangle, CheckCircle2, CircleOff, FlaskConical } from "lucide-react";
+import capabilityMetadata from "../../data/capabilities.json";
 
-const capabilities = [
-  {
-    surface: "Basic CSS parsing and emission",
-    status: "Experimental",
-    detail: "The strict file/stdin CLI delegates to the owned public compile facade, has stable exit statuses, and is independently parsed in both output modes.",
-  },
-  {
-    surface: "Zig compile API",
-    status: "Experimental / consumer-tested",
-    detail: "A separate consumer verifies owned CSS/maps, located diagnostics, ordered imports, accepted transforms, borrowed canonical targets, and one result cleanup path.",
-  },
-  {
-    surface: "Zig package metadata",
-    status: "Experimental / consumer-tested",
-    detail: "Package zigcss 0.3.0 pins minimum Zig 0.15.2 and a minimal source allowlist; path and freshly fetched consumers resolve the public module.",
-  },
-  {
-    surface: "Zig build helper",
-    status: "Experimental / consumer-tested",
-    detail: "The dependency build module creates cached host-tool runs with declared LazyPath inputs and generated CSS outputs; a complete integration example builds in Debug and ReleaseSafe CI.",
-  },
-  {
-    surface: "Native plugins",
-    status: "Experimental / trusted library-only",
-    detail: "Borrowed plugin.-namespaced Zig callbacks use deterministic transactional pass plans; there is no stable ABI, sandbox, CLI, or HTTP path.",
-  },
-  {
-    surface: "Compact emission (--minify)",
-    status: "Experimental",
-    detail: "Whitespace-only emission mode; it remains independent of the explicit --optimize preset.",
-  },
-  {
-    surface: "Output path planning",
-    status: "Verified boundary",
-    detail: "Rejects input aliases and duplicate batch destinations before writes.",
-  },
-  {
-    surface: "Verified optimizer preset",
-    status: "Experimental / acceptance-gated",
-    detail: "--optimize runs seven verified order-preserving passes to a bounded byte-stable fixed point; legacy and separately authorized transform classes remain unreachable.",
-  },
-  {
-    surface: "Dead-code and critical-CSS extraction",
-    status: "Experimental / library-only",
-    detail: "Two bounded passes require complete class/ID inventories plus explicit experimental and extraction authority; the recovery CLI does not expose them.",
-  },
-  {
-    surface: "Target prefix rewrite",
-    status: "Experimental / library-only",
-    detail: "One verified pass covers eight pinned features with target-dependent output; the recovery CLI does not expose it yet.",
-  },
-  {
-    surface: "Source maps",
-    status: "Experimental / CLI-unavailable",
-    detail: "The library pipeline returns deterministic mappings; the CLI output policy is not yet defined.",
-  },
-  {
-    surface: "Browser targets",
-    status: "Experimental / library-only",
-    detail: "Strict explicit-minimum queries configure pinned BCD 8.0.0 data; --browsers and --autoprefix still fail in the recovery CLI.",
-  },
-  {
-    surface: "Alternate format adapters",
-    status: "Unavailable",
-    detail: "The compiler's SCSS, SASS, LESS, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like adapter sources are removed.",
-  },
-  {
-    surface: "LSP",
-    status: "Experimental",
-    detail: "Dynamic framing supports sequential requests up to 16 MiB, while JSON lifecycle, positions, features, and parser migration remain later gates.",
-  },
-  {
-    surface: "Public compile API and playground",
-    status: "Disabled",
-    detail: "The static documentation server returns HTTP 503 for compile requests.",
-  },
-] as const;
+const capabilities = capabilityMetadata.capabilities;
 
-function StatusIcon({ status }: { status: string }) {
-  if (status === "Verified boundary") return <CheckCircle2 className="size-5 text-emerald-700" />;
-  if (status === "Disabled" || status === "Unavailable") return <CircleOff className="size-5 text-slate-500" />;
+function StatusIcon({ statusKind }: { statusKind: string }) {
+  if (statusKind === "verified") return <CheckCircle2 className="size-5 text-emerald-700" />;
+  if (statusKind === "disabled" || statusKind === "unavailable") return <CircleOff className="size-5 text-slate-500" />;
   return <FlaskConical className="size-5 text-amber-700" />;
+}
+
+function InlineBehavior({ value }: { value: string }) {
+  return value.split(/(`[^`]+`)/g).filter(Boolean).map((part, index) =>
+    part.startsWith("`")
+      ? <code key={index} className="rounded bg-slate-100 px-1 py-0.5 text-sm text-slate-800">{part.slice(1, -1)}</code>
+      : part
+  );
 }
 
 export function Features() {
@@ -111,15 +44,15 @@ export function Features() {
             </thead>
             <tbody>
               {capabilities.map(capability => (
-                <tr key={capability.surface} className="border-b border-slate-100 align-top">
+                <tr key={capability.id} className="border-b border-slate-100 align-top">
                   <td className="p-4 font-medium">{capability.surface}</td>
                   <td className="p-4">
                     <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                      <StatusIcon status={capability.status} />
+                      <StatusIcon statusKind={capability.statusKind} />
                       {capability.status}
                     </span>
                   </td>
-                  <td className="p-4 text-slate-600">{capability.detail}</td>
+                  <td className="p-4 text-slate-600"><InlineBehavior value={capability.behavior} /></td>
                 </tr>
               ))}
             </tbody>
