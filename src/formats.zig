@@ -3,7 +3,6 @@ const ast = @import("ast.zig");
 
 pub const Format = enum {
     css,
-    css_modules,
     css_in_js,
     postcss,
 };
@@ -17,7 +16,6 @@ pub fn isExperimental(format: Format) bool {
 pub fn displayName(format: Format) []const u8 {
     return switch (format) {
         .css => "CSS",
-        .css_modules => "CSS Modules",
         .css_in_js => "CSS-in-JS",
         .postcss => "PostCSS",
     };
@@ -27,11 +25,10 @@ pub fn detectFormat(filename: []const u8) ?Format {
     if (std.mem.endsWith(u8, filename, ".scss") or
         std.mem.endsWith(u8, filename, ".sass") or
         std.mem.endsWith(u8, filename, ".less") or
-        std.mem.endsWith(u8, filename, ".styl"))
+        std.mem.endsWith(u8, filename, ".styl") or
+        std.mem.endsWith(u8, filename, ".module.css"))
     {
         return null;
-    } else if (std.mem.endsWith(u8, filename, ".module.css")) {
-        return .css_modules;
     } else if (std.mem.endsWith(u8, filename, ".css.js") or std.mem.endsWith(u8, filename, ".css.ts")) {
         return .css_in_js;
     } else if (std.mem.endsWith(u8, filename, ".postcss")) {
@@ -50,7 +47,6 @@ pub const ParserTrait = struct {
 pub fn getParser(format: Format) ParserTrait {
     return switch (format) {
         .css => .{ .parseFn = parseCSS },
-        .css_modules => .{ .parseFn = parseCSSModules },
         .css_in_js => .{ .parseFn = parseCSSInJS },
         .postcss => .{ .parseFn = parsePostCSS },
     };
@@ -59,13 +55,6 @@ pub fn getParser(format: Format) ParserTrait {
 fn parseCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
     const css_parser = @import("parser.zig");
     var p = css_parser.Parser.init(allocator, input);
-    return try p.parse();
-}
-
-fn parseCSSModules(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    const css_modules_parser = @import("formats/css_modules.zig");
-    var p = css_modules_parser.Parser.init(allocator, input);
-    defer p.deinit();
     return try p.parse();
 }
 
@@ -85,7 +74,7 @@ fn parsePostCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet
 
 test "detect format from filename" {
     try std.testing.expectEqual(Format.css, detectFormat("style.css").?);
-    try std.testing.expectEqual(Format.css_modules, detectFormat("style.module.css").?);
+    try std.testing.expect(detectFormat("style.module.css") == null);
     try std.testing.expectEqual(Format.css_in_js, detectFormat("style.css.js").?);
     try std.testing.expectEqual(Format.css_in_js, detectFormat("style.css.ts").?);
     try std.testing.expectEqual(Format.postcss, detectFormat("style.postcss").?);

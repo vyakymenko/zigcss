@@ -2,13 +2,16 @@
   "schemaVersion": 1,
   "implementationDefinitions": {
     "LegacyCharacterized": "Heuristic adapter source remains only behind the test-only legacy boundary.",
+    "LimitedNative": "A closed ZigCSS-native subset uses the rebuilt parser and public result ownership boundary.",
     "Removed": "No adapter parser source or legacy Format tag remains; filename handling exists only to reject the unavailable input."
   },
   "availabilityDefinitions": {
-    "Unavailable": "Rejected by the recovery CLI before output and absent from the public compile syntax enum."
+    "Unavailable": "Rejected by the recovery CLI before output and absent from the public compile syntax enum.",
+    "ExperimentalLibrary": "Available only through an explicit Zig library syntax tag; the recovery CLI and LSP still reject the extension."
   },
   "compatibilityDefinitions": {
-    "Unverified": "Legacy characterization is not a compatibility contract or supported subset."
+    "Unverified": "Legacy characterization is not a compatibility contract or supported subset.",
+    "NativeSubset": "Only the exact published ZigCSS-native grammar and result contract are supported; this is not full ecosystem compatibility."
   },
   "strategyDefinitions": {
     "limited-native-subset": "Implement only a closed named grammar with strict errors outside it.",
@@ -123,24 +126,30 @@
       "id": "css-modules",
       "displayName": "CSS Modules",
       "cliDisplayName": "CSS Modules",
-      "formatTag": "css_modules",
+      "formatTag": null,
+      "publicSyntax": "css_modules",
       "extensions": [".module.css"],
-      "availability": "Unavailable",
-      "compatibility": "Unverified",
-      "implementation": "LegacyCharacterized",
+      "availability": "ExperimentalLibrary",
+      "compatibility": "NativeSubset",
+      "implementation": "LimitedNative",
       "strategy": "limited-native-subset",
       "ownerPackages": ["MODULE-001", "MODULE-002"],
-      "sourceFiles": ["src/formats/css_modules.zig"],
-      "currentBoundary": "Rewrites encountered legacy-AST class selectors with a name-only FNV-1a suffix.",
+      "sourceFiles": ["src/css_modules.zig", "src/css/module_names.zig"],
+      "currentBoundary": "The Zig library scopes local-by-default authored classes with versioned SHA-256 names derived from normalized source identity and decoded class name, and returns unique first-seen owned exports. CLI and LSP exposure remain disabled.",
       "knownRisks": [
-        "Names are not file-specific and no owned module export mapping is produced.",
-        "Local/global scope, composition, values, dependencies, nested coverage, and collision policy are absent."
+        "Explicit :local/:global, composition, @value, module imports/exports, and their dependency semantics remain strict errors until MODULE-002.",
+        "Untyped functional pseudos, selector-bearing or unknown at-rules, optimizer/prefix transforms, and native plugins remain outside the initial subset."
       ],
       "probe": ".card { color: red; }\n",
       "sourceEvidence": [
-        { "file": "src/formats/css_modules.zig", "contains": "fn scopeClassNames" },
-        { "file": "src/formats/css_modules.zig", "contains": "std.hash.Fnv1a_32" },
-        { "file": "src/formats/css_modules.zig", "contains": "fn getScopedClassName" }
+        { "file": "src/css_modules.zig", "contains": "pub fn prepare(" },
+        { "file": "src/css_modules.zig", "contains": "std.crypto.hash.sha2.Sha256" },
+        { "file": "src/css/module_names.zig", "contains": "pub fn find(" }
+      ],
+      "containmentEvidence": [
+        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".module.css\")" },
+        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".module.css\")" },
+        { "file": "src/lsp.zig", "contains": "file:///library-only.module.css" }
       ]
     },
     {

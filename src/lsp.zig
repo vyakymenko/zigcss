@@ -729,7 +729,7 @@ test "LSP handle initialize request" {
     try std.testing.expect(std.mem.containsAtLeast(u8, response, 1, "textDocumentSync"));
 }
 
-test "LSP diagnostics reject removed preprocessor formats without CSS fallback" {
+test "LSP diagnostics reject unavailable formats without CSS fallback" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -771,6 +771,14 @@ test "LSP diagnostics reject removed preprocessor formats without CSS fallback" 
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":8,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.styl"}}}
+            ,
+        },
+        .{
+            .open =
+            \\{"jsonrpc":"2.0","id":9,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///library-only.module.css","version":1,"text":".card{x:1}"}}}
+            ,
+            .diagnostics =
+            \\{"jsonrpc":"2.0","id":10,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///library-only.module.css"}}}
             ,
         },
     };

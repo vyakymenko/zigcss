@@ -37,11 +37,11 @@ Copying source bytes into compilation ownership is the safe default. A future ze
 
 ### Public compile facade
 
-`zigcss.compile` accepts one caller allocator, a borrowed input name and byte slice, and `CompileOptions`. The stable syntax enum currently contains only CSS. Output format, separate source-map output, the closed verified optimizer, verified target prefixing, a borrowed canonical target query, and dependency limits are explicit independent fields. A target query remains caller-owned for the duration of the call; no pointer to it enters the result.
+`zigcss.compile` accepts one caller allocator, a borrowed input name and byte slice, and `CompileOptions`. The public syntax enum contains stable CSS and an explicit experimental CSS Modules subset; the recovery CLI remains CSS-only. Output format, separate source-map output, verified CSS transforms, a borrowed canonical target query, dependency limits, and CSS Modules metadata limits are explicit independent fields. A target query remains caller-owned for the duration of the call; no pointer to it enters the result.
 
 Incoherent option combinations are result diagnostics rather than accepted no-ops: prefixing requires targets, targets require prefixing, forged queries fail validation, and source maps cannot accompany fixed-point optimization until intermediate maps can be composed. Such results contain no CSS. Allocation failures and broken internal invariants remain operational errors rather than being mislabeled as CSS diagnostics.
 
-Dependency reporting recognizes only decoded string or URL operands of top-level `@import` statements. Results deeply own the decoded specifier and source name, retain authored order and duplicates, and carry the operand span. Unsupported, malformed, or dynamic preludes are not guessed into dependencies. Count and owned-byte bounds report `resource_limit` and discard partial facts. Stable CSS returns `module_exports = null`; later adapter work must populate owned export entries explicitly rather than exposing compilation storage.
+Dependency reporting recognizes only decoded string or URL operands of top-level `@import` statements. Results deeply own the decoded specifier and source name, retain authored order and duplicates, and carry the operand span. Unsupported, malformed, or dynamic preludes are not guessed into dependencies. Count and owned-byte bounds report `resource_limit` and discard partial facts. Stable CSS returns `module_exports = null`; a successful experimental CSS Modules compile transfers unique first-seen decoded name/generated value entries into the same result allocator. Errors and module-limit failures publish no partial export state.
 
 ### Verification
 

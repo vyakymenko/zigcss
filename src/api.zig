@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("css/ast.zig");
 const compilation = @import("compilation.zig");
+const css_modules = @import("css_modules.zig");
 const dependencies = @import("dependencies.zig");
 const diagnostics = @import("diagnostics.zig");
 const emitter = @import("css/emitter.zig");
@@ -17,6 +18,8 @@ const verified_optimizer = @import("transform/verified_optimizer.zig");
 
 pub const Syntax = enum {
     css,
+    /// Explicit library-only native subset; the recovery CLI remains CSS-only.
+    css_modules,
 };
 
 pub const OutputFormat = enum {
@@ -57,6 +60,8 @@ pub const CompileOptions = struct {
     targets: ?*const target_query.Query = null,
     plugins: PluginOptions = .none,
     dependency_limits: dependencies.Options = .{},
+    /// Bounds result-owned CSS Modules metadata and source identity work.
+    module_limits: css_modules.Limits = .{},
     /// Adds measured stage timings and allocator-requested memory statistics
     /// to the owned result. Disabled calls do not install the tracking wrapper.
     profile: bool = false,
@@ -80,12 +85,12 @@ pub const Diagnostic = struct {
     message: []const u8,
 };
 
-pub const ModuleExport = struct {
-    name: []const u8,
-    value: []const u8,
-};
+pub const CssModuleLimits = css_modules.Limits;
+/// Result-owned decoded authored name and generated CSS identifier.
+pub const ModuleExport = css_modules.Export;
 
 pub const ModuleExports = struct {
+    /// Unique entries in first authored occurrence order.
     entries: []const ModuleExport,
 };
 
@@ -159,9 +164,18 @@ fn compileInternal(
         var parsed = try pipeline.parse(work_allocator, name, input);
         profile.endStage(.parse, parse_started_ns);
         defer parsed.deinit();
+        var prepared_modules = css_modules.Prepared.init(work_allocator);
+        defer prepared_modules.deinit();
 
         const validation_started_ns = profile.startStage();
         try validateOptions(&parsed, options);
+        if (!parsed.hasErrors() and options.syntax == .css_modules) {
+            prepared_modules = try css_modules.prepare(
+                work_allocator,
+                &parsed,
+                options.module_limits,
+            );
+        }
         var plugin_plan: ?pass_manager.Plan = null;
         defer if (plugin_plan) |*plan| plan.deinit();
         if (!parsed.hasErrors()) {
@@ -265,7 +279,10 @@ fn compileInternal(
         }
 
         const emit_started_ns = profile.startStage();
-        var pipeline_result = try parsed.emitResult(work_allocator, pipelineOptions(options));
+        var pipeline_result = try parsed.emitResult(
+            work_allocator,
+            pipelineOptions(options, &prepared_modules),
+        );
         profile.endStage(.emit, emit_started_ns);
         defer pipeline_result.deinit();
 
@@ -276,6 +293,8 @@ fn compileInternal(
             parsed.file(),
             &pipeline_result,
             &dependency_list,
+            &prepared_modules,
+            options.syntax == .css_modules and !parsed.hasErrors(),
         );
         profile.endStage(.result, result_started_ns);
         cleanup_started_ns = profile.startStage();
@@ -288,7 +307,22 @@ fn compileInternal(
 }
 
 fn validateOptions(parsed: *pipeline.ParsedStylesheet, options: CompileOptions) !void {
-    _ = options.syntax;
+    if (options.syntax == .css_modules and
+        (options.transforms.optimize or options.transforms.prefix))
+    {
+        try reportAtStart(
+            parsed,
+            .invalid_option,
+            "CSS Modules cannot yet be combined with optimizer or prefix transforms",
+        );
+    }
+    if (options.syntax == .css_modules and pluginOptionsSelected(options.plugins)) {
+        try reportAtStart(
+            parsed,
+            .invalid_option,
+            "CSS Modules cannot yet be combined with experimental native plugins",
+        );
+    }
     if (options.transforms.optimize and options.source_map != .none) {
         try reportAtStart(
             parsed,
@@ -336,6 +370,13 @@ fn experimentalPlugins(options: PluginOptions) ?plugins.ExperimentalOptions {
 fn requestedPluginCount(options: PluginOptions) usize {
     const plugin_options = experimentalPlugins(options) orelse return 0;
     return plugin_options.requested.len;
+}
+
+fn pluginOptionsSelected(options: PluginOptions) bool {
+    return switch (options) {
+        .none => false,
+        .experimental => true,
+    };
 }
 
 fn reportAtStart(
@@ -415,7 +456,10 @@ fn emitMode(format: OutputFormat) emitter.Mode {
     };
 }
 
-fn pipelineOptions(options: CompileOptions) pipeline.Options {
+fn pipelineOptions(
+    options: CompileOptions,
+    prepared_modules: *const css_modules.Prepared,
+) pipeline.Options {
     return .{
         .mode = emitMode(options.format),
         .source_map = switch (options.source_map) {
@@ -424,6 +468,10 @@ fn pipelineOptions(options: CompileOptions) pipeline.Options {
                 .generated_file = map.generated_file,
                 .include_sources_content = map.include_sources_content,
             },
+        },
+        .class_names = switch (options.syntax) {
+            .css => null,
+            .css_modules => prepared_modules.lookup(),
         },
     };
 }
@@ -434,6 +482,8 @@ fn promoteResult(
     file: *const source.SourceFile,
     pipeline_result: *compilation.CompileResult,
     dependency_list: *dependencies.OwnedList,
+    prepared_modules: *css_modules.Prepared,
+    publish_module_exports: bool,
 ) !CompileResult {
     const owned_diagnostics = try cloneDiagnostics(
         work_allocator,
@@ -455,7 +505,10 @@ fn promoteResult(
         .source_map = source_map,
         .diagnostics = owned_diagnostics,
         .dependencies = dependency_list.take(),
-        .module_exports = null,
+        .module_exports = if (publish_module_exports)
+            .{ .entries = prepared_modules.takeExports() }
+        else
+            null,
         .metrics = null,
     };
 }
@@ -1083,4 +1136,314 @@ test "successful plugin warnings are retained and plugin source maps are rejecte
     try std.testing.expectEqual(diagnostics.Code.invalid_option, map_result.diagnostics[0].code);
     try std.testing.expectEqualStrings("API0001", map_result.diagnostics[0].code.label());
     try std.testing.expectEqualStrings("w", log.bytes[0..log.len]);
+}
+
+test "experimental CSS Modules returns deterministic owned exports and mapped CSS" {
+    var input = [_]u8{
+        '@', 'i', 'm', 'p', 'o', 'r', 't', ' ', '"', 't', 'h', 'e', 'm', 'e', '.', 'c', 's', 's', '"', ';',
+        '.', 'c', 'a', 'r', 'd', ',', '.', 'c', 'a', 'r', 'd', ':', 'h', 'o', 'v', 'e', 'r', '{', 'c', 'o',
+        'l', 'o', 'r', ':', 'r', 'e', 'd', '}', '@', 'm', 'e', 'd', 'i', 'a', ' ', 'a', 'l', 'l', '{', '.',
+        'i', 'c', 'o', 'n', ':', 'i', 's', '(', '.', 'c', 'a', 'r', 'd', ',', '.', 'b', 'a', 'd', 'g', 'e',
+        ')', '{', 'd', 'i', 's', 'p', 'l', 'a', 'y', ':', 'b', 'l', 'o', 'c', 'k', '}', '}',
+    };
+    var result = try compile(
+        std.testing.allocator,
+        "src/components/card.module.css",
+        &input,
+        .{
+            .syntax = .css_modules,
+            .format = .minified,
+            .source_map = .{ .external = .{ .generated_file = "card.css" } },
+            .profile = true,
+        },
+    );
+    input[22] = 'x';
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies.len);
+    try std.testing.expectEqualStrings("theme.css", result.dependencies[0].specifier);
+    const module_exports = result.module_exports orelse return error.MissingModuleExports;
+    try std.testing.expectEqual(@as(usize, 3), module_exports.entries.len);
+    const expected_names = [_][]const u8{ "card", "icon", "badge" };
+    for (module_exports.entries, expected_names) |entry, expected_name| {
+        try std.testing.expectEqualStrings(expected_name, entry.name);
+        try std.testing.expect(std.mem.startsWith(u8, entry.value, "_zigcss_"));
+        try std.testing.expect(std.mem.indexOf(u8, result.css, entry.value) != null);
+    }
+    try std.testing.expectEqual(
+        @as(usize, 3),
+        std.mem.count(u8, result.css, module_exports.entries[0].value),
+    );
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ".card") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ".icon") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, ".badge") == null);
+    try std.testing.expect(result.source_map != null);
+    try std.testing.expect(result.metrics != null);
+    var map_json = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        result.source_map.?,
+        .{},
+    );
+    defer map_json.deinit();
+    try std.testing.expectEqualStrings(
+        "card.css",
+        map_json.value.object.get("file").?.string,
+    );
+    try std.testing.expectEqualStrings(
+        "src/components/card.module.css",
+        map_json.value.object.get("sources").?.array.items[0].string,
+    );
+    const mappings = try sourcemap.decodeMappings(
+        std.testing.allocator,
+        map_json.value.object.get("mappings").?.string,
+    );
+    defer std.testing.allocator.free(mappings);
+    var found_card_mapping = false;
+    for (mappings) |mapping| {
+        if (mapping.generated_line == 0 and
+            mapping.generated_column == 20 and
+            mapping.original_line == 0 and
+            mapping.original_column == 20)
+        {
+            found_card_mapping = true;
+        }
+    }
+    try std.testing.expect(found_card_mapping);
+
+    var reparsed = try pipeline.parse(std.testing.allocator, "generated.css", result.css);
+    defer reparsed.deinit();
+    try std.testing.expect(!reparsed.hasErrors());
+}
+
+test "CSS Modules names normalize separators and vary with source identity" {
+    var slash = try compile(
+        std.testing.allocator,
+        "src/components/card.module.css",
+        ".card{x:1}",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer slash.deinit();
+    var backslash = try compile(
+        std.testing.allocator,
+        "src\\components\\card.module.css",
+        ".card{x:1}",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer backslash.deinit();
+    var other = try compile(
+        std.testing.allocator,
+        "src/components/other.module.css",
+        ".card{x:1}",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer other.deinit();
+
+    const slash_export = slash.module_exports.?.entries[0];
+    const backslash_export = backslash.module_exports.?.entries[0];
+    const other_export = other.module_exports.?.entries[0];
+    try std.testing.expectEqualStrings(slash_export.value, backslash_export.value);
+    try std.testing.expectEqualStrings(slash.css, backslash.css);
+    try std.testing.expect(!std.mem.eql(u8, slash_export.value, other_export.value));
+    try std.testing.expect(!std.mem.eql(u8, slash.css, other.css));
+}
+
+test "CSS Modules scopes decoded classes through the closed nested grammar" {
+    const input =
+        "@layer base;@layer components{.\\31 23{x:1}}" ++
+        "@container layout (width>1px){.🔥{x:2}}" ++
+        "@starting-style{.enter{x:3}}" ++
+        "@font-face{font-family:x;src:url(x)}" ++
+        "@property --x{syntax:\"<length>\";inherits:false;initial-value:1px}" ++
+        "@keyframes fade{from{opacity:0}to{opacity:1}}";
+    var result = try compile(
+        std.testing.allocator,
+        "nested.module.css",
+        input,
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    const entries = result.module_exports.?.entries;
+    try std.testing.expectEqual(@as(usize, 3), entries.len);
+    try std.testing.expectEqualStrings("123", entries[0].name);
+    try std.testing.expectEqualStrings("🔥", entries[1].name);
+    try std.testing.expectEqualStrings("enter", entries[2].name);
+    for (entries) |entry| {
+        try std.testing.expect(std.mem.indexOf(u8, result.css, entry.value) != null);
+    }
+    var reparsed = try pipeline.parse(std.testing.allocator, "nested-output.css", result.css);
+    defer reparsed.deinit();
+    try std.testing.expect(!reparsed.hasErrors());
+}
+
+test "CSS Modules exports survive explicit moves and repeated cleanup" {
+    var original = try compile(
+        std.testing.allocator,
+        "move.module.css",
+        ".card{x:1}",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    var moved = original.take();
+    original.deinit();
+    original.deinit();
+    try std.testing.expect(original.module_exports == null);
+    try std.testing.expectEqualStrings("card", moved.module_exports.?.entries[0].name);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        moved.css,
+        moved.module_exports.?.entries[0].value,
+    ) != null);
+    moved.deinit();
+    moved.deinit();
+    try std.testing.expect(moved.module_exports == null);
+}
+
+test "CSS Modules rejects deferred semantics and unscoped selector containers" {
+    const cases = [_][]const u8{
+        ":local(.card){x:1}",
+        ":global .card{x:1}",
+        ":export{token:red}",
+        ".card{composes:base}",
+        "@value color:red;.card{x:1}",
+        ".card:nth-child(2n of .item){x:1}",
+        "@supports selector(.card){.card{x:1}}",
+        "@unknown{.card{x:1}}",
+        "@import \"theme.css\";:local(.card){x:1}",
+    };
+    for (cases) |input| {
+        var result = try compile(
+            std.testing.allocator,
+            "unsupported.module.css",
+            input,
+            .{ .syntax = .css_modules, .format = .minified },
+        );
+        defer result.deinit();
+        try std.testing.expectEqual(@as(usize, 0), result.css.len);
+        try std.testing.expectEqual(@as(usize, 0), result.dependencies.len);
+        try std.testing.expect(result.module_exports == null);
+        try std.testing.expectEqual(@as(usize, 1), result.diagnostics.len);
+        try std.testing.expectEqual(diagnostics.Code.unsupported_syntax, result.diagnostics[0].code);
+    }
+}
+
+test "CSS Modules validates identity limits and incompatible transforms" {
+    const cases = [_]CompileOptions{
+        .{ .syntax = .css_modules, .transforms = .{ .optimize = true } },
+        .{ .syntax = .css_modules, .plugins = .{ .experimental = .{} } },
+    };
+    for (cases) |options| {
+        var result = try compile(std.testing.allocator, "options.module.css", ".a{x:1}", options);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(usize, 0), result.css.len);
+        try std.testing.expect(result.module_exports == null);
+        try std.testing.expectEqual(diagnostics.Code.invalid_option, result.diagnostics[0].code);
+    }
+
+    var unnamed = try compile(
+        std.testing.allocator,
+        "",
+        ".a{x:1}",
+        .{ .syntax = .css_modules },
+    );
+    defer unnamed.deinit();
+    try std.testing.expectEqual(diagnostics.Code.invalid_option, unnamed.diagnostics[0].code);
+    try std.testing.expect(unnamed.module_exports == null);
+
+    var limited = try compile(
+        std.testing.allocator,
+        "limited.module.css",
+        ".a,.b{x:1}",
+        .{
+            .syntax = .css_modules,
+            .module_limits = .{ .max_exports = 1 },
+        },
+    );
+    defer limited.deinit();
+    try std.testing.expectEqual(@as(usize, 0), limited.css.len);
+    try std.testing.expect(limited.module_exports == null);
+    try std.testing.expectEqual(diagnostics.Code.resource_limit, limited.diagnostics[0].code);
+
+    var byte_limited = try compile(
+        std.testing.allocator,
+        "byte-limited.module.css",
+        ".a{x:1}",
+        .{
+            .syntax = .css_modules,
+            .module_limits = .{ .max_owned_bytes = 1 },
+        },
+    );
+    defer byte_limited.deinit();
+    try std.testing.expectEqual(diagnostics.Code.resource_limit, byte_limited.diagnostics[0].code);
+    try std.testing.expect(byte_limited.module_exports == null);
+
+    var identity_limited = try compile(
+        std.testing.allocator,
+        "long.module.css",
+        ".a{x:1}",
+        .{
+            .syntax = .css_modules,
+            .module_limits = .{ .max_source_name_bytes = 4 },
+        },
+    );
+    defer identity_limited.deinit();
+    try std.testing.expectEqual(diagnostics.Code.resource_limit, identity_limited.diagnostics[0].code);
+    try std.testing.expect(identity_limited.module_exports == null);
+
+    var dependency_limited = try compile(
+        std.testing.allocator,
+        "dependency-limited.module.css",
+        "@import \"one.css\";@import \"two.css\";.a{x:1}",
+        .{
+            .syntax = .css_modules,
+            .dependency_limits = .{ .max_dependencies = 1 },
+        },
+    );
+    defer dependency_limited.deinit();
+    try std.testing.expectEqual(@as(usize, 0), dependency_limited.css.len);
+    try std.testing.expectEqual(@as(usize, 0), dependency_limited.dependencies.len);
+    try std.testing.expect(dependency_limited.module_exports == null);
+    try std.testing.expectEqual(
+        diagnostics.Code.resource_limit,
+        dependency_limited.diagnostics[0].code,
+    );
+
+    var empty = try compile(
+        std.testing.allocator,
+        "empty.module.css",
+        "@import \"theme.css\";",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer empty.deinit();
+    try std.testing.expectEqual(@as(usize, 0), empty.module_exports.?.entries.len);
+    try std.testing.expectEqual(@as(usize, 1), empty.dependencies.len);
+}
+
+fn exerciseCssModulesAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "oom/components.module.css",
+        "@import \"theme.css\";.card:is(.icon,.card){color:red}",
+        .{
+            .syntax = .css_modules,
+            .format = .minified,
+            .source_map = .{ .external = .{} },
+            .profile = true,
+        },
+    );
+    defer result.deinit();
+    try std.testing.expectEqual(@as(usize, 2), result.module_exports.?.entries.len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies.len);
+    try std.testing.expect(result.source_map != null);
+    try std.testing.expect(result.metrics != null);
+}
+
+test "CSS Modules result construction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCssModulesAllocationFailures,
+        .{},
+    );
 }

@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const compatibility_analysis = @import("../prefixing/rewrite_analysis.zig");
 const extraction_analysis = @import("../transform/selector_extraction_analysis.zig");
+const module_names = @import("module_names.zig");
 const rule_parser = @import("rule_parser.zig");
 const rule_merge = @import("rule_merge.zig");
 const shorthand = @import("shorthand.zig");
@@ -21,6 +22,9 @@ pub const Options = struct {
     indent_width: u8 = 2,
     /// Defaults to true for pretty output and false for minified output.
     final_newline: ?bool = null,
+    /// Internal generated-identifier view. A non-null slice must be strictly
+    /// sorted and contain every class selector reached during emission.
+    class_names: ?[]const module_names.Entry = null,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -79,6 +83,9 @@ fn emitInternal(
     options: Options,
     source_map_builder: ?*sourcemap.Builder,
 ) Error![]u8 {
+    if (options.class_names) |entries| {
+        module_names.validate(entries) catch return error.InvalidMappings;
+    }
     rules.validate() catch return error.InvalidAst;
     if (!rules.span.source.eql(file.id)) return error.SourceMismatch;
 
@@ -430,7 +437,18 @@ const Emitter = struct {
     }
 
     fn writeSelectorList(self: *Emitter, list: *const ast.SelectorList) Error!void {
-        _ = ast.SelectorList.init(list.span, list.selectors) catch return error.InvalidAst;
+        try self.writeSelectorListMode(list, false);
+    }
+
+    fn writeSelectorListMode(
+        self: *Emitter,
+        list: *const ast.SelectorList,
+        allow_empty: bool,
+    ) Error!void {
+        _ = (if (allow_empty)
+            ast.SelectorList.initForgiving(list.span, list.selectors)
+        else
+            ast.SelectorList.init(list.span, list.selectors)) catch return error.InvalidAst;
         for (list.selectors, 0..) |selector, index| {
             if (index > 0) try self.appendSlice(if (self.pretty()) ", " else ",");
             try self.writeComplexSelector(selector);
@@ -491,7 +509,11 @@ const Emitter = struct {
             },
             .class => |selector| {
                 try self.appendByte('.');
-                try self.writeIdentifier(selector.name.value);
+                const name = if (self.options.class_names) |entries|
+                    module_names.find(entries, selector.name.value) orelse return error.InvalidMappings
+                else
+                    selector.name.value;
+                try self.writeIdentifier(name);
             },
             .attribute => |selector| try self.writeAttributeSelector(selector),
             .pseudo_class => |selector| try self.writePseudo(selector.name, selector.arguments, false),
@@ -553,7 +575,18 @@ const Emitter = struct {
         try self.writeIdentifier(name.value);
         if (arguments) |value| {
             try self.appendByte('(');
-            try self.writeComponentValuesWithEdges(value.values, false);
+            if (self.options.class_names != null) {
+                const parsed = value.parsed orelse return error.InvalidMappings;
+                switch (parsed) {
+                    .selector_list => |list| try self.writeSelectorListMode(
+                        list,
+                        std.ascii.eqlIgnoreCase(name.value, "is") or
+                            std.ascii.eqlIgnoreCase(name.value, "where"),
+                    ),
+                }
+            } else {
+                try self.writeComponentValuesWithEdges(value.values, false);
+            }
             try self.appendByte(')');
         }
     }
@@ -2809,5 +2842,80 @@ test "mapped emission handles every allocation failure" {
         std.testing.allocator,
         exerciseMappedEmitterAllocationFailures,
         .{},
+    );
+}
+
+test "class mappings rewrite typed selector pseudos and reject incomplete views" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "mapped-classes.css",
+        ".card:is(.icon,.card):where(){color:red}",
+    );
+    const file = try context.sources.get(parsed[0]);
+    const mappings = [_]module_names.Entry{
+        .{ .name = "card", .value = "_card" },
+        .{ .name = "icon", .value = "_icon" },
+    };
+    const output = try emit(
+        std.testing.allocator,
+        file,
+        parsed[1],
+        .{ .mode = .minified, .class_names = &mappings },
+    );
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings(
+        "._card:is(._icon,._card):where(){color:red}",
+        output,
+    );
+
+    const incomplete = [_]module_names.Entry{
+        .{ .name = "card", .value = "_card" },
+    };
+    try std.testing.expectError(
+        error.InvalidMappings,
+        emit(
+            std.testing.allocator,
+            file,
+            parsed[1],
+            .{ .mode = .minified, .class_names = &incomplete },
+        ),
+    );
+    const unsorted = [_]module_names.Entry{
+        .{ .name = "icon", .value = "_icon" },
+        .{ .name = "card", .value = "_card" },
+    };
+    try std.testing.expectError(
+        error.InvalidMappings,
+        emit(
+            std.testing.allocator,
+            file,
+            parsed[1],
+            .{ .mode = .minified, .class_names = &unsorted },
+        ),
+    );
+}
+
+test "class mappings reject raw functional pseudo arguments" {
+    var context = try compilation.Compilation.init(std.testing.allocator);
+    defer context.deinit();
+    const parsed = try parseSource(
+        &context,
+        "raw-pseudo.css",
+        ".card:nth-child(2n of .item){color:red}",
+    );
+    const mappings = [_]module_names.Entry{
+        .{ .name = "card", .value = "_card" },
+        .{ .name = "item", .value = "_item" },
+    };
+    try std.testing.expectError(
+        error.InvalidMappings,
+        emit(
+            std.testing.allocator,
+            try context.sources.get(parsed[0]),
+            parsed[1],
+            .{ .mode = .minified, .class_names = &mappings },
+        ),
     );
 }

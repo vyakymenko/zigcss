@@ -38,7 +38,7 @@ Native callbacks execute inside the compiler process. ZigCSS cannot catch a plug
 - `ExperimentalPluginOptions.definitions`, `requested`, all metadata strings and dependency slices, callbacks, and `user_data` are borrowed only for synchronous `compile` plan construction and execution. They must remain valid until `compile` returns.
 - A plan owns only its ordered pointer slice. Plugin definitions and `user_data` remain caller-owned, and neither enters `CompileResult`.
 - A callback receives a borrowed pass context and immutable root. Persistent replacement nodes must use the compilation arena; scratch analysis uses the supplied scratch allocator. A callback must not retain the context, root, source views, or arena pointers after it returns.
-- Result CSS, maps, diagnostics, dependencies, and future module exports keep the independent `API-002` ownership contract. No plugin context escapes through them.
+- Result CSS, maps, diagnostics, dependencies, and module exports keep the independent `API-002` ownership contract. No plugin context escapes through them.
 
 ### Failure behavior
 

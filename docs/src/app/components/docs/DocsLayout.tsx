@@ -9,6 +9,7 @@ const SIDEBAR = [
       { text: "Current status", link: "/docs/guide/status" },
       { text: "CSS compatibility", link: "/docs/guide/css-compatibility" },
       { text: "Format compatibility", link: "/docs/guide/format-compatibility" },
+      { text: "CSS Modules subset", link: "/docs/guide/css-modules" },
       { text: "Build from source", link: "/docs/guide/build-from-source" },
       { text: "Recovery CLI", link: "/docs/guide/recovery-cli" },
     ],

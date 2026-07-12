@@ -9,7 +9,7 @@
 
 The inherited prototype contains ad hoc SCSS, indented Sass, Less, Stylus, CSS Modules, CSS-in-JS, PostCSS-like, and Tailwind-like implementations. They preprocess bytes into the legacy CSS parser with heuristics rather than implementing the source language's lexical, scope, module, dependency, evaluation, and diagnostic contracts. Some paths intentionally strip imports or directives, skip expressions, ignore unknown utility names, or rewrite every class without producing an export map. Their small positive tests do not establish compatibility with canonical implementations.
 
-The recovery CLI already rejects every alternate extension before reading or writing files, and the public `CompileOptions.Syntax` enum admits only CSS. That containment must remain until an adapter has its own exact contract, strict negative behavior, dependency model, generated-CSS validation, and ownership rules. A legacy parser continuing to compile in test-only code is not a supported language surface.
+At the `FMT-001` decision point, the recovery CLI rejected every alternate extension before reading or writing files and the public `CompileOptions.Syntax` enum admitted only CSS. That containment remains the default until an adapter has its own exact contract, strict negative behavior, dependency model, generated-CSS validation, and ownership rules. A legacy parser continuing to compile in test-only code is not a supported language surface. `MODULE-001` subsequently met that threshold for one explicitly named library-only CSS Modules subset; it did not change the CLI/LSP boundary.
 
 The roadmap originally reserved ADR-005 for this decision. The native-plugin contract created during `API-003` used that provisional number, so it is renumbered to ADR-011 rather than leaving two decisions with one durable identifier.
 
@@ -17,7 +17,7 @@ The roadmap originally reserved ADR-005 for this decision. The native-plugin con
 
 ### Common admission policy
 
-- Every adapter remains unavailable from the stable CLI and public compile facade until its owning packages satisfy the adapter exit criteria.
+- Every adapter remains unavailable from the stable CLI. Public compile-facade exposure requires its owning package to satisfy the exact subset's admission criteria; it does not imply CLI or ecosystem graduation.
 - Unsupported syntax must produce a structured diagnostic and no partial CSS. Deletion, guessed substitution, vacuous success, and fallback to plain CSS are not compatibility behavior.
 - An admitted adapter must use the rebuilt source/token/component/typed-CSS pipeline or a version-pinned canonical implementation boundary. It must not feed transformed bytes into the inherited parser.
 - Filesystem dependencies are facts and explicit inputs. No adapter may perform implicit network access, package installation, arbitrary process execution, or unbounded recursive loading.
@@ -36,6 +36,8 @@ The roadmap originally reserved ADR-005 for this decision. The native-plugin con
 | `css-in-js` | `remove-until-funded` | Remove byte scanning and expression deletion. Any future extraction requires an actual version-pinned JavaScript/TypeScript parser, a non-executing static contract, and explicit handling for dynamic expressions; arbitrary JavaScript evaluation is out of scope. |
 | `postcss` | `remove-until-funded` | Remove the PostCSS name from the fixed byte-rewrite adapter. Verified native transformations remain ZigCSS passes, not PostCSS plugins. A real JavaScript plugin host would require a separate isolation, lifecycle, configuration, and compatibility program. |
 | `tailwind` | `remove-until-funded` | Remove the Tailwind name from the fixed utility registry and `@apply` scanner. It does not implement canonical content scanning, configuration, variants, plugins, arbitrary values, or versioned utility semantics. A finite ZigCSS preset may be proposed later under its own non-Tailwind name and exact table. |
+
+`MODULE-001` implements the first CSS Modules slice through the rebuilt typed pipeline: local-by-default authored classes, versioned source-specific SHA-256 names, owned first-seen export entries, bounded metadata, source maps, strict deferred-syntax diagnostics, and no optimizer/prefix/plugin composition. The former FNV legacy parser and `Format.css_modules` dispatch are removed. `MODULE-002` still owns explicit local/global scope, composition, values, and module dependency semantics.
 
 `remove-until-funded` means no public syntax tag, CLI option, package claim, or silent fallback. Owning packages may delete legacy code immediately or retain it temporarily behind the existing test-only boundary while adding regressions that prevent reachability. It does not promise a future integration.
 

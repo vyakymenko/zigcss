@@ -39,6 +39,7 @@ comptime {
     _ = zigcss.Dependency;
     _ = zigcss.DependencyKind;
     _ = zigcss.DependencyLimits;
+    _ = zigcss.CssModuleLimits;
     _ = zigcss.CompileMetrics;
     _ = zigcss.CompileStageTimings;
     _ = zigcss.CompileMemoryMetrics;
@@ -136,6 +137,24 @@ test "external consumer reaches only explicit transform and target modules" {
         @as(u16, 120),
         query.minimum(.chrome).?.major,
     );
+}
+
+test "external consumer owns experimental CSS Modules exports" {
+    var result = try zigcss.compile(
+        std.testing.allocator,
+        "components/external.module.css",
+        ".card:is(.icon,.card){color:red}",
+        .{ .syntax = .css_modules, .format = .minified },
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    const exports = result.module_exports orelse return error.MissingModuleExports;
+    try std.testing.expectEqual(@as(usize, 2), exports.entries.len);
+    try std.testing.expectEqualStrings("card", exports.entries[0].name);
+    try std.testing.expectEqualStrings("icon", exports.entries[1].name);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, exports.entries[0].value) != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.css, exports.entries[1].value) != null);
 }
 
 test "external consumer opts into the borrowed experimental plugin contract" {

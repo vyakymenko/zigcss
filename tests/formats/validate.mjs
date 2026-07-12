@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { validateCssModules } from './css_modules_validate.mjs'
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
 const repositoryRoot = path.resolve(scriptDirectory, '../..')
@@ -23,20 +24,32 @@ function fail(message) {
   throw new Error(message)
 }
 
-function compilerFromArguments(argumentsList) {
+function binariesFromArguments(argumentsList) {
   let compiler = path.join(
     repositoryRoot,
     'zig-out',
     'bin',
     process.platform === 'win32' ? 'zigcss.exe' : 'zigcss',
   )
+  let moduleDriver = path.join(
+    repositoryRoot,
+    'zig-out',
+    'bin',
+    process.platform === 'win32'
+      ? 'zigcss-css-modules-test-driver.exe'
+      : 'zigcss-css-modules-test-driver',
+  )
   for (let index = 0; index < argumentsList.length; index += 1) {
-    if (argumentsList[index] !== '--compiler') fail(`unknown argument: ${argumentsList[index]}`)
+    const argument = argumentsList[index]
+    if (argument !== '--compiler' && argument !== '--module-driver') {
+      fail(`unknown argument: ${argument}`)
+    }
     if (index + 1 >= argumentsList.length) fail('--compiler requires a path')
-    compiler = path.resolve(argumentsList[index + 1])
+    if (argument === '--compiler') compiler = path.resolve(argumentsList[index + 1])
+    else moduleDriver = path.resolve(argumentsList[index + 1])
     index += 1
   }
-  return compiler
+  return { compiler, moduleDriver }
 }
 
 function sorted(values) {
@@ -71,7 +84,16 @@ function formatTagsFromSource(source) {
   return match[1]
     .split('\n')
     .map(line => line.trim().replace(/,$/, ''))
-    .filter(Boolean)
+    .filter(line => line.length > 0 && !line.startsWith('//'))
+}
+
+function syntaxTagsFromSource(source) {
+  const match = source.match(/pub const Syntax = enum \{([\s\S]*?)\n\};/)
+  if (!match) fail('src/api.zig does not declare Syntax')
+  return match[1]
+    .split('\n')
+    .map(line => line.trim().replace(/,$/, ''))
+    .filter(line => line.length > 0 && !line.startsWith('//'))
 }
 
 function validateMatrix() {
@@ -94,7 +116,9 @@ function validateMatrix() {
   }
 
   const ids = new Set()
+  const publicSyntaxes = new Set()
   const coveredSources = new Set()
+  const coveredLegacySources = new Set()
   const strategyDocument = fs.readFileSync(strategyPath, 'utf8')
   for (const adapter of matrix.adapters) {
     if (ids.has(adapter.id)) fail(`duplicate adapter id: ${adapter.id}`)
@@ -141,8 +165,24 @@ function validateMatrix() {
     for (const sourceFile of adapter.sourceFiles) {
       repositoryFile(sourceFile)
       coveredSources.add(sourceFile)
+      if (adapter.implementation === 'LegacyCharacterized') coveredLegacySources.add(sourceFile)
+    }
+    if (
+      adapter.publicSyntax !== undefined &&
+      (typeof adapter.publicSyntax !== 'string' || !/^[a-z][a-z0-9_]*$/.test(adapter.publicSyntax))
+    ) {
+      fail(`${adapter.id}: invalid publicSyntax`)
+    }
+    if (adapter.publicSyntax !== undefined) {
+      if (publicSyntaxes.has(adapter.publicSyntax)) {
+        fail(`${adapter.id}: duplicate publicSyntax ${adapter.publicSyntax}`)
+      }
+      publicSyntaxes.add(adapter.publicSyntax)
     }
     if (adapter.implementation === 'LegacyCharacterized') {
+      if (adapter.availability !== 'Unavailable' || adapter.compatibility !== 'Unverified') {
+        fail(`${adapter.id}: legacy implementation must remain Unavailable and Unverified`)
+      }
       if (adapter.sourceFiles.length === 0) fail(`${adapter.id}: legacy sourceFiles must be nonempty`)
       if (!Array.isArray(adapter.sourceEvidence) || adapter.sourceEvidence.length === 0) {
         fail(`${adapter.id}: sourceEvidence must be nonempty`)
@@ -156,7 +196,41 @@ function validateMatrix() {
       if (adapter.removedBy !== undefined || adapter.removedSourceFiles !== undefined) {
         fail(`${adapter.id}: legacy implementation cannot claim removal metadata`)
       }
+      if (adapter.publicSyntax !== undefined) {
+        fail(`${adapter.id}: legacy implementation cannot expose a public syntax`)
+      }
+    } else if (adapter.implementation === 'LimitedNative') {
+      if (adapter.formatTag !== null) fail(`${adapter.id}: native implementation retains a legacy Format tag`)
+      if (adapter.sourceFiles.length === 0) fail(`${adapter.id}: native sourceFiles must be nonempty`)
+      if (adapter.availability !== 'ExperimentalLibrary') {
+        fail(`${adapter.id}: native implementation must be ExperimentalLibrary`)
+      }
+      if (adapter.compatibility !== 'NativeSubset') {
+        fail(`${adapter.id}: native implementation must publish NativeSubset compatibility`)
+      }
+      if (typeof adapter.publicSyntax !== 'string') {
+        fail(`${adapter.id}: native implementation must expose one publicSyntax`)
+      }
+      if (!Array.isArray(adapter.sourceEvidence) || adapter.sourceEvidence.length === 0) {
+        fail(`${adapter.id}: native sourceEvidence must be nonempty`)
+      }
+      for (const evidence of adapter.sourceEvidence) {
+        if (!adapter.sourceFiles.includes(evidence.file)) {
+          fail(`${adapter.id}: evidence file is outside sourceFiles: ${evidence.file}`)
+        }
+        validateEvidence(adapter.id, evidence)
+      }
+      if (!Array.isArray(adapter.containmentEvidence) || adapter.containmentEvidence.length === 0) {
+        fail(`${adapter.id}: native containmentEvidence must be nonempty`)
+      }
+      for (const evidence of adapter.containmentEvidence) validateEvidence(adapter.id, evidence)
+      if (adapter.removedBy !== undefined || adapter.removedSourceFiles !== undefined) {
+        fail(`${adapter.id}: native implementation cannot claim removal metadata`)
+      }
     } else if (adapter.implementation === 'Removed') {
+      if (adapter.availability !== 'Unavailable' || adapter.compatibility !== 'Unverified') {
+        fail(`${adapter.id}: removed implementation must remain Unavailable and Unverified`)
+      }
       if (adapter.formatTag !== null) fail(`${adapter.id}: removed implementation retains a Format tag`)
       if (adapter.sourceFiles.length !== 0) fail(`${adapter.id}: removed implementation retains sourceFiles`)
       if (!adapter.ownerPackages.includes(adapter.removedBy)) {
@@ -177,6 +251,9 @@ function validateMatrix() {
       if (adapter.sourceEvidence !== undefined) {
         fail(`${adapter.id}: removed implementation must not retain sourceEvidence`)
       }
+      if (adapter.publicSyntax !== undefined) {
+        fail(`${adapter.id}: removed implementation cannot expose a public syntax`)
+      }
     }
     const strategyRow = `| \`${adapter.id}\` | \`${adapter.strategy}\` |`
     if (!strategyDocument.includes(strategyRow)) {
@@ -191,7 +268,15 @@ function validateMatrix() {
     .filter(name => name.endsWith('.zig'))
     .map(name => `src/formats/${name}`)
   legacySources.push('src/tailwind.zig')
-  expectExactSet(coveredSources, legacySources, 'legacy adapter source inventory')
+  expectExactSet(coveredLegacySources, legacySources, 'legacy adapter source inventory')
+  const nativeSources = matrix.adapters
+    .filter(adapter => adapter.implementation === 'LimitedNative')
+    .flatMap(adapter => adapter.sourceFiles)
+  expectExactSet(
+    coveredSources,
+    [...legacySources, ...nativeSources],
+    'complete adapter source inventory',
+  )
 
   const formatsSource = fs.readFileSync(path.join(repositoryRoot, 'src/formats.zig'), 'utf8')
   const sourceTags = formatTagsFromSource(formatsSource).filter(tag => tag !== 'css')
@@ -212,9 +297,11 @@ function validateMatrix() {
   }
 
   const apiSource = fs.readFileSync(path.join(repositoryRoot, 'src/api.zig'), 'utf8')
-  if (!/pub const Syntax = enum \{\s*css,\s*\};/.test(apiSource)) {
-    fail('public Syntax must remain CSS-only while every adapter is unavailable')
-  }
+  expectExactSet(
+    syntaxTagsFromSource(apiSource),
+    ['css', ...publicSyntaxes],
+    'public Syntax coverage',
+  )
   return matrix
 }
 
@@ -264,10 +351,12 @@ function validateCliRejections(compiler, matrix) {
   return rejectionCount
 }
 
-const compiler = compilerFromArguments(process.argv.slice(2))
+const { compiler, moduleDriver } = binariesFromArguments(process.argv.slice(2))
 const matrix = validateMatrix()
 const rejectionCount = validateCliRejections(compiler, matrix)
+const moduleEvidence = validateCssModules(moduleDriver)
 const removedCount = matrix.adapters.filter(adapter => adapter.implementation === 'Removed').length
+const nativeCount = matrix.adapters.filter(adapter => adapter.implementation === 'LimitedNative').length
 console.log(
-  `Format matrix verified: ${matrix.adapters.length} adapters, ${removedCount} removed implementations, ${rejectionCount} rejected extension probes, complete legacy-source coverage.`,
+  `Format matrix verified: ${matrix.adapters.length} adapters, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs, ${moduleEvidence.rejections} strict module rejection (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
 )

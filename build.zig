@@ -114,6 +114,21 @@ pub fn build(b: *std.Build) void {
     });
     const install_transform_driver = b.addInstallArtifact(transform_driver, .{});
 
+    // This executable exposes the public CSS Modules result only to the
+    // independent format oracle. It is installed by `zig build test`, never by
+    // the normal install step or recovery CLI.
+    const css_modules_driver_module = b.createModule(.{
+        .root_source_file = b.path("tests/formats/css_modules_driver.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    css_modules_driver_module.addImport("zigcss", library_module);
+    const css_modules_driver = b.addExecutable(.{
+        .name = "zigcss-css-modules-test-driver",
+        .root_module = css_modules_driver_module,
+    });
+    const install_css_modules_driver = b.addInstallArtifact(css_modules_driver, .{});
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_lsp_tests.step);
@@ -122,6 +137,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&public_api_example.step);
     test_step.dependOn(&run_audit_tests.step);
     test_step.dependOn(&install_transform_driver.step);
+    test_step.dependOn(&install_css_modules_driver.step);
 
     const helper_compilation = helpers.addCssCompile(b, exe, .{
         .input = b.path("tests/build-helpers/input.css"),

@@ -19,7 +19,7 @@ zig build test-public-api --summary all
 
 The executable is written to `zig-out/bin/zigcss`.
 
-`test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the owned high-level compile facade, result cleanup, and an explicitly experimental borrowed native-plugin callback without claiming a stable plugin ABI or CSS Modules.
+`test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the owned high-level compile facade, result cleanup, the explicit native CSS Modules subset, and an experimental borrowed native-plugin callback without claiming a stable plugin ABI or full ecosystem compatibility.
 
 ## Zig library example
 
@@ -52,6 +52,8 @@ pub fn main() !void {
 <!-- api-example:end -->
 
 Set `.profile = true` to populate `result.metrics` with `CompileMetrics`; the public root also exports `CompileStageTimings` and `CompileMemoryMetrics`. The total uses one monotonic session around the real compile, while stage fields cover parse, validation, dependencies, optimization, plugin/prefix transforms, emission, result promotion, and temporary cleanup. Memory fields count allocator-requested bytes and operations through a forwarding wrapper; they are not process RSS. Result buffers remain compatible with normal `result.deinit()` because the wrapper forwards exact pointers from the caller's allocator.
+
+Set `.syntax = .css_modules` only for the [experimental native CSS Modules subset](/guide/css-modules). A successful result owns `module_exports`; the recovery executable and build helper remain CSS-only.
 
 ## Local Zig package dependency
 
@@ -116,4 +118,5 @@ The CLI writes an experimental-build warning to standard error. Treat successful
 
 - [Current status](/guide/status)
 - [CSS compatibility](/guide/css-compatibility)
+- [CSS Modules subset](/guide/css-modules)
 - [Recovery CLI](/guide/recovery-cli)

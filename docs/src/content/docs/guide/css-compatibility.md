@@ -71,7 +71,7 @@ The fixture has reviewed pretty and minified goldens, reparses byte-idempotently
 
 The dead-code and critical fixtures share one stylesheet but use different complete inventories. Reviewed pretty/minified goldens preserve custom and logical declarations, layers, media/supports groups, nested styles, functional pseudos, attributes, elements, font faces, and keyframes at the documented boundaries. A separate Lightning CSS visitor independently removes only style rules whose every selector has a direct absent class/ID requirement, then canonicalizes the expected subset. Both modes reduce their transform-free baseline, emit no mappings for extracted rules, reject forged proofs, and remain byte-idempotent after reparse.
 
-Source-map generation exists for ordinary library parse/pass/emit pipelines, but the recovery CLI still rejects `--source-map` until its map-file/comment policy and fixed-point map composition are defined. Target/prefix flags, extraction flags, preprocessors, CSS Modules, CSS-in-JS, and the public compile service remain outside the stable grammar/CLI contract.
+Source-map generation exists for ordinary library parse/pass/emit pipelines, but the recovery CLI still rejects `--source-map` until its map-file/comment policy and fixed-point map composition are defined. Target/prefix flags, extraction flags, preprocessors, CSS-in-JS, the [experimental library-only CSS Modules subset](/guide/css-modules), and the public compile service remain outside the stable grammar/CLI contract.
 
 To run the independent gate after building the compiler:
 

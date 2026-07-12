@@ -25,6 +25,7 @@ pub const DiagnosticSeverity = diagnostics.Severity;
 pub const Dependency = dependencies.Dependency;
 pub const DependencyKind = dependencies.Kind;
 pub const DependencyLimits = dependencies.Options;
+pub const CssModuleLimits = api.CssModuleLimits;
 pub const Compilation = compilation.Compilation;
 pub const CompileOptions = api.CompileOptions;
 pub const CompileError = api.Error;

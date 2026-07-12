@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const compilation = @import("../compilation.zig");
 const diagnostics = @import("../diagnostics.zig");
 const emitter = @import("emitter.zig");
+const module_names = @import("module_names.zig");
 const rule_parser = @import("rule_parser.zig");
 const source = @import("../source.zig");
 const sourcemap = @import("../sourcemap.zig");
@@ -14,6 +15,7 @@ pub const CompileResult = compilation.CompileResult;
 pub const Options = struct {
     mode: emitter.Mode = .pretty,
     source_map: ?sourcemap.Options = null,
+    class_names: ?[]const module_names.Entry = null,
 };
 
 /// Owns compilation-lifetime syntax and typed AST data. Emitted results are
@@ -54,7 +56,7 @@ pub const ParsedStylesheet = struct {
                 result_allocator,
                 self.file(),
                 self.rules,
-                .{ .mode = options.mode },
+                .{ .mode = options.mode, .class_names = options.class_names },
                 source_map_options,
             );
             defer output.deinit();
@@ -70,7 +72,7 @@ pub const ParsedStylesheet = struct {
             result_allocator,
             self.file(),
             self.rules,
-            .{ .mode = options.mode },
+            .{ .mode = options.mode, .class_names = options.class_names },
         );
         defer if (css.len > 0) result_allocator.free(css);
         return CompileResult.init(result_allocator, css, null, diagnostic_items);
