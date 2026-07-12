@@ -24,7 +24,7 @@ Copying source bytes into compilation ownership is the safe default. A future ze
 ### Returned ownership
 
 - The stable compile entry point accepts a caller-owned allocator for allocations that must outlive the compilation.
-- `CompileResult` owns generated CSS, optional source-map bytes, and cloned structured diagnostics allocated from that result allocator.
+- The low-level pipeline result owns generated CSS, optional source-map bytes, and cloned parser diagnostics allocated from that result allocator. The public `API-002` result promotes those buffers into the high-level contract and additionally owns located diagnostics, dependency facts, and optional module-export state.
 - `CompileResult.deinit` is the single public cleanup path for all owned result fields. The result records the allocator it must use, so cleanup does not depend on callers remembering an undocumented allocator pairing.
 - A result is move-only by convention: copying it and deinitializing both copies is invalid. APIs take a pointer when consuming or deinitializing it.
 - On failure before a result is returned, `errdefer` paths release all non-arena allocations and the compilation arena releases the remainder.
@@ -32,8 +32,16 @@ Copying source bytes into compilation ownership is the safe default. A future ze
 ### Diagnostics and borrowed views
 
 - Diagnostics inside a live compilation may borrow source bytes but own any synthesized message text in the arena.
-- Diagnostics copied into `CompileResult` own message strings and contain stable source IDs, byte spans, codes, and severity. Source excerpts are generated while the source manager is live or copied explicitly.
+- Diagnostics copied into the public `CompileResult` own message and source-name strings and contain stable source IDs, byte spans, codes, severity, and one-based start/end line and scalar-column locations. They remain useful without a live source manager.
 - Public accessors must label slices as borrowed or owned through their containing type and lifetime documentation.
+
+### Public compile facade
+
+`zigcss.compile` accepts one caller allocator, a borrowed input name and byte slice, and `CompileOptions`. The stable syntax enum currently contains only CSS. Output format, separate source-map output, the closed verified optimizer, verified target prefixing, a borrowed canonical target query, and dependency limits are explicit independent fields. A target query remains caller-owned for the duration of the call; no pointer to it enters the result.
+
+Incoherent option combinations are result diagnostics rather than accepted no-ops: prefixing requires targets, targets require prefixing, forged queries fail validation, and source maps cannot accompany fixed-point optimization until intermediate maps can be composed. Such results contain no CSS. Allocation failures and broken internal invariants remain operational errors rather than being mislabeled as CSS diagnostics.
+
+Dependency reporting recognizes only decoded string or URL operands of top-level `@import` statements. Results deeply own the decoded specifier and source name, retain authored order and duplicates, and carry the operand span. Unsupported, malformed, or dynamic preludes are not guessed into dependencies. Count and owned-byte bounds report `resource_limit` and discard partial facts. Stable CSS returns `module_exports = null`; later adapter work must populate owned export entries explicitly rather than exposing compilation storage.
 
 ### Verification
 

@@ -34,7 +34,7 @@ Each row maps to a versioned fixture in `tests/compatibility/matrix.json`. For e
 | `at-rules.descriptors` | At-rules | Supported | Declaration-backed `@property` and `@font-face` blocks. |
 | `at-rules.keyframes` | At-rules | Supported | `@keyframes` names, `from`/`to`, percentages, and declaration blocks. |
 | `at-rules.page` | At-rules | Supported | `@page` selectors, declarations, and ordered margin at-rules. |
-| `at-rules.statements` | At-rules | Preserved | Semicolon forms such as `@charset`, `@import`, and `@namespace`; dependency fetching is out of scope. |
+| `at-rules.statements` | At-rules | Preserved | Semicolon forms such as `@charset`, `@import`, and `@namespace`; the API reports decoded top-level string/URL imports in authored order, while dependency fetching remains out of scope. |
 | `at-rules.unknown` | At-rules | Preserved | Unknown or future at-rules and values retain nested components and whitespace-token presence. |
 | `errors.invalid-declaration` | Diagnostics | Rejected | A declaration candidate without a top-level colon reports its file, location, and code without partial output. |
 

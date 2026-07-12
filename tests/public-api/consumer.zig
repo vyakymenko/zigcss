@@ -23,6 +23,18 @@ comptime {
     _ = zigcss.DiagnosticSeverity;
     _ = zigcss.Compilation;
     _ = zigcss.CompileResult;
+    _ = zigcss.CompileOptions;
+    _ = zigcss.CompileError;
+    _ = zigcss.OutputFormat;
+    _ = zigcss.SourceMapOptions;
+    _ = zigcss.TransformOptions;
+    _ = zigcss.Syntax;
+    _ = zigcss.TargetQuery;
+    _ = zigcss.Dependency;
+    _ = zigcss.DependencyKind;
+    _ = zigcss.DependencyLimits;
+    _ = zigcss.ModuleExport;
+    _ = zigcss.ModuleExports;
     _ = zigcss.Token;
     _ = zigcss.TokenKind;
     _ = zigcss.Tokenizer;
@@ -31,19 +43,22 @@ comptime {
 }
 
 test "external consumer imports the public root and owns CSS maps and diagnostics" {
-    var result: zigcss.CompileResult = try zigcss.css.pipeline.compile(
+    var result: zigcss.CompileResult = try zigcss.compile(
         std.testing.allocator,
         "consumer.css",
-        ".consumer { color: red; }",
+        "@import \"theme.css\";.consumer { color: red; }",
         .{
-            .mode = .minified,
-            .source_map = .{ .generated_file = "consumer.out.css" },
+            .format = .minified,
+            .source_map = .{ .external = .{ .generated_file = "consumer.out.css" } },
         },
     );
     defer result.deinit();
 
-    try std.testing.expectEqualStrings(".consumer{color:red}", result.css);
+    try std.testing.expectEqualStrings("@import \"theme.css\";.consumer{color:red}", result.css);
     try std.testing.expectEqual(@as(usize, 0), result.diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies.len);
+    try std.testing.expectEqualStrings("theme.css", result.dependencies[0].specifier);
+    try std.testing.expect(result.module_exports == null);
     const source_map = result.source_map orelse return error.MissingSourceMap;
     var parsed_map = try std.json.parseFromSlice(
         std.json.Value,

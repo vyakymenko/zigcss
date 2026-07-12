@@ -19,7 +19,37 @@ zig build test-public-api --summary all
 
 The executable is written to `zig-out/bin/zigcss`.
 
-`test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the current experimental foundation exports without claiming the final high-level compile facade or package-manager integration, which remain later Milestone 4 work.
+`test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the owned high-level compile facade and result cleanup without claiming package-manager integration, plugin stability, or CSS Modules, which remain later Milestone 4 work.
+
+## Zig library example
+
+This exact example is compiled by `test-public-api`:
+
+<!-- api-example:start -->
+```zig
+const std = @import("std");
+const zigcss = @import("zigcss");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    var result = try zigcss.compile(
+        gpa.allocator(),
+        "input.css",
+        ".notice { color: red; }",
+        .{ .format = .minified },
+    );
+    defer result.deinit();
+    if (result.diagnostics.len != 0) return error.InvalidCss;
+
+    var buffer: [1024]u8 = undefined;
+    var writer = std.fs.File.stdout().writer(&buffer);
+    try writer.interface.writeAll(result.css);
+    try writer.interface.flush();
+}
+```
+<!-- api-example:end -->
 
 The independent parser gate additionally requires Node.js. After the Zig build has produced the executable, run:
 

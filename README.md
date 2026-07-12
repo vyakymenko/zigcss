@@ -21,7 +21,7 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | Surface | Status | Behavior |
 |---|---|---|
 | `.css` parsing and emission | Experimental, matrix-tested | Stable CLI input uses the rebuilt parser/emitter; the tested grammar boundary is published below. |
-| Zig library foundation | Experimental, consumer-tested | The `zigcss` module roots at `src/lib.zig` and exports owned source/diagnostic/compilation, tokenizer/syntax/CSS, source-map, transform, and target-query modules. |
+| Zig compile API | Experimental, consumer-tested | The `zigcss` module exposes owned compile options/results, located structured diagnostics, ordered `@import` dependencies, maps, accepted transforms, and target queries. |
 | `--minify` | Experimental | Compacts emitted whitespace without enabling AST transforms. |
 | Output planning | Verified safety boundary | Rejects input/output aliases and duplicate batch destinations before writes. |
 | Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs a closed seven-pass cleanup/semantic plan to a bounded byte-stable fixed point; legacy, experimental, compatibility, extraction, custom-resolution, logical-conversion, and reorder paths are excluded. |
@@ -33,11 +33,39 @@ The helper does not launch a model or mutate the repository; the active Codex ta
 | LSP | Experimental | Still consumes the legacy parser. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 pending bounded isolation. |
 
-## Experimental Zig library foundation
+## Experimental Zig compile API
 
-`build.zig` registers one external module named `zigcss` at `src/lib.zig`. Its current foundation exports source/span and diagnostic ownership, compilation-scoped tokenizer/syntax/CSS modules, independently owned CSS/map/diagnostic results, verified transform modules, and strict target-query modules. `zig build test-public-api` compiles and runs a separate consumer that imports only `zigcss`; it proves result lifetime, source-map JSON, the stable optimizer preset, and target-query access outside the implementation root.
+`build.zig` registers one external module named `zigcss` at `src/lib.zig`. `zigcss.compile` accepts `CompileOptions` for CSS output format, separate source maps, the verified optimizer, verified target prefixing, a borrowed canonical target query, and bounded dependency reporting. Its move-only-by-convention `CompileResult` owns CSS, optional map bytes, located structured diagnostics, ordered decoded top-level `@import` dependencies, and optional module-export state through one idempotent `deinit` path.
 
-This is not yet the final high-level compile contract. `CompileOptions`, dependency reporting, module exports, and the final result facade belong to `API-002`; plugin ordering/stability belongs to `API-003`; dependency metadata and external package consumption belong to `BUILD-001` and later packages.
+The stable CSS path returns `module_exports = null`; CSS Modules remain experimental. Fixed-point optimization and source maps cannot be combined until intermediate maps can be composed, and incoherent options return owned `API0001` diagnostics without CSS. Plugin ordering/stability belongs to `API-003`; dependency metadata and installed external-package consumption belong to `BUILD-001` and later packages.
+
+A minimal repository consumer uses the owned high-level result:
+
+<!-- api-example:start -->
+```zig
+const std = @import("std");
+const zigcss = @import("zigcss");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    var result = try zigcss.compile(
+        gpa.allocator(),
+        "input.css",
+        ".notice { color: red; }",
+        .{ .format = .minified },
+    );
+    defer result.deinit();
+    if (result.diagnostics.len != 0) return error.InvalidCss;
+
+    var buffer: [1024]u8 = undefined;
+    var writer = std.fs.File.stdout().writer(&buffer);
+    try writer.interface.writeAll(result.css);
+    try writer.interface.flush();
+}
+```
+<!-- api-example:end -->
 
 ## Current limitations
 

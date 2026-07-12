@@ -59,8 +59,19 @@ pub fn build(b: *std.Build) void {
         .root_module = public_api_test_module,
     });
     const run_public_api_tests = b.addRunArtifact(public_api_tests);
+    const public_api_example_module = b.createModule(.{
+        .root_source_file = b.path("examples/public_api.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    public_api_example_module.addImport("zigcss", library_module);
+    const public_api_example = b.addExecutable(.{
+        .name = "zigcss-public-api-example",
+        .root_module = public_api_example_module,
+    });
     const public_api_step = b.step("test-public-api", "Test the external Zig library surface");
     public_api_step.dependOn(&run_public_api_tests.step);
+    public_api_step.dependOn(&public_api_example.step);
 
     const audit_test_module = b.addModule("zigcss-audit-regressions", .{
         .root_source_file = b.path("tests/regressions/audit.zig"),
@@ -95,6 +106,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
+    test_step.dependOn(&public_api_example.step);
     test_step.dependOn(&run_audit_tests.step);
     test_step.dependOn(&install_transform_driver.step);
 

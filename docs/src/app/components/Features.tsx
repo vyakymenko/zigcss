@@ -8,9 +8,9 @@ const capabilities = [
     detail: "The stable CLI uses the new parser and emitter; its published grammar matrix is independently parsed in both output modes.",
   },
   {
-    surface: "Zig library foundation",
+    surface: "Zig compile API",
     status: "Experimental / consumer-tested",
-    detail: "A separate consumer imports the zigcss module and verifies owned results, maps, accepted transforms, and target queries; the final high-level compile facade is still pending.",
+    detail: "A separate consumer verifies owned CSS/maps, located diagnostics, ordered imports, accepted transforms, borrowed canonical targets, and one result cleanup path.",
   },
   {
     surface: "Compact emission (--minify)",

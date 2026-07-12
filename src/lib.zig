@@ -1,5 +1,7 @@
+pub const api = @import("api.zig");
 pub const source = @import("source.zig");
 pub const diagnostics = @import("diagnostics.zig");
+pub const dependencies = @import("dependencies.zig");
 pub const compilation = @import("compilation.zig");
 pub const tokenizer = @import("tokenizer.zig");
 pub const syntax = @import("syntax.zig");
@@ -13,12 +15,28 @@ pub const Span = source.Span;
 pub const SourceLocation = source.Location;
 pub const SourceFile = source.SourceFile;
 pub const SourceManager = source.SourceManager;
-pub const Diagnostic = diagnostics.Diagnostic;
+pub const Diagnostic = api.Diagnostic;
+pub const RawDiagnostic = diagnostics.Diagnostic;
 pub const DiagnosticCode = diagnostics.Code;
 pub const DiagnosticList = diagnostics.DiagnosticList;
 pub const DiagnosticSeverity = diagnostics.Severity;
+pub const Dependency = dependencies.Dependency;
+pub const DependencyKind = dependencies.Kind;
+pub const DependencyLimits = dependencies.Options;
 pub const Compilation = compilation.Compilation;
-pub const CompileResult = compilation.CompileResult;
+pub const CompileOptions = api.CompileOptions;
+pub const CompileError = api.Error;
+pub const CompileResult = api.CompileResult;
+pub const OutputFormat = api.OutputFormat;
+pub const SourceMapOptions = api.SourceMapOptions;
+pub const ExternalSourceMapOptions = api.ExternalSourceMapOptions;
+pub const TransformOptions = api.TransformOptions;
+pub const Syntax = api.Syntax;
+pub const ModuleExport = api.ModuleExport;
+pub const ModuleExports = api.ModuleExports;
+pub const PipelineCompileResult = compilation.CompileResult;
+pub const TargetQuery = prefixing.TargetQuery;
+pub const compile = api.compile;
 pub const Token = tokenizer.Token;
 pub const TokenKind = tokenizer.TokenKind;
 pub const Tokenizer = tokenizer.Tokenizer;
@@ -27,7 +45,9 @@ pub const ComponentValueDocument = syntax.Document;
 
 test "public foundation types compose through the library root" {
     const std = @import("std");
+    _ = api;
     _ = tokenizer;
+    _ = dependencies;
     _ = syntax;
     _ = css;
     _ = sourcemap;
@@ -42,7 +62,7 @@ test "public foundation types compose through the library root" {
 
     const file: *const SourceFile = try context.sources.get(source_id);
     const location: SourceLocation = try file.location(span.start);
-    const diagnostic: Diagnostic = context.diagnostics.items()[0];
+    const diagnostic: RawDiagnostic = context.diagnostics.items()[0];
     try std.testing.expectEqual(@as(u32, 1), location.line);
     try std.testing.expectEqual(DiagnosticSeverity.note, diagnostic.severity);
     try std.testing.expectEqual(DiagnosticCode.unexpected_token, diagnostic.code);
