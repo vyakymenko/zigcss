@@ -35,7 +35,7 @@ describe('experimental LSP transport', () => {
     expect(status).toContain('unknown method returns `-32601`')
     expect(status).toContain('invalid method parameters return `-32602`')
     expect(status).toContain('next frame is processed normally')
-    expect(status).toContain('Protocol stress/leak expansion remains `LSP-007`')
+    expect(status).toContain('this completes `LSP-007`')
   })
 
   test('uses standard JSON parsing and serialization with transcript regressions', () => {
@@ -150,5 +150,25 @@ describe('experimental LSP transport', () => {
     expect(status).toContain('Class and ID selectors represent external DOM names')
     expect(extension).toContain('Syntax-aware editing')
     expect(extension).toContain('Bounded open-document workspace')
+  })
+
+  test('publishes the final large Unicode protocol and leak stress gate', () => {
+    const lsp = read('src/lsp.zig')
+    const audit = read('tests/regressions/audit.zig')
+    const status = read('docs/src/content/docs/guide/status.md')
+    const readme = read('README.md')
+    const extension = read('vscode-extension/README.md')
+
+    expect(lsp).toContain('LSP repeated Unicode index lifecycle is balanced and leak-free')
+    expect(lsp).toContain('for (0..64)')
+    expect(audit).toContain(
+      'LSP executable survives large Unicode and malformed protocol transcript (LSP-007)',
+    )
+    expect(audit).toContain("appendNTimes(allocator, 'x', 1024 * 1024)")
+    expect(status).toContain('synchronizes more than 1 MiB of CSS')
+    expect(status).toContain('response output remains below 64 KiB')
+    expect(status).toContain('return to zero after every cycle')
+    expect(readme).toContain('Protocol transcript, large-document, Unicode, malformed-request')
+    expect(extension).toContain('Protocol stress coverage')
   })
 })

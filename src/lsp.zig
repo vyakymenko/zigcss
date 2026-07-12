@@ -2446,6 +2446,75 @@ test "LSP workspace state and indexed requests enforce resource budgets" {
     try std.testing.expectEqual(@as(usize, 0), server.workspace_index_bytes);
 }
 
+test "LSP repeated Unicode index lifecycle is balanced and leak-free" {
+    const allocator = std.testing.allocator;
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+    try initializeTestServer(&server);
+
+    const open =
+        \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///stress.css","languageId":"css","version":1,"text":":root{--色:red}.使用{color:var(--色)}@keyframes 回転{to{opacity:1}}"}}}
+    ;
+    const first_symbols =
+        \\{"jsonrpc":"2.0","id":50,"method":"workspace/symbol","params":{"query":"使用"}}
+    ;
+    const change =
+        \\{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///stress.css","version":2},"contentChanges":[{"text":":root{--色:blue}.使用{background:var(--色);animation-name:回転}@keyframes 回転{to{opacity:0}}"}]}}
+    ;
+    const second_symbols =
+        \\{"jsonrpc":"2.0","id":51,"method":"workspace/symbol","params":{"query":"回転"}}
+    ;
+    const close =
+        \\{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///stress.css"}}}
+    ;
+
+    for (0..64) |_| {
+        try expectNoResponse(&server, open);
+        {
+            const response = try server.handleRequest(first_symbols);
+            defer allocator.free(response);
+            var parsed = try std.json.parseFromSlice(
+                std.json.Value,
+                allocator,
+                response,
+                .{},
+            );
+            defer parsed.deinit();
+            try std.testing.expectEqual(
+                @as(usize, 1),
+                parsed.value.object.get("result").?.array.items.len,
+            );
+        }
+        try std.testing.expect(server.documents.get("file:///stress.css").?.index != null);
+        try std.testing.expect(server.workspace_index_bytes > 0);
+
+        try expectNoResponse(&server, change);
+        try std.testing.expect(server.documents.get("file:///stress.css").?.index == null);
+        try std.testing.expectEqual(@as(usize, 0), server.workspace_index_bytes);
+        {
+            const response = try server.handleRequest(second_symbols);
+            defer allocator.free(response);
+            var parsed = try std.json.parseFromSlice(
+                std.json.Value,
+                allocator,
+                response,
+                .{},
+            );
+            defer parsed.deinit();
+            try std.testing.expectEqual(
+                @as(usize, 1),
+                parsed.value.object.get("result").?.array.items.len,
+            );
+        }
+
+        try expectNoResponse(&server, close);
+        try std.testing.expectEqual(@as(usize, 0), server.documents.count());
+        try std.testing.expectEqual(@as(usize, 0), server.workspace_text_bytes);
+        try std.testing.expectEqual(@as(usize, 0), server.workspace_uri_bytes);
+        try std.testing.expectEqual(@as(usize, 0), server.workspace_index_bytes);
+    }
+}
+
 fn exerciseLspJsonAllocationFailures(allocator: std.mem.Allocator) !void {
     var server = LspServer.init(allocator);
     defer server.deinit();

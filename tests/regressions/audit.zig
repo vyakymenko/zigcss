@@ -137,6 +137,14 @@ fn nextLspFrame(bytes: []const u8, offset: *usize) ![]const u8 {
     return bytes[body_start..body_end];
 }
 
+fn stringifyJson(value: anytype) ![]u8 {
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    defer output.deinit();
+    var json: std.json.Stringify = .{ .writer = &output.writer };
+    try json.write(value);
+    return try output.toOwnedSlice();
+}
+
 fn profileMetric(report: []const u8, label: []const u8) !u64 {
     const label_start = std.mem.indexOf(u8, report, label) orelse return error.MissingProfileMetric;
     const value_start = label_start + label.len;
@@ -711,6 +719,175 @@ test "LSP executable serves syntax-aware deterministic workspace features (LSP-0
     try std.testing.expectEqualStrings(
         "--next",
         b_edits[0].object.get("newText").?.string,
+    );
+
+    var shutdown = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        shutdown_body,
+        .{},
+    );
+    defer shutdown.deinit();
+    try std.testing.expect(shutdown.value.object.get("result").? == .null);
+}
+
+test "LSP executable survives large Unicode and malformed protocol transcript (LSP-007)" {
+    var large_text = std.ArrayList(u8).empty;
+    defer large_text.deinit(allocator);
+    try large_text.appendSlice(allocator, "/*");
+    try large_text.appendNTimes(allocator, 'x', 1024 * 1024);
+    try large_text.appendSlice(
+        allocator,
+        "*/\n😀:root{--色:red}\r\n.使用{color:var(--色)}",
+    );
+
+    const open_body = try stringifyJson(.{
+        .jsonrpc = "2.0",
+        .method = "textDocument/didOpen",
+        .params = .{ .textDocument = .{
+            .uri = "file:///large-unicode.css",
+            .languageId = "css",
+            .version = @as(i32, 1),
+            .text = large_text.items,
+        } },
+    });
+    defer allocator.free(open_body);
+    try std.testing.expect(open_body.len > 1024 * 1024);
+
+    const messages = [_][]const u8{
+        "{not-json",
+        "[]",
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
+        open_body,
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///large-unicode.css\"},\"position\":{\"line\":2,\"character\":15}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///large-unicode.css\"},\"position\":{\"line\":2,\"character\":5}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"file:///large-unicode.css\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///large-unicode.css\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///large-unicode.css\"},\"position\":{\"line\":2,\"character\":15}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"shutdown\"}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}",
+    };
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    for (messages) |message| try appendLspFrame(&transcript, message);
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectExitCode(result, 0);
+
+    var offset: usize = 0;
+    const parse_error_body = try nextLspFrame(result.stdout, &offset);
+    const invalid_request_body = try nextLspFrame(result.stdout, &offset);
+    const initialize_body = try nextLspFrame(result.stdout, &offset);
+    const definition_body = try nextLspFrame(result.stdout, &offset);
+    const hover_body = try nextLspFrame(result.stdout, &offset);
+    const diagnostic_body = try nextLspFrame(result.stdout, &offset);
+    const closed_body = try nextLspFrame(result.stdout, &offset);
+    const shutdown_body = try nextLspFrame(result.stdout, &offset);
+    try std.testing.expectEqual(result.stdout.len, offset);
+    try std.testing.expect(result.stdout.len < 64 * 1024);
+
+    var parse_error = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        parse_error_body,
+        .{},
+    );
+    defer parse_error.deinit();
+    try std.testing.expect(parse_error.value.object.get("id").? == .null);
+    try std.testing.expectEqual(
+        @as(i64, -32700),
+        parse_error.value.object.get("error").?.object.get("code").?.integer,
+    );
+
+    var invalid_request = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        invalid_request_body,
+        .{},
+    );
+    defer invalid_request.deinit();
+    try std.testing.expectEqual(
+        @as(i64, -32600),
+        invalid_request.value.object.get("error").?.object.get("code").?.integer,
+    );
+
+    var initialized = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        initialize_body,
+        .{},
+    );
+    defer initialized.deinit();
+    try std.testing.expectEqual(@as(i64, 1), initialized.value.object.get("id").?.integer);
+
+    var definition = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        definition_body,
+        .{},
+    );
+    defer definition.deinit();
+    const definitions = definition.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), definitions.len);
+    try std.testing.expectEqualStrings(
+        "file:///large-unicode.css",
+        definitions[0].object.get("uri").?.string,
+    );
+    const definition_range = definitions[0].object.get("range").?.object;
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        definition_range.get("start").?.object.get("line").?.integer,
+    );
+    try std.testing.expectEqual(
+        @as(i64, 8),
+        definition_range.get("start").?.object.get("character").?.integer,
+    );
+    try std.testing.expectEqual(
+        @as(i64, 11),
+        definition_range.get("end").?.object.get("character").?.integer,
+    );
+
+    var hover = try std.json.parseFromSlice(std.json.Value, allocator, hover_body, .{});
+    defer hover.deinit();
+    const hover_range = hover.value.object.get("result").?.object.get("range").?.object;
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        hover_range.get("start").?.object.get("line").?.integer,
+    );
+    try std.testing.expectEqual(
+        @as(i64, 4),
+        hover_range.get("start").?.object.get("character").?.integer,
+    );
+    try std.testing.expectEqual(
+        @as(i64, 9),
+        hover_range.get("end").?.object.get("character").?.integer,
+    );
+
+    var diagnostic = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        diagnostic_body,
+        .{},
+    );
+    defer diagnostic.deinit();
+    const report = diagnostic.value.object.get("result").?.object;
+    try std.testing.expectEqualStrings("full", report.get("kind").?.string);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        report.get("items").?.array.items.len,
+    );
+
+    var closed = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        closed_body,
+        .{},
+    );
+    defer closed.deinit();
+    try std.testing.expectEqual(
+        @as(i64, -32602),
+        closed.value.object.get("error").?.object.get("code").?.integer,
     );
 
     var shutdown = try std.json.parseFromSlice(
