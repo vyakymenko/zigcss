@@ -765,6 +765,14 @@ test "LSP diagnostics reject removed preprocessor formats without CSS fallback" 
             \\{"jsonrpc":"2.0","id":6,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.less"}}}
             ,
         },
+        .{
+            .open =
+            \\{"jsonrpc":"2.0","id":7,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.styl","version":1,"text":"$color = red"}}}
+            ,
+            .diagnostics =
+            \\{"jsonrpc":"2.0","id":8,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.styl"}}}
+            ,
+        },
     };
 
     for (cases) |case| {

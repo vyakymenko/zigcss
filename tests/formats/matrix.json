@@ -97,24 +97,26 @@
       "id": "stylus",
       "displayName": "Stylus",
       "cliDisplayName": "Stylus",
-      "formatTag": "stylus",
+      "formatTag": null,
       "extensions": [".styl"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
-      "implementation": "LegacyCharacterized",
+      "implementation": "Removed",
       "strategy": "remove-until-funded",
       "ownerPackages": ["STYLUS-001"],
-      "sourceFiles": ["src/formats/stylus.zig"],
-      "currentBoundary": "Line-oriented indentation conversion and global dollar-variable replacement before the inherited CSS parser.",
+      "removedBy": "STYLUS-001",
+      "removedSourceFiles": ["src/formats/stylus.zig"],
+      "sourceFiles": [],
+      "currentBoundary": "No Stylus parser implementation remains; .styl is classified only for explicit CLI rejection and a null legacy detector result.",
       "knownRisks": [
-        "Optional punctuation and selector/property ambiguity are guessed from colons and leading bytes.",
-        "Variable parse errors are swallowed during scanning and unsupported constructs can disappear."
+        "Reintroducing indentation conversion without a real grammar for optional punctuation, expressions, scope, dependencies, and strict errors would recreate the removed guessing boundary."
       ],
       "probe": "$color = red\n.card\n  color: $color\n",
-      "sourceEvidence": [
-        { "file": "src/formats/stylus.zig", "contains": "fn convertToCSS" },
-        { "file": "src/formats/stylus.zig", "contains": "self.parseVariable() catch {};" },
-        { "file": "src/formats/stylus.zig", "contains": "fn substituteVariables" }
+      "containmentEvidence": [
+        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".styl\")" },
+        { "file": "src/main.zig", "contains": "return \"Stylus\";" },
+        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".styl\")" },
+        { "file": "src/lsp.zig", "contains": "Unsupported or removed stylesheet format" }
       ]
     },
     {

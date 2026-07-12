@@ -6,7 +6,6 @@ pub const Format = enum {
     css_modules,
     css_in_js,
     postcss,
-    stylus,
 };
 
 /// The legacy adapters are retained for characterization and future adapter
@@ -21,14 +20,14 @@ pub fn displayName(format: Format) []const u8 {
         .css_modules => "CSS Modules",
         .css_in_js => "CSS-in-JS",
         .postcss => "PostCSS",
-        .stylus => "Stylus",
     };
 }
 
 pub fn detectFormat(filename: []const u8) ?Format {
     if (std.mem.endsWith(u8, filename, ".scss") or
         std.mem.endsWith(u8, filename, ".sass") or
-        std.mem.endsWith(u8, filename, ".less"))
+        std.mem.endsWith(u8, filename, ".less") or
+        std.mem.endsWith(u8, filename, ".styl"))
     {
         return null;
     } else if (std.mem.endsWith(u8, filename, ".module.css")) {
@@ -37,8 +36,6 @@ pub fn detectFormat(filename: []const u8) ?Format {
         return .css_in_js;
     } else if (std.mem.endsWith(u8, filename, ".postcss")) {
         return .postcss;
-    } else if (std.mem.endsWith(u8, filename, ".styl")) {
-        return .stylus;
     } else if (std.mem.endsWith(u8, filename, ".css")) {
         return .css;
     } else {
@@ -56,7 +53,6 @@ pub fn getParser(format: Format) ParserTrait {
         .css_modules => .{ .parseFn = parseCSSModules },
         .css_in_js => .{ .parseFn = parseCSSInJS },
         .postcss => .{ .parseFn = parsePostCSS },
-        .stylus => .{ .parseFn = parseStylus },
     };
 }
 
@@ -87,23 +83,16 @@ fn parsePostCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet
     return try p.parse();
 }
 
-fn parseStylus(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    const stylus_parser = @import("formats/stylus.zig");
-    var p = stylus_parser.Parser.init(allocator, input);
-    defer p.deinit();
-    return try p.parse();
-}
-
 test "detect format from filename" {
     try std.testing.expectEqual(Format.css, detectFormat("style.css").?);
     try std.testing.expectEqual(Format.css_modules, detectFormat("style.module.css").?);
     try std.testing.expectEqual(Format.css_in_js, detectFormat("style.css.js").?);
     try std.testing.expectEqual(Format.css_in_js, detectFormat("style.css.ts").?);
     try std.testing.expectEqual(Format.postcss, detectFormat("style.postcss").?);
-    try std.testing.expectEqual(Format.stylus, detectFormat("style.styl").?);
     try std.testing.expect(detectFormat("style.scss") == null);
     try std.testing.expect(detectFormat("style.sass") == null);
     try std.testing.expect(detectFormat("style.less") == null);
+    try std.testing.expect(detectFormat("style.styl") == null);
     try std.testing.expect(detectFormat("style.unknown") == null);
 }
 
