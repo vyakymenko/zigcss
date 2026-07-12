@@ -29,6 +29,8 @@
     "check:dependencies": "node scripts/audit-production-dependencies.mjs --check",
     "test:dependencies": "node --test scripts/audit-production-dependencies.test.mjs",
     "audit:production": "node scripts/audit-production-dependencies.mjs --audit",
+    "check:workflows": "node scripts/validate-workflows.mjs --check",
+    "test:workflows": "node --test scripts/validate-workflows.test.mjs",
     "test:zig-package": "node --test scripts/verify-zig-package.test.mjs",
     "test:node-wrapper": "node --test scripts/verify-node-wrapper.test.mjs",
     "test:vscode": "npm --prefix vscode-extension test && npm --prefix vscode-extension run package:check",

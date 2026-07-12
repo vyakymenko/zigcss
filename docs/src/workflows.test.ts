@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const workflowsDir = path.resolve(import.meta.dirname, '..', '..', '.github', 'workflows')
+const statusGuide = fs.readFileSync(path.resolve(import.meta.dirname, 'content', 'docs', 'guide', 'status.md'), 'utf8')
 
 describe('documentation workflow', () => {
   const workflow = fs.readFileSync(path.join(workflowsDir, 'docs.yml'), 'utf8')
@@ -31,11 +32,21 @@ describe('native artifact workflows', () => {
   const releaseWorkflow = fs.readFileSync(path.join(workflowsDir, 'release.yml'), 'utf8')
   const dependabot = fs.readFileSync(path.resolve(workflowsDir, '..', 'dependabot.yml'), 'utf8')
 
+  test('publishes the enforced least-privilege and immutable-action boundary', () => {
+    const workflows = [buildWorkflow, releaseWorkflow, fs.readFileSync(path.join(workflowsDir, 'docs.yml'), 'utf8')].join('\n')
+
+    expect(workflows.match(/^permissions: \{\}$/gm)).toHaveLength(3)
+    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(19)
+    expect(workflows).not.toMatch(/\n\s+uses: [^\n]+@(?![0-9a-f]{40} # v)/)
+    expect(statusGuide).toContain('Their seven jobs declare only the access they use')
+    expect(statusGuide).toContain('All 19 action invocations are pinned')
+  })
+
   test('passes every build matrix target to Zig after native tests', () => {
     const nativeTests = buildWorkflow.indexOf('zig build test --summary all')
     const targetBuild = buildWorkflow.indexOf('zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}')
     const inspection = buildWorkflow.indexOf('node scripts/verify-artifact-target.mjs')
-    const upload = buildWorkflow.indexOf('uses: actions/upload-artifact@v4')
+    const upload = buildWorkflow.indexOf('uses: actions/upload-artifact@')
 
     expect(nativeTests).toBeGreaterThan(-1)
     expect(targetBuild).toBeGreaterThan(nativeTests)
