@@ -52,6 +52,25 @@ function loadMatrix() {
     if (!fixturePath.startsWith(fixturePrefix)) fail(`fixture escapes compatibility root: ${testCase.fixture}`)
     if (!fs.statSync(fixturePath).isFile()) fail(`fixture is not a file: ${testCase.fixture}`)
     if (fs.readFileSync(fixturePath).length === 0) fail(`fixture is empty: ${testCase.fixture}`)
+    if (testCase.requiredFragments !== undefined) {
+      if (typeof testCase.requiredFragments !== 'object' || testCase.requiredFragments === null) {
+        fail(`${testCase.id} requiredFragments must be an object`)
+      }
+      for (const mode of testCase.modes) {
+        const fragments = testCase.requiredFragments[mode]
+        if (!Array.isArray(fragments) || fragments.length === 0) {
+          fail(`${testCase.id}/${mode} requires a nonempty fragment list`)
+        }
+        for (const fragment of fragments) {
+          if (typeof fragment !== 'string' || fragment.length === 0) {
+            fail(`${testCase.id}/${mode} contains an invalid required fragment`)
+          }
+        }
+      }
+      for (const mode of Object.keys(testCase.requiredFragments)) {
+        if (!testCase.modes.includes(mode)) fail(`${testCase.id} has fragments for unknown mode ${mode}`)
+      }
+    }
     testCase.fixturePath = fixturePath
     cases.set(testCase.id, testCase)
   }
@@ -95,6 +114,11 @@ function validateEmission(testCase, mode, result, validatorOptions) {
   if (result.stdout.length === 0) fail(`${testCase.id}/${mode}: compiler emitted empty CSS`)
   if (!result.stderr.includes('experimental recovery build')) {
     fail(`${testCase.id}/${mode}: recovery boundary warning is missing`)
+  }
+  for (const fragment of testCase.requiredFragments?.[mode] ?? []) {
+    if (!result.stdout.includes(fragment)) {
+      fail(`${testCase.id}/${mode}: missing required output fragment ${JSON.stringify(fragment)}`)
+    }
   }
 
   let independent

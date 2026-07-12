@@ -1,0 +1,15 @@
+:root {
+  --Theme: red;
+  --theme: calc(1px + 2px);
+  --fallback-list: var(--missing, red, blue);
+  --cycle-a: var(--cycle-b);
+  --cycle-b: var(--cycle-a);
+  --token-boundary: a/**/b;
+  --empty:;
+}
+.scope {
+  --Theme: blue;
+  color: var(--Theme);
+  width: calc(var(--theme) + 1px);
+  border-color: var(--missing, green);
+}

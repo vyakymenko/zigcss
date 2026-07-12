@@ -221,7 +221,21 @@ test "optimizer containment: non-adjacent merge input cannot reach unsafe passes
     try expectUnsafeTransformsDisabled(result);
 }
 
-test "optimizer containment: cascade-sensitive input cannot reach unsafe passes (OPT-001)" {
+test "stable CLI preserves custom-property cascade without static substitution (CUSTOM-001)" {
+    var result = try runCompiler(@embedFile("fixtures/custom-logical-reset.css"), &.{"--minify"});
+    defer deinitRun(&result);
+
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ":root{--theme:red}.scope{--theme:blue;color:var(--theme)}" ++
+            ".box{margin-inline-start:1px;writing-mode:vertical-rl;direction:rtl;" ++
+            "background-color:red;background-image:url(\"x.png\");font-style:italic;" ++
+            "font-size:16px;font-family:serif}",
+        result.stdout,
+    );
+}
+
+test "stable CLI exposes no custom-property static-resolution mode (CUSTOM-001)" {
     var result = try runCompiler(@embedFile("fixtures/custom-logical-reset.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);
 

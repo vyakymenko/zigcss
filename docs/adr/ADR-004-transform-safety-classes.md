@@ -39,7 +39,7 @@ Safety and phase metadata must agree: analysis, cleanup, compatibility, and extr
 
 ### Metadata and acceptance evidence
 
-Each pass has a stable identifier and revision, phase, deterministic priority, dependency IDs, maturity, safety class, documented precondition/postcondition/no-op conditions, nesting support, order effect, and acceptance evidence.
+Each pass has a stable identifier and revision, phase, deterministic priority, dependency IDs, maturity, safety class, custom-property effect, documented precondition/postcondition/no-op conditions, nesting support, order effect, and acceptance evidence.
 
 A pass marked `verified` is invalid unless it has a validator and evidence for postconditions, idempotence, every allocation failure, and nested rules. Output-changing verified passes additionally require semantic and differential validation. A claimed size reduction requires a size check. A pass that can reorder syntax requires both a written rationale and explicit order-validation evidence; stable policy may still reject it.
 
@@ -72,6 +72,14 @@ Compatibility is part of equivalence. Opaque named, hex, and RGB forms may share
 CSS Values Level 4 permits a zero `<length>` to omit its unit, but a zero that can also parse as `<number>` must take the number interpretation. Zero shortening therefore accepts only a complete positive-zero length dimension on a closed length-only or length-percentage property list. Percentages, angles, times, signed zero, math functions, custom properties, descriptors, and number-or-length grammars such as `line-height` remain unchanged.
 
 Numeric and color output are variants of one structured generated-value union. A shared bounded immutable traversal covers style/nested declarations, group rules, keyframes, pages, and margin boxes while deliberately skipping declaration-backed descriptors. `OPT-012` requires strict byte reduction, recomputed output/source-map validation, idempotence, allocation-failure coverage, and independent canonical equivalence. Like `MATH-001`, it is exposed only through explicit semantic-rewrite policy and the test driver, not the stable CLI.
+
+### Custom-property preservation boundary
+
+[CSS Custom Properties Level 1](https://drafts.csswg.org/css-variables/) makes custom-property names case-sensitive, applies the normal cascade and inheritance per element, preserves arbitrary token streams, and resolves `var()` fallbacks and dependency cycles at computed-value time. A source-only compiler therefore lacks the element, cascade, registration, and computed-value state required for general substitution. `CUSTOM-001` treats custom-property definitions and every declaration containing a decoded `var()` function at any component depth as authored protected values.
+
+The shared value-rewrite traversal never invokes a generator for a protected value and rejects any generated-declaration proof that consumes one. Detection validates source ownership, decodes escaped and case-varied function names, walks nested functions and blocks under an explicit depth limit, and participates in allocation-failure testing. Rule-level proofs may still compose adjacent equivalent contexts because they retain the complete authored declarations and independently prove cascade/order equivalence; they do not resolve or rewrite the protected values.
+
+Pass metadata defaults to `custom_property_effect = preserves`. Static custom-property resolution is confined to an experimental semantic value-pass classification and is rejected unless policy separately authorizes semantic rewriting, experimental maturity, and static resolution. A pass claiming that effect cannot be marked verified under the current ADR. No such rebuilt pass is registered, exported by the stable CLI, or implied by `--optimize`; the inherited global resolver remains on the quarantined legacy optimizer path. Any future resolver requires its own roadmap package, DOM/cascade inputs, validation strategy, and an ADR revision rather than reuse of the default traversal.
 
 ### Adjacent selector-rule merge
 

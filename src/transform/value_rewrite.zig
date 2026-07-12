@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../css/ast.zig");
+const custom_property_guard = @import("custom_property_guard.zig");
 const pass_manager = @import("pass_manager.zig");
 
 pub const Options = struct {
@@ -475,6 +476,16 @@ fn rewriteDeclarationList(
                 input,
             ) orelse break :blk .{ .value = input, .changed = false };
             if (generated.len == 0) return error.InvalidAst;
+            custom_property_guard.validateGeneratedDeclarations(
+                context.scratchAllocator(),
+                context.file(),
+                input.declarations,
+                generated,
+                .{},
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.InvalidAst,
+            };
             break :blk .{
                 .value = ast.DeclarationList.initWithGenerated(
                     input.span,
@@ -498,6 +509,19 @@ fn rewriteDeclarationValues(
     defer scratch.free(candidates);
     var changed = false;
     for (input.declarations, 0..) |declaration, index| {
+        const protected = custom_property_guard.protectsDeclaration(
+            context.scratchAllocator(),
+            context.file(),
+            declaration,
+            .{},
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidAst,
+        };
+        if (protected) {
+            candidates[index] = declaration;
+            continue;
+        }
         const generated = try generate(user_data, context, declaration);
         candidates[index] = declaration;
         if (generated) |value| {
@@ -521,4 +545,114 @@ test "whole-value rewrite traversal rejects work beyond its explicit budgets" {
     try std.testing.expectError(error.PassFailed, budget.checkDepth(3));
     try budget.visitDeclaration();
     try std.testing.expectError(error.PassFailed, budget.visitDeclaration());
+}
+
+const pipeline = @import("../css/pipeline.zig");
+const emitter = @import("../css/emitter.zig");
+
+const GuardTestState = struct {
+    calls: usize = 0,
+};
+
+fn rewriteEveryUnprotectedValue(
+    user_data: ?*anyopaque,
+    _: *pass_manager.Context,
+    declaration: ast.Declaration,
+) pass_manager.Error!?ast.GeneratedValue {
+    const state: *GuardTestState = @ptrCast(@alignCast(user_data.?));
+    state.calls += 1;
+    const values = declaration.valueWithoutImportance();
+    if (values.len != 1) return null;
+    return .{ .numeric = .{
+        .value = 2,
+        .unit = .px,
+        .source_span = values[0].span(),
+    } };
+}
+
+test "whole-value rewrite never invokes generators for custom definitions or var consumers" {
+    var parsed = try pipeline.parse(
+        std.testing.allocator,
+        "value-rewrite-custom-guard.css",
+        ".a{--size:1px;width:v\\61 r(--size);" ++
+            "max-width:calc(1px + VAR(--size));height:1px}",
+    );
+    defer parsed.deinit();
+    var context = try pass_manager.Context.init(
+        &parsed.compilation,
+        parsed.source_id,
+        std.testing.allocator,
+    );
+    var state = GuardTestState{};
+    const result = try rewrite(
+        &context,
+        parsed.rules,
+        rewriteEveryUnprotectedValue,
+        &state,
+        .{},
+    );
+    try std.testing.expect(result.changed);
+    try std.testing.expectEqual(@as(usize, 1), state.calls);
+    const declarations = result.value.rules[0].style_rule.block.declarations.declarations;
+    try std.testing.expect(declarations[0].generated_value == null);
+    try std.testing.expect(declarations[1].generated_value == null);
+    try std.testing.expect(declarations[2].generated_value == null);
+    try std.testing.expect(declarations[3].generated_value != null);
+    const css = try emitter.emit(
+        std.testing.allocator,
+        parsed.file(),
+        result.value,
+        .{ .mode = .minified },
+    );
+    defer std.testing.allocator.free(css);
+    try std.testing.expectEqualStrings(
+        ".a{--size:1px;width:v\\61 r(--size);" ++
+            "max-width:calc(1px + VAR(--size));height:2px}",
+        css,
+    );
+}
+
+fn generateUnsafeVarShorthand(
+    _: ?*anyopaque,
+    context: *pass_manager.Context,
+    _: DeclarationContext,
+    declarations: ast.DeclarationList,
+) pass_manager.Error!?[]const ast.GeneratedDeclaration {
+    if (declarations.declarations.len != 4) return null;
+    const generated = try context.arenaAllocator().alloc(ast.GeneratedDeclaration, 1);
+    generated[0] = .{
+        .kind = .margin,
+        .first_declaration = 0,
+        .source_span = .{
+            .source = context.source_id,
+            .start = declarations.declarations[0].span.start,
+            .end = declarations.declarations[3].span.end,
+        },
+    };
+    return generated;
+}
+
+test "declaration rewrite rejects generated proofs that consume var values" {
+    var parsed = try pipeline.parse(
+        std.testing.allocator,
+        "declaration-rewrite-custom-guard.css",
+        ".a{margin-top:var(--gap);margin-right:var(--gap);" ++
+            "margin-bottom:var(--gap);margin-left:var(--gap)}",
+    );
+    defer parsed.deinit();
+    var context = try pass_manager.Context.init(
+        &parsed.compilation,
+        parsed.source_id,
+        std.testing.allocator,
+    );
+    try std.testing.expectError(
+        error.InvalidAst,
+        rewriteDeclarations(
+            &context,
+            parsed.rules,
+            generateUnsafeVarShorthand,
+            null,
+            .{},
+        ),
+    );
 }

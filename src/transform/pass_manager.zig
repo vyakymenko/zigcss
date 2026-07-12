@@ -24,6 +24,7 @@ pub const Error = std.mem.Allocator.Error || error{
     OrderChangeDisallowed,
     PassFailed,
     PassReportedErrors,
+    StaticCustomPropertyResolutionDisallowed,
     TooManyPasses,
     UnknownDependency,
     UnknownRequestedPass,
@@ -59,6 +60,11 @@ pub const OrderEffect = enum {
     proven_reorder,
 };
 
+pub const CustomPropertyEffect = enum {
+    preserves,
+    static_resolution,
+};
+
 pub const AcceptanceEvidence = struct {
     postcondition: bool = false,
     idempotence: bool = false,
@@ -82,6 +88,7 @@ pub const Metadata = struct {
     postcondition: []const u8,
     no_op_conditions: []const u8,
     supports_nested_rules: bool = false,
+    custom_property_effect: CustomPropertyEffect = .preserves,
     order_effect: OrderEffect = .preserves,
     order_rationale: []const u8 = "",
     claims_size_reduction: bool = false,
@@ -158,6 +165,7 @@ pub const Policy = struct {
     require_validator: bool = true,
     require_nested_rules: bool = true,
     allow_proven_reorder: bool = false,
+    allow_static_custom_property_resolution: bool = false,
 
     fn allows(self: Policy, safety: SafetyClass) bool {
         return switch (safety) {
@@ -342,6 +350,13 @@ fn validateMetadata(pass: *const Pass) Error!void {
     if (metadata.order_effect == .proven_reorder and emptyDocumentation(metadata.order_rationale)) {
         return error.InvalidMetadata;
     }
+    if (metadata.custom_property_effect == .static_resolution and
+        (metadata.maturity != .experimental or
+            metadata.safety != .semantic_rewrite or
+            metadata.phase != .values))
+    {
+        return error.InvalidMetadata;
+    }
     if (metadata.order_effect == .proven_reorder and !metadata.acceptance.order_validation) {
         return error.MissingAcceptanceEvidence;
     }
@@ -375,6 +390,11 @@ fn enforcePolicy(pass: *const Pass, policy: Policy) Error!void {
     if (policy.require_nested_rules and !pass.metadata.supports_nested_rules) return error.NestedRulesUnsupported;
     if (!policy.allow_proven_reorder and pass.metadata.order_effect == .proven_reorder) {
         return error.OrderChangeDisallowed;
+    }
+    if (!policy.allow_static_custom_property_resolution and
+        pass.metadata.custom_property_effect == .static_resolution)
+    {
+        return error.StaticCustomPropertyResolutionDisallowed;
     }
 }
 
@@ -685,6 +705,18 @@ test "verified metadata requires documented acceptance evidence" {
         error.InvalidMetadata,
         buildPlan(std.testing.allocator, &mismatched_phase, &.{}, .{}),
     );
+
+    var verified_static_metadata = acceptedMetadata(
+        "verified-static-custom-properties",
+        .values,
+        .semantic_rewrite,
+    );
+    verified_static_metadata.custom_property_effect = .static_resolution;
+    const verified_static = [_]Pass{testPass(verified_static_metadata, &state)};
+    try std.testing.expectError(
+        error.InvalidMetadata,
+        buildPlan(std.testing.allocator, &verified_static, &.{}, .{}),
+    );
 }
 
 test "default policy denies unverified and output-changing passes" {
@@ -744,6 +776,39 @@ test "default policy denies unverified and output-changing passes" {
             .{ .allow_experimental = true },
         ),
     );
+
+    var static_resolution_metadata = acceptedMetadata(
+        "static-custom-properties",
+        .values,
+        .semantic_rewrite,
+    );
+    static_resolution_metadata.maturity = .experimental;
+    static_resolution_metadata.custom_property_effect = .static_resolution;
+    const static_resolution = [_]Pass{testPass(static_resolution_metadata, &state)};
+    try std.testing.expectError(
+        error.StaticCustomPropertyResolutionDisallowed,
+        buildPlan(
+            std.testing.allocator,
+            &static_resolution,
+            &.{"static-custom-properties"},
+            .{
+                .allow_semantic_rewrite = true,
+                .allow_experimental = true,
+            },
+        ),
+    );
+    var explicit_static_plan = try buildPlan(
+        std.testing.allocator,
+        &static_resolution,
+        &.{"static-custom-properties"},
+        .{
+            .allow_semantic_rewrite = true,
+            .allow_experimental = true,
+            .allow_static_custom_property_resolution = true,
+        },
+    );
+    defer explicit_static_plan.deinit();
+    try std.testing.expectEqual(@as(usize, 1), explicit_static_plan.orderedPasses().len);
 }
 
 test "pass execution invokes semantic hooks and optional idempotence checks in order" {

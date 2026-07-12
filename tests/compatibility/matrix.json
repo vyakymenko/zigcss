@@ -99,8 +99,8 @@
       "area": "Declarations",
       "syntax": "Custom property names and arbitrary nested component values",
       "status": "Supported",
-      "case": "declarations",
-      "notes": "Custom-property identity and token boundaries are retained without substitution."
+      "case": "custom-properties",
+      "notes": "Case-sensitive identities, cascade scopes, fallbacks, cycles, empty values, and token boundaries are retained without static substitution."
     },
     {
       "id": "values.property-grammar",
@@ -187,6 +187,34 @@
       "fixture": "fixtures/declarations.css",
       "expectation": "emit",
       "modes": ["pretty", "minified"]
+    },
+    {
+      "id": "custom-properties",
+      "fixture": "fixtures/custom-properties.css",
+      "expectation": "emit",
+      "modes": ["pretty", "minified"],
+      "requiredFragments": {
+        "pretty": [
+          "--Theme: red;",
+          "--theme: calc(1px + 2px);",
+          "--fallback-list: var(--missing, red, blue);",
+          "--cycle-a: var(--cycle-b);",
+          "--cycle-b: var(--cycle-a);",
+          "--token-boundary: a/**/b;",
+          "color: var(--Theme);",
+          "width: calc(var(--theme) + 1px);"
+        ],
+        "minified": [
+          "--Theme:red",
+          "--theme:calc(1px + 2px)",
+          "--fallback-list:var(--missing, red, blue)",
+          "--cycle-a:var(--cycle-b)",
+          "--cycle-b:var(--cycle-a)",
+          "--token-boundary:a/**/b",
+          "color:var(--Theme)",
+          "width:calc(var(--theme) + 1px)"
+        ]
+      }
     },
     {
       "id": "conditional-at-rules",
