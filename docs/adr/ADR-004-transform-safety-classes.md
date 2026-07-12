@@ -39,7 +39,7 @@ Safety and phase metadata must agree: analysis, cleanup, compatibility, and extr
 
 ### Metadata and acceptance evidence
 
-Each pass has a stable identifier and revision, phase, deterministic priority, dependency IDs, maturity, safety class, custom-property effect, documented precondition/postcondition/no-op conditions, nesting support, order effect, and acceptance evidence.
+Each pass has a stable identifier and revision, phase, deterministic priority, dependency IDs, maturity, safety class, custom/logical-property effects, documented precondition/postcondition/no-op conditions, nesting support, order effect, and acceptance evidence.
 
 A pass marked `verified` is invalid unless it has a validator and evidence for postconditions, idempotence, every allocation failure, and nested rules. Output-changing verified passes additionally require semantic and differential validation. A claimed size reduction requires a size check. A pass that can reorder syntax requires both a written rationale and explicit order-validation evidence; stable policy may still reject it.
 
@@ -80,6 +80,14 @@ Numeric and color output are variants of one structured generated-value union. A
 The shared value-rewrite traversal never invokes a generator for a protected value and rejects any generated-declaration proof that consumes one. Detection validates source ownership, decodes escaped and case-varied function names, walks nested functions and blocks under an explicit depth limit, and participates in allocation-failure testing. Rule-level proofs may still compose adjacent equivalent contexts because they retain the complete authored declarations and independently prove cascade/order equivalence; they do not resolve or rewrite the protected values.
 
 Pass metadata defaults to `custom_property_effect = preserves`. Static custom-property resolution is confined to an experimental semantic value-pass classification and is rejected unless policy separately authorizes semantic rewriting, experimental maturity, and static resolution. A pass claiming that effect cannot be marked verified under the current ADR. No such rebuilt pass is registered, exported by the stable CLI, or implied by `--optimize`; the inherited global resolver remains on the quarantined legacy optimizer path. Any future resolver requires its own roadmap package, DOM/cascade inputs, validation strategy, and an ADR revision rather than reuse of the default traversal.
+
+### Logical-property preservation boundary
+
+[CSS Logical Properties Level 1](https://drafts.csswg.org/css-logical/) defines flow-relative properties and values whose physical mapping depends on the used `writing-mode`, `direction`, and `text-orientation`. Logical and physical declarations in one property group cascade together according to their relative declaration order after that mapping is known. A source-only property-name table cannot recover the required element, containing-block, inheritance, HTML directionality, or computed-style context and can reverse inline sides under RTL or rotate them under vertical writing modes.
+
+`LOGICAL-001` therefore retains no logical-to-physical conversion mode in the rebuilt pipeline. Pass metadata defaults to `logical_property_effect = preserves`; the reserved `physical_conversion` effect is registry-invalid rather than unlockable through policy. All current passes declare preservation, the AST exposes no generated property-name payload, and the stable CLI rejects the inherited optimizer entry point. Typed value-only rewrites may still shorten a value on a logical property when their independent proof leaves the property name, cascade position, importance, and direction-sensitive keyword structure unchanged.
+
+A future conversion proposal must begin with a new roadmap package and ADR revision defining DOM/style inputs, the exact box whose writing mode controls each mapping, interactions between physical and logical declarations, inheritance, target compatibility, source maps, and computed-style validation. A global `ltr`/`rtl` switch is insufficient and is intentionally not part of current policy.
 
 ### Adjacent selector-rule merge
 

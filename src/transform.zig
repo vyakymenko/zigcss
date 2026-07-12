@@ -34,6 +34,11 @@ test "verified pass composition preserves custom definitions substitutions and c
         ".scope{--Theme:blue;color:var(--Theme);width:calc(var(--theme) + 1px);" ++
         "margin-top:var(--gap,1px);margin-right:var(--gap,1px);" ++
         "margin-bottom:var(--gap,1px);margin-left:var(--gap,1px)}" ++
+        ".logical{direction:rtl;writing-mode:vertical-rl;text-orientation:upright;" ++
+        "margin-inline-start:calc(1px + 2px);border-inline-end-color:#ffffff;" ++
+        "inset-block-start:0px;float:inline-start;text-align:end;" ++
+        "margin-top:1px;margin-right:1px;margin-inline-end:4px;" ++
+        "margin-bottom:1px;margin-left:1px}" ++
         ".cleanup{.empty{}.keep{x:1}}.safe{width:calc(1px + 2px);color:#ffffff;" ++
         "margin-top:1px;margin-right:1px;margin-bottom:1px;margin-left:1px}" ++
         ".merge-a{--token:a/**/b}.merge-b{--token:a/**/b}" ++
@@ -53,6 +58,10 @@ test "verified pass composition preserves custom definitions substitutions and c
         try std.testing.expectEqual(
             pass_manager.CustomPropertyEffect.preserves,
             pass.metadata.custom_property_effect,
+        );
+        try std.testing.expectEqual(
+            pass_manager.LogicalPropertyEffect.preserves,
+            pass.metadata.logical_property_effect,
         );
     }
     var plan = try pass_manager.buildPlan(
@@ -82,6 +91,11 @@ test "verified pass composition preserves custom definitions substitutions and c
             ".scope{--Theme:blue;color:var(--Theme);width:calc(var(--theme) + 1px);" ++
             "margin-top:var(--gap,1px);margin-right:var(--gap,1px);" ++
             "margin-bottom:var(--gap,1px);margin-left:var(--gap,1px)}" ++
+            ".logical{direction:rtl;writing-mode:vertical-rl;text-orientation:upright;" ++
+            "margin-inline-start:3px;border-inline-end-color:#fff;" ++
+            "inset-block-start:0;float:inline-start;text-align:end;" ++
+            "margin-top:1px;margin-right:1px;margin-inline-end:4px;" ++
+            "margin-bottom:1px;margin-left:1px}" ++
             ".cleanup{.keep{x:1}}" ++
             ".safe{width:3px;color:#fff;margin:1px}" ++
             ".merge-a,.merge-b{--token:a/**/b}" ++

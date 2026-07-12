@@ -27,6 +27,7 @@ Each row maps to a versioned fixture in `tests/compatibility/matrix.json`. For e
 | `selectors.column-combinator` | Selectors | Rejected | The column combinator is excluded from the selected stable Selectors Level 4 grammar. |
 | `declarations.order-and-importance` | Declarations | Supported | Ordered duplicates, fallbacks, and `!important` remain ordered. |
 | `declarations.custom-properties` | Declarations | Supported | Case-sensitive names, cascade scopes, fallbacks, cycles, empty values, and token boundaries are retained without static substitution. |
+| `declarations.logical-properties` | Declarations | Supported | Flow-relative names and values remain authored under horizontal, RTL, and vertical writing modes; no physical mapping is guessed. |
 | `values.property-grammar` | Declarations | Preserved | Property-specific and future values are lossless component trees; broad semantic validation is not claimed. |
 | `at-rules.conditional` | At-rules | Supported | Typed `@media`, `@supports`, and named or anonymous `@container` preludes and rule blocks. |
 | `at-rules.layers` | At-rules | Supported | `@layer` statements, names, and blocks. |

@@ -103,6 +103,14 @@
       "notes": "Case-sensitive identities, cascade scopes, fallbacks, cycles, empty values, and token boundaries are retained without static substitution."
     },
     {
+      "id": "declarations.logical-properties",
+      "area": "Declarations",
+      "syntax": "Flow-relative properties and values under horizontal, RTL, and vertical writing modes",
+      "status": "Supported",
+      "case": "logical-properties",
+      "notes": "Logical names and values remain authored; ZigCSS does not guess a physical mapping without computed writing-mode, direction, and text-orientation context."
+    },
+    {
       "id": "values.property-grammar",
       "area": "Declarations",
       "syntax": "Property-specific values and future value functions",
@@ -213,6 +221,40 @@
           "--token-boundary:a/**/b",
           "color:var(--Theme)",
           "width:calc(var(--theme) + 1px)"
+        ]
+      }
+    },
+    {
+      "id": "logical-properties",
+      "fixture": "fixtures/logical-properties.css",
+      "expectation": "emit",
+      "modes": ["pretty", "minified"],
+      "requiredFragments": {
+        "pretty": [
+          "direction: rtl;",
+          "writing-mode: horizontal-tb;",
+          "margin-inline-start: 1px;",
+          "inset-inline-end: 2px;",
+          "text-align: start;",
+          "writing-mode: vertical-rl;",
+          "text-orientation: upright;",
+          "border-start-end-radius: 5px;",
+          "float: inline-end;",
+          "writing-mode: vertical-lr;",
+          "clear: inline-start;"
+        ],
+        "minified": [
+          "direction:rtl",
+          "writing-mode:horizontal-tb",
+          "margin-inline-start:1px",
+          "inset-inline-end:2px",
+          "text-align:start",
+          "writing-mode:vertical-rl",
+          "text-orientation:upright",
+          "border-start-end-radius:5px",
+          "float:inline-end",
+          "writing-mode:vertical-lr",
+          "clear:inline-start"
         ]
       }
     },

@@ -1,0 +1,13 @@
+.rtl {
+  direction: rtl;
+  margin-inline-start: 1px;
+  inset-inline-end: 2px;
+  text-align: start;
+}
+.vertical {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  margin-block-start: 3px;
+  padding-inline-end: 4px;
+  float: inline-end;
+}

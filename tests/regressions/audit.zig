@@ -242,6 +242,26 @@ test "stable CLI exposes no custom-property static-resolution mode (CUSTOM-001)"
     try expectUnsafeTransformsDisabled(result);
 }
 
+test "stable CLI preserves logical properties across RTL and vertical modes (LOGICAL-001)" {
+    var result = try runCompiler(@embedFile("fixtures/logical-directions.css"), &.{"--minify"});
+    defer deinitRun(&result);
+
+    try expectSuccess(result);
+    try std.testing.expectEqualStrings(
+        ".rtl{direction:rtl;margin-inline-start:1px;inset-inline-end:2px;" ++
+            "text-align:start}.vertical{writing-mode:vertical-rl;text-orientation:upright;" ++
+            "margin-block-start:3px;padding-inline-end:4px;float:inline-end}",
+        result.stdout,
+    );
+}
+
+test "stable CLI exposes no logical-to-physical conversion mode (LOGICAL-001)" {
+    var result = try runCompiler(@embedFile("fixtures/logical-directions.css"), &.{ "--optimize", "--minify" });
+    defer deinitRun(&result);
+
+    try expectUnsafeTransformsDisabled(result);
+}
+
 test "optimizer containment: typed math input cannot reach unsafe folding (OPT-001)" {
     var result = try runCompiler(@embedFile("fixtures/math.css"), &.{ "--optimize", "--minify" });
     defer deinitRun(&result);

@@ -65,6 +65,11 @@ pub const CustomPropertyEffect = enum {
     static_resolution,
 };
 
+pub const LogicalPropertyEffect = enum {
+    preserves,
+    physical_conversion,
+};
+
 pub const AcceptanceEvidence = struct {
     postcondition: bool = false,
     idempotence: bool = false,
@@ -89,6 +94,7 @@ pub const Metadata = struct {
     no_op_conditions: []const u8,
     supports_nested_rules: bool = false,
     custom_property_effect: CustomPropertyEffect = .preserves,
+    logical_property_effect: LogicalPropertyEffect = .preserves,
     order_effect: OrderEffect = .preserves,
     order_rationale: []const u8 = "",
     claims_size_reduction: bool = false,
@@ -355,6 +361,9 @@ fn validateMetadata(pass: *const Pass) Error!void {
             metadata.safety != .semantic_rewrite or
             metadata.phase != .values))
     {
+        return error.InvalidMetadata;
+    }
+    if (metadata.logical_property_effect == .physical_conversion) {
         return error.InvalidMetadata;
     }
     if (metadata.order_effect == .proven_reorder and !metadata.acceptance.order_validation) {
@@ -716,6 +725,19 @@ test "verified metadata requires documented acceptance evidence" {
     try std.testing.expectError(
         error.InvalidMetadata,
         buildPlan(std.testing.allocator, &verified_static, &.{}, .{}),
+    );
+
+    var logical_conversion_metadata = acceptedMetadata(
+        "logical-physical-conversion",
+        .declarations,
+        .semantic_rewrite,
+    );
+    logical_conversion_metadata.maturity = .experimental;
+    logical_conversion_metadata.logical_property_effect = .physical_conversion;
+    const logical_conversion = [_]Pass{testPass(logical_conversion_metadata, &state)};
+    try std.testing.expectError(
+        error.InvalidMetadata,
+        buildPlan(std.testing.allocator, &logical_conversion, &.{}, .{}),
     );
 }
 

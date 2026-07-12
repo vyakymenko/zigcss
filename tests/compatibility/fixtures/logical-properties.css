@@ -1,0 +1,24 @@
+:root {
+  direction: rtl;
+}
+.horizontal {
+  writing-mode: horizontal-tb;
+  direction: ltr;
+  margin-inline-start: 1px;
+  inset-inline-end: 2px;
+  text-align: start;
+}
+.vertical-rl {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  margin-block-start: 3px;
+  padding-inline-end: 4px;
+  border-start-end-radius: 5px;
+  float: inline-end;
+}
+.vertical-lr {
+  writing-mode: vertical-lr;
+  margin-inline-end: 6px;
+  inset-block-end: 7px;
+  clear: inline-start;
+}

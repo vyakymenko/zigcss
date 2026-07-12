@@ -18,7 +18,7 @@ Cases labeled `optimizer containment:` are active safety assertions: every trans
 | Empty-rule removal order | Contained by `OPT-001` | `OPT-010` |
 | Non-adjacent selector and at-rule merging | Contained by `OPT-001` | `OPT-014`, `OPT-015` |
 | Custom-property cascade | Verified by `CUSTOM-001` | `CUSTOM-001` |
-| Logical properties in RTL/vertical modes | Contained by `OPT-001` | `LOGICAL-001` |
+| Logical properties in RTL/vertical modes | Verified by `LOGICAL-001` | `LOGICAL-001` |
 | Background and font shorthand resets | Contained by `OPT-001` | `OPT-013` |
 | Typed math precedence and units | Contained by `OPT-001` | `VAL-001`, `MATH-001` |
 | Selector simplification crash | Contained by `OPT-001` | A future selector pass requires a new package and acceptance suite. |
