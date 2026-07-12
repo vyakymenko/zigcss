@@ -10,6 +10,7 @@ import { Readable } from 'node:stream'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { releaseAssetsFor, releaseTargets } from './generate-release-metadata.mjs'
+import { prepareReleaseContainer } from './prepare-release-container.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
@@ -112,6 +113,48 @@ function makeInstallerFixture({ binary = elf(62), extraEntry = false, tamper = f
     downloadFile,
     packageRoot,
     requested,
+    cleanup() {
+      fs.rmSync(temporary, { recursive: true, force: true })
+    },
+  }
+}
+
+function makeContainerFixture({
+  target = 'x86_64-linux',
+  binary = target === 'aarch64-linux' ? elf(183) : elf(62),
+  extraEntry = false,
+  tamper = false,
+  tamperSbom = false,
+} = {}) {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-container-'))
+  const assetsRoot = path.join(temporary, 'release-assets')
+  fs.mkdirSync(assetsRoot)
+  fs.writeFileSync(path.join(temporary, 'package.json'), '{"version":"0.4.0-rc.1"}\n')
+
+  const assets = releaseAssetsFor('0.4.0-rc.1', target)
+  const archive = makeArchive(temporary, assets.archive, binary, extraEntry)
+  const confinedArchive = path.join(assetsRoot, assets.archive)
+  fs.renameSync(archive, confinedArchive)
+  const sbom = Buffer.from('{"spdxVersion":"SPDX-2.3"}\n')
+  const manifest = [
+    `${sha256(fs.readFileSync(confinedArchive))}  ${assets.archive}`,
+    `${sha256(sbom)}  ${assets.sbom}`,
+    '',
+  ].join('\n')
+  fs.writeFileSync(path.join(assetsRoot, assets.sbom), sbom)
+  fs.writeFileSync(path.join(assetsRoot, assets.checksums), manifest)
+  fs.writeFileSync(path.join(assetsRoot, assets.provenanceBundle), '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}\n')
+  fs.writeFileSync(path.join(assetsRoot, assets.sbomBundle), '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}\n')
+  if (tamper) fs.appendFileSync(confinedArchive, 'tamper')
+  if (tamperSbom) fs.appendFileSync(path.join(assetsRoot, assets.sbom), 'tamper')
+
+  return {
+    assets,
+    assetsRoot,
+    binary,
+    outputDirectory: 'container-root',
+    root: temporary,
+    target,
     cleanup() {
       fs.rmSync(temporary, { recursive: true, force: true })
     },
@@ -364,13 +407,106 @@ test('npm package runs one installer lifecycle and CI gates it before dependency
   assert.equal(manifest.scripts.install, undefined)
   assert.equal(manifest.scripts.postinstall, 'node install.js')
   assert.equal(manifest.scripts['test:release-consumers'], 'node --test scripts/verify-release-consumers.test.mjs')
+  assert.equal(manifest.scripts['test:release-container'], 'node scripts/test-release-container.mjs')
 
   const workflow = fs.readFileSync(path.join(repositoryRoot, '.github/workflows/build.yml'), 'utf8')
   const metadata = workflow.indexOf('npm run test:release-metadata && npm run check:release-metadata')
   const consumers = workflow.indexOf('npm run test:release-consumers', metadata)
-  const install = workflow.indexOf('npm ci --ignore-scripts', consumers)
+  const container = workflow.indexOf('npm run test:release-container', consumers)
+  const install = workflow.indexOf('npm ci --ignore-scripts', container)
   assert.ok(metadata >= 0)
   assert.ok(consumers > metadata)
-  assert.ok(install > consumers)
+  assert.ok(container > consumers)
+  assert.ok(install > container)
   assert.equal(workflow.indexOf('npm run test:release-consumers', consumers + 1), -1)
+  assert.equal(workflow.indexOf('npm run test:release-container', container + 1), -1)
+})
+
+test('release container preparation verifies and confines a local Linux archive', async () => {
+  const fixture = makeContainerFixture()
+  try {
+    const result = await prepareReleaseContainer({
+      root: fixture.root,
+      outputDirectory: fixture.outputDirectory,
+      target: fixture.target,
+      version: '0.4.0-rc.1',
+    })
+    assert.equal(result.target, fixture.target)
+    assert.equal(result.version, '0.4.0-rc.1')
+    assert.deepEqual(fs.readFileSync(result.binary), fixture.binary)
+    assert.equal(fs.statSync(result.binary).mode & 0o777, 0o555)
+    assert.deepEqual(fs.readdirSync(path.join(fixture.root, fixture.outputDirectory)), ['bin'])
+    assert.deepEqual(fs.readdirSync(path.dirname(result.binary)), ['zigcss'])
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('release container preparation removes output after trust failures', async () => {
+  for (const options of [
+    { tamper: true },
+    { tamperSbom: true },
+    { target: 'aarch64-linux', binary: elf(62) },
+    { extraEntry: true },
+  ]) {
+    const fixture = makeContainerFixture(options)
+    try {
+      await assert.rejects(
+        prepareReleaseContainer({
+          root: fixture.root,
+          outputDirectory: fixture.outputDirectory,
+          target: fixture.target,
+          version: '0.4.0-rc.1',
+        }),
+        /(?:checksum does not match|does not match target|archive must contain exactly)/,
+      )
+      assert.equal(fs.existsSync(path.join(fixture.root, fixture.outputDirectory)), false)
+    } finally {
+      fixture.cleanup()
+    }
+  }
+})
+
+test('release container preparation rejects inventory drift and symlink substitution before output', async () => {
+  for (const mode of ['extra', 'missing', 'symlink']) {
+    const fixture = makeContainerFixture()
+    try {
+      if (mode === 'extra') {
+        fs.writeFileSync(path.join(fixture.assetsRoot, 'unreviewed'), 'asset\n')
+      } else if (mode === 'missing') {
+        fs.rmSync(path.join(fixture.assetsRoot, fixture.assets.sbomBundle))
+      } else {
+        const manifest = path.join(fixture.assetsRoot, fixture.assets.checksums)
+        const outside = path.join(fixture.root, 'outside.sha256')
+        fs.renameSync(manifest, outside)
+        fs.symlinkSync(outside, manifest)
+      }
+      await assert.rejects(
+        prepareReleaseContainer({
+          root: fixture.root,
+          outputDirectory: fixture.outputDirectory,
+          target: fixture.target,
+          version: '0.4.0-rc.1',
+        }),
+        /(?:must contain exactly|is unavailable|regular non-symlink file)/,
+      )
+      assert.equal(fs.existsSync(path.join(fixture.root, fixture.outputDirectory)), false)
+    } finally {
+      fixture.cleanup()
+    }
+  }
+})
+
+test('release Dockerfile copies only a locally verified binary into a non-root scratch image', () => {
+  const dockerfile = fs.readFileSync(path.join(repositoryRoot, 'Dockerfile.release'), 'utf8')
+  assert.match(dockerfile, /^# syntax=docker\/dockerfile:1$/m)
+  assert.match(dockerfile, /^FROM node:22-alpine@sha256:[0-9a-f]{64} AS verifier$/m)
+  assert.match(dockerfile, /linux\/amd64\) zigcss_target=x86_64-linux/)
+  assert.match(dockerfile, /linux\/arm64\) zigcss_target=aarch64-linux/)
+  assert.match(dockerfile, /node scripts\/prepare-release-container\.mjs/)
+  assert.match(dockerfile, /^FROM scratch AS runtime$/m)
+  assert.match(dockerfile, /^COPY --from=verifier --chmod=0555 \/verify\/container-root\/bin\/zigcss \/usr\/local\/bin\/zigcss$/m)
+  assert.match(dockerfile, /^USER 65532:65532$/m)
+  assert.match(dockerfile, /^ENTRYPOINT \["\/usr\/local\/bin\/zigcss"\]$/m)
+  assert.doesNotMatch(dockerfile, /\b(?:curl|wget|zig build)\b|ADD https?:/)
 })

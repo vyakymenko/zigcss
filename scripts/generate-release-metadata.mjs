@@ -572,6 +572,7 @@ export function validateReleaseBuildGate(source) {
   )
   expectLiteralCount(source, '- name: Test release consumer paths', 1, 'release consumer CI step')
   expectLiteralCount(source, 'npm run test:release-consumers', 1, 'release consumer CI command')
+  expectLiteralCount(source, 'npm run test:release-container', 1, 'release container CI command')
   expectOrdered(source, [
     '- name: Setup Node.js',
     '- name: Verify workflow security policy',

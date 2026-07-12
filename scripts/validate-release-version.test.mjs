@@ -28,7 +28,7 @@ test('all release, package, runtime, editor, container, formula, and documentati
   assert.deepEqual(validateReleaseVersion(), {
     version: '0.4.0-rc.1',
     vscodeVersion: '0.4.0',
-    surfaces: 26,
+    surfaces: 27,
   })
 })
 
@@ -80,6 +80,10 @@ test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {
   const docker = cloneSources()
   replace(docker, 'Dockerfile.docs', 'ARG ZIGCSS_VERSION=0.4.0-rc.1', 'ARG ZIGCSS_VERSION=0.4.0')
   assert.throws(() => validateReleaseSources(docker), /Dockerfile\.docs product version/)
+
+  const releaseDocker = cloneSources()
+  replace(releaseDocker, 'Dockerfile.release', 'ARG ZIGCSS_VERSION=0.4.0-rc.1', 'ARG ZIGCSS_VERSION=0.4.0')
+  assert.throws(() => validateReleaseSources(releaseDocker), /Dockerfile\.release product version/)
 
   const changelog = cloneSources()
   replace(changelog, 'CHANGELOG.md', 'Target release: `0.4.0-rc.1`', 'Target release: `0.4.0`')

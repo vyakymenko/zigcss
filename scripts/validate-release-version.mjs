@@ -12,6 +12,7 @@ export const releaseSourcePaths = Object.freeze([
   'DEVELOPMENT_PLAN.md',
   'Dockerfile',
   'Dockerfile.docs',
+  'Dockerfile.release',
   'Formula/zigcss.rb',
   'README.md',
   'VERSION',
@@ -161,7 +162,7 @@ export function validateReleaseSources(sources) {
     fail('Homebrew sha256 must remain empty before REL-003 or contain exactly 64 lowercase hex digits')
   }
 
-  for (const filename of ['Dockerfile', 'Dockerfile.docs']) {
+  for (const filename of ['Dockerfile', 'Dockerfile.docs', 'Dockerfile.release']) {
     const dockerfile = sources.get(filename)
     const dockerVersion = singleCapture(dockerfile, /^ARG ZIGCSS_VERSION=(\S+)$/gm, `${filename} product version`)
     expectEqual(dockerVersion, version, `${filename} product version`)

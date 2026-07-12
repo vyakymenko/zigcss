@@ -266,4 +266,8 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     () => validateReleaseBuildGate(buildWorkflow.replace('- name: Test release consumer paths', '- name: Removed release consumer paths')),
     /release consumer CI step/,
   )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-container', 'npm run removed:release-container')),
+    /release container CI command/,
+  )
 })

@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+
+ARG ZIGCSS_VERSION=0.4.0-rc.1
+
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS verifier
+
+ARG ZIGCSS_VERSION
+ARG TARGETOS
+ARG TARGETARCH
+
+WORKDIR /verify
+COPY package.json install.js ./
+COPY scripts/prepare-release-container.mjs ./scripts/prepare-release-container.mjs
+COPY release-assets/ ./release-assets/
+
+RUN set -eu; \
+    case "${TARGETOS}/${TARGETARCH}" in \
+      linux/amd64) zigcss_target=x86_64-linux ;; \
+      linux/arm64) zigcss_target=aarch64-linux ;; \
+      *) echo "Unsupported container target: ${TARGETOS}/${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    node scripts/prepare-release-container.mjs \
+      --root /verify \
+      --output-directory container-root \
+      --target "${zigcss_target}" \
+      --version "${ZIGCSS_VERSION}"
+
+FROM scratch AS runtime
+
+ARG ZIGCSS_VERSION
+LABEL org.opencontainers.image.title="ZigCSS" \
+      org.opencontainers.image.version="${ZIGCSS_VERSION}" \
+      org.opencontainers.image.source="https://github.com/vyakymenko/zigcss" \
+      org.opencontainers.image.description="Experimental ZigCSS release compiler"
+
+COPY --from=verifier --chmod=0555 /verify/container-root/bin/zigcss /usr/local/bin/zigcss
+
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/zigcss"]
+CMD ["--help"]

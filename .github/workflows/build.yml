@@ -104,7 +104,7 @@ jobs:
         run: npm run test:release-metadata && npm run check:release-metadata
 
       - name: Test release consumer paths
-        run: npm run test:release-consumers
+        run: npm run test:release-consumers && npm run test:release-container
 
       - name: Install independent validator
         run: npm ci --ignore-scripts
