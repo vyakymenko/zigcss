@@ -184,24 +184,26 @@
       "id": "postcss",
       "displayName": "PostCSS",
       "cliDisplayName": "PostCSS",
-      "formatTag": "postcss",
+      "formatTag": null,
       "extensions": [".postcss"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
-      "implementation": "LegacyCharacterized",
+      "implementation": "Removed",
       "strategy": "remove-until-funded",
       "ownerPackages": ["POSTCSS-001"],
-      "sourceFiles": ["src/formats/postcss.zig"],
-      "currentBoundary": "Fixed byte scanning for @apply plus deletion of selected at-rules before the inherited CSS parser; there is no JavaScript plugin host.",
+      "removedBy": "POSTCSS-001",
+      "removedSourceFiles": ["src/formats/postcss.zig"],
+      "sourceFiles": [],
+      "currentBoundary": "No PostCSS-like parser implementation remains; .postcss is classified only for explicit CLI rejection and a null legacy detector result.",
       "knownRisks": [
-        "@custom-media and @nest constructs are skipped without a diagnostic or semantic expansion.",
-        "No plugin discovery, configuration, ordering, lifecycle, dependency, or source-map contract exists."
+        "Reintroducing fixed directive scanning without a real isolated JavaScript plugin host, versioned lifecycle, configuration, ordering, dependency, diagnostic, and source-map contracts would recreate the removed deletion boundary."
       ],
       "probe": "@custom-media --narrow (width < 40rem);\n.card { color: red; }\n",
-      "sourceEvidence": [
-        { "file": "src/formats/postcss.zig", "contains": "fn processPostCSS" },
-        { "file": "src/formats/postcss.zig", "contains": "self.matchAt(i, \"@custom-media\")" },
-        { "file": "src/formats/postcss.zig", "contains": "i = try self.skipAtRule(i);" }
+      "containmentEvidence": [
+        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".postcss\")" },
+        { "file": "src/main.zig", "contains": "return \"PostCSS\";" },
+        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".postcss\")" },
+        { "file": "src/lsp.zig", "contains": "file:///removed.postcss" }
       ]
     },
     {
@@ -215,8 +217,8 @@
       "implementation": "LegacyCharacterized",
       "strategy": "remove-until-funded",
       "ownerPackages": ["TAILWIND-001"],
-      "sourceFiles": ["src/tailwind.zig", "src/formats/postcss.zig"],
-      "currentBoundary": "A fixed in-memory utility table expands whitespace-separated names only when encountered by the PostCSS-like @apply scanner.",
+      "sourceFiles": ["src/tailwind.zig"],
+      "currentBoundary": "A fixed in-memory utility table remains as unreachable characterized source after POSTCSS-001 removed its only @apply scanner and dispatch path.",
       "knownRisks": [
         "Unknown utilities are silently omitted from the expansion.",
         "Content scanning, configuration, versions, variants, plugins, arbitrary values, ordering, and canonical Tailwind semantics are absent."

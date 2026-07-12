@@ -3,7 +3,6 @@ const ast = @import("ast.zig");
 
 pub const Format = enum {
     css,
-    postcss,
 };
 
 /// The legacy adapters are retained for characterization and future adapter
@@ -15,7 +14,6 @@ pub fn isExperimental(format: Format) bool {
 pub fn displayName(format: Format) []const u8 {
     return switch (format) {
         .css => "CSS",
-        .postcss => "PostCSS",
     };
 }
 
@@ -26,11 +24,10 @@ pub fn detectFormat(filename: []const u8) ?Format {
         std.mem.endsWith(u8, filename, ".styl") or
         std.mem.endsWith(u8, filename, ".module.css") or
         std.mem.endsWith(u8, filename, ".css.js") or
-        std.mem.endsWith(u8, filename, ".css.ts"))
+        std.mem.endsWith(u8, filename, ".css.ts") or
+        std.mem.endsWith(u8, filename, ".postcss"))
     {
         return null;
-    } else if (std.mem.endsWith(u8, filename, ".postcss")) {
-        return .postcss;
     } else if (std.mem.endsWith(u8, filename, ".css")) {
         return .css;
     } else {
@@ -45,7 +42,6 @@ pub const ParserTrait = struct {
 pub fn getParser(format: Format) ParserTrait {
     return switch (format) {
         .css => .{ .parseFn = parseCSS },
-        .postcss => .{ .parseFn = parsePostCSS },
     };
 }
 
@@ -55,19 +51,12 @@ fn parseCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
     return try p.parse();
 }
 
-fn parsePostCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    const postcss_parser = @import("formats/postcss.zig");
-    var p = postcss_parser.Parser.init(allocator, input);
-    defer p.deinit();
-    return try p.parse();
-}
-
 test "detect format from filename" {
     try std.testing.expectEqual(Format.css, detectFormat("style.css").?);
     try std.testing.expect(detectFormat("style.module.css") == null);
     try std.testing.expect(detectFormat("style.css.js") == null);
     try std.testing.expect(detectFormat("style.css.ts") == null);
-    try std.testing.expectEqual(Format.postcss, detectFormat("style.postcss").?);
+    try std.testing.expect(detectFormat("style.postcss") == null);
     try std.testing.expect(detectFormat("style.scss") == null);
     try std.testing.expect(detectFormat("style.sass") == null);
     try std.testing.expect(detectFormat("style.less") == null);

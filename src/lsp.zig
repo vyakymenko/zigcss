@@ -797,6 +797,14 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
             \\{"jsonrpc":"2.0","id":14,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.css.ts"}}}
             ,
         },
+        .{
+            .open =
+            \\{"jsonrpc":"2.0","id":15,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.postcss","version":1,"text":"@custom-media --narrow (width < 40rem); .card { color: red; }"}}}
+            ,
+            .diagnostics =
+            \\{"jsonrpc":"2.0","id":16,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.postcss"}}}
+            ,
+        },
     };
 
     for (cases) |case| {
