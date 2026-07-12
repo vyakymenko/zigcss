@@ -280,12 +280,15 @@ test "LSP returns parse errors and continues with the next frame (LSP-002)" {
 
 test "LSP serializes hostile IDs and returns invalid-params errors (LSP-002)" {
     const escaped_id = "line\n\"\\id";
+    const initialize =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}";
     const unknown =
         "{\"jsonrpc\":\"2.0\",\"id\":\"line\\n\\\"\\\\id\",\"method\":\"unknown/method\",\"params\":{}}";
     const invalid_params =
-        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"initialize\",\"params\":[]}";
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":[]}";
     var transcript = std.ArrayList(u8).empty;
     defer transcript.deinit(allocator);
+    try appendLspFrame(&transcript, initialize);
     try appendLspFrame(&transcript, unknown);
     try appendLspFrame(&transcript, invalid_params);
 
@@ -294,9 +297,20 @@ test "LSP serializes hostile IDs and returns invalid-params errors (LSP-002)" {
     try expectSuccess(result);
 
     var offset: usize = 0;
+    const initialize_body = try nextLspFrame(result.stdout, &offset);
     const unknown_body = try nextLspFrame(result.stdout, &offset);
     const invalid_params_body = try nextLspFrame(result.stdout, &offset);
     try std.testing.expectEqual(result.stdout.len, offset);
+
+    var initialized = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        initialize_body,
+        .{},
+    );
+    defer initialized.deinit();
+    try std.testing.expectEqual(@as(i64, 1), initialized.value.object.get("id").?.integer);
+    try std.testing.expect(initialized.value.object.get("result") != null);
 
     var unknown_response = try std.json.parseFromSlice(
         std.json.Value,
@@ -326,6 +340,69 @@ test "LSP serializes hostile IDs and returns invalid-params errors (LSP-002)" {
         @as(i64, -32602),
         invalid_response.value.object.get("error").?.object.get("code").?.integer,
     );
+}
+
+test "LSP notifications and lifecycle follow the shutdown protocol (LSP-003)" {
+    const messages = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"unknown/beforeInitialize\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///lifecycle.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".a{}\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///lifecycle.css\",\"version\":2},\"contentChanges\":[{\"text\":\".b{}\"}]}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":99}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///lifecycle.css\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"unknown/notification\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"shutdown\"}",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}",
+    };
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    for (messages) |message| try appendLspFrame(&transcript, message);
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectExitCode(result, 0);
+
+    const expected_ids = [_]i64{ 0, 1, 11, 2, 3 };
+    const expected_errors = [_]?i64{ -32002, null, -32600, null, -32600 };
+    var offset: usize = 0;
+    for (expected_ids, expected_errors) |expected_id, expected_error| {
+        const body = try nextLspFrame(result.stdout, &offset);
+        var response = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
+        defer response.deinit();
+        const response_id = response.value.object.get("id").?;
+        try std.testing.expect(response_id == .integer);
+        try std.testing.expectEqual(expected_id, response_id.integer);
+        if (expected_error) |code| {
+            try std.testing.expectEqual(
+                code,
+                response.value.object.get("error").?.object.get("code").?.integer,
+            );
+            try std.testing.expect(response.value.object.get("result") == null);
+        } else if (expected_id == 2) {
+            try std.testing.expect(response.value.object.get("result").? == .null);
+            try std.testing.expect(response.value.object.get("error") == null);
+        } else {
+            try std.testing.expect(response.value.object.get("result") != null);
+            try std.testing.expect(response.value.object.get("error") == null);
+        }
+    }
+    try std.testing.expectEqual(result.stdout.len, offset);
+}
+
+test "LSP exit without shutdown returns failure without a response (LSP-003)" {
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    try appendLspFrame(&transcript, "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectExitCode(result, 1);
+    try std.testing.expectEqual(@as(usize, 0), result.stdout.len);
 }
 
 test "stable CLI emits functional and attribute selectors" {

@@ -35,7 +35,7 @@ describe('experimental LSP transport', () => {
     expect(status).toContain('unknown method returns `-32601`')
     expect(status).toContain('invalid method parameters return `-32602`')
     expect(status).toContain('next frame is processed normally')
-    expect(status).toContain('LSP-003` through `LSP-007')
+    expect(status).toContain('LSP-004` through `LSP-007')
   })
 
   test('uses standard JSON parsing and serialization with transcript regressions', () => {
@@ -51,5 +51,25 @@ describe('experimental LSP transport', () => {
     expect(lsp).toContain('checkAllAllocationFailures')
     expect(audit).toContain('LSP returns parse errors and continues with the next frame (LSP-002)')
     expect(audit).toContain('LSP serializes hostile IDs and returns invalid-params errors (LSP-002)')
+  })
+
+  test('implements silent notifications and the bounded lifecycle state machine', () => {
+    const main = read('src/main.zig')
+    const lsp = read('src/lsp.zig')
+    const audit = read('tests/regressions/audit.zig')
+    const status = read('docs/src/content/docs/guide/status.md')
+
+    expect(main).toContain('server.handleMessage')
+    expect(main).toContain('.no_response => {}')
+    expect(lsp).toContain('pre_initialize')
+    expect(lsp).toContain('"Server not initialized"')
+    expect(lsp).toContain('"textDocument/didClose"')
+    expect(lsp).toContain('"$/cancelRequest"')
+    expect(lsp).toContain('version <= document.version')
+    expect(lsp).toContain('try json.objectField("openClose")')
+    expect(audit).toContain('LSP notifications and lifecycle follow the shutdown protocol (LSP-003)')
+    expect(audit).toContain('LSP exit without shutdown returns failure without a response (LSP-003)')
+    expect(status).toContain('subsequent requests return `-32600`')
+    expect(status).toContain('exit` terminates with status 0 only after shutdown or status 1 otherwise')
   })
 })

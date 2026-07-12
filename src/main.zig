@@ -661,7 +661,7 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
 
 const CompileError = error{CompileError};
 
-fn runLspServer(allocator: std.mem.Allocator) !void {
+fn runLspServer(allocator: std.mem.Allocator) !lsp.ExitStatus {
     var server = lsp.LspServer.init(allocator);
     defer server.deinit();
     
@@ -672,12 +672,17 @@ fn runLspServer(allocator: std.mem.Allocator) !void {
     
     while (try lsp_transport.readFrame(allocator, &stdin_reader.interface)) |request| {
         defer allocator.free(request);
-        const response = try server.handleRequest(request);
-        defer allocator.free(response);
-
-        try lsp_transport.writeFrame(&stdout_writer.interface, response);
-        try stdout_writer.interface.flush();
+        switch (try server.handleMessage(request)) {
+            .response => |response| {
+                defer allocator.free(response);
+                try lsp_transport.writeFrame(&stdout_writer.interface, response);
+                try stdout_writer.interface.flush();
+            },
+            .no_response => {},
+            .exit => |status| return status,
+        }
     }
+    return .success;
 }
 
 fn expandGlob(allocator: std.mem.Allocator, pattern: []const u8) !std.ArrayList([]const u8) {
@@ -1040,7 +1045,8 @@ pub fn main() !void {
     if (args.len >= 2 and (std.mem.eql(u8, args[1], "--lsp") or std.mem.eql(u8, args[1], "-lsp"))) {
         if (args.len != 2) exitWithCliError("--lsp does not accept additional arguments", .{});
         std.debug.print("{s}", .{experimental_notice});
-        try runLspServer(allocator);
+        const status = try runLspServer(allocator);
+        if (status == .failure) std.process.exit(exit_compile_failure);
         return;
     }
 

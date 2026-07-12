@@ -5,11 +5,28 @@ const error_module = @import("error.zig");
 
 const unsupported_format_message = "Unsupported or removed stylesheet format";
 
+pub const ExitStatus = enum {
+    success,
+    failure,
+};
+
+pub const MessageResult = union(enum) {
+    response: []const u8,
+    no_response,
+    exit: ExitStatus,
+};
+
 pub const LspServer = struct {
     allocator: std.mem.Allocator,
-    initialized: bool,
+    lifecycle: Lifecycle,
     root_uri: ?[]const u8 = null,
     documents: std.StringHashMap(Document),
+
+    const Lifecycle = enum {
+        pre_initialize,
+        running,
+        shutdown,
+    };
 
     // The hash-map key is the sole owned URI copy.
     const Document = struct {
@@ -20,7 +37,7 @@ pub const LspServer = struct {
     pub fn init(allocator: std.mem.Allocator) LspServer {
         return .{
             .allocator = allocator,
-            .initialized = false,
+            .lifecycle = .pre_initialize,
             .documents = std.StringHashMap(Document).init(allocator),
         };
     }
@@ -39,49 +56,114 @@ pub const LspServer = struct {
     
     const JsonWriter = std.json.Stringify;
     const JsonObject = std.json.ObjectMap;
+    const DispatchResponse = struct {
+        bytes: []const u8,
+        success: bool,
+    };
 
     pub fn handleRequest(self: *LspServer, request: []const u8) ![]const u8 {
-        return self.handleRequestInner(request) catch |err| switch (err) {
+        const result = try self.handleMessage(request);
+        return switch (result) {
+            .response => |response| response,
+            .no_response, .exit => error.NoResponse,
+        };
+    }
+
+    pub fn handleMessage(self: *LspServer, message: []const u8) !MessageResult {
+        return self.handleMessageInner(message) catch |err| switch (err) {
             error.WriteFailed => return error.OutOfMemory,
             else => return err,
         };
     }
 
-    fn handleRequestInner(self: *LspServer, request: []const u8) ![]const u8 {
+    fn handleMessageInner(self: *LspServer, message: []const u8) !MessageResult {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const root = std.json.parseFromSliceLeaky(
             std.json.Value,
             arena.allocator(),
-            request,
+            message,
             .{},
         ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => return self.writeErrorResponse(null, -32700, "Parse error"),
+            else => return self.errorResult(null, -32700, "Parse error"),
         };
 
         const object = switch (root) {
             .object => |value| value,
-            else => return self.writeErrorResponse(null, -32600, "Invalid Request"),
+            else => return self.errorResult(null, -32600, "Invalid Request"),
         };
         const version = object.get("jsonrpc") orelse
-            return self.writeErrorResponse(null, -32600, "Invalid Request");
+            return self.errorResult(null, -32600, "Invalid Request");
         if (version != .string or !std.mem.eql(u8, version.string, "2.0")) {
-            return self.writeErrorResponse(null, -32600, "Invalid Request");
+            return self.errorResult(null, -32600, "Invalid Request");
         }
         const method_value = object.get("method") orelse
-            return self.writeErrorResponse(null, -32600, "Invalid Request");
+            return self.errorResult(null, -32600, "Invalid Request");
         const method = switch (method_value) {
             .string => |value| value,
-            else => return self.writeErrorResponse(null, -32600, "Invalid Request"),
+            else => return self.errorResult(null, -32600, "Invalid Request"),
         };
         const id = object.get("id");
         if (id) |value| {
             if (!isValidRequestId(value)) {
-                return self.writeErrorResponse(null, -32600, "Invalid Request");
+                return self.errorResult(null, -32600, "Invalid Request");
             }
         }
-        return self.writeDispatchResponse(object, method, id);
+
+        if (id == null and std.mem.eql(u8, method, "exit")) {
+            validateNoParams(object) catch return .no_response;
+            return .{ .exit = if (self.lifecycle == .shutdown) .success else .failure };
+        }
+
+        switch (self.lifecycle) {
+            .pre_initialize => {
+                if (id == null) return .no_response;
+                if (!std.mem.eql(u8, method, "initialize")) {
+                    return self.errorResult(id, -32002, "Server not initialized");
+                }
+                const response = try self.writeDispatchResponse(object, method, id);
+                if (response.success) self.lifecycle = .running;
+                return .{ .response = response.bytes };
+            },
+            .running => {
+                if (std.mem.eql(u8, method, "initialize")) {
+                    if (id == null) return .no_response;
+                    return self.errorResult(id, -32600, "Invalid Request");
+                }
+                if (std.mem.eql(u8, method, "shutdown")) {
+                    if (id == null) return .no_response;
+                    validateNoParams(object) catch {
+                        return self.errorResult(id, -32602, "Invalid params");
+                    };
+                    const response = try self.writeNullResultResponse(id);
+                    self.lifecycle = .shutdown;
+                    return .{ .response = response };
+                }
+                if (id == null) {
+                    self.dispatchNotification(object, method) catch |err| switch (err) {
+                        error.InvalidParams => {},
+                        else => return err,
+                    };
+                    return .no_response;
+                }
+                const response = try self.writeDispatchResponse(object, method, id);
+                return .{ .response = response.bytes };
+            },
+            .shutdown => {
+                if (id == null) return .no_response;
+                return self.errorResult(id, -32600, "Invalid Request");
+            },
+        }
+    }
+
+    fn errorResult(
+        self: *LspServer,
+        id: ?std.json.Value,
+        code: i32,
+        message: []const u8,
+    ) !MessageResult {
+        return .{ .response = try self.writeErrorResponse(id, code, message) };
     }
 
     fn writeDispatchResponse(
@@ -89,18 +171,22 @@ pub const LspServer = struct {
         root: JsonObject,
         method: []const u8,
         id: ?std.json.Value,
-    ) ![]const u8 {
+    ) !DispatchResponse {
         var output: std.Io.Writer.Allocating = .init(self.allocator);
         defer output.deinit();
         var json: JsonWriter = .{ .writer = &output.writer };
         try writeResponsePrefix(&json, id);
 
+        var success = true;
         self.dispatch(&json, root, method) catch |err| switch (err) {
-            error.InvalidParams => try writeErrorField(&json, -32602, "Invalid params"),
+            error.InvalidParams => {
+                success = false;
+                try writeErrorField(&json, -32602, "Invalid params");
+            },
             else => return err,
         };
         try json.endObject();
-        return try output.toOwnedSlice();
+        return .{ .bytes = try output.toOwnedSlice(), .success = success };
     }
 
     fn dispatch(
@@ -111,12 +197,6 @@ pub const LspServer = struct {
     ) !void {
         if (std.mem.eql(u8, method, "initialize")) {
             try self.handleInitialize(json, root);
-        } else if (std.mem.eql(u8, method, "initialized")) {
-            try writeEmptyResult(json);
-        } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
-            try self.handleDidOpen(json, root);
-        } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
-            try self.handleDidChange(json, root);
         } else if (std.mem.eql(u8, method, "textDocument/diagnostics")) {
             try self.handleDiagnostics(json, root);
         } else if (std.mem.eql(u8, method, "textDocument/hover")) {
@@ -134,6 +214,25 @@ pub const LspServer = struct {
         }
     }
 
+    fn dispatchNotification(
+        self: *LspServer,
+        root: JsonObject,
+        method: []const u8,
+    ) !void {
+        if (std.mem.eql(u8, method, "initialized")) {
+            const params = root.get("params") orelse return error.InvalidParams;
+            if (params != .object and params != .null) return error.InvalidParams;
+        } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
+            try self.handleDidOpen(root);
+        } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
+            try self.handleDidChange(root);
+        } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
+            try self.handleDidClose(root);
+        } else if (std.mem.eql(u8, method, "$/cancelRequest")) {
+            try handleCancelRequest(root);
+        }
+    }
+
     fn writeErrorResponse(
         self: *LspServer,
         id: ?std.json.Value,
@@ -145,6 +244,20 @@ pub const LspServer = struct {
         var json: JsonWriter = .{ .writer = &output.writer };
         try writeResponsePrefix(&json, id);
         try writeErrorField(&json, code, message);
+        try json.endObject();
+        return try output.toOwnedSlice();
+    }
+
+    fn writeNullResultResponse(
+        self: *LspServer,
+        id: ?std.json.Value,
+    ) ![]const u8 {
+        var output: std.Io.Writer.Allocating = .init(self.allocator);
+        defer output.deinit();
+        var json: JsonWriter = .{ .writer = &output.writer };
+        try writeResponsePrefix(&json, id);
+        try json.objectField("result");
+        try json.write(null);
         try json.endObject();
         return try output.toOwnedSlice();
     }
@@ -167,10 +280,19 @@ pub const LspServer = struct {
         try json.endObject();
     }
 
-    fn writeEmptyResult(json: *JsonWriter) !void {
-        try json.objectField("result");
-        try json.beginObject();
-        try json.endObject();
+    fn validateNoParams(root: JsonObject) !void {
+        const params = root.get("params") orelse return;
+        if (params != .null) return error.InvalidParams;
+    }
+
+    fn handleCancelRequest(root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const id = params.get("id") orelse return error.InvalidParams;
+        switch (id) {
+            .string => {},
+            .integer => |value| _ = try integerToI32(value),
+            else => return error.InvalidParams,
+        }
     }
 
     fn writeDiagnostic(
@@ -223,14 +345,6 @@ pub const LspServer = struct {
         };
     }
 
-    fn optionalIntegerField(object: JsonObject, name: []const u8, default: i64) !i64 {
-        const value = object.get(name) orelse return default;
-        return switch (value) {
-            .integer => |result| result,
-            else => error.InvalidParams,
-        };
-    }
-
     fn requireArrayField(object: JsonObject, name: []const u8) ![]const std.json.Value {
         const value = object.get(name) orelse return error.InvalidParams;
         return switch (value) {
@@ -248,6 +362,7 @@ pub const LspServer = struct {
     
     fn handleInitialize(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
+        _ = try requireObjectField(params, "capabilities");
         if (params.get("rootUri")) |root_uri| {
             const replacement: ?[]u8 = switch (root_uri) {
                 .null => null,
@@ -260,82 +375,68 @@ pub const LspServer = struct {
             if (self.root_uri) |old| self.allocator.free(old);
             self.root_uri = replacement;
         }
-        
-        self.initialized = true;
-        
+
         try json.objectField("result");
         try json.beginObject();
         try json.objectField("capabilities");
         try json.beginObject();
         try json.objectField("textDocumentSync");
-        try json.write(@as(i32, 1));
-        try json.objectField("hoverProvider");
+        try json.beginObject();
+        try json.objectField("openClose");
         try json.write(true);
-        try json.objectField("completionProvider");
-        try json.beginObject();
-        try json.objectField("triggerCharacters");
-        try json.write(&[_][]const u8{ " ", ":", "-" });
-        try json.endObject();
-        try json.objectField("diagnosticProvider");
-        try json.beginObject();
-        try json.objectField("interFileDependencies");
-        try json.write(false);
-        try json.objectField("workspaceDiagnostics");
-        try json.write(false);
+        try json.objectField("change");
+        try json.write(@as(i32, 1));
         try json.endObject();
         try json.endObject();
         try json.endObject();
     }
-    
-    fn handleDidOpen(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+
+    fn handleDidOpen(self: *LspServer, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
+        _ = try requireStringField(text_document, "languageId");
         const text = try requireStringField(text_document, "text");
-        const version = try integerToI32(try optionalIntegerField(text_document, "version", 0));
+        const version = try integerToI32(try requireIntegerField(text_document, "version"));
+        if (self.documents.contains(uri)) return error.InvalidParams;
 
         {
             const text_copy = try self.allocator.dupe(u8, text);
             errdefer self.allocator.free(text_copy);
-            if (self.documents.getPtr(uri)) |doc| {
-                self.allocator.free(doc.text);
-                doc.* = .{ .version = version, .text = text_copy };
-            } else {
-                const uri_copy = try self.allocator.dupe(u8, uri);
-                errdefer self.allocator.free(uri_copy);
-                try self.documents.put(uri_copy, .{ .version = version, .text = text_copy });
-            }
+            const uri_copy = try self.allocator.dupe(u8, uri);
+            errdefer self.allocator.free(uri_copy);
+            try self.documents.put(uri_copy, .{ .version = version, .text = text_copy });
         }
-        try writeEmptyResult(json);
     }
 
-    fn handleDidChange(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+    fn handleDidChange(self: *LspServer, root: JsonObject) !void {
         const params = try requireObjectField(root, "params");
         const text_document = try requireObjectField(params, "textDocument");
         const uri = try requireStringField(text_document, "uri");
         const changes = try requireArrayField(params, "contentChanges");
-        const version = try integerToI32(try optionalIntegerField(text_document, "version", 0));
-
-        if (changes.len > 0) {
-            const change = switch (changes[changes.len - 1]) {
-                .object => |value| value,
-                else => return error.InvalidParams,
-            };
-            const text = try requireStringField(change, "text");
-            {
-                const text_copy = try self.allocator.dupe(u8, text);
-                errdefer self.allocator.free(text_copy);
-                if (self.documents.getPtr(uri)) |doc| {
-                    self.allocator.free(doc.text);
-                    doc.* = .{ .version = version, .text = text_copy };
-                } else {
-                    const uri_copy = try self.allocator.dupe(u8, uri);
-                    errdefer self.allocator.free(uri_copy);
-                    try self.documents.put(uri_copy, .{ .version = version, .text = text_copy });
-                }
-            }
+        const version = try integerToI32(try requireIntegerField(text_document, "version"));
+        const document = self.documents.getPtr(uri) orelse return error.InvalidParams;
+        if (version <= document.version or changes.len != 1) return error.InvalidParams;
+        const change = switch (changes[0]) {
+            .object => |value| value,
+            else => return error.InvalidParams,
+        };
+        if (change.get("range") != null or change.get("rangeLength") != null) {
+            return error.InvalidParams;
         }
-        try writeEmptyResult(json);
+        const text = try requireStringField(change, "text");
+        const text_copy = try self.allocator.dupe(u8, text);
+        self.allocator.free(document.text);
+        document.* = .{ .version = version, .text = text_copy };
+    }
+
+    fn handleDidClose(self: *LspServer, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const removed = self.documents.fetchRemove(uri) orelse return error.InvalidParams;
+        self.allocator.free(removed.key);
+        self.allocator.free(removed.value.text);
     }
     
     fn handleDiagnostics(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
@@ -815,6 +916,24 @@ pub const LspServer = struct {
     };
 };
 
+fn initializeTestServer(server: *LspServer) !void {
+    const response = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
+    );
+    server.allocator.free(response);
+}
+
+fn expectNoResponse(server: *LspServer, message: []const u8) !void {
+    switch (try server.handleMessage(message)) {
+        .no_response => {},
+        .response => |response| {
+            server.allocator.free(response);
+            return error.UnexpectedResponse;
+        },
+        .exit => return error.UnexpectedExit,
+    }
+}
+
 test "LSP server initialization" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -823,7 +942,7 @@ test "LSP server initialization" {
     var server = LspServer.init(allocator);
     defer server.deinit();
 
-    try std.testing.expect(!server.initialized);
+    try std.testing.expectEqual(LspServer.Lifecycle.pre_initialize, server.lifecycle);
     try std.testing.expect(server.root_uri == null);
 }
 
@@ -842,9 +961,18 @@ test "LSP handle initialize request" {
     const response = try server.handleRequest(request);
     defer allocator.free(response);
 
-    try std.testing.expect(server.initialized);
-    try std.testing.expect(std.mem.containsAtLeast(u8, response, 1, "capabilities"));
-    try std.testing.expect(std.mem.containsAtLeast(u8, response, 1, "textDocumentSync"));
+    try std.testing.expectEqual(LspServer.Lifecycle.running, server.lifecycle);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
+    defer parsed.deinit();
+    const capabilities = parsed.value.object
+        .get("result").?.object
+        .get("capabilities").?.object;
+    const synchronization = capabilities.get("textDocumentSync").?.object;
+    try std.testing.expect(synchronization.get("openClose").?.bool);
+    try std.testing.expectEqual(@as(i64, 1), synchronization.get("change").?.integer);
+    try std.testing.expect(capabilities.get("hoverProvider") == null);
+    try std.testing.expect(capabilities.get("completionProvider") == null);
+    try std.testing.expect(capabilities.get("diagnosticProvider") == null);
 }
 
 test "LSP returns structured JSON-RPC envelope errors" {
@@ -924,10 +1052,11 @@ test "LSP serializer escapes handler strings and dynamic object fields" {
     defer server.deinit();
     const uri = "file:///a\"b.css";
 
-    const opened = try server.handleRequest(
-        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a\\\"b.css\",\"version\":1,\"text\":\".foo{color:red}.foo{}\"}}}",
+    try initializeTestServer(&server);
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a\\\"b.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".foo{color:red}.foo{}\"}}}",
     );
-    allocator.free(opened);
 
     const hover = try server.handleRequest(
         "{\"jsonrpc\":\"2.0\",\"id\":\"hover\\n\\\"id\",\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///a\\\"b.css\"},\"position\":{\"line\":0,\"character\":5}}}",
@@ -967,11 +1096,21 @@ test "LSP serializes every handler response as complete JSON" {
     var server = LspServer.init(allocator);
     defer server.deinit();
 
+    try initializeTestServer(&server);
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}",
+    );
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".foo{color:red}.foo{}\"}}}",
+    );
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\",\"version\":2},\"contentChanges\":[{\"text\":\".foo{color:blue}.foo{}\"}]}}",
+    );
+
     const requests = [_][]const u8{
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialized\",\"params\":{}}",
-        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\",\"version\":1,\"text\":\".foo{color:red}.foo{}\"}}}",
-        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\",\"version\":2},\"contentChanges\":[{\"text\":\".foo{color:blue}.foo{}\"}]}}",
         "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/diagnostics\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":6}}}",
         "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":0}}}",
@@ -980,7 +1119,7 @@ test "LSP serializes every handler response as complete JSON" {
         "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2},\"newName\":\"bar\"}}",
     };
 
-    for (requests, 1..) |request, id| {
+    for (requests, 5..) |request, id| {
         const response = try server.handleRequest(request);
         defer allocator.free(response);
         var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
@@ -992,49 +1131,68 @@ test "LSP serializes every handler response as complete JSON" {
     }
 }
 
-test "LSP document ownership survives response serialization failure" {
+test "LSP document synchronization is balanced full and version ordered" {
     const allocator = std.testing.allocator;
     var server = LspServer.init(allocator);
     defer server.deinit();
 
-    var request = try std.json.parseFromSlice(
-        std.json.Value,
-        allocator,
-        "{\"params\":{\"textDocument\":{\"uri\":\"file:///ownership.css\",\"version\":1,\"text\":\".a{}\"}}}",
-        .{},
+    try initializeTestServer(&server);
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\",\"languageId\":\"css\",\"version\":5,\"text\":\".v5{}\"}}}",
     );
-    defer request.deinit();
+    try std.testing.expectEqual(@as(i32, 5), server.documents.get("file:///versions.css").?.version);
+    try std.testing.expectEqualStrings(".v5{}", server.documents.get("file:///versions.css").?.text);
 
-    var output_buffer: [1]u8 = undefined;
-    var output = std.Io.Writer.fixed(&output_buffer);
-    var json: std.json.Stringify = .{ .writer = &output };
-    try json.beginObject();
-    try std.testing.expectError(
-        error.WriteFailed,
-        server.handleDidOpen(&json, request.value.object),
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\",\"languageId\":\"css\",\"version\":6,\"text\":\".duplicate{}\"}}}",
     );
+    try std.testing.expectEqual(@as(i32, 5), server.documents.get("file:///versions.css").?.version);
+    try std.testing.expectEqualStrings(".v5{}", server.documents.get("file:///versions.css").?.text);
 
-    const document = server.documents.get("file:///ownership.css").?;
-    try std.testing.expectEqualStrings(".a{}", document.text);
-
-    var change_request = try std.json.parseFromSlice(
-        std.json.Value,
-        allocator,
-        "{\"params\":{\"textDocument\":{\"uri\":\"file:///ownership.css\",\"version\":2},\"contentChanges\":[{\"text\":\".b{}\"}]}}",
-        .{},
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\",\"version\":5},\"contentChanges\":[{\"text\":\".stale{}\"}]}}",
     );
-    defer change_request.deinit();
+    try std.testing.expectEqualStrings(".v5{}", server.documents.get("file:///versions.css").?.text);
 
-    output = std.Io.Writer.fixed(&output_buffer);
-    json = .{ .writer = &output };
-    try json.beginObject();
-    try std.testing.expectError(
-        error.WriteFailed,
-        server.handleDidChange(&json, change_request.value.object),
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\",\"version\":7},\"contentChanges\":[{\"text\":\".v7{}\"}]}}",
     );
-    const changed_document = server.documents.get("file:///ownership.css").?;
-    try std.testing.expectEqual(@as(i32, 2), changed_document.version);
-    try std.testing.expectEqualStrings(".b{}", changed_document.text);
+    try std.testing.expectEqual(@as(i32, 7), server.documents.get("file:///versions.css").?.version);
+    try std.testing.expectEqualStrings(".v7{}", server.documents.get("file:///versions.css").?.text);
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\",\"version\":8},\"contentChanges\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"text\":\"x\"}]}}",
+    );
+    try std.testing.expectEqual(@as(i32, 7), server.documents.get("file:///versions.css").?.version);
+    try std.testing.expectEqualStrings(".v7{}", server.documents.get("file:///versions.css").?.text);
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\"}}}",
+    );
+    try std.testing.expect(server.documents.get("file:///versions.css") == null);
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\",\"version\":9},\"contentChanges\":[{\"text\":\".closed{}\"}]}}",
+    );
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\"}}}",
+    );
+    try std.testing.expect(server.documents.get("file:///versions.css") == null);
+
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///versions.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".reopened{}\"}}}",
+    );
+    try std.testing.expectEqual(@as(i32, 1), server.documents.get("file:///versions.css").?.version);
+    try std.testing.expectEqualStrings(".reopened{}", server.documents.get("file:///versions.css").?.text);
 }
 
 fn exerciseLspJsonAllocationFailures(allocator: std.mem.Allocator) !void {
@@ -1059,15 +1217,42 @@ fn exerciseLspDocumentAllocationFailures(allocator: std.mem.Allocator) !void {
     var server = LspServer.init(allocator);
     defer server.deinit();
 
-    const opened = try server.handleRequest(
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///allocation.css\",\"version\":1,\"text\":\".a{color:red}\"}}}",
+    const initialized = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
     );
-    allocator.free(opened);
+    allocator.free(initialized);
 
-    const changed = try server.handleRequest(
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///allocation.css\",\"version\":2},\"contentChanges\":[{\"text\":\".a{color:blue}\"}]}}",
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///allocation.css\",\"languageId\":\"css\",\"version\":1,\"text\":\".a{color:red}\"}}}",
     );
-    allocator.free(changed);
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///allocation.css\",\"version\":2},\"contentChanges\":[{\"text\":\".a{color:blue}\"}]}}",
+    );
+    try expectNoResponse(
+        &server,
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"file:///allocation.css\"}}}",
+    );
+}
+
+fn exerciseLspLifecycleAllocationFailures(allocator: std.mem.Allocator) !void {
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    const initialized = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file:///allocation-root\",\"capabilities\":{}}}",
+    );
+    allocator.free(initialized);
+    const shutdown = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"shutdown\"}",
+    );
+    allocator.free(shutdown);
+    const exited = try server.handleMessage(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}",
+    );
+    try std.testing.expect(exited == .exit);
+    try std.testing.expectEqual(ExitStatus.success, exited.exit);
 }
 
 test "LSP JSON parsing and responses handle every allocation failure" {
@@ -1086,6 +1271,11 @@ test "LSP JSON parsing and responses handle every allocation failure" {
         exerciseLspDocumentAllocationFailures,
         .{},
     );
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLspLifecycleAllocationFailures,
+        .{},
+    );
 }
 
 test "LSP diagnostics reject unavailable formats without CSS fallback" {
@@ -1095,6 +1285,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
 
     var server = LspServer.init(allocator);
     defer server.deinit();
+    try initializeTestServer(&server);
 
     const cases = [_]struct {
         open: []const u8,
@@ -1102,7 +1293,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
     }{
         .{
             .open =
-            \\{"jsonrpc":"2.0","id":1,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.scss","version":1,"text":"$color: red;"}}}
+            \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.scss","languageId":"scss","version":1,"text":"$color: red;"}}}
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.scss"}}}
@@ -1110,7 +1301,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
         },
         .{
             .open =
-            \\{"jsonrpc":"2.0","id":3,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.sass","version":1,"text":"$color: red"}}}
+            \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.sass","languageId":"sass","version":1,"text":"$color: red"}}}
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":4,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.sass"}}}
@@ -1118,7 +1309,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
         },
         .{
             .open =
-            \\{"jsonrpc":"2.0","id":5,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.less","version":1,"text":"@color: red;"}}}
+            \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.less","languageId":"less","version":1,"text":"@color: red;"}}}
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":6,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.less"}}}
@@ -1126,7 +1317,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
         },
         .{
             .open =
-            \\{"jsonrpc":"2.0","id":7,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.styl","version":1,"text":"$color = red"}}}
+            \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.styl","languageId":"stylus","version":1,"text":"$color = red"}}}
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":8,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.styl"}}}
@@ -1134,7 +1325,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
         },
         .{
             .open =
-            \\{"jsonrpc":"2.0","id":9,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///library-only.module.css","version":1,"text":".card{x:1}"}}}
+            \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///library-only.module.css","languageId":"css","version":1,"text":".card{x:1}"}}}
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":10,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///library-only.module.css"}}}
@@ -1142,7 +1333,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
         },
         .{
             .open =
-            \\{"jsonrpc":"2.0","id":11,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.css.js","version":1,"text":"const styles = `\\n.card { color: ${theme.color}; }\\n`;"}}}
+            \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.css.js","languageId":"javascript","version":1,"text":"const styles = `\\n.card { color: ${theme.color}; }\\n`;"}}}
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":12,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.css.js"}}}
@@ -1150,7 +1341,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
         },
         .{
             .open =
-            \\{"jsonrpc":"2.0","id":13,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.css.ts","version":1,"text":"const styles = `\\n.card { color: red; }\\n`;"}}}
+            \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.css.ts","languageId":"typescript","version":1,"text":"const styles = `\\n.card { color: red; }\\n`;"}}}
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":14,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.css.ts"}}}
@@ -1158,7 +1349,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
         },
         .{
             .open =
-            \\{"jsonrpc":"2.0","id":15,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.postcss","version":1,"text":"@custom-media --narrow (width < 40rem); .card { color: red; }"}}}
+            \\{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///removed.postcss","languageId":"postcss","version":1,"text":"@custom-media --narrow (width < 40rem); .card { color: red; }"}}}
             ,
             .diagnostics =
             \\{"jsonrpc":"2.0","id":16,"method":"textDocument/diagnostics","params":{"textDocument":{"uri":"file:///removed.postcss"}}}
@@ -1167,8 +1358,7 @@ test "LSP diagnostics reject unavailable formats without CSS fallback" {
     };
 
     for (cases) |case| {
-        const opened = try server.handleRequest(case.open);
-        defer allocator.free(opened);
+        try expectNoResponse(&server, case.open);
         const diagnostics = try server.handleRequest(case.diagnostics);
         defer allocator.free(diagnostics);
         try std.testing.expect(std.mem.containsAtLeast(
