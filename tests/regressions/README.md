@@ -24,6 +24,7 @@ The legacy code-generator transform fields remain active containment assertions 
 | Selector simplification crash | Verified as an unchanged no-pass boundary through the stable optimizer preset | A future selector simplification pass still requires a new package and acceptance suite. |
 | Profiling lifecycle crash | Verified by `PROF-001` | `PROF-010` owns real allocator-backed metrics. |
 | Watch duplicate reads, ignored imports, and unchanged-error loops | Verified by `WATCH-001`; the root snapshot is compiled directly, local imports are deduplicated, and unchanged failures wait for a real state transition | `WATCH-001` |
+| Parallel ownership, cancellation, and commit order | Verified by `PARALLEL-001`; at most eight queued workers own separate allocators, cancel unclaimed work on failure, join before cleanup, and commit only in argument order | `PARALLEL-001` |
 | Source-map no-op behavior | Explicitly unavailable via `CLI-002` | `MAP-001` |
 | Browser-target prefix behavior | Verified at the library/test-driver boundary by `PREFIX-001` and `PREFIX-002`; stable target flags remain explicitly unavailable via `CLI-002` and are not part of `--optimize` | Later public API/CLI wiring |
 | Dead-code and critical-CSS selector filtering | Verified as two bounded experimental library/test-driver modes by `TREE-001`; extraction flags remain unavailable via `CLI-002` and are not part of `--optimize` | Later public API/CLI wiring and matrix expansion |

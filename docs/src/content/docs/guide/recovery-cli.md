@@ -44,6 +44,12 @@ The watcher reads and hashes the root file once per poll and passes those exact 
 
 The root fingerprint is recorded before every compile attempt. An unchanged read error, parser/transform diagnostic, or output failure is therefore reported once and waits for a real root/dependency transition instead of looping twice per second. A failed parse cannot produce new dependency evidence, so the watcher conservatively retains the last successfully parsed dependency set. Duplicate imports resolving to the same platform path are polled once; missing or temporarily unreadable dependencies remain tracked and their creation or recovery counts as a change.
 
+## Batch execution
+
+Multi-input compilation uses a mutex-protected dynamic work index rather than static input chunks. Worker count is the smaller of the input count, detected CPU count, and an explicit process-local cap of eight. Each task owns a separate allocator that remains alive through result cleanup; workers do not concurrently allocate result data through the CLI's planning allocator.
+
+The first observed read, compile, or diagnostic failure closes the queue. Work already running completes because the public compile call has no unsafe asynchronous interruption point, while unclaimed tasks are marked cancelled and never opened. Every started worker is joined even if a later thread cannot be created. Only an all-successful joined batch reaches the commit loop, which visits tasks in original argument order for atomic writes and status messages. Failure diagnostics are likewise rendered by input order, independent of scheduling. This preserves the no-output-on-compile-failure contract while keeping CLI-012's documented per-destination limitation for operational failures during the later commit loop.
+
 ## Output safety
 
 Before reading and compiling inputs, the CLI plans file destinations and rejects paths that resolve to an input, including relative aliases, symlinks, and hard links. It also rejects duplicate final destinations. The `-` stream sentinel is never treated as a filesystem path.

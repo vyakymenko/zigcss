@@ -9,6 +9,7 @@ const experimental_notice = "Warning: ZigCSS 0.3 is an experimental recovery bui
 const unsafe_transforms_message = "legacy and non-verified transform paths are disabled pending safety validation";
 const max_input_bytes = 10 * 1024 * 1024;
 const max_batch_output_basename_bytes = 128;
+const max_batch_workers = 8;
 const stdin_source_name = "<stdin>";
 const stdio_path = "-";
 const exit_compile_failure: u8 = 1;
@@ -23,6 +24,16 @@ const CompileConfig = struct {
     profile: bool = false,
 };
 
+const CompileTaskAllocator = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false });
+
+const CompileTaskState = enum {
+    pending,
+    running,
+    succeeded,
+    failed,
+    cancelled,
+};
+
 const CompileTask = struct {
     input_file: []const u8,
     output_file: []const u8,
@@ -32,21 +43,38 @@ const CompileTask = struct {
     result: ?zigcss.CompileResult = null,
     err: ?[]const u8 = null,
     err_owned: bool = false,
+    state: CompileTaskState = .pending,
+    allocator_state: CompileTaskAllocator = .{},
+
+    fn allocator(self: *CompileTask) std.mem.Allocator {
+        return self.allocator_state.allocator();
+    }
+
+    fn deinit(self: *CompileTask, planning_allocator: std.mem.Allocator) void {
+        const task_allocator = self.allocator();
+        if (self.result) |*result| result.deinit();
+        if (self.err_owned) task_allocator.free(self.err.?);
+        const allocator_check = self.allocator_state.deinit();
+        std.debug.assert(allocator_check == .ok);
+        planning_allocator.free(self.output_file);
+    }
 };
 
 fn setTaskError(
     task: *CompileTask,
-    allocator: std.mem.Allocator,
     comptime format: []const u8,
     args: anytype,
     fallback: []const u8,
 ) void {
+    const allocator = task.allocator();
     task.err = std.fmt.allocPrint(allocator, format, args) catch {
         task.err = fallback;
         task.err_owned = false;
+        task.state = .failed;
         return;
     };
     task.err_owned = true;
+    task.state = .failed;
 }
 
 fn compileCss(
@@ -484,10 +512,11 @@ fn watchFile(allocator: std.mem.Allocator, config: CompileConfig) !void {
     }
 }
 
-fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
+fn compileTask(task: *CompileTask) bool {
+    const allocator = task.allocator();
     const input = std.fs.cwd().readFileAlloc(allocator, task.input_file, max_input_bytes) catch |err| {
-        setTaskError(task, allocator, "Failed to read {s}: {s}", .{ task.input_file, @errorName(err) }, "Read error");
-        return;
+        setTaskError(task, "Failed to read {s}: {s}", .{ task.input_file, @errorName(err) }, "Read error");
+        return false;
     };
     defer allocator.free(input);
 
@@ -499,16 +528,17 @@ fn compileTask(task: *CompileTask, allocator: std.mem.Allocator) void {
         task.optimize,
         task.minify,
     ) catch |err| {
-        setTaskError(task, allocator, "Compilation error: {s}", .{@errorName(err)}, "Compilation error");
-        return;
+        setTaskError(task, "Compilation error: {s}", .{@errorName(err)}, "Compilation error");
+        return false;
     };
     task.result = result.take();
     result.deinit();
+    task.state = if (hasErrorDiagnostics(task.result.?.diagnostics)) .failed else .succeeded;
+    return task.state == .succeeded;
 }
 
 fn taskFailed(task: *const CompileTask) bool {
-    if (task.err != null or task.result == null) return true;
-    return hasErrorDiagnostics(task.result.?.diagnostics);
+    return task.state == .failed;
 }
 
 fn printTaskFailure(task: *const CompileTask) void {
@@ -521,57 +551,82 @@ fn printTaskFailure(task: *const CompileTask) void {
     }
 }
 
-fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !void {
-    const num_threads = @min(tasks.len, std.Thread.getCpuCount() catch 4);
-    
-    if (tasks.len == 1) {
-        compileTask(&tasks[0], allocator);
-        if (taskFailed(&tasks[0])) {
-            printTaskFailure(&tasks[0]);
-            return error.CompileError;
+const BatchWorkQueue = struct {
+    tasks: []CompileTask,
+    mutex: std.Thread.Mutex = .{},
+    next_index: usize = 0,
+    cancelled: bool = false,
+    failed: bool = false,
+
+    fn claim(self: *BatchWorkQueue) ?*CompileTask {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.cancelled or self.next_index >= self.tasks.len) return null;
+
+        const task = &self.tasks[self.next_index];
+        self.next_index += 1;
+        std.debug.assert(task.state == .pending);
+        task.state = .running;
+        return task;
+    }
+
+    fn cancel(self: *BatchWorkQueue) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.cancelled = true;
+    }
+
+    fn cancelForFailure(self: *BatchWorkQueue) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.failed = true;
+        self.cancelled = true;
+    }
+
+    fn markPendingCancelled(self: *BatchWorkQueue) void {
+        for (self.tasks) |*task| {
+            if (task.state == .pending) task.state = .cancelled;
         }
-        try writeOutputFile(tasks[0].output_file, tasks[0].result.?.css);
-        std.debug.print("Compiled: {s} -> {s}\n", .{ tasks[0].input_file, tasks[0].output_file });
-        return;
     }
+};
 
-    var threads = try std.ArrayList(std.Thread).initCapacity(allocator, num_threads);
-    defer threads.deinit(allocator);
-    
-    var mutex = std.Thread.Mutex{};
-    var completed: usize = 0;
-    var has_error = false;
-
-    const batch_size = (tasks.len + num_threads - 1) / num_threads;
-    var thread_idx: usize = 0;
-    
-    while (thread_idx < num_threads) : (thread_idx += 1) {
-        const start = thread_idx * batch_size;
-        const end = @min(start + batch_size, tasks.len);
-        
-        if (start >= tasks.len) break;
-        
-        const thread = try std.Thread.spawn(.{}, struct {
-            fn worker(tasks_slice: []CompileTask, alloc: std.mem.Allocator, mtx: *std.Thread.Mutex, done: *usize, err: *bool) void {
-                for (tasks_slice) |*task| {
-                    compileTask(task, alloc);
-                    
-                    mtx.lock();
-                    done.* += 1;
-                    if (taskFailed(task)) err.* = true;
-                    mtx.unlock();
-                }
-            }
-        }.worker, .{ tasks[start..end], allocator, &mutex, &completed, &has_error });
-        
-        try threads.append(allocator, thread);
+fn batchWorker(queue: *BatchWorkQueue) void {
+    while (queue.claim()) |task| {
+        if (!compileTask(task)) {
+            queue.cancelForFailure();
+            return;
+        }
     }
+}
 
-    for (threads.items) |thread| {
-        thread.join();
+fn batchWorkerCount(task_count: usize, cpu_count: usize) usize {
+    if (task_count == 0) return 0;
+    return @min(task_count, @min(@max(cpu_count, 1), max_batch_workers));
+}
+
+fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !void {
+    if (tasks.len == 0) return;
+    const cpu_count = std.Thread.getCpuCount() catch 4;
+    const worker_count = batchWorkerCount(tasks.len, cpu_count);
+    const threads = try allocator.alloc(std.Thread, worker_count);
+    defer allocator.free(threads);
+
+    var queue = BatchWorkQueue{ .tasks = tasks };
+    var spawned: usize = 0;
+    var spawn_error: ?anyerror = null;
+    while (spawned < worker_count) {
+        threads[spawned] = std.Thread.spawn(.{}, batchWorker, .{&queue}) catch |err| {
+            queue.cancel();
+            spawn_error = err;
+            break;
+        };
+        spawned += 1;
     }
+    for (threads[0..spawned]) |thread| thread.join();
+    queue.markPendingCancelled();
 
-    if (has_error) {
+    if (spawn_error) |err| return err;
+    if (queue.failed) {
         for (tasks) |*task| {
             if (taskFailed(task)) printTaskFailure(task);
         }
@@ -579,6 +634,7 @@ fn compileFilesParallel(allocator: std.mem.Allocator, tasks: []CompileTask) !voi
     }
 
     for (tasks) |*task| {
+        if (task.state != .succeeded) return error.CompileError;
         try writeOutputFile(task.output_file, task.result.?.css);
         std.debug.print("Compiled: {s} -> {s}\n", .{ task.input_file, task.output_file });
     }
@@ -793,11 +849,15 @@ fn findOutputCollision(allocator: std.mem.Allocator, input_paths: []const []cons
     return null;
 }
 
-fn rejectOutputCollision(collision: OutputCollision) noreturn {
+fn printOutputCollision(collision: OutputCollision) void {
     switch (collision.kind) {
         .output_is_input => std.debug.print("Error: output path resolves to an input: {s}\n", .{collision.path}),
         .duplicate_output => std.debug.print("Error: multiple inputs resolve to the same output: {s}\n", .{collision.path}),
     }
+}
+
+fn rejectOutputCollision(collision: OutputCollision) noreturn {
+    printOutputCollision(collision);
     std.process.exit(exit_usage);
 }
 
@@ -910,6 +970,52 @@ fn determineBatchOutputFile(
     };
     defer allocator.free(output_basename);
     return std.fs.path.join(allocator, &.{ output_dir, output_basename });
+}
+
+fn compileBatch(
+    allocator: std.mem.Allocator,
+    input_files: []const []const u8,
+    output_dir: []const u8,
+    syntax: zigcss.Syntax,
+    optimize: bool,
+    minify: bool,
+) !void {
+    var tasks = try std.ArrayList(CompileTask).initCapacity(allocator, input_files.len);
+    defer {
+        for (tasks.items) |*task| task.deinit(allocator);
+        tasks.deinit(allocator);
+    }
+
+    for (input_files, 0..) |input, input_index| {
+        const out_file = try determineBatchOutputFile(
+            allocator,
+            input_files,
+            input_index,
+            output_dir,
+        );
+        tasks.append(allocator, CompileTask{
+            .input_file = input,
+            .output_file = out_file,
+            .syntax = syntax,
+            .optimize = optimize,
+            .minify = minify,
+        }) catch |err| {
+            allocator.free(out_file);
+            return err;
+        };
+    }
+
+    const planned_outputs = try allocator.alloc([]const u8, tasks.items.len);
+    defer allocator.free(planned_outputs);
+    for (tasks.items, 0..) |task, task_index| {
+        planned_outputs[task_index] = task.output_file;
+    }
+    if (try findOutputCollision(allocator, input_files, planned_outputs)) |collision| {
+        printOutputCollision(collision);
+        return error.BatchUsageError;
+    }
+
+    try compileFilesParallel(allocator, tasks.items);
 }
 
 fn experimentalFormatName(filename: []const u8) ?[]const u8 {
@@ -1113,44 +1219,18 @@ pub fn main() !void {
         };
     } else {
         const output_dir = output_file.?;
-
-        var tasks = try std.ArrayList(CompileTask).initCapacity(allocator, input_files.items.len);
-        defer {
-            for (tasks.items) |*task| {
-                allocator.free(task.output_file);
-                if (task.err_owned) allocator.free(task.err.?);
-                if (task.result) |*result| result.deinit();
+        compileBatch(
+            allocator,
+            input_files.items,
+            output_dir,
+            syntax,
+            optimize_flag,
+            minify_flag,
+        ) catch |err| {
+            if (err != error.CompileError and err != error.BatchUsageError) {
+                std.debug.print("Error: batch compilation failed: {s}\n", .{@errorName(err)});
             }
-            tasks.deinit(allocator);
-        }
-        
-        for (input_files.items, 0..) |input, input_index| {
-            const out_file = try determineBatchOutputFile(
-                allocator,
-                input_files.items,
-                input_index,
-                output_dir,
-            );
-            try tasks.append(allocator, CompileTask{
-                .input_file = input,
-                .output_file = out_file,
-                .syntax = syntax,
-                .optimize = optimize_flag,
-                .minify = minify_flag,
-            });
-        }
-
-        const planned_outputs = try allocator.alloc([]const u8, tasks.items.len);
-        defer allocator.free(planned_outputs);
-        for (tasks.items, 0..) |task, task_index| {
-            planned_outputs[task_index] = task.output_file;
-        }
-        if (try findOutputCollision(allocator, input_files.items, planned_outputs)) |collision| {
-            rejectOutputCollision(collision);
-        }
-
-        compileFilesParallel(allocator, tasks.items) catch {
-            std.process.exit(exit_compile_failure);
+            std.process.exit(if (err == error.BatchUsageError) exit_usage else exit_compile_failure);
         };
     }
 }
@@ -1305,6 +1385,93 @@ test "watch tracker records source state before a failed compile attempt" {
     const unavailable = WatchFingerprint{ .unavailable = error.FileNotFound };
     try std.testing.expect(tracker.observeSource(unavailable));
     try std.testing.expect(!tracker.observeSource(unavailable));
+}
+
+fn testCompileTask(name: []const u8) CompileTask {
+    return .{
+        .input_file = name,
+        .output_file = name,
+        .syntax = .css,
+        .optimize = false,
+        .minify = false,
+    };
+}
+
+test "parallel worker count has an explicit process-local cap" {
+    try std.testing.expectEqual(@as(usize, 0), batchWorkerCount(0, 128));
+    try std.testing.expectEqual(@as(usize, 1), batchWorkerCount(10, 0));
+    try std.testing.expectEqual(@as(usize, 3), batchWorkerCount(3, 128));
+    try std.testing.expectEqual(max_batch_workers, batchWorkerCount(1000, 128));
+}
+
+test "parallel queue cancellation leaves unclaimed work explicitly cancelled" {
+    var tasks = [_]CompileTask{
+        testCompileTask("zero.css"),
+        testCompileTask("one.css"),
+        testCompileTask("two.css"),
+        testCompileTask("three.css"),
+    };
+    var queue = BatchWorkQueue{ .tasks = &tasks };
+    const first = queue.claim() orelse return error.MissingClaimedTask;
+    const second = queue.claim() orelse return error.MissingClaimedTask;
+    try std.testing.expectEqualStrings("zero.css", first.input_file);
+    try std.testing.expectEqualStrings("one.css", second.input_file);
+    first.state = .failed;
+    second.state = .succeeded;
+    queue.cancelForFailure();
+    try std.testing.expect(queue.claim() == null);
+    queue.markPendingCancelled();
+    try std.testing.expect(queue.failed);
+    try std.testing.expectEqual(CompileTaskState.failed, tasks[0].state);
+    try std.testing.expectEqual(CompileTaskState.succeeded, tasks[1].state);
+    try std.testing.expectEqual(CompileTaskState.cancelled, tasks[2].state);
+    try std.testing.expectEqual(CompileTaskState.cancelled, tasks[3].state);
+}
+
+test "parallel tasks own independent allocator lifetimes" {
+    var first = testCompileTask("first.css");
+    var second = testCompileTask("second.css");
+    const first_allocator = first.allocator();
+    const second_allocator = second.allocator();
+    try std.testing.expect(first_allocator.ptr != second_allocator.ptr);
+
+    const first_bytes = try first_allocator.dupe(u8, "first");
+    const second_bytes = try second_allocator.dupe(u8, "second");
+    try std.testing.expectEqualStrings("first", first_bytes);
+    try std.testing.expectEqualStrings("second", second_bytes);
+    first_allocator.free(first_bytes);
+    second_allocator.free(second_bytes);
+    try std.testing.expect(first.allocator_state.deinit() == .ok);
+    try std.testing.expect(second.allocator_state.deinit() == .ok);
+}
+
+test "parallel batch failure unwinds every task allocator before returning" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "broken.css", .data = ".broken{missing}" });
+    try tmp.dir.writeFile(.{ .sub_path = "valid.css", .data = ".valid{color:green}" });
+    const directory = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(directory);
+    const broken = try std.fs.path.join(std.testing.allocator, &.{ directory, "broken.css" });
+    defer std.testing.allocator.free(broken);
+    const valid = try std.fs.path.join(std.testing.allocator, &.{ directory, "valid.css" });
+    defer std.testing.allocator.free(valid);
+    const output = try std.fs.path.join(std.testing.allocator, &.{ directory, "out" });
+    defer std.testing.allocator.free(output);
+    const inputs = [_][]const u8{ broken, valid };
+
+    try std.testing.expectError(
+        error.CompileError,
+        compileBatch(
+            std.testing.allocator,
+            &inputs,
+            output,
+            .css,
+            false,
+            true,
+        ),
+    );
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("out", .{}));
 }
 
 test "legacy compiler imports remain test-only" {

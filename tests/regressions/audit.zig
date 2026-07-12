@@ -334,6 +334,99 @@ test "stable batch CLI writes no outputs when one input has parser errors" {
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("out", .{}));
 }
 
+test "parallel batch commits outputs and status lines in argument order (PARALLEL-001)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const names = [_][]const u8{
+        "seven.css",
+        "two.css",
+        "nine.css",
+        "zero.css",
+        "five.css",
+        "one.css",
+        "eight.css",
+        "three.css",
+        "six.css",
+        "four.css",
+    };
+    for (names, 0..) |name, index| {
+        const css = try std.fmt.allocPrint(allocator, ".item-{d} {{ z-index: {d}; }}", .{ index, index });
+        defer allocator.free(css);
+        try tmp.dir.writeFile(.{ .sub_path = name, .data = css });
+    }
+
+    var argv: [names.len + 4][]const u8 = undefined;
+    @memcpy(argv[0..names.len], names[0..]);
+    argv[names.len] = "-o";
+    argv[names.len + 1] = "out";
+    argv[names.len + 2] = "--output-dir";
+    argv[names.len + 3] = "--minify";
+    var result = try runInDir(tmp.dir, &argv);
+    defer deinitRun(&result);
+    try expectSuccess(result);
+    try std.testing.expectEqual(names.len, countOccurrences(result.stderr, "Compiled: "));
+
+    var cursor: usize = 0;
+    for (names, 0..) |name, index| {
+        const output_path = try std.fs.path.join(allocator, &.{ "out", name });
+        defer allocator.free(output_path);
+        const line = try std.fmt.allocPrint(allocator, "Compiled: {s} -> {s}\n", .{ name, output_path });
+        defer allocator.free(line);
+        const position = std.mem.indexOfPos(u8, result.stderr, cursor, line) orelse return error.MissingOrderedCommit;
+        cursor = position + line.len;
+
+        const css = try tmp.dir.readFileAlloc(allocator, output_path, 1024);
+        defer allocator.free(css);
+        const expected = try std.fmt.allocPrint(allocator, ".item-{d}{{z-index:{d}}}", .{ index, index });
+        defer allocator.free(expected);
+        try std.testing.expectEqualStrings(expected, css);
+    }
+}
+
+test "parallel batch cancels queued reads after the first compile failure (PARALLEL-001)" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "broken.css", .data = ".broken { missing; color: red; }" });
+    try tmp.dir.writeFile(.{ .sub_path = "late.css", .data = ".late { color: green; }" });
+
+    var slow = try std.ArrayList(u8).initCapacity(allocator, 16 * 8192);
+    defer slow.deinit(allocator);
+    for (0..8192) |_| try slow.appendSlice(allocator, ".slow{color:red}");
+    const slow_names = [_][]const u8{
+        "slow-one.css",
+        "slow-two.css",
+        "slow-three.css",
+        "slow-four.css",
+        "slow-five.css",
+        "slow-six.css",
+        "slow-seven.css",
+    };
+    for (slow_names) |name| {
+        try tmp.dir.writeFile(.{ .sub_path = name, .data = slow.items });
+    }
+
+    var result = try runInDir(tmp.dir, &.{
+        "broken.css",
+        "slow-one.css",
+        "slow-two.css",
+        "slow-three.css",
+        "slow-four.css",
+        "slow-five.css",
+        "slow-six.css",
+        "slow-seven.css",
+        "missing.css",
+        "late.css",
+        "-o",
+        "out",
+        "--output-dir",
+        "--minify",
+    });
+    defer deinitRun(&result);
+    try expectFailureContaining(result, "broken.css:1:11: error CSS0007");
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "missing.css") == null);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("out", .{}));
+}
+
 test "verified optimizer CLI reaches the reviewed byte-stable fixed point" {
     const input = ".empty{}.a{color:#ffffff}.b{color:#fff}" ++
         ".c{width:calc(0px);margin-top:calc(1px + 0px);" ++

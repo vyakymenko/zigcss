@@ -123,6 +123,8 @@ test('the installed executable delegates CSS compilation to the public facade', 
   const main = read('src/main.zig')
   const runtime = main.split('\ntest "')[0]
   const watch = runtime.match(/fn watchFile\([\s\S]*?\n}\n\nconst CompileError/)
+  const parallel = runtime.match(/const BatchWorkQueue[\s\S]*?\n}\n\nconst CompileError/)
+  const batch = runtime.match(/fn compileBatch\([\s\S]*?\n}\n\nfn experimentalFormatName/)
 
   assert.match(runtime, /const zigcss = @import\("zigcss"\)/)
   assert.equal([...runtime.matchAll(/zigcss\.compile\(/g)].length, 1)
@@ -137,6 +139,15 @@ test('the installed executable delegates CSS compilation to the public facade', 
   assert.match(watch[0], /const input = readInput\(allocator, config\.input_file\)/)
   assert.match(watch[0], /compileLoadedFile\(allocator, config, input\)/)
   assert.doesNotMatch(watch[0], /compileFile\(/)
+  assert.ok(parallel, 'missing bounded parallel queue boundary')
+  assert.ok(batch, 'missing owned batch lifetime boundary')
+  assert.match(runtime, /const max_batch_workers = 8;/)
+  assert.match(runtime, /GeneralPurposeAllocator\(\.\{ \.thread_safe = false \}\)/)
+  assert.match(runtime, /fn compileTask\(task: \*CompileTask\) bool \{\s+const allocator = task\.allocator\(\)/)
+  assert.match(parallel[0], /queue\.cancelForFailure\(\)/)
+  assert.match(parallel[0], /threads\[0\.\.spawned\][\s\S]*thread\.join\(\)/)
+  assert.doesNotMatch(parallel[0], /batch_size|tasks_slice|completed/)
+  assert.match(batch[0], /for \(tasks\.items\) \|\*task\| task\.deinit\(allocator\)/)
   assert.match(read('.github/workflows/build.yml'), /npm run test:node-wrapper/)
 })
 
