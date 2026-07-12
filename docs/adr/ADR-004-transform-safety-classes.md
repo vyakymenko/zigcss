@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-11
 - Owners: ZigCSS transform and validation maintainers
-- Roadmap: `PASS-001`, `OPT-010` through `OPT-015`, `CUSTOM-001`, `LOGICAL-001`, `PREFIX-002`, and `TREE-001`
+- Roadmap: `PASS-001`, `OPT-010` through `OPT-015`, `VAL-001`, `MATH-001`, `CUSTOM-001`, `LOGICAL-001`, `PREFIX-002`, and `TREE-001`
 
 ## Context
 
@@ -46,6 +46,14 @@ A pass marked `verified` is invalid unless it has a validator and evidence for p
 These metadata flags record completed evidence. They do not replace the executable fixtures, allocation tests, independent parsing, computed-style checks, or pass-specific proof required by the development plan.
 
 Analysis results are facts rather than latent mutation authority. Duplicate-declaration analysis groups only within one ordered declaration-list segment, matches standard property names ASCII case-insensitively and custom properties case-sensitively, records every importance transition, and treats same-importance chains as potential compatibility fallbacks. It does not nominate a declaration for deletion without later typed property/value evidence.
+
+### Typed numeric prerequisite
+
+Semantic value rewrites depend on one immutable typed numeric layer rather than property-name heuristics. Its grammar, precedence, math constants, and unit taxonomy follow the current [CSS Values and Units Level 4](https://drafts.csswg.org/css-values-4/) Editor's Draft. Dimension maps, percentage hints, addition, multiplication, and inversion follow the [CSS Typed OM Level 1 type algebra](https://www.w3.org/TR/css-typed-om-1/). Container-relative units additionally track [CSS Conditional Rules Level 5](https://drafts.csswg.org/css-conditional/). Executable fixtures freeze the reviewed behavior so a later living-spec change is an intentional update.
+
+The numeric parser validates source ownership and complete nested spans, rejects unterminated or unsupported component trees, and enforces independent instruction, argument, and nesting limits. It produces a caller-owned flat postfix instruction stream with source envelopes and a result type; it never mutates the CSS AST or rewrites output. Dimensionally invalid expressions remain distinguishable from unsupported grammar and operational failures. Context-sensitive percentages receive a caller-supplied hint, while context-relative lengths retain their unit instead of being guessed into pixels.
+
+`VAL-001` supplies type evidence only. Folding, unit conversion, or shortening requires a later verified semantic-rewrite pass with pass-specific compatibility, finite-value, precision, output-equivalence, idempotence, and size evidence. Unknown units, unresolved substitutions such as `var()`, and compound result types therefore default to no rewrite.
 
 ### Deterministic planning
 

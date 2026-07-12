@@ -65,6 +65,10 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('lossless_cleanup')
     expect(adr).toContain('Safety classes are not an ordered permission ladder')
     expect(adr).toContain('defaults to verified analysis only')
+    expect(adr).toContain('https://drafts.csswg.org/css-values-4/')
+    expect(adr).toContain('https://www.w3.org/TR/css-typed-om-1/')
+    expect(adr).toContain('caller-owned flat postfix instruction stream')
+    expect(adr).toContain('`VAL-001` supplies type evidence only')
     expect(adr).toContain('does not enable `--optimize`')
   })
 

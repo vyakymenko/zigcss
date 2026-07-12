@@ -7,6 +7,7 @@ pub const recovery = @import("css/recovery.zig");
 pub const emitter = @import("css/emitter.zig");
 pub const equivalence = @import("css/equivalence.zig");
 pub const pipeline = @import("css/pipeline.zig");
+pub const numeric_value = @import("css/numeric_value.zig");
 
 test {
     _ = ast;
@@ -18,4 +19,5 @@ test {
     _ = emitter;
     _ = equivalence;
     _ = pipeline;
+    _ = numeric_value;
 }
