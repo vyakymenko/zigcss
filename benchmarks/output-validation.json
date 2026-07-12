@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "package": "lightningcss",
+    "version": "1.30.1",
+    "errorRecovery": false,
+    "minify": true
+  },
+  "limits": {
+    "timeoutMilliseconds": 120000,
+    "stdioBytes": 1048576,
+    "maxOutputFactor": 4,
+    "maxOutputExtraBytes": 4096
+  },
+  "corpora": [
+    "small-flat",
+    "medium-flat",
+    "large-flat"
+  ],
+  "tools": [
+    {
+      "id": "zigcss",
+      "arguments": [
+        "{input}",
+        "--minify",
+        "-o",
+        "{output}"
+      ],
+      "stderr": "experimental-warning"
+    },
+    {
+      "id": "esbuild",
+      "arguments": [
+        "{input}",
+        "--minify",
+        "--legal-comments=none",
+        "--log-level=error",
+        "--outfile={output}"
+      ],
+      "stderr": "empty"
+    },
+    {
+      "id": "lightningcss",
+      "arguments": [
+        "{input}",
+        "--minify",
+        "--output-file",
+        "{output}"
+      ],
+      "stderr": "empty"
+    }
+  ]
+}

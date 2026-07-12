@@ -231,13 +231,17 @@ pub fn build(b: *std.Build) void {
     bench_module.addAnonymousImport("benchmark-large-css", .{
         .root_source_file = b.path("benchmarks/corpora/v1/large.css"),
     });
+    bench_module.addImport("zigcss", library_module);
 
     const bench_exe = b.addExecutable(.{
         .name = "zigcss-bench",
         .root_module = bench_module,
     });
+    const bench_tests = b.addTest(.{ .root_module = bench_module });
+    const run_bench_tests = b.addRunArtifact(bench_tests);
+    test_step.dependOn(&run_bench_tests.step);
 
     const run_bench = b.addRunArtifact(bench_exe);
-    const bench_step = b.step("bench", "Run benchmarks");
+    const bench_step = b.step("bench", "Validate benchmark compiler outputs before timing");
     bench_step.dependOn(&run_bench.step);
 }

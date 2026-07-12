@@ -245,7 +245,7 @@ export function validateBenchmarkWorkflow(root = repositoryRoot) {
   const install = workflow.indexOf('npm ci --ignore-scripts')
   const corpora = workflow.indexOf('- name: Validate benchmark corpora')
   const toolchain = workflow.indexOf('- name: Validate benchmark toolchain')
-  const execution = workflow.indexOf('- name: Run Benchmarks')
+  const execution = workflow.indexOf('- name: Run validated benchmark smoke')
   const exactCommand = workflow.indexOf('npm run test:benchmark-tools && npm run check:benchmark-tools', toolchain)
   if (
     install === -1 ||
@@ -254,7 +254,7 @@ export function validateBenchmarkWorkflow(root = repositoryRoot) {
     exactCommand <= toolchain ||
     execution <= exactCommand
   ) {
-    fail('build workflow must verify locked local benchmark tools after corpora and before execution')
+    fail('build workflow must verify locked local benchmark tools after corpora and before the validated smoke')
   }
   return true
 }

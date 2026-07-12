@@ -261,5 +261,8 @@ jobs:
       - name: Validate benchmark toolchain
         run: npm run test:benchmark-tools && npm run check:benchmark-tools
 
-      - name: Run Benchmarks
+      - name: Validate benchmark outputs
+        run: npm run test:benchmark-output && npm run check:benchmark-output
+
+      - name: Run validated benchmark smoke
         run: zig build bench
