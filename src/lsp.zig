@@ -2,7 +2,6 @@ const std = @import("std");
 const parser = @import("parser.zig");
 const formats = @import("formats.zig");
 const error_module = @import("error.zig");
-const ast = @import("ast.zig");
 
 const unsupported_format_message = "Unsupported or removed stylesheet format";
 
@@ -11,7 +10,7 @@ pub const LspServer = struct {
     initialized: bool,
     root_uri: ?[]const u8 = null,
     documents: std.StringHashMap(Document),
-    
+
     // The hash-map key is the sole owned URI copy.
     const Document = struct {
         version: i32,
@@ -38,190 +37,325 @@ pub const LspServer = struct {
         }
     }
     
+    const JsonWriter = std.json.Stringify;
+    const JsonObject = std.json.ObjectMap;
+
     pub fn handleRequest(self: *LspServer, request: []const u8) ![]const u8 {
-        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        defer _ = gpa.deinit();
-        const temp_allocator = gpa.allocator();
-        
-        var json_tree = try std.json.parseFromSlice(
+        return self.handleRequestInner(request) catch |err| switch (err) {
+            error.WriteFailed => return error.OutOfMemory,
+            else => return err,
+        };
+    }
+
+    fn handleRequestInner(self: *LspServer, request: []const u8) ![]const u8 {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const root = std.json.parseFromSliceLeaky(
             std.json.Value,
-            temp_allocator,
+            arena.allocator(),
             request,
             .{},
-        );
-        defer json_tree.deinit();
-        
-        const root = json_tree.value;
-        const method = if (root.object.get("method")) |m| m.string else return error.InvalidRequest;
-        const id = root.object.get("id");
-        
-        var response = try std.ArrayList(u8).initCapacity(self.allocator, 512);
-        errdefer response.deinit(self.allocator);
-        
-        try response.writer(self.allocator).writeAll("{\"jsonrpc\":\"2.0\"");
-        
-        if (id) |request_id| {
-            try response.writer(self.allocator).print(",\"id\":", .{});
-            try self.writeJsonValue(response.writer(self.allocator), request_id);
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return self.writeErrorResponse(null, -32700, "Parse error"),
+        };
+
+        const object = switch (root) {
+            .object => |value| value,
+            else => return self.writeErrorResponse(null, -32600, "Invalid Request"),
+        };
+        const version = object.get("jsonrpc") orelse
+            return self.writeErrorResponse(null, -32600, "Invalid Request");
+        if (version != .string or !std.mem.eql(u8, version.string, "2.0")) {
+            return self.writeErrorResponse(null, -32600, "Invalid Request");
         }
-        
-        if (std.mem.eql(u8, method, "initialize")) {
-            try self.handleInitialize(&response, root);
-        } else if (std.mem.eql(u8, method, "initialized")) {
-            try response.writer(self.allocator).writeAll(",\"result\":{}");
-        } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
-            try self.handleDidOpen(&response, root);
-        } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
-            try self.handleDidChange(&response, root);
-        } else if (std.mem.eql(u8, method, "textDocument/diagnostics")) {
-            try self.handleDiagnostics(&response, root);
-        } else if (std.mem.eql(u8, method, "textDocument/hover")) {
-            try self.handleHover(&response, root);
-        } else if (std.mem.eql(u8, method, "textDocument/completion")) {
-            try self.handleCompletion(&response, root);
-        } else if (std.mem.eql(u8, method, "textDocument/definition")) {
-            try self.handleDefinition(&response, root);
-        } else if (std.mem.eql(u8, method, "textDocument/references")) {
-            try self.handleReferences(&response, root);
-        } else if (std.mem.eql(u8, method, "textDocument/rename")) {
-            try self.handleRename(&response, root);
-        } else {
-            try response.writer(self.allocator).print(",\"error\":{{\"code\":-32601,\"message\":\"Method not found\"}}", .{});
-        }
-        
-        try response.append(self.allocator, '}');
-        return try response.toOwnedSlice(self.allocator);
-    }
-    
-    fn writeJsonValue(self: *LspServer, writer: anytype, value: std.json.Value) !void {
-        switch (value) {
-            .string => |s| try writer.print("\"{s}\"", .{s}),
-            .number_string => |s| try writer.print("\"{s}\"", .{s}),
-            .integer => |i| try writer.print("{}", .{i}),
-            .float => |f| try writer.print("{}", .{f}),
-            .bool => |b| try writer.print("{}", .{b}),
-            .null => try writer.writeAll("null"),
-            .array => |arr| {
-                try writer.writeAll("[");
-                for (arr.items, 0..) |item, i| {
-                    if (i > 0) try writer.writeAll(",");
-                    try self.writeJsonValue(writer, item);
-                }
-                try writer.writeAll("]");
-            },
-            .object => |obj| {
-                try writer.writeAll("{");
-                var first = true;
-                var it = obj.iterator();
-                while (it.next()) |entry| {
-                    if (!first) try writer.writeAll(",");
-                    first = false;
-                    try writer.print("\"{s}\":", .{entry.key_ptr.*});
-                    try self.writeJsonValue(writer, entry.value_ptr.*);
-                }
-                try writer.writeAll("}");
-            },
-        }
-    }
-    
-    fn handleInitialize(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        if (params.object.get("rootUri")) |root_uri_val| {
-            if (root_uri_val.string.len > 0) {
-                self.root_uri = try self.allocator.dupe(u8, root_uri_val.string);
+        const method_value = object.get("method") orelse
+            return self.writeErrorResponse(null, -32600, "Invalid Request");
+        const method = switch (method_value) {
+            .string => |value| value,
+            else => return self.writeErrorResponse(null, -32600, "Invalid Request"),
+        };
+        const id = object.get("id");
+        if (id) |value| {
+            if (!isValidRequestId(value)) {
+                return self.writeErrorResponse(null, -32600, "Invalid Request");
             }
+        }
+        return self.writeDispatchResponse(object, method, id);
+    }
+
+    fn writeDispatchResponse(
+        self: *LspServer,
+        root: JsonObject,
+        method: []const u8,
+        id: ?std.json.Value,
+    ) ![]const u8 {
+        var output: std.Io.Writer.Allocating = .init(self.allocator);
+        defer output.deinit();
+        var json: JsonWriter = .{ .writer = &output.writer };
+        try writeResponsePrefix(&json, id);
+
+        self.dispatch(&json, root, method) catch |err| switch (err) {
+            error.InvalidParams => try writeErrorField(&json, -32602, "Invalid params"),
+            else => return err,
+        };
+        try json.endObject();
+        return try output.toOwnedSlice();
+    }
+
+    fn dispatch(
+        self: *LspServer,
+        json: *JsonWriter,
+        root: JsonObject,
+        method: []const u8,
+    ) !void {
+        if (std.mem.eql(u8, method, "initialize")) {
+            try self.handleInitialize(json, root);
+        } else if (std.mem.eql(u8, method, "initialized")) {
+            try writeEmptyResult(json);
+        } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
+            try self.handleDidOpen(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
+            try self.handleDidChange(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/diagnostics")) {
+            try self.handleDiagnostics(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/hover")) {
+            try self.handleHover(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/completion")) {
+            try self.handleCompletion(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/definition")) {
+            try self.handleDefinition(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/references")) {
+            try self.handleReferences(json, root);
+        } else if (std.mem.eql(u8, method, "textDocument/rename")) {
+            try self.handleRename(json, root);
+        } else {
+            try writeErrorField(json, -32601, "Method not found");
+        }
+    }
+
+    fn writeErrorResponse(
+        self: *LspServer,
+        id: ?std.json.Value,
+        code: i32,
+        message: []const u8,
+    ) ![]const u8 {
+        var output: std.Io.Writer.Allocating = .init(self.allocator);
+        defer output.deinit();
+        var json: JsonWriter = .{ .writer = &output.writer };
+        try writeResponsePrefix(&json, id);
+        try writeErrorField(&json, code, message);
+        try json.endObject();
+        return try output.toOwnedSlice();
+    }
+
+    fn writeResponsePrefix(json: *JsonWriter, id: ?std.json.Value) !void {
+        try json.beginObject();
+        try json.objectField("jsonrpc");
+        try json.write("2.0");
+        try json.objectField("id");
+        if (id) |value| try json.write(value) else try json.write(null);
+    }
+
+    fn writeErrorField(json: *JsonWriter, code: i32, message: []const u8) !void {
+        try json.objectField("error");
+        try json.beginObject();
+        try json.objectField("code");
+        try json.write(code);
+        try json.objectField("message");
+        try json.write(message);
+        try json.endObject();
+    }
+
+    fn writeEmptyResult(json: *JsonWriter) !void {
+        try json.objectField("result");
+        try json.beginObject();
+        try json.endObject();
+    }
+
+    fn writeDiagnostic(
+        json: *JsonWriter,
+        start_line: i64,
+        start_character: i64,
+        end_line: i64,
+        end_character: i64,
+        message: []const u8,
+    ) !void {
+        try json.write(.{
+            .range = .{
+                .start = .{ .line = start_line, .character = start_character },
+                .end = .{ .line = end_line, .character = end_character },
+            },
+            .severity = @as(i32, 1),
+            .message = message,
+            .source = "zigcss",
+        });
+    }
+
+    fn isValidRequestId(value: std.json.Value) bool {
+        return switch (value) {
+            .string, .integer, .float, .number_string, .null => true,
+            else => false,
+        };
+    }
+
+    fn requireObjectField(object: JsonObject, name: []const u8) !JsonObject {
+        const value = object.get(name) orelse return error.InvalidParams;
+        return switch (value) {
+            .object => |result| result,
+            else => error.InvalidParams,
+        };
+    }
+
+    fn requireStringField(object: JsonObject, name: []const u8) ![]const u8 {
+        const value = object.get(name) orelse return error.InvalidParams;
+        return switch (value) {
+            .string => |result| result,
+            else => error.InvalidParams,
+        };
+    }
+
+    fn requireIntegerField(object: JsonObject, name: []const u8) !i64 {
+        const value = object.get(name) orelse return error.InvalidParams;
+        return switch (value) {
+            .integer => |result| result,
+            else => error.InvalidParams,
+        };
+    }
+
+    fn optionalIntegerField(object: JsonObject, name: []const u8, default: i64) !i64 {
+        const value = object.get(name) orelse return default;
+        return switch (value) {
+            .integer => |result| result,
+            else => error.InvalidParams,
+        };
+    }
+
+    fn requireArrayField(object: JsonObject, name: []const u8) ![]const std.json.Value {
+        const value = object.get(name) orelse return error.InvalidParams;
+        return switch (value) {
+            .array => |result| result.items,
+            else => error.InvalidParams,
+        };
+    }
+
+    fn integerToI32(value: i64) !i32 {
+        if (value < std.math.minInt(i32) or value > std.math.maxInt(i32)) {
+            return error.InvalidParams;
+        }
+        return @intCast(value);
+    }
+    
+    fn handleInitialize(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        if (params.get("rootUri")) |root_uri| {
+            const replacement: ?[]u8 = switch (root_uri) {
+                .null => null,
+                .string => |value| if (value.len == 0)
+                    null
+                else
+                    try self.allocator.dupe(u8, value),
+                else => return error.InvalidParams,
+            };
+            if (self.root_uri) |old| self.allocator.free(old);
+            self.root_uri = replacement;
         }
         
         self.initialized = true;
         
-        const capabilities = 
-            \\"capabilities":{
-            \\  "textDocumentSync":1,
-            \\  "hoverProvider":true,
-            \\  "completionProvider":{"triggerCharacters":[" ",":","-"]},
-            \\  "diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":false}
-            \\}
-        ;
-        
-        try response.writer(self.allocator).print(",\"result\":{{", .{});
-        try response.writer(self.allocator).print("{s}", .{capabilities});
-        try response.writer(self.allocator).print("}}", .{});
+        try json.objectField("result");
+        try json.beginObject();
+        try json.objectField("capabilities");
+        try json.beginObject();
+        try json.objectField("textDocumentSync");
+        try json.write(@as(i32, 1));
+        try json.objectField("hoverProvider");
+        try json.write(true);
+        try json.objectField("completionProvider");
+        try json.beginObject();
+        try json.objectField("triggerCharacters");
+        try json.write(&[_][]const u8{ " ", ":", "-" });
+        try json.endObject();
+        try json.objectField("diagnosticProvider");
+        try json.beginObject();
+        try json.objectField("interFileDependencies");
+        try json.write(false);
+        try json.objectField("workspaceDiagnostics");
+        try json.write(false);
+        try json.endObject();
+        try json.endObject();
+        try json.endObject();
     }
     
-    fn handleDidOpen(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
-        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
-        const text = text_document.object.get("text") orelse return error.InvalidRequest;
-        const version = if (text_document.object.get("version")) |v| v.integer else 0;
-        
-        const uri_copy = try self.allocator.dupe(u8, uri.string);
-        errdefer self.allocator.free(uri_copy);
-        const text_copy = try self.allocator.dupe(u8, text.string);
-        errdefer self.allocator.free(text_copy);
-        
-        try self.documents.put(uri_copy, .{
-            .version = @intCast(version),
-            .text = text_copy,
-        });
-        
-        try response.writer(self.allocator).print(",\"result\":{{}}", .{});
-    }
-    
-    fn handleDidChange(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
-        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
-        const changes = params.object.get("contentChanges") orelse return error.InvalidRequest;
-        const version = if (text_document.object.get("version")) |v| v.integer else 0;
-        
-        if (changes.array.items.len > 0) {
-            const change = changes.array.items[changes.array.items.len - 1];
-            const text = change.object.get("text") orelse return error.InvalidRequest;
-            
-            if (self.documents.getPtr(uri.string)) |doc| {
+    fn handleDidOpen(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const text = try requireStringField(text_document, "text");
+        const version = try integerToI32(try optionalIntegerField(text_document, "version", 0));
+
+        {
+            const text_copy = try self.allocator.dupe(u8, text);
+            errdefer self.allocator.free(text_copy);
+            if (self.documents.getPtr(uri)) |doc| {
                 self.allocator.free(doc.text);
-                doc.text = try self.allocator.dupe(u8, text.string);
-                doc.version = @intCast(version);
+                doc.* = .{ .version = version, .text = text_copy };
             } else {
-                const uri_copy = try self.allocator.dupe(u8, uri.string);
+                const uri_copy = try self.allocator.dupe(u8, uri);
                 errdefer self.allocator.free(uri_copy);
-                const text_copy = try self.allocator.dupe(u8, text.string);
-                errdefer self.allocator.free(text_copy);
-                
-                try self.documents.put(uri_copy, .{
-                    .version = @intCast(version),
-                    .text = text_copy,
-                });
+                try self.documents.put(uri_copy, .{ .version = version, .text = text_copy });
             }
         }
-        
-        try response.writer(self.allocator).print(",\"result\":{{}}", .{});
+        try writeEmptyResult(json);
+    }
+
+    fn handleDidChange(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const changes = try requireArrayField(params, "contentChanges");
+        const version = try integerToI32(try optionalIntegerField(text_document, "version", 0));
+
+        if (changes.len > 0) {
+            const change = switch (changes[changes.len - 1]) {
+                .object => |value| value,
+                else => return error.InvalidParams,
+            };
+            const text = try requireStringField(change, "text");
+            {
+                const text_copy = try self.allocator.dupe(u8, text);
+                errdefer self.allocator.free(text_copy);
+                if (self.documents.getPtr(uri)) |doc| {
+                    self.allocator.free(doc.text);
+                    doc.* = .{ .version = version, .text = text_copy };
+                } else {
+                    const uri_copy = try self.allocator.dupe(u8, uri);
+                    errdefer self.allocator.free(uri_copy);
+                    try self.documents.put(uri_copy, .{ .version = version, .text = text_copy });
+                }
+            }
+        }
+        try writeEmptyResult(json);
     }
     
-    fn handleDiagnostics(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
-        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
-        
-        const doc = self.documents.get(uri.string) orelse {
-            try response.writer(self.allocator).print(",\"result\":{{\"items\":[]}}", .{});
+    fn handleDiagnostics(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+
+        try json.objectField("result");
+        try json.beginObject();
+        try json.objectField("items");
+        try json.beginArray();
+        const doc = self.documents.get(uri) orelse {
+            try json.endArray();
+            try json.endObject();
             return;
         };
-        
-        var diagnostics = try std.ArrayList(u8).initCapacity(self.allocator, 512);
-        defer diagnostics.deinit(self.allocator);
-        try diagnostics.append(self.allocator, '[');
-        
-        var first = true;
-        
-        const format = formats.detectFormat(uri.string);
+
+        const format = formats.detectFormat(uri);
         if (format == null) {
-            if (!first) try diagnostics.append(self.allocator, ',');
-            first = false;
-            try diagnostics.writer(self.allocator).print(
-                "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":1}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zigcss\"}}",
-                .{unsupported_format_message});
+            try writeDiagnostic(json, 0, 0, 0, 1, unsupported_format_message);
         } else if (format.? == .css) {
             var css_parser = parser.Parser.init(self.allocator, doc.text);
             defer if (css_parser.owns_pool) {
@@ -229,60 +363,45 @@ pub const LspServer = struct {
                 self.allocator.destroy(css_parser.string_pool);
             };
             
-            const result = css_parser.parseWithErrorInfo();
+            var result = css_parser.parseWithErrorInfo();
             switch (result) {
-                .success => |_| {},
+                .success => |*stylesheet| stylesheet.deinit(),
                 .parse_error => |parse_error| {
-                    if (!first) try diagnostics.append(self.allocator, ',');
-                    first = false;
-                    
                     const line = parse_error.line;
                     const column = parse_error.column;
                     const message = error_module.ParseError.getMessage(parse_error.kind);
-                    
+
                     const col: i64 = @intCast(column);
                     const col_char = if (col - 1 > 0) col - 1 else 0;
-                    try diagnostics.writer(self.allocator).print(
-                        "{{\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zigcss\"}}",
-                        .{ line - 1, col_char, line - 1, column, message });
+                    try writeDiagnostic(
+                        json,
+                        @as(i64, @intCast(line)) - 1,
+                        col_char,
+                        @as(i64, @intCast(line)) - 1,
+                        @intCast(column),
+                        message,
+                    );
                 },
             }
-        } else {
-            const parser_trait = formats.getParser(format.?);
-            if (parser_trait.parseFn(self.allocator, doc.text)) |stylesheet_result| {
-                var stylesheet = stylesheet_result;
-                defer stylesheet.deinit();
-            } else |err| {
-                if (!first) try diagnostics.append(self.allocator, ',');
-                first = false;
-                
-                const error_msg = @errorName(err);
-                try diagnostics.writer(self.allocator).print(
-                    "{{\"range\":{{\"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":1}}}},\"severity\":1,\"message\":\"{s}\",\"source\":\"zigcss\"}}",
-                    .{error_msg});
-            }
         }
-        
-        try diagnostics.append(self.allocator, ']');
-        const diagnostics_str = try diagnostics.toOwnedSlice(self.allocator);
-        defer self.allocator.free(diagnostics_str);
-        
-        try response.writer(self.allocator).print(",\"result\":{{\"items\":{s}}}", .{diagnostics_str});
+
+        try json.endArray();
+        try json.endObject();
     }
     
-    fn handleHover(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
-        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
-        const position = params.object.get("position") orelse return error.InvalidRequest;
-        
-        const doc = self.documents.get(uri.string) orelse {
-            try response.writer(self.allocator).print(",\"result\":null", .{});
+    fn handleHover(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const position = try requireObjectField(params, "position");
+        const line = @max(try requireIntegerField(position, "line"), 0);
+        const character = @max(try requireIntegerField(position, "character"), 0);
+
+        const doc = self.documents.get(uri) orelse {
+            try json.objectField("result");
+            try json.write(null);
             return;
         };
-        
-        const line = if (position.object.get("line")) |l| l.integer else 0;
-        const character = if (position.object.get("character")) |c| c.integer else 0;
         
         const line_start = blk: {
             var line_num: i64 = 0;
@@ -321,38 +440,40 @@ pub const LspServer = struct {
             if (word_end > word_start) {
                 const word = line_text[word_start..word_end];
                 if (self.getCssPropertyInfo(word)) |info| {
-                    try response.writer(self.allocator).writeAll(",\"result\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"");
-                    try response.writer(self.allocator).print("{s}", .{info});
-                    try response.writer(self.allocator).writeAll("\"},\"range\":{\"start\":{\"line\":");
-                    try response.writer(self.allocator).print("{}", .{line});
-                    try response.writer(self.allocator).writeAll(",\"character\":");
-                    try response.writer(self.allocator).print("{}", .{word_start});
-                    try response.writer(self.allocator).writeAll("},\"end\":{\"line\":");
-                    try response.writer(self.allocator).print("{}", .{line});
-                    try response.writer(self.allocator).writeAll(",\"character\":");
-                    try response.writer(self.allocator).print("{}", .{word_end});
-                    try response.writer(self.allocator).writeAll("}}}}");
+                    try json.objectField("result");
+                    try json.write(.{
+                        .contents = .{ .kind = "markdown", .value = info },
+                        .range = .{
+                            .start = .{ .line = line, .character = word_start },
+                            .end = .{ .line = line, .character = word_end },
+                        },
+                    });
                     return;
                 }
             }
         }
-        
-        try response.writer(self.allocator).print(",\"result\":null", .{});
+
+        try json.objectField("result");
+        try json.write(null);
     }
     
-    fn handleCompletion(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
-        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
-        const position = params.object.get("position") orelse return error.InvalidRequest;
-        
-        const doc = self.documents.get(uri.string) orelse {
-            try response.writer(self.allocator).print(",\"result\":{{\"items\":[]}}", .{});
+    fn handleCompletion(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const position = try requireObjectField(params, "position");
+        const line = @max(try requireIntegerField(position, "line"), 0);
+        const character = @max(try requireIntegerField(position, "character"), 0);
+
+        try json.objectField("result");
+        try json.beginObject();
+        try json.objectField("items");
+        try json.beginArray();
+        const doc = self.documents.get(uri) orelse {
+            try json.endArray();
+            try json.endObject();
             return;
         };
-        
-        const line = if (position.object.get("line")) |l| l.integer else 0;
-        const character = if (position.object.get("character")) |c| c.integer else 0;
         
         const line_start = blk: {
             var line_num: i64 = 0;
@@ -377,26 +498,19 @@ pub const LspServer = struct {
         const line_text = doc.text[line_start..line_end];
         const char_pos: usize = @intCast(if (character > 0) character else 0);
         
-        var items = try std.ArrayList(u8).initCapacity(self.allocator, 512);
-        defer items.deinit(self.allocator);
-        try items.append(self.allocator, '[');
-        
-        var first = true;
         for (COMMON_CSS_PROPERTIES) |prop| {
             if (std.mem.startsWith(u8, prop, line_text[0..@min(char_pos, line_text.len)])) {
-                if (!first) try items.append(self.allocator, ',');
-                first = false;
-                try items.writer(self.allocator).print(
-                    "{{\"label\":\"{s}\",\"kind\":10,\"detail\":\"CSS Property\",\"insertText\":\"{s}\"}}"
-                , .{ prop, prop });
+                try json.write(.{
+                    .label = prop,
+                    .kind = @as(i32, 10),
+                    .detail = "CSS Property",
+                    .insertText = prop,
+                });
             }
         }
-        
-        try items.append(self.allocator, ']');
-        const items_str = try items.toOwnedSlice(self.allocator);
-        defer self.allocator.free(items_str);
-        
-        try response.writer(self.allocator).print(",\"result\":{{\"items\":{s}}}", .{items_str});
+
+        try json.endArray();
+        try json.endObject();
     }
     
     fn getCssPropertyInfo(self: *LspServer, property: []const u8) ?[]const u8 {
@@ -427,126 +541,130 @@ pub const LspServer = struct {
         .{ .property = "border", .description = "**border** - Sets border on all sides\n\nValues: `<border-width>` `<border-style>` `<border-color>` | `inherit` | `initial` | `unset`" },
     };
     
-    fn handleDefinition(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
-        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
-        const position = params.object.get("position") orelse return error.InvalidRequest;
-        
-        const doc = self.documents.get(uri.string) orelse {
-            try response.writer(self.allocator).print(",\"result\":null", .{});
+    fn handleDefinition(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const position = try requireObjectField(params, "position");
+        const line = @max(try requireIntegerField(position, "line"), 0);
+        const character = @max(try requireIntegerField(position, "character"), 0);
+
+        const doc = self.documents.get(uri) orelse {
+            try json.objectField("result");
+            try json.write(null);
             return;
         };
-        
-        const line = if (position.object.get("line")) |l| l.integer else 0;
-        const character = if (position.object.get("character")) |c| c.integer else 0;
         
         const pos = self.getPosition(doc.text, line, character);
         const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
-            try response.writer(self.allocator).print(",\"result\":null", .{});
+            try json.objectField("result");
+            try json.write(null);
             return;
         };
-        
+
         const definition_pos = self.findDefinition(doc.text, symbol) orelse {
-            try response.writer(self.allocator).print(",\"result\":null", .{});
+            try json.objectField("result");
+            try json.write(null);
             return;
         };
-        
+
         const def_line_col = self.getLineColumn(doc.text, definition_pos);
-        try response.writer(self.allocator).print(
-            ",\"result\":{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}}}}",
-            .{ uri.string, def_line_col.line, def_line_col.column, def_line_col.line, def_line_col.column + @as(i64, @intCast(symbol.len)) }
-        );
+        try json.objectField("result");
+        try json.write(.{
+            .uri = uri,
+            .range = .{
+                .start = .{ .line = def_line_col.line, .character = def_line_col.column },
+                .end = .{
+                    .line = def_line_col.line,
+                    .character = def_line_col.column + @as(i64, @intCast(symbol.len)),
+                },
+            },
+        });
     }
     
-    fn handleReferences(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
-        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
-        const position = params.object.get("position") orelse return error.InvalidRequest;
-        
-        const doc = self.documents.get(uri.string) orelse {
-            try response.writer(self.allocator).print(",\"result\":[]", .{});
+    fn handleReferences(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const position = try requireObjectField(params, "position");
+        const line = @max(try requireIntegerField(position, "line"), 0);
+        const character = @max(try requireIntegerField(position, "character"), 0);
+
+        try json.objectField("result");
+        try json.beginArray();
+        const doc = self.documents.get(uri) orelse {
+            try json.endArray();
             return;
         };
-        
-        const line = if (position.object.get("line")) |l| l.integer else 0;
-        const character = if (position.object.get("character")) |c| c.integer else 0;
-        
+
         const pos = self.getPosition(doc.text, line, character);
         const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
-            try response.writer(self.allocator).print(",\"result\":[]", .{});
+            try json.endArray();
             return;
         };
-        
-        var locations = try std.ArrayList(u8).initCapacity(self.allocator, 512);
-        defer locations.deinit(self.allocator);
-        try locations.append(self.allocator, '[');
-        
-        var first = true;
+
         var search_pos: usize = 0;
         while (self.findNextReference(doc.text, symbol, &search_pos)) |ref_pos| {
-            if (!first) try locations.append(self.allocator, ',');
-            first = false;
-            
             const ref_line_col = self.getLineColumn(doc.text, ref_pos);
-            try locations.writer(self.allocator).print(
-                "{{\"uri\":\"{s}\",\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}}}}",
-                .{ uri.string, ref_line_col.line, ref_line_col.column, ref_line_col.line, ref_line_col.column + @as(i64, @intCast(symbol.len)) }
-            );
+            try json.write(.{
+                .uri = uri,
+                .range = .{
+                    .start = .{ .line = ref_line_col.line, .character = ref_line_col.column },
+                    .end = .{
+                        .line = ref_line_col.line,
+                        .character = ref_line_col.column + @as(i64, @intCast(symbol.len)),
+                    },
+                },
+            });
         }
-        
-        try locations.append(self.allocator, ']');
-        const locations_str = try locations.toOwnedSlice(self.allocator);
-        defer self.allocator.free(locations_str);
-        
-        try response.writer(self.allocator).print(",\"result\":{s}", .{locations_str});
+
+        try json.endArray();
     }
     
-    fn handleRename(self: *LspServer, response: *std.ArrayList(u8), root: std.json.Value) !void {
-        const params = root.object.get("params") orelse return error.InvalidRequest;
-        const text_document = params.object.get("textDocument") orelse return error.InvalidRequest;
-        const uri = text_document.object.get("uri") orelse return error.InvalidRequest;
-        const position = params.object.get("position") orelse return error.InvalidRequest;
-        const new_name = params.object.get("newName") orelse return error.InvalidRequest;
-        
-        const doc = self.documents.get(uri.string) orelse {
-            try response.writer(self.allocator).print(",\"error\":{{\"code\":-32602,\"message\":\"Document not found\"}}", .{});
+    fn handleRename(self: *LspServer, json: *JsonWriter, root: JsonObject) !void {
+        const params = try requireObjectField(root, "params");
+        const text_document = try requireObjectField(params, "textDocument");
+        const uri = try requireStringField(text_document, "uri");
+        const position = try requireObjectField(params, "position");
+        const new_name = try requireStringField(params, "newName");
+        const line = @max(try requireIntegerField(position, "line"), 0);
+        const character = @max(try requireIntegerField(position, "character"), 0);
+
+        const doc = self.documents.get(uri) orelse {
+            try writeErrorField(json, -32602, "Document not found");
             return;
         };
-        
-        const line = if (position.object.get("line")) |l| l.integer else 0;
-        const character = if (position.object.get("character")) |c| c.integer else 0;
-        
+
         const pos = self.getPosition(doc.text, line, character);
         const symbol = self.getSymbolAtPosition(doc.text, pos) orelse {
-            try response.writer(self.allocator).print(",\"error\":{{\"code\":-32602,\"message\":\"Symbol not found\"}}", .{});
+            try writeErrorField(json, -32602, "Symbol not found");
             return;
         };
-        
-        var changes = try std.ArrayList(u8).initCapacity(self.allocator, 512);
-        defer changes.deinit(self.allocator);
-        try changes.writer(self.allocator).print("{{\"{s}\":[", .{uri.string});
-        
-        var first = true;
+
+        try json.objectField("result");
+        try json.beginObject();
+        try json.objectField("changes");
+        try json.beginObject();
+        try json.objectField(uri);
+        try json.beginArray();
         var search_pos: usize = 0;
         while (self.findNextReference(doc.text, symbol, &search_pos)) |ref_pos| {
-            if (!first) try changes.append(self.allocator, ',');
-            first = false;
-            
             const ref_line_col = self.getLineColumn(doc.text, ref_pos);
-            try changes.writer(self.allocator).print(
-                "{{\"range\":{{\"start\":{{\"line\":{},\"character\":{}}},\"end\":{{\"line\":{},\"character\":{}}}}},\"newText\":\"{s}\"}}",
-                .{ ref_line_col.line, ref_line_col.column, ref_line_col.line, ref_line_col.column + @as(i64, @intCast(symbol.len)), new_name.string }
-            );
+            try json.write(.{
+                .range = .{
+                    .start = .{ .line = ref_line_col.line, .character = ref_line_col.column },
+                    .end = .{
+                        .line = ref_line_col.line,
+                        .character = ref_line_col.column + @as(i64, @intCast(symbol.len)),
+                    },
+                },
+                .newText = new_name,
+            });
         }
-        
-        try changes.append(self.allocator, ']');
-        try changes.append(self.allocator, '}');
-        const changes_str = try changes.toOwnedSlice(self.allocator);
-        defer self.allocator.free(changes_str);
-        
-        try response.writer(self.allocator).print(",\"result\":{{\"changes\":{s}}}", .{changes_str});
+
+        try json.endArray();
+        try json.endObject();
+        try json.endObject();
     }
     
     fn getPosition(self: *LspServer, text: []const u8, line: i64, character: i64) usize {
@@ -727,6 +845,247 @@ test "LSP handle initialize request" {
     try std.testing.expect(server.initialized);
     try std.testing.expect(std.mem.containsAtLeast(u8, response, 1, "capabilities"));
     try std.testing.expect(std.mem.containsAtLeast(u8, response, 1, "textDocumentSync"));
+}
+
+test "LSP returns structured JSON-RPC envelope errors" {
+    var server = LspServer.init(std.testing.allocator);
+    defer server.deinit();
+
+    const cases = [_]struct {
+        request: []const u8,
+        code: i64,
+        id: ?i64 = null,
+    }{
+        .{ .request = "{", .code = -32700 },
+        .{ .request = "[]", .code = -32600 },
+        .{
+            .request = "{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}",
+            .code = -32600,
+        },
+        .{
+            .request = "{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"initialize\",\"params\":{}}",
+            .code = -32600,
+        },
+        .{
+            .request = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"initialize\",\"params\":[]}",
+            .code = -32602,
+            .id = 7,
+        },
+    };
+
+    for (cases) |case| {
+        const response = try server.handleRequest(case.request);
+        defer std.testing.allocator.free(response);
+        var parsed = try std.json.parseFromSlice(
+            std.json.Value,
+            std.testing.allocator,
+            response,
+            .{},
+        );
+        defer parsed.deinit();
+        try std.testing.expectEqualStrings(
+            "2.0",
+            parsed.value.object.get("jsonrpc").?.string,
+        );
+        try std.testing.expectEqual(
+            case.code,
+            parsed.value.object.get("error").?.object.get("code").?.integer,
+        );
+        if (case.id) |id| {
+            try std.testing.expectEqual(id, parsed.value.object.get("id").?.integer);
+        } else {
+            try std.testing.expect(parsed.value.object.get("id").? == .null);
+        }
+    }
+
+    const large_id_response = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":9223372036854775808,\"method\":\"unknown/method\"}",
+    );
+    defer std.testing.allocator.free(large_id_response);
+    try std.testing.expect(
+        std.mem.indexOf(u8, large_id_response, "\"id\":9223372036854775808") != null,
+    );
+    var parsed_large_id = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        large_id_response,
+        .{},
+    );
+    defer parsed_large_id.deinit();
+    try std.testing.expectEqualStrings(
+        "9223372036854775808",
+        parsed_large_id.value.object.get("id").?.number_string,
+    );
+}
+
+test "LSP serializer escapes handler strings and dynamic object fields" {
+    const allocator = std.testing.allocator;
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+    const uri = "file:///a\"b.css";
+
+    const opened = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a\\\"b.css\",\"version\":1,\"text\":\".foo{color:red}.foo{}\"}}}",
+    );
+    allocator.free(opened);
+
+    const hover = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"hover\\n\\\"id\",\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///a\\\"b.css\"},\"position\":{\"line\":0,\"character\":5}}}",
+    );
+    defer allocator.free(hover);
+    var parsed_hover = try std.json.parseFromSlice(std.json.Value, allocator, hover, .{});
+    defer parsed_hover.deinit();
+    try std.testing.expectEqualStrings(
+        "hover\n\"id",
+        parsed_hover.value.object.get("id").?.string,
+    );
+    const markdown = parsed_hover.value.object
+        .get("result").?.object
+        .get("contents").?.object
+        .get("value").?.string;
+    try std.testing.expect(std.mem.indexOfScalar(u8, markdown, '\n') != null);
+
+    const rename = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"file:///a\\\"b.css\"},\"position\":{\"line\":0,\"character\":1},\"newName\":\"renamed\\nname\"}}",
+    );
+    defer allocator.free(rename);
+    var parsed_rename = try std.json.parseFromSlice(std.json.Value, allocator, rename, .{});
+    defer parsed_rename.deinit();
+    const edits = parsed_rename.value.object
+        .get("result").?.object
+        .get("changes").?.object
+        .get(uri).?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), edits.len);
+    try std.testing.expectEqualStrings(
+        "renamed\nname",
+        edits[0].object.get("newText").?.string,
+    );
+}
+
+test "LSP serializes every handler response as complete JSON" {
+    const allocator = std.testing.allocator;
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    const requests = [_][]const u8{
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialized\",\"params\":{}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\",\"version\":1,\"text\":\".foo{color:red}.foo{}\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\",\"version\":2},\"contentChanges\":[{\"text\":\".foo{color:blue}.foo{}\"}]}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/diagnostics\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":6}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":0}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"textDocument/definition\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"textDocument/references\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2}}}",
+        "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"textDocument/rename\",\"params\":{\"textDocument\":{\"uri\":\"file:///handlers.css\"},\"position\":{\"line\":0,\"character\":2},\"newName\":\"bar\"}}",
+    };
+
+    for (requests, 1..) |request, id| {
+        const response = try server.handleRequest(request);
+        defer allocator.free(response);
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, response, .{});
+        defer parsed.deinit();
+        try std.testing.expectEqualStrings("2.0", parsed.value.object.get("jsonrpc").?.string);
+        try std.testing.expectEqual(@as(i64, @intCast(id)), parsed.value.object.get("id").?.integer);
+        try std.testing.expect(parsed.value.object.get("result") != null);
+        try std.testing.expect(parsed.value.object.get("error") == null);
+    }
+}
+
+test "LSP document ownership survives response serialization failure" {
+    const allocator = std.testing.allocator;
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    var request = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        "{\"params\":{\"textDocument\":{\"uri\":\"file:///ownership.css\",\"version\":1,\"text\":\".a{}\"}}}",
+        .{},
+    );
+    defer request.deinit();
+
+    var output_buffer: [1]u8 = undefined;
+    var output = std.Io.Writer.fixed(&output_buffer);
+    var json: std.json.Stringify = .{ .writer = &output };
+    try json.beginObject();
+    try std.testing.expectError(
+        error.WriteFailed,
+        server.handleDidOpen(&json, request.value.object),
+    );
+
+    const document = server.documents.get("file:///ownership.css").?;
+    try std.testing.expectEqualStrings(".a{}", document.text);
+
+    var change_request = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        "{\"params\":{\"textDocument\":{\"uri\":\"file:///ownership.css\",\"version\":2},\"contentChanges\":[{\"text\":\".b{}\"}]}}",
+        .{},
+    );
+    defer change_request.deinit();
+
+    output = std.Io.Writer.fixed(&output_buffer);
+    json = .{ .writer = &output };
+    try json.beginObject();
+    try std.testing.expectError(
+        error.WriteFailed,
+        server.handleDidChange(&json, change_request.value.object),
+    );
+    const changed_document = server.documents.get("file:///ownership.css").?;
+    try std.testing.expectEqual(@as(i32, 2), changed_document.version);
+    try std.testing.expectEqualStrings(".b{}", changed_document.text);
+}
+
+fn exerciseLspJsonAllocationFailures(allocator: std.mem.Allocator) !void {
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+    const response = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"quoted\\\"id\",\"method\":\"initialize\",\"params\":{\"rootUri\":\"file:///root\",\"capabilities\":{}}}",
+    );
+    defer allocator.free(response);
+    try std.testing.expect(response.len > 0);
+}
+
+fn exerciseLspParseErrorAllocationFailures(allocator: std.mem.Allocator) !void {
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+    const response = try server.handleRequest("{");
+    defer allocator.free(response);
+    try std.testing.expect(std.mem.indexOf(u8, response, "-32700") != null);
+}
+
+fn exerciseLspDocumentAllocationFailures(allocator: std.mem.Allocator) !void {
+    var server = LspServer.init(allocator);
+    defer server.deinit();
+
+    const opened = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///allocation.css\",\"version\":1,\"text\":\".a{color:red}\"}}}",
+    );
+    allocator.free(opened);
+
+    const changed = try server.handleRequest(
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///allocation.css\",\"version\":2},\"contentChanges\":[{\"text\":\".a{color:blue}\"}]}}",
+    );
+    allocator.free(changed);
+}
+
+test "LSP JSON parsing and responses handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLspJsonAllocationFailures,
+        .{},
+    );
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLspParseErrorAllocationFailures,
+        .{},
+    );
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLspDocumentAllocationFailures,
+        .{},
+    );
 }
 
 test "LSP diagnostics reject unavailable formats without CSS fallback" {

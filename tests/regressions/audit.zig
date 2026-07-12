@@ -237,6 +237,97 @@ test "LSP transport accepts sequential frames and bodies above 8 KiB (LSP-001)" 
     try std.testing.expect(std.mem.indexOf(u8, second_response, "\"code\":-32601") != null);
 }
 
+test "LSP returns parse errors and continues with the next frame (LSP-002)" {
+    const initialize =
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":null,\"capabilities\":{}}}";
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    try appendLspFrame(&transcript, "{not-json");
+    try appendLspFrame(&transcript, initialize);
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectSuccess(result);
+
+    var offset: usize = 0;
+    const parse_error_body = try nextLspFrame(result.stdout, &offset);
+    const initialize_body = try nextLspFrame(result.stdout, &offset);
+    try std.testing.expectEqual(result.stdout.len, offset);
+
+    var parse_error = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        parse_error_body,
+        .{},
+    );
+    defer parse_error.deinit();
+    try std.testing.expect(parse_error.value.object.get("id").? == .null);
+    try std.testing.expectEqual(
+        @as(i64, -32700),
+        parse_error.value.object.get("error").?.object.get("code").?.integer,
+    );
+
+    var initialized = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        initialize_body,
+        .{},
+    );
+    defer initialized.deinit();
+    try std.testing.expectEqual(@as(i64, 1), initialized.value.object.get("id").?.integer);
+    try std.testing.expect(initialized.value.object.get("result") != null);
+}
+
+test "LSP serializes hostile IDs and returns invalid-params errors (LSP-002)" {
+    const escaped_id = "line\n\"\\id";
+    const unknown =
+        "{\"jsonrpc\":\"2.0\",\"id\":\"line\\n\\\"\\\\id\",\"method\":\"unknown/method\",\"params\":{}}";
+    const invalid_params =
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"initialize\",\"params\":[]}";
+    var transcript = std.ArrayList(u8).empty;
+    defer transcript.deinit(allocator);
+    try appendLspFrame(&transcript, unknown);
+    try appendLspFrame(&transcript, invalid_params);
+
+    var result = try runWithStdin(&.{"--lsp"}, transcript.items);
+    defer deinitRun(&result);
+    try expectSuccess(result);
+
+    var offset: usize = 0;
+    const unknown_body = try nextLspFrame(result.stdout, &offset);
+    const invalid_params_body = try nextLspFrame(result.stdout, &offset);
+    try std.testing.expectEqual(result.stdout.len, offset);
+
+    var unknown_response = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        unknown_body,
+        .{},
+    );
+    defer unknown_response.deinit();
+    try std.testing.expectEqualStrings(
+        escaped_id,
+        unknown_response.value.object.get("id").?.string,
+    );
+    try std.testing.expectEqual(
+        @as(i64, -32601),
+        unknown_response.value.object.get("error").?.object.get("code").?.integer,
+    );
+
+    var invalid_response = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        invalid_params_body,
+        .{},
+    );
+    defer invalid_response.deinit();
+    try std.testing.expectEqual(@as(i64, 3), invalid_response.value.object.get("id").?.integer);
+    try std.testing.expectEqual(
+        @as(i64, -32602),
+        invalid_response.value.object.get("error").?.object.get("code").?.integer,
+    );
+}
+
 test "stable CLI emits functional and attribute selectors" {
     var result = try runCompiler(@embedFile("fixtures/functional-attribute.css"), &.{"--minify"});
     defer deinitRun(&result);
