@@ -71,24 +71,26 @@
       "id": "less",
       "displayName": "LESS",
       "cliDisplayName": "LESS",
-      "formatTag": "less",
+      "formatTag": null,
       "extensions": [".less"],
       "availability": "Unavailable",
       "compatibility": "Unverified",
-      "implementation": "LegacyCharacterized",
+      "implementation": "Removed",
       "strategy": "remove-until-funded",
       "ownerPackages": ["LESS-001"],
-      "sourceFiles": ["src/formats/less.zig"],
-      "currentBoundary": "Leading at-variable collection, textual declaration removal, and global byte substitution before the inherited CSS parser.",
+      "removedBy": "LESS-001",
+      "removedSourceFiles": ["src/formats/less.zig"],
+      "sourceFiles": [],
+      "currentBoundary": "No Less parser implementation remains; .less is classified only for explicit CLI rejection and a null legacy detector result.",
       "knownRisks": [
-        "Variable and CSS at-rule identity is inferred from a short hard-coded name list.",
-        "Lexical scope, lazy evaluation, mixins, nesting, imports, strings, comments, and arithmetic are not a closed subset."
+        "Reintroducing textual at-variable substitution without lexical scope, lazy evaluation, imports, strings/comments, arithmetic, dependencies, and strict errors would recreate the removed corruption boundary."
       ],
       "probe": "@color: red;\n.card { color: @color; }\n",
-      "sourceEvidence": [
-        { "file": "src/formats/less.zig", "contains": "fn removeVariables" },
-        { "file": "src/formats/less.zig", "contains": "fn processVariables" },
-        { "file": "src/formats/less.zig", "contains": "potential_var_name" }
+      "containmentEvidence": [
+        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".less\")" },
+        { "file": "src/main.zig", "contains": "return \"LESS\";" },
+        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".less\")" },
+        { "file": "src/lsp.zig", "contains": "Unsupported or removed stylesheet format" }
       ]
     },
     {

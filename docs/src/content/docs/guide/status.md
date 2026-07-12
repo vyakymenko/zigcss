@@ -19,7 +19,7 @@ ZigCSS 0.3 is an experimental compiler prototype undergoing a correctness-first 
 | Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property/value/selector/at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
 | Source maps | Experimental, library-only | The library pipeline produces deterministic mappings; the CLI flag remains unavailable until its output policy is defined. |
 | Browser target queries | Experimental, library-only | The Zig API accepts a strict explicit-minimum grammar over six browsers and deterministically configures the verified rewrite from pinned BCD 8.0.0 data; CLI flags remain unavailable pending public option wiring. |
-| SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS, Tailwind-like `@apply` | Unavailable | Every extension is rejected before output and absent from the public syntax enum. The SCSS/Sass parser sources are removed; the [format compatibility matrix](/guide/format-compatibility) distinguishes removed and remaining characterized implementations and publishes each accepted strategy. |
+| SCSS, SASS, LESS, Stylus, PostCSS, CSS Modules, CSS-in-JS, Tailwind-like `@apply` | Unavailable | Every extension is rejected before output and absent from the public syntax enum. The SCSS/Sass and Less parser sources are removed; the [format compatibility matrix](/guide/format-compatibility) distinguishes removed and remaining characterized implementations and publishes each accepted strategy. |
 | LSP | Experimental | Shares the legacy parser and is not a stable editor contract. |
 | Public compile API and playground | Disabled | Public routes return HTTP 503 until bounded isolation is implemented. |
 

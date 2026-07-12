@@ -3,7 +3,6 @@ const ast = @import("ast.zig");
 
 pub const Format = enum {
     css,
-    less,
     css_modules,
     css_in_js,
     postcss,
@@ -19,7 +18,6 @@ pub fn isExperimental(format: Format) bool {
 pub fn displayName(format: Format) []const u8 {
     return switch (format) {
         .css => "CSS",
-        .less => "LESS",
         .css_modules => "CSS Modules",
         .css_in_js => "CSS-in-JS",
         .postcss => "PostCSS",
@@ -29,11 +27,10 @@ pub fn displayName(format: Format) []const u8 {
 
 pub fn detectFormat(filename: []const u8) ?Format {
     if (std.mem.endsWith(u8, filename, ".scss") or
-        std.mem.endsWith(u8, filename, ".sass"))
+        std.mem.endsWith(u8, filename, ".sass") or
+        std.mem.endsWith(u8, filename, ".less"))
     {
         return null;
-    } else if (std.mem.endsWith(u8, filename, ".less")) {
-        return .less;
     } else if (std.mem.endsWith(u8, filename, ".module.css")) {
         return .css_modules;
     } else if (std.mem.endsWith(u8, filename, ".css.js") or std.mem.endsWith(u8, filename, ".css.ts")) {
@@ -56,7 +53,6 @@ pub const ParserTrait = struct {
 pub fn getParser(format: Format) ParserTrait {
     return switch (format) {
         .css => .{ .parseFn = parseCSS },
-        .less => .{ .parseFn = parseLESS },
         .css_modules => .{ .parseFn = parseCSSModules },
         .css_in_js => .{ .parseFn = parseCSSInJS },
         .postcss => .{ .parseFn = parsePostCSS },
@@ -67,13 +63,6 @@ pub fn getParser(format: Format) ParserTrait {
 fn parseCSS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
     const css_parser = @import("parser.zig");
     var p = css_parser.Parser.init(allocator, input);
-    return try p.parse();
-}
-
-fn parseLESS(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet {
-    const less_parser = @import("formats/less.zig");
-    var p = less_parser.Parser.init(allocator, input);
-    defer p.deinit();
     return try p.parse();
 }
 
@@ -107,7 +96,6 @@ fn parseStylus(allocator: std.mem.Allocator, input: []const u8) !ast.Stylesheet 
 
 test "detect format from filename" {
     try std.testing.expectEqual(Format.css, detectFormat("style.css").?);
-    try std.testing.expectEqual(Format.less, detectFormat("style.less").?);
     try std.testing.expectEqual(Format.css_modules, detectFormat("style.module.css").?);
     try std.testing.expectEqual(Format.css_in_js, detectFormat("style.css.js").?);
     try std.testing.expectEqual(Format.css_in_js, detectFormat("style.css.ts").?);
@@ -115,6 +103,7 @@ test "detect format from filename" {
     try std.testing.expectEqual(Format.stylus, detectFormat("style.styl").?);
     try std.testing.expect(detectFormat("style.scss") == null);
     try std.testing.expect(detectFormat("style.sass") == null);
+    try std.testing.expect(detectFormat("style.less") == null);
     try std.testing.expect(detectFormat("style.unknown") == null);
 }
 
