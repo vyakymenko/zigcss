@@ -14,10 +14,10 @@ Last updated: 2026-07-12
 
 ## Current work
 
-- Milestone: Milestone 3 — Semantics-preserving transform pipeline
-- Work package: Milestone 3 exit validation
-- State: `VERIFIED`
-- Next eligible package: `API-001` public library surface audit
+- Milestone: Milestone 4 — Public library, CLI, build integration, and profiling
+- Work package: `API-001` public library surface audit
+- State: `IN_PROGRESS`
+- Next eligible package: `API-001`
 
 ## Milestone 0 package ledger
 
@@ -175,7 +175,7 @@ Milestone 2 is `PASS` at gate checkpoint `d4a16d3`.
 
 ## Milestone 3 exit validation
 
-Milestone 3 is `PASS` at gate checkpoint `PENDING CHECKPOINT`.
+Milestone 3 is `PASS` at gate checkpoint `89417a8`.
 
 | Gate | Result |
 |---|---|
@@ -313,4 +313,4 @@ The authoritative regression list remains the Milestone 0 list in `DEVELOPMENT_P
 
 ## Last full validation
 
-Milestones 0, 1, 2, and 3 are `PASS`; the Milestone 3 checkpoint is pending. Debug and ReleaseSafe each pass 425/425 tests (80 legacy unit, 310 library/core, 35 CLI integration), and both builds pass. The stable CLI preset contains exactly seven accepted order-preserving definitions, grants only cleanup/semantic authority, reaches a bounded allocation-safe byte fixed point, and leaves prefixing/extraction/experimental/legacy paths unreachable. The pinned grammar gate remains 21 features/18 independently parsed outputs/four deterministic rejections, and all ten transform differentials are green with Lightning CSS 1.30.1, including the combined 1,143→866-byte optimizer fixture, target-dependent prefix output, two independently derived selector subsets, exact byte idempotence, and structured query/inventory rejection. Four generator tests and byte-exact BCD 8.0.0 regeneration, benchmark smoke, root production audit, the five-file npm dry run (14,517 bytes unpacked), focused formatting/script/diff checks, and 82/82 docs tests/build pass. Repository-wide formatting reports exactly the same 19 inherited files and the recorded docs dependency debt remains. The next dependency-eligible package is `API-001`.
+Milestones 0, 1, 2, and 3 are `PASS`; Milestone 3 is checkpointed at `89417a8`. Debug and ReleaseSafe each pass 425/425 tests (80 legacy unit, 310 library/core, 35 CLI integration), and both builds pass. The stable CLI preset contains exactly seven accepted order-preserving definitions, grants only cleanup/semantic authority, reaches a bounded allocation-safe byte fixed point, and leaves prefixing/extraction/experimental/legacy paths unreachable. The pinned grammar gate remains 21 features/18 independently parsed outputs/four deterministic rejections, and all ten transform differentials are green with Lightning CSS 1.30.1, including the combined 1,143→866-byte optimizer fixture, target-dependent prefix output, two independently derived selector subsets, exact byte idempotence, and structured query/inventory rejection. Four generator tests and byte-exact BCD 8.0.0 regeneration, benchmark smoke, root production audit, the five-file npm dry run (14,517 bytes unpacked), focused formatting/script/diff checks, and 82/82 docs tests/build pass. Repository-wide formatting reports exactly the same 19 inherited files and the recorded docs dependency debt remains. `API-001` public library surface audit is active.
