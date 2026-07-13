@@ -30,6 +30,20 @@ function fail(message) {
   throw new Error(`release smoke integrity: ${message}`)
 }
 
+export function archiveExecutable(platform = process.platform, systemRoot = process.env.SystemRoot) {
+  if (platform !== 'win32') return 'tar'
+  // Git Bash can shadow Windows' ZIP-capable bsdtar with GNU tar.
+  if (
+    typeof systemRoot !== 'string'
+    || systemRoot.includes('\0')
+    || !/^[A-Za-z]:[\\/]/.test(systemRoot)
+    || !path.win32.isAbsolute(systemRoot)
+  ) {
+    fail('Windows system root must be an absolute local drive path')
+  }
+  return path.win32.join(systemRoot, 'System32', 'tar.exe')
+}
+
 function same(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
@@ -339,13 +353,14 @@ export function smokeReleaseArtifact(options) {
 
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-native-release-smoke-'))
   try {
-    const listing = child('tar', ['-tf', archive], { cwd: temporary, label: 'release archive listing' })
+    const archiveReader = archiveExecutable()
+    const listing = child(archiveReader, ['-tf', archive], { cwd: temporary, label: 'release archive listing' })
     if (listing.stdout.replaceAll('\r\n', '\n') !== `${policy.binaryName}\n` || listing.stderr !== '') {
       fail(`release archive must contain exactly ${policy.binaryName}`)
     }
     const directDirectory = path.join(temporary, 'direct')
     fs.mkdirSync(directDirectory)
-    child('tar', ['-xf', archive, '-C', directDirectory], { cwd: temporary, label: 'release archive extraction' })
+    child(archiveReader, ['-xf', archive, '-C', directDirectory], { cwd: temporary, label: 'release archive extraction' })
     const directBinary = confinedRegularFile(directDirectory, policy.binaryName, 'direct archive binary', maximumBinaryBytes)
     if (hashFile(directBinary) !== hashFile(binary)) fail('direct archive binary differs from the release binary')
     if (process.platform !== 'win32') fs.chmodSync(directBinary, 0o755)

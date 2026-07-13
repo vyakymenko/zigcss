@@ -258,8 +258,22 @@ function validateArchiveListing(listing, binaryName) {
   }
 }
 
+function archiveExecutable(platform = process.platform, systemRoot = process.env.SystemRoot) {
+  if (platform !== 'win32') return 'tar'
+  // Git Bash can shadow Windows' ZIP-capable bsdtar with GNU tar.
+  if (
+    typeof systemRoot !== 'string'
+    || systemRoot.includes('\0')
+    || !/^[A-Za-z]:[\\/]/.test(systemRoot)
+    || !path.win32.isAbsolute(systemRoot)
+  ) {
+    throw new Error('Windows system root must be an absolute local drive path')
+  }
+  return path.win32.join(systemRoot, 'System32', 'tar.exe')
+}
+
 function listArchive(archivePath, binaryName) {
-  const result = spawnSync('tar', ['-tf', archivePath], {
+  const result = spawnSync(archiveExecutable(), ['-tf', archivePath], {
     encoding: 'utf8',
     maxBuffer: installLimits.maximumManifestBytes,
     timeout: installLimits.requestTimeoutMs,
@@ -275,7 +289,7 @@ function listArchive(archivePath, binaryName) {
 function extractArchiveBinary(archivePath, destination, binaryName) {
   listArchive(archivePath, binaryName)
   return new Promise((resolve, reject) => {
-    const child = spawn('tar', ['-xOf', archivePath, binaryName], {
+    const child = spawn(archiveExecutable(), ['-xOf', archivePath, binaryName], {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -514,6 +528,7 @@ if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === __filenam
 }
 
 module.exports = {
+  archiveExecutable,
   assertBinaryMatchesTarget,
   boundedDownload,
   install,

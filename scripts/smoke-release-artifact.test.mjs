@@ -6,12 +6,24 @@ import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
+  archiveExecutable,
   nativeSmokeTargets,
   parseSmokeArguments,
   validateReleaseSmokeWorkflowSources,
 } from './smoke-release-artifact.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+test('Windows release smoke selects the native archive reader instead of Git tar', () => {
+  assert.equal(archiveExecutable('linux'), 'tar')
+  assert.equal(archiveExecutable('darwin'), 'tar')
+  assert.equal(
+    archiveExecutable('win32', 'D:\\Windows'),
+    'D:\\Windows\\System32\\tar.exe',
+  )
+  assert.throws(() => archiveExecutable('win32', undefined), /Windows system root/)
+  assert.throws(() => archiveExecutable('win32', '\\\\server\\Windows'), /Windows system root/)
+})
 
 test('native smoke policy covers every release target on one matching runner', () => {
   assert.deepEqual(nativeSmokeTargets, [

@@ -18,6 +18,17 @@ const require = createRequire(import.meta.url)
 const installer = require(path.join(repositoryRoot, 'install.js'))
 const https = require('node:https')
 
+test('Windows npm installation selects the native archive reader instead of Git tar', () => {
+  assert.equal(installer.archiveExecutable('linux'), 'tar')
+  assert.equal(installer.archiveExecutable('darwin'), 'tar')
+  assert.equal(
+    installer.archiveExecutable('win32', 'D:\\Windows'),
+    'D:\\Windows\\System32\\tar.exe',
+  )
+  assert.throws(() => installer.archiveExecutable('win32', undefined), /Windows system root/)
+  assert.throws(() => installer.archiveExecutable('win32', '\\\\server\\Windows'), /Windows system root/)
+})
+
 function sha256(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex')
 }
