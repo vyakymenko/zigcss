@@ -37,7 +37,7 @@ jobs:
             archive-extension: tar.gz
             zig-version: 0.15.2
             binary-name: zigcss
-          - os: macos-latest
+          - os: macos-15
             arch: aarch64
             target: aarch64-macos
             archive-extension: tar.gz

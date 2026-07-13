@@ -22,7 +22,7 @@ export const nativeSmokeTargets = Object.freeze([
   Object.freeze({ target: 'x86_64-linux', runner: 'ubuntu-latest', nodePlatform: 'linux', nodeArch: 'x64', binaryName: 'zigcss' }),
   Object.freeze({ target: 'aarch64-linux', runner: 'ubuntu-24.04-arm', nodePlatform: 'linux', nodeArch: 'arm64', binaryName: 'zigcss' }),
   Object.freeze({ target: 'x86_64-macos', runner: 'macos-15-intel', nodePlatform: 'darwin', nodeArch: 'x64', binaryName: 'zigcss' }),
-  Object.freeze({ target: 'aarch64-macos', runner: 'macos-latest', nodePlatform: 'darwin', nodeArch: 'arm64', binaryName: 'zigcss' }),
+  Object.freeze({ target: 'aarch64-macos', runner: 'macos-15', nodePlatform: 'darwin', nodeArch: 'arm64', binaryName: 'zigcss' }),
   Object.freeze({ target: 'x86_64-windows', runner: 'windows-latest', nodePlatform: 'win32', nodeArch: 'x64', binaryName: 'zigcss.exe' }),
 ])
 

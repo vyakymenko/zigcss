@@ -20,7 +20,7 @@ export const releaseTargets = Object.freeze([
   Object.freeze({ target: 'x86_64-linux', os: 'ubuntu-latest', arch: 'x86_64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
   Object.freeze({ target: 'aarch64-linux', os: 'ubuntu-24.04-arm', arch: 'aarch64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
   Object.freeze({ target: 'x86_64-macos', os: 'macos-15-intel', arch: 'x86_64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
-  Object.freeze({ target: 'aarch64-macos', os: 'macos-latest', arch: 'aarch64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
+  Object.freeze({ target: 'aarch64-macos', os: 'macos-15', arch: 'aarch64', binaryName: 'zigcss', archiveExtension: 'tar.gz' }),
   Object.freeze({ target: 'x86_64-windows', os: 'windows-latest', arch: 'x86_64', binaryName: 'zigcss.exe', archiveExtension: 'zip' }),
 ])
 

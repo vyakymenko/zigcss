@@ -38,7 +38,7 @@ test('native smoke policy covers every release target on one matching runner', (
     },
     {
       target: 'aarch64-macos',
-      runner: 'macos-latest',
+      runner: 'macos-15',
       nodePlatform: 'darwin',
       nodeArch: 'arm64',
       binaryName: 'zigcss',
