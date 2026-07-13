@@ -203,6 +203,10 @@ function requireContains(source, value, message) {
   if (!source.includes(value)) fail(message)
 }
 
+function requireCount(source, value, expected, message) {
+  if (source.split(value).length - 1 !== expected) fail(message)
+}
+
 function requireOrder(source, values, message) {
   let previous = -1
   for (const value of values) {
@@ -239,6 +243,15 @@ export function validateBenchmarkArchiveWorkflowSource(benchmarkWorkflow, buildW
     'scheduled workflow must use read-only repository contents',
   )
   requireContains(benchmarkWorkflow, 'timeout-minutes: 45', 'scheduled workflow timeout drifted')
+  if (benchmarkWorkflow.includes('    env:\n      BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}')) {
+    fail('scheduled workflow runner context must be resolved only in step-local environment')
+  }
+  requireCount(
+    benchmarkWorkflow,
+    '        env:\n          BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive',
+    4,
+    'scheduled workflow must resolve the archive path in exactly four runner-assigned steps',
+  )
   requireContains(
     benchmarkWorkflow,
     `name: ${contract.benchmarkId}-\${{ github.sha }}-\${{ github.run_id }}-\${{ github.run_attempt }}`,

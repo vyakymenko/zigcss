@@ -179,6 +179,17 @@ test('schedule, runner, retention, cleanup, and build-gate drift fail closed', (
   )
   const buildWorkflow = fs.readFileSync(path.join(repositoryRoot, '.github', 'workflows', 'build.yml'), 'utf8')
 
+  assert.doesNotMatch(
+    benchmarkWorkflow,
+    /^    env:\n      BENCHMARK_ARCHIVE_DIR: \$\{\{ runner\.temp \}\}/m,
+    'runner context is unavailable in jobs.<job_id>.env',
+  )
+  assert.equal(
+    benchmarkWorkflow.match(/^        env:\n          BENCHMARK_ARCHIVE_DIR: \$\{\{ runner\.temp \}\}\/zigcss-benchmark-archive$/gm)?.length,
+    4,
+    'each archive step must resolve runner.temp only after runner assignment',
+  )
+
   assert.throws(
     () => validateBenchmarkArchiveWorkflowSource(
       benchmarkWorkflow.replace("cron: '17 4 * * 1'", "cron: '0 0 * * *'"),

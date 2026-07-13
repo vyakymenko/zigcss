@@ -18,8 +18,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-    env:
-      BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive
     steps:
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -58,15 +56,21 @@ jobs:
 
       - name: Prepare benchmark archive directory
         shell: bash
+        env:
+          BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive
         run: |
           rm -rf -- "$BENCHMARK_ARCHIVE_DIR"
           mkdir -p -- "$BENCHMARK_ARCHIVE_DIR"
           chmod 700 "$BENCHMARK_ARCHIVE_DIR"
 
       - name: Collect complete benchmark report
+        env:
+          BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive
         run: node scripts/report-benchmark-statistics.mjs --output "$BENCHMARK_ARCHIVE_DIR/benchmark-report.json"
 
       - name: Seal and verify benchmark archive
+        env:
+          BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive
         run: |
           node scripts/archive-benchmark-report.mjs --write \
             --directory "$BENCHMARK_ARCHIVE_DIR" \
@@ -94,4 +98,6 @@ jobs:
       - name: Clean benchmark archive directory
         if: always()
         shell: bash
+        env:
+          BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive
         run: rm -rf -- "$BENCHMARK_ARCHIVE_DIR"
