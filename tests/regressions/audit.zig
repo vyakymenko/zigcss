@@ -103,6 +103,12 @@ fn expectSuccess(result: Child.RunResult) !void {
 }
 
 fn expectFailureContaining(result: Child.RunResult, expected: []const u8) !void {
+    if (succeeded(result.term) or std.mem.indexOf(u8, result.stderr, expected) == null) {
+        std.debug.print(
+            "unexpected child result while requiring stderr fragment '{s}'\nstdout: {s}\nstderr: {s}\n",
+            .{ expected, result.stdout, result.stderr },
+        );
+    }
     try std.testing.expect(!succeeded(result.term));
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, expected) != null);
 }
@@ -1372,7 +1378,7 @@ test "CLI informational and failure modes have stable streams and exit codes (CL
     var write_failure = try runInDir(tmp.dir, &.{ "input.css", "-o", "blocked-output" });
     defer deinitRun(&write_failure);
     try expectExitCode(write_failure, 1);
-    try std.testing.expect(std.mem.indexOf(u8, write_failure.stderr, "failed to write blocked-output") != null);
+    try expectFailureContaining(write_failure, "failed to write blocked-output atomically");
 }
 
 test "CLI syntax selection is explicit bounded and non-repeatable (CLI-011)" {
@@ -1499,7 +1505,9 @@ test "CLI watch recompiles once when a local imported dependency changes (WATCH-
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;
-    child.cwd_dir = tmp.dir;
+    const cwd = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(cwd);
+    child.cwd = cwd;
     try child.spawn();
     var running = true;
     defer if (running) {

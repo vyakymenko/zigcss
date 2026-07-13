@@ -183,7 +183,9 @@ fn writeOutputFile(path: []const u8, bytes: []const u8) !void {
         const stat = cwd.statFile(path) catch |err| switch (err) {
             error.FileNotFound => break :blk std.fs.File.default_mode,
             else => {
-                std.debug.print("Error: failed to inspect output {s}: {s}\n", .{ path, @errorName(err) });
+                // Some hosts report an existing directory during stat while
+                // others reach atomicFile. Keep one cross-platform contract.
+                std.debug.print("Error: failed to write {s} atomically: {s}\n", .{ path, @errorName(err) });
                 return err;
             },
         };
