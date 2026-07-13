@@ -12,10 +12,15 @@ fn runInDir(dir: std.fs.Dir, argv_tail: []const []const u8) !Child.RunResult {
     argv[0] = audit_options.compiler_path;
     @memcpy(argv[1..], argv_tail);
 
+    // Zig 0.15.2 does not implement Child.cwd_dir on Windows. Resolve the
+    // already-confined test directory so every host exercises the same cwd.
+    const cwd = try dir.realpathAlloc(allocator, ".");
+    defer allocator.free(cwd);
+
     return Child.run(.{
         .allocator = allocator,
         .argv = argv,
-        .cwd_dir = dir,
+        .cwd = cwd,
         .max_output_bytes = 1024 * 1024,
     });
 }
@@ -34,7 +39,9 @@ fn runWithStdinInDir(
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
-    child.cwd_dir = cwd_dir;
+    const cwd = if (cwd_dir) |dir| try dir.realpathAlloc(allocator, ".") else null;
+    defer if (cwd) |path| allocator.free(path);
+    child.cwd = cwd;
     try child.spawn();
     errdefer _ = child.kill() catch {};
 
