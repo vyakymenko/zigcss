@@ -220,6 +220,19 @@
           "contains": ["ubuntu-24.04-arm", "macos-15-intel", "Smoke Native Archive and npm Installation"]
         }
       ]
+    },
+    "benchmark-publication": {
+      "command": "npm run test:benchmark-publication",
+      "anchors": [
+        {
+          "path": "scripts/publish-benchmark-report.mjs",
+          "contains": ["renderBenchmarkPublication", "validateBenchmarkPublication", "exact no-claims notice"]
+        },
+        {
+          "path": "BENCHMARK_REPORT.md",
+          "contains": ["Performance claims are withdrawn", "No controlled scheduled archive has been selected"]
+        }
+      ]
     }
   },
   "capabilities": [
@@ -374,6 +387,14 @@
       "statusKind": "experimental",
       "behavior": "The tag workflow builds on five architecture-matched runners, then executes each archive directly and through an offline real npm pack/postinstall/wrapper lifecycle before attestation; SHA-256 manifests, deterministic SPDX 2.3 SBOMs, and signed SLSA/SBOM verification remain mandatory before upload. This recovery run has not published a release.",
       "evidence": ["release-version", "release-artifacts", "release-smoke"]
+    },
+    {
+      "id": "benchmark-report",
+      "surface": "Performance benchmark report",
+      "status": "Unavailable",
+      "statusKind": "unavailable",
+      "behavior": "The BENCH-007 generator accepts only a committed, provenance-bound controlled scheduled archive and renders its 43 complete series deterministically; no archive is selected, so the current report contains no timing, ranking, or ratio claim.",
+      "evidence": ["benchmark-publication"]
     },
     {
       "id": "public-compile",

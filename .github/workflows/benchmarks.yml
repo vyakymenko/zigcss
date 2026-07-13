@@ -54,6 +54,7 @@ jobs:
           npm run test:benchmark-modes && npm run check:benchmark-modes
           npm run test:benchmark-statistics
           npm run test:benchmark-archive && npm run check:benchmark-archive
+          npm run test:benchmark-publication && npm run check:benchmark-publication
 
       - name: Prepare benchmark archive directory
         shell: bash

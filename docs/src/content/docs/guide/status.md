@@ -26,6 +26,7 @@ ZigCSS 0.4.0-rc.1 is an unpublished compiler release candidate produced by a cor
 | VS Code extension | Experimental, package-tested | Marketplace version 0.4.0 maps to core 0.4.0-rc.1 and packages only with the pre-release marker; its exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and five-file VSIX are verified; no binary is bundled or published. |
 | Neovim configuration | Experimental, integration-tested | The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled. |
 | Release archives | Experimental, native-smoke-gated | The tag workflow builds on five architecture-matched runners, then executes each archive directly and through an offline real npm pack/postinstall/wrapper lifecycle before attestation; SHA-256 manifests, deterministic SPDX 2.3 SBOMs, and signed SLSA/SBOM verification remain mandatory before upload. This recovery run has not published a release. |
+| Performance benchmark report | Unavailable | The BENCH-007 generator accepts only a committed, provenance-bound controlled scheduled archive and renders its 43 complete series deterministically; no archive is selected, so the current report contains no timing, ranking, or ratio claim. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 until bounded process and request isolation is implemented. |
 <!-- capability-status:end -->
 
@@ -107,7 +108,7 @@ Use the current binary only for contributing, testing, or evaluating the recover
 
 ## Project direction
 
-The approved roadmap has replaced the stable CLI's byte-oriented parser with a tokenizer, source model, syntax tree, standards-oriented parser, and semantics-preserving emitter. It enables only the closed evidence-backed optimizer preset while separately gated or inherited transform paths remain unavailable. Public performance comparisons remain withdrawn until equivalent output is validated first.
+The approved roadmap has replaced the stable CLI's byte-oriented parser with a tokenizer, source model, syntax tree, standards-oriented parser, and semantics-preserving emitter. It enables only the closed evidence-backed optimizer preset while separately gated or inherited transform paths remain unavailable. Public performance comparisons remain withdrawn because no controlled scheduled archive has been selected; BENCH-007 can render only a committed archive whose report, source/run provenance, hardware fingerprint, raw statistics, and artifact link all revalidate.
 
 - [Build from source](/guide/build-from-source)
 - [Recovery CLI](/guide/recovery-cli)

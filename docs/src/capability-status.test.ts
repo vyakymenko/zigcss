@@ -28,9 +28,9 @@ describe('evidence-linked capability status metadata', () => {
       'unavailable',
       'disabled',
     ])
-    expect(capabilityMetadata.capabilities).toHaveLength(20)
-    expect(new Set(capabilityMetadata.capabilities.map(item => item.id)).size).toBe(20)
-    expect(new Set(capabilityMetadata.capabilities.map(item => item.surface)).size).toBe(20)
+    expect(capabilityMetadata.capabilities).toHaveLength(21)
+    expect(new Set(capabilityMetadata.capabilities.map(item => item.id)).size).toBe(21)
+    expect(new Set(capabilityMetadata.capabilities.map(item => item.surface)).size).toBe(21)
   })
 
   test('anchors every row to a declared executable gate and real source text', () => {
@@ -70,6 +70,8 @@ describe('evidence-linked capability status metadata', () => {
     expect(byId.get('vscode')?.behavior).toContain('no binary is bundled or published')
     expect(byId.get('neovim')?.behavior).toContain('0.11.7 and 0.12.4')
     expect(byId.get('release-artifacts')?.behavior).toContain('has not published a release')
+    expect(byId.get('benchmark-report')?.statusKind).toBe('unavailable')
+    expect(byId.get('benchmark-report')?.behavior).toContain('no archive is selected')
     expect(byId.get('public-compile')?.statusKind).toBe('disabled')
     expect(byId.get('public-compile')?.behavior).toContain('HTTP 503')
   })

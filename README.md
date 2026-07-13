@@ -48,6 +48,7 @@ bash scripts/autodevelop/orient.sh
 | VS Code extension | Experimental, package-tested | Marketplace version 0.4.0 maps to core 0.4.0-rc.1 and packages only with the pre-release marker; its exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and five-file VSIX are verified; no binary is bundled or published. |
 | Neovim configuration | Experimental, integration-tested | The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled. |
 | Release archives | Experimental, native-smoke-gated | The tag workflow builds on five architecture-matched runners, then executes each archive directly and through an offline real npm pack/postinstall/wrapper lifecycle before attestation; SHA-256 manifests, deterministic SPDX 2.3 SBOMs, and signed SLSA/SBOM verification remain mandatory before upload. This recovery run has not published a release. |
+| Performance benchmark report | Unavailable | The BENCH-007 generator accepts only a committed, provenance-bound controlled scheduled archive and renders its 43 complete series deterministically; no archive is selected, so the current report contains no timing, ranking, or ratio claim. |
 | Public compile API and playground | Disabled | Public compile routes return HTTP 503 until bounded process and request isolation is implemented. |
 <!-- capability-status:end -->
 
@@ -176,7 +177,7 @@ The optimizer preset reaches only seven verified order-preserving passes and rep
 
 ## Performance claims
 
-Public performance comparisons are withdrawn. Historical timings did not first prove equivalent output, and some measurements included incomparable process startup paths. New benchmark results will be publishable only after semantic validation, reproducible methodology, and the benchmark gates in the development plan pass.
+Public performance comparisons are withdrawn. Historical timings did not first prove equivalent output, and some measurements included incomparable process startup paths. The replacement pipeline now validates semantics, modes, raw statistics, and controlled archive provenance, but no scheduled archive is selected for publication. [Benchmark evidence status](BENCHMARK_REPORT.md) is generated only after the BENCH-007 gate accepts that retained archive.
 
 ## Contributing
 

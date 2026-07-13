@@ -280,3 +280,6 @@ jobs:
 
       - name: Validate benchmark archive policy
         run: npm run test:benchmark-archive && npm run check:benchmark-archive
+
+      - name: Validate benchmark publication
+        run: npm run test:benchmark-publication && npm run check:benchmark-publication

@@ -41,6 +41,8 @@
     "test:benchmark-statistics": "node --test scripts/report-benchmark-statistics.test.mjs",
     "check:benchmark-archive": "node scripts/archive-benchmark-report.mjs --check-policy",
     "test:benchmark-archive": "node --test scripts/archive-benchmark-report.test.mjs",
+    "check:benchmark-publication": "node scripts/publish-benchmark-report.mjs --check",
+    "test:benchmark-publication": "node --test scripts/publish-benchmark-report.test.mjs",
     "check:workflows": "node scripts/validate-workflows.mjs --check",
     "test:workflows": "node --test scripts/validate-workflows.test.mjs",
     "check:version": "node scripts/validate-release-version.mjs --check",

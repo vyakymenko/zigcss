@@ -19,10 +19,10 @@ import {
 test('capability metadata is closed, unique, and anchored to executable evidence', () => {
   const metadata = validateMetadata(loadMetadata())
 
-  assert.equal(metadata.capabilities.length, 20)
-  assert.equal(Object.keys(metadata.gates).length, 18)
+  assert.equal(metadata.capabilities.length, 21)
+  assert.equal(Object.keys(metadata.gates).length, 19)
   assert.deepEqual(metadata.statusKinds, ['experimental', 'verified', 'unavailable', 'disabled'])
-  assert.equal(new Set(metadata.capabilities.map(capability => capability.id)).size, 20)
+  assert.equal(new Set(metadata.capabilities.map(capability => capability.id)).size, 21)
   assert.ok(metadata.capabilities.every(capability => capability.evidence.length > 0))
 })
 
@@ -100,7 +100,7 @@ test('generator check is deterministic and the site consumes metadata directly',
     encoding: 'utf8',
   })
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /20 rows, 18 executable evidence gates, 2 Markdown tables/)
+  assert.match(result.stdout, /21 rows, 19 executable evidence gates, 2 Markdown tables/)
 
   const features = fs.readFileSync(path.join(repositoryRoot, 'docs/src/app/components/Features.tsx'), 'utf8')
   assert.match(features, /data\/capabilities\.json/)
@@ -127,4 +127,7 @@ test('public disabled and final LSP/editor boundaries cannot regress to stale cl
   assert.doesNotMatch(byId.get('lsp').behavior, /remain later|parser migration/i)
   assert.match(byId.get('vscode').behavior, /no binary is bundled or published/)
   assert.match(byId.get('neovim').behavior, /0\.11\.7 and 0\.12\.4/)
+  assert.equal(byId.get('benchmark-report').statusKind, 'unavailable')
+  assert.match(byId.get('benchmark-report').behavior, /no archive is selected/i)
+  assert.match(byId.get('benchmark-report').behavior, /no timing, ranking, or ratio claim/i)
 })

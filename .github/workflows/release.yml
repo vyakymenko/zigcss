@@ -232,7 +232,7 @@ jobs:
             - macOS (x86_64, aarch64)
             - Windows (x86_64)
 
-            Optimizer transforms, CLI source-map output, browser targeting, alternate format adapters, and the public compile API remain disabled or unavailable. Public performance comparisons are withdrawn until equivalent output is validated.
+            Optimizer transforms, CLI source-map output, browser targeting, alternate format adapters, and the public compile API remain disabled or unavailable. Public performance comparisons are withdrawn until a controlled scheduled archive is selected and reproduced by the BENCH-007 publication gate.
 
           draft: false
           prerelease: true
