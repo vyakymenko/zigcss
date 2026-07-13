@@ -45,7 +45,12 @@ fn runWithStdinInDir(
     try child.spawn();
     errdefer _ = child.kill() catch {};
 
-    try child.stdin.?.writeAll(input);
+    child.stdin.?.writeAll(input) catch |err| switch (err) {
+        // Argument-validation failures may close stdin before the parent
+        // finishes its fixture write. The child result owns that contract.
+        error.BrokenPipe => {},
+        else => return err,
+    };
     child.stdin.?.close();
     child.stdin = null;
 
