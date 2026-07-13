@@ -762,7 +762,7 @@ const OutputCollision = struct {
 
 fn canonicalizeAbsolutePath(allocator: std.mem.Allocator, absolute_path: []const u8) ![]u8 {
     return std.fs.cwd().realpathAlloc(allocator, absolute_path) catch |err| {
-        if (err != error.FileNotFound and err != error.NotDir) return err;
+        if (err != error.FileNotFound and err != error.NotDir and err != error.IsDir) return err;
 
         const parent = std.fs.path.dirname(absolute_path) orelse return allocator.dupe(u8, absolute_path);
         if (std.mem.eql(u8, parent, absolute_path)) return allocator.dupe(u8, absolute_path);
@@ -779,7 +779,9 @@ fn identifyPath(allocator: std.mem.Allocator, raw_path: []const u8) !PathIdentit
 
     const inode: ?std.fs.File.INode = blk: {
         const stat = std.fs.cwd().statFile(raw_path) catch |err| switch (err) {
-            error.FileNotFound, error.NotDir => break :blk null,
+            // Windows statFile reports IsDir for directory destinations;
+            // normalized identity is sufficient for collision planning.
+            error.FileNotFound, error.NotDir, error.IsDir => break :blk null,
             else => return err,
         };
         break :blk stat.inode;
