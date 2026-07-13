@@ -567,6 +567,14 @@ export function validateReleaseWorkflowSource(source) {
 
 export function validateReleaseBuildGate(source) {
   if (typeof source !== 'string' || source.length > 256 * 1024) fail('build workflow is missing or oversized')
+  const testJobStart = source.indexOf('\n  test:\n')
+  if (testJobStart < 0) fail('release consumer test job is missing')
+  expectLiteralCount(
+    source.slice(testJobStart),
+    '          fetch-depth: 0',
+    1,
+    'release consumer full-history checkout',
+  )
   expectLiteralCount(source, '- name: Verify release artifact metadata policy', 1, 'release metadata CI step')
   expectLiteralCount(
     source,

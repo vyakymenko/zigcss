@@ -283,4 +283,8 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-homebrew', 'npm run removed:release-homebrew')),
     /Homebrew release CI command/,
   )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace('          fetch-depth: 0', '          fetch-depth: 1')),
+    /release consumer full-history checkout/,
+  )
 })
