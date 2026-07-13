@@ -5,7 +5,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validateCssModules } from './css_modules_validate.mjs'
 
-const scriptDirectory = path.dirname(fileURLToPath(import.meta.url))
+const scriptPath = fileURLToPath(import.meta.url)
+const scriptDirectory = path.dirname(scriptPath)
 const repositoryRoot = path.resolve(scriptDirectory, '../..')
 const matrixPath = path.join(scriptDirectory, 'matrix.json')
 const strategyPath = path.join(repositoryRoot, 'docs/adr/ADR-005-preprocessor-strategy.md')
@@ -76,6 +77,28 @@ function repositoryFile(relativePath) {
   const resolved = repositoryPath(relativePath)
   if (!fs.statSync(resolved).isFile()) fail(`not a file: ${relativePath}`)
   return resolved
+}
+
+export function discoverLegacyAdapterSources(root) {
+  const formatsDirectory = path.join(root, 'src/formats')
+  const legacySources = []
+  if (fs.existsSync(formatsDirectory)) {
+    const stat = fs.lstatSync(formatsDirectory)
+    if (!stat.isDirectory() || stat.isSymbolicLink()) fail('src/formats must be a regular directory')
+    legacySources.push(
+      ...fs
+        .readdirSync(formatsDirectory)
+        .filter(name => name.endsWith('.zig'))
+        .map(name => `src/formats/${name}`),
+    )
+  }
+  const tailwindPath = path.join(root, 'src/tailwind.zig')
+  if (fs.existsSync(tailwindPath)) {
+    const stat = fs.lstatSync(tailwindPath)
+    if (!stat.isFile() || stat.isSymbolicLink()) fail('src/tailwind.zig must be a regular file')
+    legacySources.push('src/tailwind.zig')
+  }
+  return sorted(legacySources)
 }
 
 function formatTagsFromSource(source) {
@@ -262,13 +285,7 @@ function validateMatrix() {
   }
   expectExactSet(ids, expectedAdapterIds, 'adapter inventory')
 
-  const formatsDirectory = path.join(repositoryRoot, 'src/formats')
-  const legacySources = fs
-    .readdirSync(formatsDirectory)
-    .filter(name => name.endsWith('.zig'))
-    .map(name => `src/formats/${name}`)
-  const tailwindSource = 'src/tailwind.zig'
-  if (fs.existsSync(repositoryPath(tailwindSource))) legacySources.push(tailwindSource)
+  const legacySources = discoverLegacyAdapterSources(repositoryRoot)
   expectExactSet(coveredLegacySources, legacySources, 'legacy adapter source inventory')
   const nativeSources = matrix.adapters
     .filter(adapter => adapter.implementation === 'LimitedNative')
@@ -352,12 +369,18 @@ function validateCliRejections(compiler, matrix) {
   return rejectionCount
 }
 
-const { compiler, moduleDriver } = binariesFromArguments(process.argv.slice(2))
-const matrix = validateMatrix()
-const rejectionCount = validateCliRejections(compiler, matrix)
-const moduleEvidence = validateCssModules(moduleDriver)
-const removedCount = matrix.adapters.filter(adapter => adapter.implementation === 'Removed').length
-const nativeCount = matrix.adapters.filter(adapter => adapter.implementation === 'LimitedNative').length
-console.log(
-  `Format matrix verified: ${matrix.adapters.length} adapters, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs (${moduleEvidence.valueFixtures} local-value fixture outputs), ${moduleEvidence.compositionDifferentials} composition differential, ${moduleEvidence.rejections} strict module rejections (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
-)
+function main(args) {
+  const { compiler, moduleDriver } = binariesFromArguments(args)
+  const matrix = validateMatrix()
+  const rejectionCount = validateCliRejections(compiler, matrix)
+  const moduleEvidence = validateCssModules(moduleDriver)
+  const removedCount = matrix.adapters.filter(adapter => adapter.implementation === 'Removed').length
+  const nativeCount = matrix.adapters.filter(adapter => adapter.implementation === 'LimitedNative').length
+  console.log(
+    `Format matrix verified: ${matrix.adapters.length} adapters, ${removedCount} removed implementations, ${nativeCount} limited native implementation, ${rejectionCount} rejected extension probes, ${moduleEvidence.outputs} independently parsed CSS Modules outputs (${moduleEvidence.valueFixtures} local-value fixture outputs), ${moduleEvidence.compositionDifferentials} composition differential, ${moduleEvidence.rejections} strict module rejections (Lightning CSS ${moduleEvidence.validatorVersion}), complete adapter-source coverage.`,
+  )
+}
+
+if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === scriptPath) {
+  main(process.argv.slice(2))
+}
