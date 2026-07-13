@@ -61,7 +61,7 @@ describe('autonomous development operations', () => {
       expect(fs.statSync(script).mode & 0o111).not.toBe(0)
     }
     expect(after).toBe(before)
-    expect(selftest).toContain('PASS=41 FAIL=0')
+    expect(selftest).toContain('PASS=44 FAIL=0')
     expect(prompt).toContain('Use only gpt-5.6-sol with ultra reasoning')
     expect(prompt).toContain('Never delegate, spawn subagents, create child tasks, or fall back')
     expect(prompt).toContain('Do not push from this model pass')

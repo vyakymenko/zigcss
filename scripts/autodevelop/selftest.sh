@@ -53,6 +53,10 @@ assert_equal "$(autodevelop_classify_pass 0 "$TMP/blocked-without-reason")" ERRO
 fixture blocked-last-marker 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED controlled-benchmark-archive: valid earlier marker
 ZIGCSS-AUTODEVELOP-STATUS: BLOCKED missing stable code'
 assert_equal "$(autodevelop_classify_pass 0 "$TMP/blocked-last-marker")" ERROR 'invalid last blocker cannot reuse earlier code'
+assert_equal "$(if autodevelop_valid_blocker_code controlled-benchmark-archive; then printf valid; else printf invalid; fi)" valid 'lowercase kebab blocker code accepted'
+assert_equal "$(if autodevelop_valid_blocker_code invalid_Code; then printf valid; else printf invalid; fi)" invalid 'non-kebab blocker code rejected'
+LONG_BLOCKER_CODE="$(printf 'a%.0s' {1..65})"
+assert_equal "$(if autodevelop_valid_blocker_code "$LONG_BLOCKER_CODE"; then printf valid; else printf invalid; fi)" invalid 'overlong blocker code rejected'
 
 fixture complete 'ZIGCSS-AUTODEVELOP-STATUS: COMPLETE'
 assert_equal "$(autodevelop_classify_pass 0 "$TMP/complete")" COMPLETE 'complete classification'
