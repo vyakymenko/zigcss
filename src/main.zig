@@ -667,12 +667,12 @@ const CompileError = error{CompileError};
 fn runLspServer(allocator: std.mem.Allocator) !lsp.ExitStatus {
     var server = lsp.LspServer.init(allocator);
     defer server.deinit();
-    
+
     var stdin_buffer: [8192]u8 = undefined;
     var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
     var stdout_buffer: [8192]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-    
+
     while (try lsp_transport.readFrame(allocator, &stdin_reader.interface)) |request| {
         defer allocator.free(request);
         switch (try server.handleMessage(request)) {
@@ -690,7 +690,7 @@ fn runLspServer(allocator: std.mem.Allocator) !lsp.ExitStatus {
 
 fn expandGlob(allocator: std.mem.Allocator, pattern: []const u8) !std.ArrayList([]const u8) {
     var files = try std.ArrayList([]const u8).initCapacity(allocator, 0);
-    
+
     if (std.mem.indexOf(u8, pattern, "*") == null) {
         const pattern_copy = try allocator.dupe(u8, pattern);
         try files.append(allocator, pattern_copy);
@@ -700,10 +700,10 @@ fn expandGlob(allocator: std.mem.Allocator, pattern: []const u8) !std.ArrayList(
     const cwd = std.fs.cwd();
     const dir_path = std.fs.path.dirname(pattern) orelse ".";
     const basename_pattern = std.fs.path.basename(pattern);
-    
+
     var dir = try cwd.openDir(dir_path, .{ .iterate = true });
     defer dir.close();
-    
+
     var iter = dir.iterate();
     while (try iter.next()) |entry| {
         if (matchPattern(basename_pattern, entry.name)) {
@@ -711,14 +711,14 @@ fn expandGlob(allocator: std.mem.Allocator, pattern: []const u8) !std.ArrayList(
             try files.append(allocator, full_path);
         }
     }
-    
+
     return files;
 }
 
 fn matchPattern(pattern: []const u8, name: []const u8) bool {
     var pattern_idx: usize = 0;
     var name_idx: usize = 0;
-    
+
     while (pattern_idx < pattern.len and name_idx < name.len) {
         if (pattern[pattern_idx] == '*') {
             pattern_idx += 1;
@@ -737,7 +737,7 @@ fn matchPattern(pattern: []const u8, name: []const u8) bool {
             return false;
         }
     }
-    
+
     return pattern_idx >= pattern.len and name_idx >= name.len;
 }
 
@@ -1060,7 +1060,7 @@ pub fn main() !void {
         }
         input_files.deinit(allocator);
     }
-    
+
     var output_file: ?[]const u8 = null;
     var output_dir_flag = false;
     var syntax: zigcss.Syntax = .css;
@@ -1661,7 +1661,7 @@ test "legacy optimizer internal: cascade layer merging" {
     var layer_count: usize = 0;
     var i: usize = 0;
     while (i < result.len) {
-        if (i + 6 <= result.len and std.mem.eql(u8, result[i..i+6], "@layer")) {
+        if (i + 6 <= result.len and std.mem.eql(u8, result[i .. i + 6], "@layer")) {
             layer_count += 1;
             i += 6;
         } else {
@@ -1692,7 +1692,7 @@ test "legacy optimizer internal: cascade layer anonymous merging" {
     var layer_count: usize = 0;
     var i: usize = 0;
     while (i < result.len) {
-        if (i + 6 <= result.len and std.mem.eql(u8, result[i..i+6], "@layer")) {
+        if (i + 6 <= result.len and std.mem.eql(u8, result[i .. i + 6], "@layer")) {
             layer_count += 1;
             i += 6;
         } else {

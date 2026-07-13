@@ -1486,10 +1486,10 @@ test "LSP handle initialize request" {
     var server = LspServer.init(allocator);
     defer server.deinit();
 
-    const request = 
+    const request =
         \\{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///test","capabilities":{}}}
     ;
-    
+
     const response = try server.handleRequest(request);
     defer allocator.free(response);
 

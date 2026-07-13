@@ -91,27 +91,27 @@ pub const CustomPropertyResolver = struct {
 
         var pos: usize = 0;
         while (pos < value.len) {
-            if (pos + 4 <= value.len and std.mem.eql(u8, value[pos..pos+4], "var(")) {
+            if (pos + 4 <= value.len and std.mem.eql(u8, value[pos .. pos + 4], "var(")) {
                 pos += 4;
-                
+
                 while (pos < value.len and std.ascii.isWhitespace(value[pos])) {
                     pos += 1;
                 }
-                
+
                 const var_start = pos;
                 while (pos < value.len and value[pos] != ',' and value[pos] != ')') {
                     pos += 1;
                 }
-                
+
                 const var_name = std.mem.trim(u8, value[var_start..pos], " \t\n\r");
-                
+
                 var fallback: ?[]const u8 = null;
                 if (pos < value.len and value[pos] == ',') {
                     pos += 1;
                     while (pos < value.len and std.ascii.isWhitespace(value[pos])) {
                         pos += 1;
                     }
-                    
+
                     const fallback_start = pos;
                     var paren_depth: usize = 0;
                     while (pos < value.len) {
@@ -122,14 +122,14 @@ pub const CustomPropertyResolver = struct {
                         }
                         pos += 1;
                     }
-                    
+
                     fallback = std.mem.trim(u8, value[fallback_start..pos], " \t\n\r");
                 }
-                
+
                 if (pos < value.len and value[pos] == ')') {
                     pos += 1;
                 }
-                
+
                 if (self.properties.get(var_name)) |resolved_value| {
                     try result.appendSlice(self.allocator, resolved_value);
                 } else if (fallback) |fb| {
@@ -150,7 +150,7 @@ pub const CustomPropertyResolver = struct {
         }
 
         const resolved = try result.toOwnedSlice(self.allocator);
-        
+
         if (self.string_pool) |pool| {
             const interned = try pool.intern(resolved);
             self.allocator.free(resolved);

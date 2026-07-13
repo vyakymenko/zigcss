@@ -94,7 +94,7 @@ pub const Optimizer = struct {
     fn removeUnusedCustomProperties(self: *Optimizer, stylesheet: *ast.Stylesheet, used_properties: *std.StringHashMap(void)) !void {
         if (stylesheet.rules.items.len == 0) return;
         if (used_properties.count() == 0) return;
-        
+
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
@@ -125,7 +125,7 @@ pub const Optimizer = struct {
     fn removeUnusedCustomPropertiesFromRules(self: *Optimizer, rules: []ast.Rule, used_properties: *const std.StringHashMap(void)) void {
         if (rules.len == 0) return;
         if (used_properties.count() == 0) return;
-        
+
         for (rules) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
@@ -155,7 +155,7 @@ pub const Optimizer = struct {
 
     fn collectUsedCustomPropertiesBeforeResolve(self: *Optimizer, stylesheet: *ast.Stylesheet, used_properties: *std.StringHashMap(void)) void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
@@ -179,7 +179,7 @@ pub const Optimizer = struct {
 
     fn collectUsedCustomPropertiesFromRules(self: *Optimizer, rules: []ast.Rule, used_properties: *std.StringHashMap(void)) void {
         if (rules.len == 0) return;
-        
+
         for (rules) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
@@ -205,21 +205,21 @@ pub const Optimizer = struct {
         _ = self;
         var pos: usize = 0;
         while (pos < value.len) {
-            if (pos + 4 <= value.len and std.mem.eql(u8, value[pos..pos+4], "var(")) {
+            if (pos + 4 <= value.len and std.mem.eql(u8, value[pos .. pos + 4], "var(")) {
                 pos += 4;
-                
+
                 while (pos < value.len and std.ascii.isWhitespace(value[pos])) {
                     pos += 1;
                 }
-                
+
                 const var_start = pos;
                 while (pos < value.len and value[pos] != ',' and value[pos] != ')') {
                     pos += 1;
                 }
-                
+
                 const var_name = std.mem.trim(u8, value[var_start..pos], " \t\n\r");
                 used_properties.put(var_name, {}) catch {};
-                
+
                 if (pos < value.len and value[pos] == ',') {
                     pos += 1;
                     var paren_depth: usize = 0;
@@ -232,7 +232,7 @@ pub const Optimizer = struct {
                         pos += 1;
                     }
                 }
-                
+
                 if (pos < value.len and value[pos] == ')') {
                     pos += 1;
                 }
@@ -245,7 +245,7 @@ pub const Optimizer = struct {
     fn removeEmptyRules(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         _ = self;
         if (stylesheet.rules.items.len == 0) return;
-        
+
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const should_remove = switch (stylesheet.rules.items[i]) {
@@ -269,7 +269,7 @@ pub const Optimizer = struct {
 
     fn mergeSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len <= 1) return;
-        
+
         const estimated_capacity = @as(u32, @intCast(@min(stylesheet.rules.items.len / 2, std.math.maxInt(u32))));
         var selector_map = std.AutoHashMap(usize, usize).init(self.allocator);
         try selector_map.ensureTotalCapacity(estimated_capacity);
@@ -285,11 +285,11 @@ pub const Optimizer = struct {
 
             const selector_hash = self.hashSelectors(&rule.style.selectors);
             const gop = try selector_map.getOrPut(selector_hash);
-            
+
             if (gop.found_existing) {
                 const target_idx = gop.value_ptr.*;
                 const target_rule = &stylesheet.rules.items[target_idx];
-                
+
                 if (target_rule.* == .style and self.selectorsEqual(&target_rule.style.selectors, &rule.style.selectors)) {
                     const decl_count = rule.style.declarations.items.len;
                     if (decl_count > 0) {
@@ -306,7 +306,7 @@ pub const Optimizer = struct {
             } else {
                 gop.value_ptr.* = i;
             }
-            
+
             i += 1;
         }
     }
@@ -314,16 +314,16 @@ pub const Optimizer = struct {
     fn hashSelectors(self: *Optimizer, selectors: *std.ArrayList(ast.Selector)) usize {
         _ = self;
         if (selectors.items.len == 0) return 0;
-        
+
         var hash: u64 = 0;
         const selector_count = selectors.items.len;
         hash = hash *% 31 +% @as(u64, selector_count);
-        
+
         for (selectors.items) |selector| {
             const part_count = selector.parts.items.len;
             hash = hash *% 31 +% @as(u64, part_count);
             if (part_count == 0) continue;
-            
+
             for (selector.parts.items) |part| {
                 hash = hash *% 31 +% @as(u64, @intFromEnum(@as(std.meta.Tag(ast.SelectorPart), part)));
                 hash = hash *% 31 +% @as(u64, switch (part) {
@@ -424,7 +424,7 @@ pub const Optimizer = struct {
     fn optimizeValues(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
         if (stylesheet.string_pool == null) return;
-        
+
         var has_optimizable = false;
         for (stylesheet.rules.items) |rule| {
             switch (rule) {
@@ -444,7 +444,7 @@ pub const Optimizer = struct {
             }
         }
         if (!has_optimizable) return;
-        
+
         if (stylesheet.string_pool) |pool| {
             for (stylesheet.rules.items) |*rule| {
                 switch (rule.*) {
@@ -489,24 +489,24 @@ pub const Optimizer = struct {
 
     fn optimizeValue(self: *Optimizer, value: []const u8) !struct { optimized: []const u8, was_optimized: bool } {
         if (value.len == 0) return .{ .optimized = value, .was_optimized = false };
-        
+
         const first_char = value[0];
         if (value.len < 3) return .{ .optimized = value, .was_optimized = false };
-        
+
         const needs_trimming = std.ascii.isWhitespace(first_char) or std.ascii.isWhitespace(value[value.len - 1]);
         const trimmed = if (needs_trimming) std.mem.trim(u8, value, " \t\n\r") else value;
-        
+
         if (trimmed.len == 0) return .{ .optimized = value, .was_optimized = false };
         if (trimmed.len < 3) return .{ .optimized = value, .was_optimized = false };
-        
+
         const trimmed_first = trimmed[0];
-        
+
         if (trimmed_first == 'r' and (trimmed.len >= 4)) {
             if (self.optimizeRgbColor(trimmed)) |optimized| {
                 return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
             }
         }
-        
+
         if (trimmed_first == '#') {
             if (self.optimizeHexColor(trimmed)) |optimized| {
                 if (optimized.len < trimmed.len) {
@@ -514,19 +514,19 @@ pub const Optimizer = struct {
                 }
             }
         }
-        
+
         if (trimmed_first == 't' and trimmed.len == 11) {
             if (self.optimizeTransparent(trimmed)) |optimized| {
                 return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
             }
         }
-        
+
         if (trimmed_first == 'c' and trimmed.len >= 5) {
             if (self.optimizeMathFunction(trimmed)) |optimized| {
                 return .{ .optimized = optimized, .was_optimized = true };
             }
         }
-        
+
         if (self.optimizeColorName(trimmed)) |optimized| {
             return .{ .optimized = try self.allocator.dupe(u8, optimized), .was_optimized = true };
         }
@@ -561,23 +561,23 @@ pub const Optimizer = struct {
 
     fn optimizeRgbColor(self: *Optimizer, value: []const u8) ?[]const u8 {
         if (value.len < 5) return null;
-        
+
         const is_rgba = value.len >= 6 and std.mem.eql(u8, value[0..5], "rgba(");
         const is_rgb = std.mem.eql(u8, value[0..4], "rgb(");
-        
+
         if (!is_rgb and !is_rgba) {
             return null;
         }
 
         const prefix_len: usize = if (is_rgba) 5 else 4;
-        
+
         if (value.len < prefix_len + 1 or value[value.len - 1] != ')') {
             return null;
         }
 
-        const content = value[prefix_len..value.len - 1];
+        const content = value[prefix_len .. value.len - 1];
         var parts = std.mem.splitScalar(u8, content, ',');
-        
+
         var r: ?u8 = null;
         var g: ?u8 = null;
         var b: ?u8 = null;
@@ -642,12 +642,12 @@ pub const Optimizer = struct {
     fn getColorHex(self: *Optimizer, name: []const u8) ?[]const u8 {
         _ = self;
         if (name.len == 0) return null;
-        
+
         const first = name[0];
         if (first >= 'A' and first <= 'Z') {
             return null;
         }
-        
+
         return switch (name.len) {
             3 => if (std.mem.eql(u8, name, "red")) "#f00" else if (std.mem.eql(u8, name, "lime")) "#0f0" else null,
             4 => if (std.mem.eql(u8, name, "blue")) "#00f" else if (std.mem.eql(u8, name, "cyan")) "#0ff" else if (std.mem.eql(u8, name, "aqua")) "#0ff" else if (std.mem.eql(u8, name, "gray")) "#808080" else if (std.mem.eql(u8, name, "teal")) "#008080" else if (std.mem.eql(u8, name, "navy")) "#000080" else null,
@@ -661,12 +661,12 @@ pub const Optimizer = struct {
     fn optimizeUnit(self: *Optimizer, value: []const u8) ?[]const u8 {
         _ = self;
         if (value.len < 2) return null;
-        
+
         const units = [_][]const u8{ "px", "em", "rem", "%", "pt", "pc", "in", "cm", "mm", "ex", "ch", "vw", "vh", "vmin", "vmax" };
-        
+
         for (units) |unit| {
             if (std.mem.endsWith(u8, value, unit)) {
-                const num_str = value[0..value.len - unit.len];
+                const num_str = value[0 .. value.len - unit.len];
                 if (std.fmt.parseFloat(f32, num_str)) |num| {
                     if (num == 0.0) {
                         return "0";
@@ -701,7 +701,7 @@ pub const Optimizer = struct {
             return null;
         }
 
-        const content = std.mem.trim(u8, value[5..value.len - 1], " \t\n\r");
+        const content = std.mem.trim(u8, value[5 .. value.len - 1], " \t\n\r");
         if (content.len == 0) {
             return null;
         }
@@ -724,7 +724,7 @@ pub const Optimizer = struct {
             return null;
         }
 
-        const content = std.mem.trim(u8, value[func_len + 1..value.len - 1], " \t\n\r");
+        const content = std.mem.trim(u8, value[func_len + 1 .. value.len - 1], " \t\n\r");
         if (content.len == 0) {
             return null;
         }
@@ -800,7 +800,7 @@ pub const Optimizer = struct {
             return null;
         }
 
-        const content = std.mem.trim(u8, value[6..value.len - 1], " \t\n\r");
+        const content = std.mem.trim(u8, value[6 .. value.len - 1], " \t\n\r");
         if (content.len == 0) {
             return null;
         }
@@ -952,7 +952,7 @@ pub const Optimizer = struct {
         for (units) |u| {
             if (std.mem.endsWith(u8, trimmed, u)) {
                 unit = u;
-                num_str = trimmed[0..trimmed.len - u.len];
+                num_str = trimmed[0 .. trimmed.len - u.len];
                 break;
             }
         }
@@ -983,10 +983,10 @@ pub const Optimizer = struct {
     fn canRemoveCalcWrapper(self: *Optimizer, content: []const u8) bool {
         _ = self;
         const trimmed = std.mem.trim(u8, content, " \t\n\r");
-        
+
         var has_operators = false;
         var depth: i32 = 0;
-        
+
         for (trimmed) |ch| {
             if (ch == '(') {
                 depth += 1;
@@ -1003,7 +1003,7 @@ pub const Optimizer = struct {
 
     fn optimizeLogicalProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         const pool = stylesheet.string_pool;
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
@@ -1034,7 +1034,7 @@ pub const Optimizer = struct {
 
     fn convertLogicalPropertiesInRule(self: *Optimizer, style_rule: *ast.StyleRule, pool: ?*string_pool.StringPool) !void {
         if (style_rule.declarations.items.len == 0) return;
-        
+
         for (style_rule.declarations.items) |*decl| {
             const logical_prop = self.getPhysicalPropertyName(decl.property);
             if (logical_prop) |physical| {
@@ -1088,7 +1088,7 @@ pub const Optimizer = struct {
 
     fn optimizeShorthandProperties(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         const pool = stylesheet.string_pool;
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
@@ -1119,45 +1119,45 @@ pub const Optimizer = struct {
 
     fn optimizeShorthandInRule(self: *Optimizer, style_rule: *ast.StyleRule, pool: ?*string_pool.StringPool) !void {
         if (style_rule.declarations.items.len == 0) return;
-        
+
         var margin_top: ?[]const u8 = null;
         var margin_right: ?[]const u8 = null;
         var margin_bottom: ?[]const u8 = null;
         var margin_left: ?[]const u8 = null;
-        
+
         var padding_top: ?[]const u8 = null;
         var padding_right: ?[]const u8 = null;
         var padding_bottom: ?[]const u8 = null;
         var padding_left: ?[]const u8 = null;
-        
+
         var border_width: ?[]const u8 = null;
         var border_style: ?[]const u8 = null;
         var border_color: ?[]const u8 = null;
-        
+
         var font_style: ?[]const u8 = null;
         var font_variant: ?[]const u8 = null;
         var font_weight: ?[]const u8 = null;
         var font_size: ?[]const u8 = null;
         var line_height: ?[]const u8 = null;
         var font_family: ?[]const u8 = null;
-        
+
         var background_color: ?[]const u8 = null;
         var background_image: ?[]const u8 = null;
         var background_repeat: ?[]const u8 = null;
         var background_position: ?[]const u8 = null;
         var background_attachment: ?[]const u8 = null;
-        
+
         var flex_grow: ?[]const u8 = null;
         var flex_shrink: ?[]const u8 = null;
         var flex_basis: ?[]const u8 = null;
-        
+
         var grid_template_rows: ?[]const u8 = null;
         var grid_template_columns: ?[]const u8 = null;
         var grid_template_areas: ?[]const u8 = null;
-        
+
         var row_gap: ?[]const u8 = null;
         var column_gap: ?[]const u8 = null;
-        
+
         var margin_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
         defer margin_indices.deinit(self.allocator);
         var padding_indices = try std.ArrayList(usize).initCapacity(self.allocator, 4);
@@ -1174,7 +1174,7 @@ pub const Optimizer = struct {
         defer grid_template_indices.deinit(self.allocator);
         var gap_indices = try std.ArrayList(usize).initCapacity(self.allocator, 2);
         defer gap_indices.deinit(self.allocator);
-        
+
         for (style_rule.declarations.items, 0..) |*decl, i| {
             if (std.mem.eql(u8, decl.property, "margin-top")) {
                 margin_top = decl.value;
@@ -1268,18 +1268,18 @@ pub const Optimizer = struct {
                 try gap_indices.append(self.allocator, i);
             }
         }
-        
+
         if (margin_indices.items.len == 4) {
             const shorthand = try self.buildShorthand(margin_top.?, margin_right.?, margin_bottom.?, margin_left.?);
             defer self.allocator.free(shorthand);
-            
+
             const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
-            
+
             var new_decl = ast.Declaration.init(style_rule.allocator);
             new_decl.property = "margin";
             new_decl.value = interned;
             try style_rule.declarations.append(style_rule.allocator, new_decl);
-            
+
             var i: usize = margin_indices.items.len;
             while (i > 0) {
                 i -= 1;
@@ -1288,18 +1288,18 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
-        
+
         if (padding_indices.items.len == 4) {
             const shorthand = try self.buildShorthand(padding_top.?, padding_right.?, padding_bottom.?, padding_left.?);
             defer self.allocator.free(shorthand);
-            
+
             const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
-            
+
             var new_decl = ast.Declaration.init(style_rule.allocator);
             new_decl.property = "padding";
             new_decl.value = interned;
             try style_rule.declarations.append(style_rule.allocator, new_decl);
-            
+
             var i: usize = padding_indices.items.len;
             while (i > 0) {
                 i -= 1;
@@ -1308,18 +1308,18 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
-        
+
         if (border_indices.items.len == 3) {
             const shorthand = try self.buildBorderShorthand(border_width.?, border_style.?, border_color.?);
             defer self.allocator.free(shorthand);
-            
+
             const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
-            
+
             var new_decl = ast.Declaration.init(style_rule.allocator);
             new_decl.property = "border";
             new_decl.value = interned;
             try style_rule.declarations.append(style_rule.allocator, new_decl);
-            
+
             var i: usize = border_indices.items.len;
             while (i > 0) {
                 i -= 1;
@@ -1328,18 +1328,18 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
-        
+
         if (font_indices.items.len >= 2 and font_size != null and font_family != null) {
             const shorthand = try self.buildFontShorthand(font_style, font_variant, font_weight, font_size.?, line_height, font_family.?);
             defer self.allocator.free(shorthand);
-            
+
             const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
-            
+
             var new_decl = ast.Declaration.init(style_rule.allocator);
             new_decl.property = "font";
             new_decl.value = interned;
             try style_rule.declarations.append(style_rule.allocator, new_decl);
-            
+
             var i: usize = font_indices.items.len;
             while (i > 0) {
                 i -= 1;
@@ -1348,18 +1348,18 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
-        
+
         if (background_indices.items.len >= 2) {
             const shorthand = try self.buildBackgroundShorthand(background_color, background_image, background_repeat, background_position, background_attachment);
             defer self.allocator.free(shorthand);
-            
+
             const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
-            
+
             var new_decl = ast.Declaration.init(style_rule.allocator);
             new_decl.property = "background";
             new_decl.value = interned;
             try style_rule.declarations.append(style_rule.allocator, new_decl);
-            
+
             var i: usize = background_indices.items.len;
             while (i > 0) {
                 i -= 1;
@@ -1368,18 +1368,18 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
-        
+
         if (flex_indices.items.len == 3) {
             const shorthand = try self.buildFlexShorthand(flex_grow.?, flex_shrink.?, flex_basis.?);
             defer self.allocator.free(shorthand);
-            
+
             const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
-            
+
             var new_decl = ast.Declaration.init(style_rule.allocator);
             new_decl.property = "flex";
             new_decl.value = interned;
             try style_rule.declarations.append(style_rule.allocator, new_decl);
-            
+
             var i: usize = flex_indices.items.len;
             while (i > 0) {
                 i -= 1;
@@ -1388,18 +1388,18 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
-        
+
         if (grid_template_indices.items.len >= 2 and grid_template_rows != null and grid_template_columns != null) {
             const shorthand = try self.buildGridTemplateShorthand(grid_template_rows, grid_template_columns, grid_template_areas);
             defer self.allocator.free(shorthand);
-            
+
             const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
-            
+
             var new_decl = ast.Declaration.init(style_rule.allocator);
             new_decl.property = "grid-template";
             new_decl.value = interned;
             try style_rule.declarations.append(style_rule.allocator, new_decl);
-            
+
             var i: usize = grid_template_indices.items.len;
             while (i > 0) {
                 i -= 1;
@@ -1408,18 +1408,18 @@ pub const Optimizer = struct {
                 _ = style_rule.declarations.swapRemove(idx);
             }
         }
-        
+
         if (gap_indices.items.len == 2) {
             const shorthand = try self.buildGapShorthand(row_gap.?, column_gap.?);
             defer self.allocator.free(shorthand);
-            
+
             const interned = if (pool) |p| try p.intern(shorthand) else shorthand;
-            
+
             var new_decl = ast.Declaration.init(style_rule.allocator);
             new_decl.property = "gap";
             new_decl.value = interned;
             try style_rule.declarations.append(style_rule.allocator, new_decl);
-            
+
             var i: usize = gap_indices.items.len;
             while (i > 0) {
                 i -= 1;
@@ -1455,7 +1455,7 @@ pub const Optimizer = struct {
         if (style) |s| try parts.append(self.allocator, s);
         if (variant) |v| try parts.append(self.allocator, v);
         if (weight) |w| try parts.append(self.allocator, w);
-        
+
         if (line_height) |lh| {
             try parts.append(self.allocator, size);
             try parts.append(self.allocator, "/");
@@ -1463,7 +1463,7 @@ pub const Optimizer = struct {
         } else {
             try parts.append(self.allocator, size);
         }
-        
+
         try parts.append(self.allocator, family);
 
         var result = try std.ArrayList(u8).initCapacity(self.allocator, 128);
@@ -1562,7 +1562,7 @@ pub const Optimizer = struct {
 
     fn removeDuplicateDeclarations(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         for (stylesheet.rules.items) |*rule| {
             switch (rule.*) {
                 .style => |*style_rule| {
@@ -1588,7 +1588,7 @@ pub const Optimizer = struct {
         _ = self;
         const decl_count = style_rule.declarations.items.len;
         if (decl_count <= 1) return;
-        
+
         const estimated_capacity = @as(u32, @intCast(@min(decl_count / 2, std.math.maxInt(u32))));
         var seen = std.StringHashMap(void).init(style_rule.allocator);
         defer seen.deinit();
@@ -1608,7 +1608,7 @@ pub const Optimizer = struct {
 
     fn optimizeSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         var i: usize = 0;
         const rules_len = stylesheet.rules.items.len;
         while (i < rules_len) {
@@ -1664,10 +1664,10 @@ pub const Optimizer = struct {
         var modified = false;
         var i: usize = 0;
         const parts_len = selector.parts.items.len;
-        
+
         while (i < parts_len) {
             const part = &selector.parts.items[i];
-            
+
             if (part.* == .universal) {
                 if (i == 0 and parts_len > 1) {
                     const next_part = &selector.parts.items[i + 1];
@@ -1691,7 +1691,7 @@ pub const Optimizer = struct {
                     }
                 }
             }
-            
+
             if (part.* == .combinator) {
                 if (i == 0) {
                     selector.parts.items[i].deinit(selector.allocator);
@@ -1714,10 +1714,10 @@ pub const Optimizer = struct {
                     continue;
                 }
             }
-            
+
             i += 1;
         }
-        
+
         return modified;
     }
 
@@ -1726,7 +1726,7 @@ pub const Optimizer = struct {
         var ids: u32 = 0;
         var classes: u32 = 0;
         var elements: u32 = 0;
-        
+
         for (selector.parts.items) |part| {
             switch (part) {
                 .id => ids += 1,
@@ -1739,14 +1739,14 @@ pub const Optimizer = struct {
                 .combinator => {},
             }
         }
-        
+
         return .{ .ids = ids, .classes = classes, .elements = elements };
     }
 
     fn compareSpecificity(self: *Optimizer, a: *const ast.Selector, b: *const ast.Selector) i32 {
         const spec_a = self.calculateSpecificity(a);
         const spec_b = self.calculateSpecificity(b);
-        
+
         if (spec_a.ids != spec_b.ids) {
             return @as(i32, @intCast(spec_a.ids)) - @as(i32, @intCast(spec_b.ids));
         }
@@ -1758,7 +1758,7 @@ pub const Optimizer = struct {
 
     fn removeRedundantSelectors(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
@@ -1829,7 +1829,7 @@ pub const Optimizer = struct {
 
     fn reorderAtRules(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         const estimated_capacity = stylesheet.rules.items.len / 4;
         var media_rules = try std.ArrayList(usize).initCapacity(self.allocator, estimated_capacity);
         defer media_rules.deinit(self.allocator);
@@ -1867,8 +1867,8 @@ pub const Optimizer = struct {
         for (other_rules.items) |idx| {
             if (stylesheet.rules.items[idx] != .at_rule or
                 (!std.mem.eql(u8, stylesheet.rules.items[idx].at_rule.name, "media") and
-                 !std.mem.eql(u8, stylesheet.rules.items[idx].at_rule.name, "container") and
-                 !std.mem.eql(u8, stylesheet.rules.items[idx].at_rule.name, "layer")))
+                    !std.mem.eql(u8, stylesheet.rules.items[idx].at_rule.name, "container") and
+                    !std.mem.eql(u8, stylesheet.rules.items[idx].at_rule.name, "layer")))
             {
                 try reordered.append(self.allocator, stylesheet.rules.items[idx]);
             }
@@ -1892,7 +1892,7 @@ pub const Optimizer = struct {
 
     fn mergeMediaQueries(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         var media_count: usize = 0;
         for (stylesheet.rules.items) |rule| {
             if (rule == .at_rule and rule.at_rule.name.len == 5 and std.mem.eql(u8, rule.at_rule.name, "media")) {
@@ -1900,7 +1900,7 @@ pub const Optimizer = struct {
             }
         }
         if (media_count <= 1) return;
-        
+
         const estimated_capacity = @min(media_count / 2, 16);
         var media_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
         try media_map.ensureTotalCapacity(estimated_capacity);
@@ -1942,7 +1942,7 @@ pub const Optimizer = struct {
             if (entry.value_ptr.items.len > 1) {
                 const first_idx = entry.value_ptr.items[0];
                 const first_rule = &stylesheet.rules.items[first_idx];
-                
+
                 if (first_rule.at_rule.rules == null) {
                     first_rule.at_rule.rules = try std.ArrayList(ast.Rule).initCapacity(self.allocator, 0);
                 }
@@ -1953,7 +1953,7 @@ pub const Optimizer = struct {
                     const other_idx = entry.value_ptr.items[j];
                     try indices_to_remove.append(self.allocator, other_idx);
                     const other_rule = &stylesheet.rules.items[other_idx];
-                    
+
                     if (other_rule.at_rule.rules) |*other_rules| {
                         while (other_rules.items.len > 0) {
                             const nested_rule = other_rules.swapRemove(0);
@@ -1976,7 +1976,7 @@ pub const Optimizer = struct {
 
     fn mergeContainerQueries(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         var container_count: usize = 0;
         for (stylesheet.rules.items) |rule| {
             if (rule == .at_rule and rule.at_rule.name.len == 9 and std.mem.eql(u8, rule.at_rule.name, "container")) {
@@ -1984,7 +1984,7 @@ pub const Optimizer = struct {
             }
         }
         if (container_count <= 1) return;
-        
+
         const estimated_capacity = @min(container_count / 2, 16);
         var container_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
         try container_map.ensureTotalCapacity(estimated_capacity);
@@ -2026,7 +2026,7 @@ pub const Optimizer = struct {
             if (entry.value_ptr.items.len > 1) {
                 const first_idx = entry.value_ptr.items[0];
                 const first_rule = &stylesheet.rules.items[first_idx];
-                
+
                 if (first_rule.at_rule.rules == null) {
                     first_rule.at_rule.rules = try std.ArrayList(ast.Rule).initCapacity(self.allocator, 0);
                 }
@@ -2037,7 +2037,7 @@ pub const Optimizer = struct {
                     const other_idx = entry.value_ptr.items[j];
                     try indices_to_remove.append(self.allocator, other_idx);
                     const other_rule = &stylesheet.rules.items[other_idx];
-                    
+
                     if (other_rule.at_rule.rules) |*other_rules| {
                         while (other_rules.items.len > 0) {
                             const nested_rule = other_rules.swapRemove(0);
@@ -2060,7 +2060,7 @@ pub const Optimizer = struct {
 
     fn mergeCascadeLayers(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         if (stylesheet.rules.items.len == 0) return;
-        
+
         var layer_count: usize = 0;
         for (stylesheet.rules.items) |rule| {
             if (rule == .at_rule and rule.at_rule.name.len == 5 and std.mem.eql(u8, rule.at_rule.name, "layer")) {
@@ -2068,7 +2068,7 @@ pub const Optimizer = struct {
             }
         }
         if (layer_count <= 1) return;
-        
+
         const estimated_capacity = @min(layer_count / 2, 16);
         var layer_map = std.StringHashMap(std.ArrayList(usize)).init(self.allocator);
         try layer_map.ensureTotalCapacity(estimated_capacity);
@@ -2111,7 +2111,7 @@ pub const Optimizer = struct {
             if (entry.value_ptr.items.len > 1) {
                 const first_idx = entry.value_ptr.items[0];
                 const first_rule = &stylesheet.rules.items[first_idx];
-                
+
                 if (first_rule.at_rule.rules == null) {
                     first_rule.at_rule.rules = try std.ArrayList(ast.Rule).initCapacity(self.allocator, 0);
                 }
@@ -2122,7 +2122,7 @@ pub const Optimizer = struct {
                     const other_idx = entry.value_ptr.items[j];
                     try indices_to_remove.append(self.allocator, other_idx);
                     const other_rule = &stylesheet.rules.items[other_idx];
-                    
+
                     if (other_rule.at_rule.rules) |*other_rules| {
                         while (other_rules.items.len > 0) {
                             const nested_rule = other_rules.swapRemove(0);
@@ -2145,7 +2145,7 @@ pub const Optimizer = struct {
 
     fn removeDeadCode(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         const opts = self.dead_code_options.?;
-        
+
         var used_classes_set = std.StringHashMap(void).init(self.allocator);
         defer used_classes_set.deinit();
         if (opts.used_classes) |classes| {
@@ -2153,7 +2153,7 @@ pub const Optimizer = struct {
                 try used_classes_set.put(class, {});
             }
         }
-        
+
         var used_ids_set = std.StringHashMap(void).init(self.allocator);
         defer used_ids_set.deinit();
         if (opts.used_ids) |ids| {
@@ -2161,7 +2161,7 @@ pub const Optimizer = struct {
                 try used_ids_set.put(id, {});
             }
         }
-        
+
         var used_elements_set = std.StringHashMap(void).init(self.allocator);
         defer used_elements_set.deinit();
         if (opts.used_elements) |elements| {
@@ -2169,7 +2169,7 @@ pub const Optimizer = struct {
                 try used_elements_set.put(element, {});
             }
         }
-        
+
         var used_attributes_set = std.StringHashMap(void).init(self.allocator);
         defer used_attributes_set.deinit();
         if (opts.used_attributes) |attributes| {
@@ -2177,7 +2177,7 @@ pub const Optimizer = struct {
                 try used_attributes_set.put(attr, {});
             }
         }
-        
+
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
@@ -2205,7 +2205,7 @@ pub const Optimizer = struct {
                     }
                 },
             };
-            
+
             if (should_remove) {
                 rule.deinit();
                 _ = stylesheet.rules.swapRemove(i);
@@ -2217,14 +2217,14 @@ pub const Optimizer = struct {
 
     fn isSelectorUsed(self: *Optimizer, selectors: *std.ArrayList(ast.Selector), used_classes: *std.StringHashMap(void), used_ids: *std.StringHashMap(void), used_elements: *std.StringHashMap(void), used_attributes: *std.StringHashMap(void)) bool {
         _ = self;
-        
+
         if (used_classes.count() == 0 and used_ids.count() == 0 and used_elements.count() == 0 and used_attributes.count() == 0) {
             return true;
         }
-        
+
         for (selectors.items) |selector| {
             var has_match = false;
-            
+
             for (selector.parts.items) |part| {
                 switch (part) {
                     .class => |class| {
@@ -2258,18 +2258,18 @@ pub const Optimizer = struct {
                     .pseudo_class, .pseudo_element, .combinator => {},
                 }
             }
-            
+
             if (has_match) {
                 return true;
             }
         }
-        
+
         return false;
     }
 
     fn extractCriticalCss(self: *Optimizer, stylesheet: *ast.Stylesheet) !void {
         const opts = self.critical_css_options.?;
-        
+
         var critical_classes_set = std.StringHashMap(void).init(self.allocator);
         defer critical_classes_set.deinit();
         if (opts.critical_classes) |classes| {
@@ -2277,7 +2277,7 @@ pub const Optimizer = struct {
                 try critical_classes_set.put(class, {});
             }
         }
-        
+
         var critical_ids_set = std.StringHashMap(void).init(self.allocator);
         defer critical_ids_set.deinit();
         if (opts.critical_ids) |ids| {
@@ -2285,7 +2285,7 @@ pub const Optimizer = struct {
                 try critical_ids_set.put(id, {});
             }
         }
-        
+
         var critical_elements_set = std.StringHashMap(void).init(self.allocator);
         defer critical_elements_set.deinit();
         if (opts.critical_elements) |elements| {
@@ -2293,7 +2293,7 @@ pub const Optimizer = struct {
                 try critical_elements_set.put(element, {});
             }
         }
-        
+
         var critical_attributes_set = std.StringHashMap(void).init(self.allocator);
         defer critical_attributes_set.deinit();
         if (opts.critical_attributes) |attributes| {
@@ -2301,7 +2301,7 @@ pub const Optimizer = struct {
                 try critical_attributes_set.put(attr, {});
             }
         }
-        
+
         var i: usize = 0;
         while (i < stylesheet.rules.items.len) {
             const rule = &stylesheet.rules.items[i];
@@ -2329,7 +2329,7 @@ pub const Optimizer = struct {
                     }
                 },
             };
-            
+
             if (should_remove) {
                 rule.deinit();
                 _ = stylesheet.rules.swapRemove(i);

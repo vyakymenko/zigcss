@@ -20,7 +20,7 @@ pub const unsafe_transforms_message = "legacy and non-verified transform paths a
 
 fn estimateOutputSize(stylesheet: ast.Stylesheet) usize {
     if (stylesheet.rules.items.len == 0) return 0;
-    
+
     var size: usize = 0;
     for (stylesheet.rules.items) |rule| {
         switch (rule) {
@@ -121,7 +121,7 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
     if (stylesheet.rules.items.len == 0) {
         return try list.toOwnedSlice(allocator);
     }
-    
+
     for (stylesheet.rules.items, 0..) |rule, i| {
         if (i > 0 and !options.minify) {
             try list.append(allocator, '\n');
@@ -143,9 +143,9 @@ pub fn generate(allocator: std.mem.Allocator, stylesheet: *ast.Stylesheet, optio
 fn generateStyleRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, rule: ast.StyleRule, options: CodegenOptions) !void {
     if (rule.selectors.items.len == 0) return;
     if (rule.declarations.items.len == 0) return;
-    
+
     const minify = options.minify;
-    
+
     var selector_needed: usize = 0;
     for (rule.selectors.items) |selector| {
         selector_needed += estimateSelectorSize(selector);
@@ -153,7 +153,7 @@ fn generateStyleRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
     }
     selector_needed += if (!minify) 3 else 1;
     try list.ensureUnusedCapacity(allocator, selector_needed);
-    
+
     for (rule.selectors.items, 0..) |selector, i| {
         if (i > 0) {
             list.appendAssumeCapacity(',');
@@ -174,7 +174,7 @@ fn generateStyleRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
 
     const decl_count = rule.declarations.items.len;
     const last_idx = decl_count - 1;
-    
+
     const total_decl_size = blk: {
         var size: usize = 0;
         for (rule.declarations.items) |decl| {
@@ -189,9 +189,8 @@ fn generateStyleRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloc
         break :blk size;
     };
     try list.ensureUnusedCapacity(allocator, total_decl_size);
-    
+
     for (rule.declarations.items, 0..) |decl, i| {
-        
         if (!minify) {
             if (i > 0) {
                 list.appendAssumeCapacity('\n');
@@ -329,7 +328,7 @@ fn generateAttributeSelector(list: *std.ArrayListUnmanaged(u8), allocator: std.m
         needed += 2;
     }
     try list.ensureUnusedCapacity(allocator, needed);
-    
+
     list.appendAssumeCapacity('[');
     list.appendSliceAssumeCapacity(attr.name);
     if (attr.operator) |op| {
@@ -353,7 +352,7 @@ fn generateAtRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocato
         needed += rule.prelude.len;
         if (!minify) needed += 1;
     }
-    
+
     if (rule.rules) |rules| {
         needed += if (!minify) 3 else 1;
         for (rules.items) |nested_rule| {
@@ -372,9 +371,9 @@ fn generateAtRule(list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocato
     } else {
         needed += 1;
     }
-    
+
     try list.ensureUnusedCapacity(allocator, needed);
-    
+
     list.appendAssumeCapacity('@');
     list.appendSliceAssumeCapacity(rule.name);
     if (rule.prelude.len > 0) {

@@ -1,14 +1,15 @@
 const std = @import("std");
 
 const COMMON_CSS_KEYWORDS = [_][]const u8{
-    "color", "background", "padding", "margin", "border", "width", "height",
-    "display", "position", "top", "right", "bottom", "left", "flex", "grid",
-    "font", "text", "line", "opacity", "transform", "transition", "animation",
-    "box-shadow", "z-index", "overflow", "cursor", "user-select", "pointer-events",
-    "align", "justify", "gap", "row", "column", "wrap", "direction", "order",
-    "grow", "shrink", "basis", "auto", "none", "inherit", "initial", "unset",
-    "block", "inline", "flex", "grid", "table", "relative", "absolute", "fixed",
-    "sticky", "static", "hidden", "visible", "scroll", "transparent", "important",
+    "color",     "background",  "padding",   "margin",   "border",  "width",       "height",
+    "display",   "position",    "top",       "right",    "bottom",  "left",        "flex",
+    "grid",      "font",        "text",      "line",     "opacity", "transform",   "transition",
+    "animation", "box-shadow",  "z-index",   "overflow", "cursor",  "user-select", "pointer-events",
+    "align",     "justify",     "gap",       "row",      "column",  "wrap",        "direction",
+    "order",     "grow",        "shrink",    "basis",    "auto",    "none",        "inherit",
+    "initial",   "unset",       "block",     "inline",   "flex",    "grid",        "table",
+    "relative",  "absolute",    "fixed",     "sticky",   "static",  "hidden",      "visible",
+    "scroll",    "transparent", "important",
 };
 
 pub const StringPool = struct {
@@ -47,7 +48,7 @@ pub const StringPool = struct {
             }
         }
         self.strings.deinit();
-        
+
         {
             var common_it = self.common_keywords.iterator();
             while (common_it.next()) |entry| {
@@ -59,11 +60,11 @@ pub const StringPool = struct {
 
     pub fn intern(self: *StringPool, str: []const u8) ![]const u8 {
         if (str.len == 0) return "";
-        
+
         if (self.common_keywords.get(str)) |pre_interned| {
             return pre_interned;
         }
-        
+
         const entry = try self.strings.getOrPut(str);
         if (!entry.found_existing) {
             const owned = try self.allocator.dupe(u8, str);
@@ -76,7 +77,7 @@ pub const StringPool = struct {
         if (start >= end or start >= input.len) return "";
         const actual_end = @min(end, input.len);
         if (start == actual_end) return "";
-        
+
         const str = input[start..actual_end];
         return self.intern(str);
     }

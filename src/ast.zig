@@ -185,20 +185,20 @@ pub const AttributeSelector = struct {
         var list = try std.ArrayList(u8).initCapacity(allocator, 0);
         defer list.deinit(allocator);
 
-    try list.append(allocator, '[');
-    try list.appendSlice(allocator, self.name);
-    if (self.operator) |op| {
-        try list.appendSlice(allocator, op);
-        if (self.value) |val| {
-            try list.append(allocator, '"');
-            try list.appendSlice(allocator, val);
-            try list.append(allocator, '"');
+        try list.append(allocator, '[');
+        try list.appendSlice(allocator, self.name);
+        if (self.operator) |op| {
+            try list.appendSlice(allocator, op);
+            if (self.value) |val| {
+                try list.append(allocator, '"');
+                try list.appendSlice(allocator, val);
+                try list.append(allocator, '"');
+            }
         }
-    }
-    if (!self.case_sensitive) {
-        try list.appendSlice(allocator, " i");
-    }
-    try list.append(allocator, ']');
+        if (!self.case_sensitive) {
+            try list.appendSlice(allocator, " i");
+        }
+        try list.append(allocator, ']');
 
         return try list.toOwnedSlice(allocator);
     }

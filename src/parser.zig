@@ -95,11 +95,11 @@ pub const Parser = struct {
 
     fn estimateRuleCount(self: *const Parser) usize {
         if (self.input.len == 0) return 0;
-        
+
         var count: usize = 0;
         var i: usize = 0;
         const len = self.input.len;
-        
+
         while (i < len) {
             const ch = self.input[i];
             if (ch == '{' or ch == '@') {
@@ -113,12 +113,12 @@ pub const Parser = struct {
     fn estimateDeclarationCount(self: *const Parser) usize {
         const input_len = self.input.len;
         if (self.pos >= input_len) return 2;
-        
+
         var count: usize = 0;
         var i: usize = self.pos;
         var depth: usize = 0;
         const sample_end = @min(i + 1000, input_len);
-        
+
         while (i < sample_end and depth < 2) {
             const ch = self.input[i];
             if (ch == '{') {
@@ -131,13 +131,13 @@ pub const Parser = struct {
             }
             i += 1;
         }
-        
+
         if (sample_end < input_len and depth > 0) {
             const sample_size = sample_end - self.pos;
             const extrapolated = (count * (input_len - self.pos)) / sample_size;
             return @max(extrapolated, 2);
         }
-        
+
         return @max(count, 2);
     }
 
@@ -191,7 +191,7 @@ pub const Parser = struct {
         const input_len = self.input.len;
         while (self.pos < input_len) {
             self.skipWhitespace();
-            
+
             if (self.pos >= input_len) break;
             const ch = self.input[self.pos];
 
@@ -261,7 +261,7 @@ pub const Parser = struct {
                 break;
             }
             if (ch == '!' and self.pos + 9 < input_len) {
-                if (std.mem.eql(u8, self.input[self.pos..self.pos+10], "!important")) {
+                if (std.mem.eql(u8, self.input[self.pos .. self.pos + 10], "!important")) {
                     important = true;
                     value_end = self.pos;
                     self.pos += 10;
@@ -274,7 +274,7 @@ pub const Parser = struct {
 
         const value = self.input[value_start..value_end];
         const trimmed = std.mem.trim(u8, value, " \t\n\r");
-        const value_interned = if (trimmed.ptr == value.ptr and trimmed.len == value.len) 
+        const value_interned = if (trimmed.ptr == value.ptr and trimmed.len == value.len)
             try self.string_pool.intern(value)
         else
             try self.string_pool.intern(trimmed);
@@ -350,11 +350,11 @@ pub const Parser = struct {
     fn parseIdentifier(self: *Parser) ![]const u8 {
         const start = self.pos;
         const input_len = self.input.len;
-        
+
         if (start >= input_len) {
             return error.InvalidIdentifier;
         }
-        
+
         const first = self.input[start];
         if (first == '-') {
             self.pos += 1;
@@ -364,14 +364,14 @@ pub const Parser = struct {
 
         var pos = self.pos;
         const remaining = input_len - pos;
-        
+
         if (remaining >= 4) {
             while (pos + 4 <= input_len) {
                 const ch0 = self.input[pos];
                 const ch1 = self.input[pos + 1];
                 const ch2 = self.input[pos + 2];
                 const ch3 = self.input[pos + 3];
-                
+
                 if (!isAlnumOrDash(ch0)) {
                     break;
                 }
@@ -390,7 +390,7 @@ pub const Parser = struct {
                 pos += 4;
             }
         }
-        
+
         while (pos < input_len) {
             const ch = self.input[pos];
             if (isAlnumOrDash(ch)) {
@@ -399,7 +399,7 @@ pub const Parser = struct {
                 break;
             }
         }
-        
+
         self.pos = pos;
 
         if (self.pos == start) {
@@ -465,7 +465,7 @@ pub const Parser = struct {
         self.pos += 2;
         const input_len = self.input.len;
         const end = input_len - 1;
-        
+
         while (self.pos < end) {
             if (self.input[self.pos] == '*' and self.input[self.pos + 1] == '/') {
                 self.pos += 2;
@@ -482,17 +482,17 @@ pub const Parser = struct {
         }
         return self.input[self.pos];
     }
-    
+
     inline fn peekSafe(self: *const Parser) u8 {
         return if (self.pos < self.input.len) self.input[self.pos] else 0;
     }
 
     inline fn advance(self: *Parser) void {
         if (self.pos >= self.input.len) return;
-        
+
         const ch = self.input[self.pos];
         self.pos += 1;
-        
+
         if (ch == '\n') {
             self.line += 1;
             self.column = 1;
@@ -506,7 +506,7 @@ pub const Parser = struct {
             self.column += 1;
         }
     }
-    
+
     inline fn advanceNoTracking(self: *Parser) void {
         if (self.pos < self.input.len) {
             self.pos += 1;
@@ -530,12 +530,12 @@ pub const Parser = struct {
         const max_context_len = 30;
         const start = if (self.pos > max_context_len) self.pos - max_context_len else 0;
         const end = @min(self.pos + max_context_len, self.input.len);
-        
+
         if (end <= start) return null;
-        
+
         const context_slice = self.input[start..end];
         if (context_slice.len == 0) return null;
-        
+
         return context_slice;
     }
 };
