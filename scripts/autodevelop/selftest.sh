@@ -36,14 +36,28 @@ fixture progress 'ZIGCSS-AUTODEVELOP-STATUS: PROGRESS REL-003 checkpointed'
 assert_equal "$(autodevelop_extract_status "$TMP/progress")" PROGRESS 'progress tag'
 assert_equal "$(autodevelop_classify_pass 0 "$TMP/progress")" PROGRESS 'progress classification'
 
-fixture blocked 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED irreversible signing policy'
-assert_equal "$(autodevelop_extract_reason "$TMP/blocked")" 'irreversible signing policy' 'blocked reason'
+fixture blocked 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED controlled-benchmark-archive: irreversible signing policy'
+assert_equal "$(autodevelop_extract_blocker_code "$TMP/blocked")" 'controlled-benchmark-archive' 'stable blocker code'
+assert_equal "$(autodevelop_extract_reason "$TMP/blocked")" 'irreversible signing policy' 'blocked reason excludes stable code'
 assert_equal "$(autodevelop_classify_pass 0 "$TMP/blocked")" BLOCKED 'blocked classification'
+
+fixture blocked-reworded 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED controlled-benchmark-archive: scheduled evidence is still unavailable'
+assert_equal "$(autodevelop_extract_blocker_code "$TMP/blocked-reworded")" 'controlled-benchmark-archive' 'reworded blocker keeps identity'
+
+fixture blocked-without-code 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED irreversible signing policy'
+assert_equal "$(autodevelop_classify_pass 0 "$TMP/blocked-without-code")" ERROR 'blocker without stable code rejected'
+
+fixture blocked-without-reason 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED controlled-benchmark-archive:'
+assert_equal "$(autodevelop_classify_pass 0 "$TMP/blocked-without-reason")" ERROR 'blocker without reason rejected'
+
+fixture blocked-last-marker 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED controlled-benchmark-archive: valid earlier marker
+ZIGCSS-AUTODEVELOP-STATUS: BLOCKED missing stable code'
+assert_equal "$(autodevelop_classify_pass 0 "$TMP/blocked-last-marker")" ERROR 'invalid last blocker cannot reuse earlier code'
 
 fixture complete 'ZIGCSS-AUTODEVELOP-STATUS: COMPLETE'
 assert_equal "$(autodevelop_classify_pass 0 "$TMP/complete")" COMPLETE 'complete classification'
 
-fixture prompt-echo 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <reason>'
+fixture prompt-echo 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <stable-code>: <reason>'
 assert_equal "$(autodevelop_classify_pass 1 "$TMP/prompt-echo")" ERROR 'prompt marker ignored'
 
 fixture echoed-runtime-error 'user
@@ -64,6 +78,10 @@ assert_equal "$(autodevelop_classify_pass 124 "$TMP/rate")" TIMEOUT 'timeout pre
 
 autodevelop_state_set counter 4
 assert_equal "$(autodevelop_state_increment counter)" 5 'atomic counter'
+assert_equal "$(autodevelop_record_blocker controlled-benchmark-archive)" 1 'new blocker starts at one'
+assert_equal "$(autodevelop_record_blocker controlled-benchmark-archive)" 2 'same stable blocker increments'
+assert_equal "$(autodevelop_record_blocker controlled-benchmark-archive)" 3 'same stable blocker reaches pause threshold'
+assert_equal "$(autodevelop_record_blocker distinct-authority-decision)" 1 'different stable blocker resets count'
 
 FAKE_CODEX="$TMP/fake-codex"
 FAKE_ARGS="$TMP/fake-args"
@@ -76,7 +94,7 @@ printf '%s\n' \
   '  shift' \
   'done' \
   'test -n "$final_message"' \
-  'printf "ZIGCSS-AUTODEVELOP-STATUS: BLOCKED synthetic-test-blocker\n" > "$final_message"' \
+  'printf "ZIGCSS-AUTODEVELOP-STATUS: BLOCKED synthetic-test-blocker: test-only external condition\n" > "$final_message"' \
   > "$FAKE_CODEX"
 chmod +x "$FAKE_CODEX"
 PASS_HOME="$TMP/pass-state"
@@ -86,6 +104,7 @@ ZIGCSS_AUTODEVELOP_CODEX_BIN="$FAKE_CODEX" \
 ZIGCSS_FAKE_ARGS="$FAKE_ARGS" \
   bash "$HERE/run-pass.sh" > "$TMP/fake-pass.log" 2>&1
 assert_equal "$(grep '^CLASS=' "$PASS_HOME/state/last-run.env" | cut -d= -f2)" BLOCKED 'fake pass classification'
+assert_equal "$(grep '^BLOCKER_CODE=' "$PASS_HOME/state/last-run.env" | cut -d= -f2)" synthetic-test-blocker 'fake pass records stable blocker code'
 assert_equal "$(grep -xc -- '--ephemeral' "$FAKE_ARGS")" 1 'ephemeral CLI flag'
 assert_equal "$(grep -xc -- '--output-last-message' "$FAKE_ARGS")" 1 'isolated final-message CLI flag'
 assert_equal "$(grep -xc -- 'gpt-5.6-sol' "$FAKE_ARGS")" 1 'fixed model argument'

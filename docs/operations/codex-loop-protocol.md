@@ -118,7 +118,7 @@ A green checkpoint is not a handoff. An interactive task continues in-session; a
 
 Difficulty, a failing test, incomplete work, a long milestone, or a package that benefits from clarification is not a blocker. Diagnose and continue.
 
-Do not treat the roadmap as blocked on the first encounter. Park a local blocker and continue elsewhere when possible. The supervisor pauses as blocked only after the same true condition repeats for three consecutive passes and no meaningful in-scope progress remains, matching the Codex goal rule.
+Do not treat the roadmap as blocked on the first encounter. Park a local blocker and continue elsewhere when possible. A blocked pass must end with `ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <stable-code>: <reason>`, where the code is lowercase kebab case and remains unchanged while the underlying condition is unchanged. Human-readable wording may evolve without resetting blocker identity. Missing or malformed codes fail as runner errors. The supervisor pauses as blocked only after the same stable code repeats for three consecutive passes and no meaningful in-scope progress remains, matching the Codex goal rule.
 
 ## 8. On a true STOP
 

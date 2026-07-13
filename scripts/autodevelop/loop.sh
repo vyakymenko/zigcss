@@ -83,6 +83,7 @@ while :; do
   bash "$HERE/run-pass.sh" || PASS_RC=$?
   CLASS="$(grep '^CLASS=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2)"
   OUTPUT="$(grep '^OUTPUT=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2-)"
+  BLOCKER_CODE="$(grep '^BLOCKER_CODE=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2-)"
   REASON="$(cat "$AUTODEVELOP_STATE_DIR/last-run.reason" 2>/dev/null || true)"
 
   case "$CLASS" in
@@ -90,7 +91,7 @@ while :; do
       push_green_checkpoint || break
       autodevelop_state_set consecutive-errors 0
       autodevelop_state_set blocked-count 0
-      autodevelop_state_set blocked-fingerprint ''
+      autodevelop_state_set blocked-code ''
       write_loop_status PROGRESS "checkpoint pushed and verified; continuing"
       autodevelop_sleep_interruptible "$AUTODEVELOP_INTER_PASS_SECS" || true
       ;;
@@ -102,20 +103,18 @@ while :; do
       break
       ;;
     BLOCKED)
-      FINGERPRINT="$(printf '%s' "$REASON" | shasum -a 256 | awk '{print $1}')"
-      PRIOR="$(autodevelop_state_get blocked-fingerprint '')"
-      if [ "$FINGERPRINT" = "$PRIOR" ]; then
-        BLOCKED_COUNT="$(autodevelop_state_increment blocked-count)"
-      else
-        autodevelop_state_set blocked-fingerprint "$FINGERPRINT"
-        autodevelop_state_set blocked-count 1
-        BLOCKED_COUNT=1
+      if ! BLOCKED_COUNT="$(autodevelop_record_blocker "$BLOCKER_CODE")"; then
+        touch "$AUTODEVELOP_PAUSE_FILE"
+        write_loop_status ERROR "invalid stable blocker code; runner paused"
+        autodevelop_log ERROR "BLOCKED result lacked a valid stable blocker code"
+        autodevelop_notify_local "ZigCSS autodevelop paused" "A BLOCKED result lacked a valid stable blocker code; inspect the latest pass."
+        continue
       fi
-      write_loop_status BLOCKED "attempt $BLOCKED_COUNT/3: $REASON"
-      autodevelop_log WARN "blocked attempt $BLOCKED_COUNT/3: ${REASON:-unspecified}"
+      write_loop_status BLOCKED "attempt $BLOCKED_COUNT/3 [$BLOCKER_CODE]: $REASON"
+      autodevelop_log WARN "blocked attempt $BLOCKED_COUNT/3 code=$BLOCKER_CODE: ${REASON:-unspecified}"
       if [ "$BLOCKED_COUNT" -ge 3 ]; then
         touch "$AUTODEVELOP_PAUSE_FILE"
-        autodevelop_notify_local "ZigCSS autodevelop blocked" "Same blocker repeated three times: ${REASON:-see logs}. Runner paused."
+        autodevelop_notify_local "ZigCSS autodevelop blocked" "Blocker $BLOCKER_CODE repeated three times: ${REASON:-see logs}. Runner paused."
       else
         autodevelop_sleep_interruptible "$AUTODEVELOP_BLOCKED_RECHECK_SECS" || true
       fi

@@ -19,12 +19,12 @@ Hard execution contract:
 - Prioritize security, parser correctness, semantic preservation, determinism, and regression evidence. Do not weaken tests or quality gates.
 - Do not push from this model pass. The outer Bash supervisor alone may push the independently verified clean checkpoint to the approved origin branch. Do not publish, deploy, create a PR/tag/release, send messages, spend money, use secrets, or modify any other external system.
 - Do not fetch, pull, rebase, merge, or switch branches. Stage only explicit package-owned paths; never use git add -A.
-- Make safe reversible engineering decisions without asking. Report BLOCKED only for a true authority/external-state/irreversible-decision blocker after exhausting in-scope alternatives.
+- Make safe reversible engineering decisions without asking. Report BLOCKED only for a true authority/external-state/irreversible-decision blocker after exhausting in-scope alternatives. Give each blocker a lowercase kebab-case stable code and reuse that code while the underlying condition is unchanged, even if the explanation changes.
 - Leave the worktree clean after PROGRESS or COMPLETE. A local commit is required for progress. Do not sleep or wait for rate limits; the outer Bash supervisor owns continuation.
 
 As the final line of the response, emit exactly one result marker:
 ZIGCSS-AUTODEVELOP-STATUS: PROGRESS <short summary>
-ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <reason>
+ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <stable-code>: <reason>
 ZIGCSS-AUTODEVELOP-STATUS: COMPLETE
 EOF
 
@@ -83,6 +83,7 @@ autodevelop_run_with_timeout "$AUTODEVELOP_PASS_TIMEOUT_SECS" \
 [ -f "$FINAL_MESSAGE" ] || : > "$FINAL_MESSAGE"
 CLASS="$(autodevelop_classify_pass "$RAW_RC" "$OUTPUT" "$FINAL_MESSAGE")"
 STATUS="$(autodevelop_extract_status "$FINAL_MESSAGE")"
+BLOCKER_CODE="$(autodevelop_extract_blocker_code "$FINAL_MESSAGE")"
 REASON="$(autodevelop_extract_reason "$FINAL_MESSAGE")"
 AFTER_HEAD="$(git rev-parse HEAD 2>/dev/null || printf 'unavailable')"
 AFTER_STATUS="$(autodevelop_git_status)"
@@ -110,6 +111,7 @@ LAST_RUN_TMP="$AUTODEVELOP_STATE_DIR/.last-run.$$"
   printf 'RAW_RC=%s\n' "$RAW_RC"
   printf 'CLASS=%s\n' "$CLASS"
   printf 'STATUS=%s\n' "${STATUS:-NONE}"
+  printf 'BLOCKER_CODE=%s\n' "${BLOCKER_CODE:-NONE}"
   printf 'BEFORE_HEAD=%s\n' "$BEFORE_HEAD"
   printf 'AFTER_HEAD=%s\n' "$AFTER_HEAD"
   printf 'OUTPUT=%s\n' "$OUTPUT"

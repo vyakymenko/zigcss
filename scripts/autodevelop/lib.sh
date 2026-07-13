@@ -123,6 +123,31 @@ autodevelop_state_increment() {
   printf '%s\n' "$value"
 }
 
+autodevelop_valid_blocker_code() {
+  local code="$1"
+  [ "${#code}" -le 64 ] || return 1
+  case "$code" in
+    ''|*[!a-z0-9-]*|-*|*-|*--*) return 1 ;;
+  esac
+}
+
+autodevelop_record_blocker() {
+  local code="$1"
+  local prior
+  autodevelop_valid_blocker_code "$code" || {
+    autodevelop_die "invalid stable blocker code"
+    return 1
+  }
+  prior="$(autodevelop_state_get blocked-code '')"
+  if [ "$code" = "$prior" ]; then
+    autodevelop_state_increment blocked-count
+  else
+    autodevelop_state_set blocked-code "$code"
+    autodevelop_state_set blocked-count 1
+    printf '1\n'
+  fi
+}
+
 autodevelop_git_status() {
   git -C "$AUTODEVELOP_ROOT" status --porcelain=v1
 }
@@ -185,11 +210,21 @@ autodevelop_extract_status() {
     | tail -1
 }
 
+autodevelop_extract_blocker_code() {
+  tail -80 "$1" 2>/dev/null \
+    | grep -v '<stable-code>' \
+    | sed -nE '/^[[:space:]]*ZIGCSS-AUTODEVELOP-STATUS:[[:space:]]*BLOCKED([[:space:]].*)?$/p' \
+    | tail -1 \
+    | sed -nE 's/^[[:space:]]*ZIGCSS-AUTODEVELOP-STATUS:[[:space:]]*BLOCKED[[:space:]]+([a-z0-9]+(-[a-z0-9]+)*):[[:space:]]+.+$/\1/p' \
+    | cut -c1-80
+}
+
 autodevelop_extract_reason() {
   tail -80 "$1" 2>/dev/null \
     | grep -v '<reason>' \
     | sed -nE 's/^[[:space:]]*ZIGCSS-AUTODEVELOP-STATUS:[[:space:]]*BLOCKED[[:space:]]*//p' \
     | tail -1 \
+    | sed -E 's/^[a-z0-9]+(-[a-z0-9]+)*:[[:space:]]*//' \
     | cut -c1-500
 }
 
@@ -197,9 +232,16 @@ autodevelop_classify_pass() {
   local rc="$1"
   local output="$2"
   local final_message="${3:-$output}"
-  local status size
+  local status blocker_code size
   status="$(autodevelop_extract_status "$final_message")"
   if [ "$rc" -eq 0 ] && [ -n "$status" ]; then
+    if [ "$status" = BLOCKED ]; then
+      blocker_code="$(autodevelop_extract_blocker_code "$final_message")"
+      if ! autodevelop_valid_blocker_code "$blocker_code"; then
+        printf 'ERROR\n'
+        return
+      fi
+    fi
     printf '%s\n' "$status"
     return
   fi

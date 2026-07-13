@@ -45,6 +45,7 @@ describe('autonomous development operations', () => {
     expect(protocol).toContain('scripts/autodevelop/orient.sh')
     expect(protocol).toContain('scripts/autodevelop/ctl.sh')
     expect(protocol).toContain('atomic directory lock')
+    expect(protocol).toContain('BLOCKED <stable-code>: <reason>')
   })
 
   test('single-lane supervisor pins the model and passes hermetic control tests', () => {
@@ -60,7 +61,7 @@ describe('autonomous development operations', () => {
       expect(fs.statSync(script).mode & 0o111).not.toBe(0)
     }
     expect(after).toBe(before)
-    expect(selftest).toContain('PASS=31 FAIL=0')
+    expect(selftest).toContain('PASS=41 FAIL=0')
     expect(prompt).toContain('Use only gpt-5.6-sol with ultra reasoning')
     expect(prompt).toContain('Never delegate, spawn subagents, create child tasks, or fall back')
     expect(prompt).toContain('Do not push from this model pass')
@@ -69,6 +70,7 @@ describe('autonomous development operations', () => {
     expect(control).toContain('screen -dmS')
     expect(control).not.toMatch(/Library\/LaunchAgents|launchctl|git\s+push|npm\s+publish/)
     expect(loop).toContain('blocked attempt $BLOCKED_COUNT/3')
+    expect(loop).toContain('autodevelop_record_blocker "$BLOCKER_CODE"')
     expect(loop).toContain('consecutive-errors')
     expect(loop).toContain('push_green_checkpoint || break')
     expect(push).toContain('push --porcelain')
