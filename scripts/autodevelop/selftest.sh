@@ -31,6 +31,9 @@ fixture() {
 }
 
 assert_equal "$(umask)" "$CALLER_UMASK" 'caller umask restored'
+assert_equal "$(if autodevelop_branch_allowed vale/recovery 0; then printf allowed; else printf rejected; fi)" allowed 'production vale branch accepted'
+assert_equal "$(if autodevelop_branch_allowed main 0; then printf allowed; else printf rejected; fi)" rejected 'production main branch rejected'
+assert_equal "$(if autodevelop_branch_allowed '' 1; then printf allowed; else printf rejected; fi)" allowed 'test-mode detached checkout accepted'
 
 fixture progress 'ZIGCSS-AUTODEVELOP-STATUS: PROGRESS REL-003 checkpointed'
 assert_equal "$(autodevelop_extract_status "$TMP/progress")" PROGRESS 'progress tag'

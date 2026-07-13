@@ -172,7 +172,19 @@ autodevelop_require_positive_integer() {
   esac
 }
 
+autodevelop_branch_allowed() {
+  local branch="$1"
+  local test_mode="${2:-$AUTODEVELOP_TEST_MODE}"
+  if [ "$test_mode" = 1 ]; then return 0; fi
+  [ "$test_mode" = 0 ] || return 1
+  case "$branch" in
+    vale/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 autodevelop_require_repository() {
+  local branch
   [ -f "$AUTODEVELOP_ROOT/DEVELOPMENT_PLAN.md" ] || {
     autodevelop_die "missing DEVELOPMENT_PLAN.md"
     return 1
@@ -185,10 +197,11 @@ autodevelop_require_repository() {
     autodevelop_die "runner root is not a Git worktree"
     return 1
   }
-  case "$(git -C "$AUTODEVELOP_ROOT" branch --show-current)" in
-    vale/*) : ;;
-    *) autodevelop_die "the isolated runner requires a vale/* branch"; return 1 ;;
-  esac
+  branch="$(git -C "$AUTODEVELOP_ROOT" branch --show-current)"
+  autodevelop_branch_allowed "$branch" || {
+    autodevelop_die "the isolated runner requires a vale/* branch"
+    return 1
+  }
   if [ -n "$(git -C "$AUTODEVELOP_ROOT" diff --name-only --diff-filter=U)" ]; then
     autodevelop_die "unmerged paths require operator recovery"
     return 1
