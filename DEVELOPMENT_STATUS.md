@@ -10,7 +10,7 @@ Last updated: 2026-07-13
 - Verified execution model: `gpt-5.6-sol`, ultra reasoning, as explicitly configured and approved in the autonomous-development handoff.
 - Worktree: isolated Codex worktree `/Users/vyakymenko/.codex/worktrees/9302/zigcss`; the user's main checkout is out of scope.
 - Inherited changes preserved: the approved `DEVELOPMENT_PLAN.md` was untracked at autonomous start and is being committed unchanged as the roadmap.
-- External actions: on 2026-07-13 the operator explicitly authorized automatic non-force pushes of each clean green checkpoint to `origin` at the same current `vale/*` branch. Publication, deployment, pull requests, tags/releases, other branches/remotes, and all other external-system changes remain unauthorized.
+- External actions: on 2026-07-13 the operator explicitly authorized automatic non-force pushes of each clean green checkpoint to `origin` at the same current `vale/*` branch, then explicitly authorized merging that branch to `origin/main` without a pull request. The direct fast-forward includes the repository's already-configured Build and Documentation/Pages push workflows as inherent merge effects. Tags/releases, package publication, other branches/remotes, and unrelated external-system changes remain unauthorized.
 
 ## Current work
 
@@ -437,7 +437,7 @@ Milestone 8 remains `IN_PROGRESS` at implementation checkpoint `509e2ef`. `BENCH
 
 ## Active blockers
 
-- `BENCH-007` final verification requires the first retained archive from the schedule-only benchmark workflow on integrated upstream `main`. Read-only GitHub inspection on 2026-07-13 found `origin/main` still at the autonomous base `2d2c0d9`, 184 commits behind the clean/pushed `vale/zigcss-recovery` head; the base is an ancestor, so integration is fast-forwardable. No pull request or matching branch rule exists. Main-branch integration remains an outward action requiring the operator to choose and authorize either a PR/merge or a direct fast-forward push.
+- `BENCH-007` final verification requires the first retained archive from the schedule-only benchmark workflow on integrated upstream `main`. Read-only GitHub inspection on 2026-07-13 found `origin/main` at the autonomous base `2d2c0d9`, 184 commits behind the clean/pushed `vale/zigcss-recovery` head; the base is an ancestor, no pull request or matching branch rule exists, and the operator has now explicitly authorized a direct non-force fast-forward. The commit containing this ledger update is the integration checkpoint; the push must verify that both remote branch object IDs equal it. This prerequisite is mechanical rather than a remaining decision blocker.
 - The GitHub repository Actions runner API returned `total_count: 0`. Therefore no runner currently satisfies the required `[self-hosted, linux, x64, zigcss-benchmark-v1]` label set, and integrating `main` alone would leave the controlled job queued. Registering and keeping a dedicated non-emulated Linux x64 runner online requires operator-owned hardware and GitHub registration authority; substituting GitHub-hosted or emulated hardware would invalidate `BENCH-006` evidence and is not an acceptable workaround. The 2026-07-13 04:17 UTC schedule has passed; once both prerequisites are satisfied, the next policy-conforming scheduled opportunity is 2026-07-20 04:17 UTC. No qualifying archive currently exists.
 
 ## Known regressions and risks
