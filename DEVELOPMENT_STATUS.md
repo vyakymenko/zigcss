@@ -18,6 +18,7 @@ Last updated: 2026-07-13
 - Work package: `BENCH-007` generate published reports from archived benchmark data
 - State: `IMPLEMENTED`
 - Active phase: the archive-only deterministic publication boundary is green; final verification awaits the first retained controlled scheduled archive
+- Quality closure: `QUAL-001` is verified at `3eced86`; repository-wide Zig formatting debt is zero and the final local validation matrix is green
 - Next eligible package: none; resume `BENCH-007` only when its exact scheduled main-branch archive exists
 
 ## Milestone 0 package ledger
@@ -337,6 +338,12 @@ Milestone 7 is `PASS` at implementation checkpoint `db4ab56`. The public compile
 ## Milestone 8 activation boundary
 
 Milestone 8 remains `IN_PROGRESS` at implementation checkpoint `509e2ef`. `BENCH-001` through `BENCH-006` are verified, and the complete `BENCH-007` publication implementation is green. The repository deliberately remains in the exact withdrawn state because a synthetic or manually invented archive cannot satisfy the roadmap's controlled scheduled evidence requirement. The first eligible archive must be produced by the schedule-only workflow on integrated upstream `main`, retained and reviewed, then committed and selected under the new fail-closed publication contract before `BENCH-007`, Milestone 8, or the autonomous program can become `VERIFIED`/`PASS`/complete.
+
+## Final quality closure ledger
+
+| Package | State | Evidence / decision | Commit |
+|---|---|---|---|
+| `QUAL-001` | `VERIFIED` | Applied only the pinned Zig 0.15.2 formatter to the exact ten inherited files still failing the repository-wide gate, isolated from every semantic package. `zig fmt --check build.zig build_helpers.zig src examples` and `git diff --check` now pass with zero formatting debt. Debug and ReleaseSafe each pass 36/36 steps and 491/491 tests. All five Linux/macOS/Windows targets inspect as the expected ELF, Mach-O, or PE architecture after both ReleaseSafe and ReleaseFast builds. The complete benchmark chain passes 40 focused regressions plus every exact check, including regeneration and validation of all 43 x 20 temporary observations while retaining the withdrawn publication state. Compatibility, ten transform differentials, eight-format, prefix, package, wrapper, release smoke/consumer/container/Homebrew, version, release metadata, workflow, dependency, capability, documentation, VS Code, both supported Neovim versions, syntax, production-audit, and generated-state gates pass. Documentation is 126/126 plus the production build and its seven-test integrity gate. A fresh package `zigcss-0.4.0-rc.1-Bz3pcT4iGwADMiFbRjkSB1R98GCMA9kpdd-K0IvHEgMp` contains the exact 75 allowlisted files/1,778,238 source bytes and builds 3/3 in Debug and ReleaseSafe; the committed external consumer passes 6/6 with 2/2 tests and the build-integration example passes 7/7 with 1/1 test in both modes. The npm dry run remains exactly five files/45,808 unpacked bytes. The sole remaining roadmap gate is the external controlled `BENCH-007` archive described above. | `3eced86` |
 
 ## Completed work packages
 
