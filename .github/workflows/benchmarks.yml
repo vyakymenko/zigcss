@@ -1,0 +1,96 @@
+name: Benchmarks
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions: {}
+
+concurrency:
+  group: zigcss-benchmark-v1
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Controlled weekly benchmark
+    if: github.repository == 'vyakymenko/zigcss' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, zigcss-benchmark-v1]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      BENCHMARK_ARCHIVE_DIR: ${{ runner.temp }}/zigcss-benchmark-archive
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install pinned benchmark dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build ReleaseFast benchmark executables
+        run: |
+          zig build -Doptimize=ReleaseFast
+          zig build install-benchmark-runner -Doptimize=ReleaseFast
+
+      - name: Validate benchmark prerequisites
+        run: |
+          npm run test:workflows && npm run check:workflows
+          npm run test:benchmark-corpora && npm run check:benchmark-corpora
+          npm run test:benchmark-tools && npm run check:benchmark-tools
+          npm run test:benchmark-output && npm run check:benchmark-output
+          npm run test:benchmark-modes && npm run check:benchmark-modes
+          npm run test:benchmark-statistics
+          npm run test:benchmark-archive && npm run check:benchmark-archive
+
+      - name: Prepare benchmark archive directory
+        shell: bash
+        run: |
+          rm -rf -- "$BENCHMARK_ARCHIVE_DIR"
+          mkdir -p -- "$BENCHMARK_ARCHIVE_DIR"
+          chmod 700 "$BENCHMARK_ARCHIVE_DIR"
+
+      - name: Collect complete benchmark report
+        run: node scripts/report-benchmark-statistics.mjs --output "$BENCHMARK_ARCHIVE_DIR/benchmark-report.json"
+
+      - name: Seal and verify benchmark archive
+        run: |
+          node scripts/archive-benchmark-report.mjs --write \
+            --directory "$BENCHMARK_ARCHIVE_DIR" \
+            --commit "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+          node scripts/archive-benchmark-report.mjs --check \
+            --directory "$BENCHMARK_ARCHIVE_DIR" \
+            --commit "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Upload benchmark archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zigcss-benchmark-v1-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/zigcss-benchmark-archive/benchmark-report.json
+            ${{ runner.temp }}/zigcss-benchmark-archive/benchmark-archive.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 9
+          include-hidden-files: false
+
+      - name: Clean benchmark archive directory
+        if: always()
+        shell: bash
+        run: rm -rf -- "$BENCHMARK_ARCHIVE_DIR"

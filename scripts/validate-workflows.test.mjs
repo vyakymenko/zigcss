@@ -12,7 +12,7 @@ function cloneSources() {
 }
 
 test('all workflow jobs use explicit least privilege and immutable reviewed actions', () => {
-  assert.deepEqual(validateWorkflows(), { workflows: 3, jobs: 7, actions: 22 })
+  assert.deepEqual(validateWorkflows(), { workflows: 4, jobs: 8, actions: 26 })
 })
 
 test('mutable, malformed, unknown, and stale action references fail closed', () => {

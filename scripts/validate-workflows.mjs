@@ -47,6 +47,17 @@ export const actionPins = Object.freeze({
 })
 
 export const workflowPolicy = Object.freeze({
+  'benchmarks.yml': Object.freeze({
+    benchmark: Object.freeze({
+      permissions: Object.freeze({ contents: 'read' }),
+      actions: Object.freeze([
+        'actions/checkout',
+        'mlugg/setup-zig',
+        'actions/setup-node',
+        'actions/upload-artifact',
+      ]),
+    }),
+  }),
   'build.yml': Object.freeze({
     build: Object.freeze({
       permissions: Object.freeze({ contents: 'read' }),

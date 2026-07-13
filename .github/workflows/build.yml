@@ -277,3 +277,6 @@ jobs:
 
       - name: Validate benchmark statistics
         run: npm run test:benchmark-statistics && npm run check:benchmark-statistics
+
+      - name: Validate benchmark archive policy
+        run: npm run test:benchmark-archive && npm run check:benchmark-archive

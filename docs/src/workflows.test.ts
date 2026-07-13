@@ -33,13 +33,18 @@ describe('native artifact workflows', () => {
   const dependabot = fs.readFileSync(path.resolve(workflowsDir, '..', 'dependabot.yml'), 'utf8')
 
   test('publishes the enforced least-privilege and immutable-action boundary', () => {
-    const workflows = [buildWorkflow, releaseWorkflow, fs.readFileSync(path.join(workflowsDir, 'docs.yml'), 'utf8')].join('\n')
+    const workflows = [
+      buildWorkflow,
+      releaseWorkflow,
+      fs.readFileSync(path.join(workflowsDir, 'docs.yml'), 'utf8'),
+      fs.readFileSync(path.join(workflowsDir, 'benchmarks.yml'), 'utf8'),
+    ].join('\n')
 
-    expect(workflows.match(/^permissions: \{\}$/gm)).toHaveLength(3)
-    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(22)
+    expect(workflows.match(/^permissions: \{\}$/gm)).toHaveLength(4)
+    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(26)
     expect(workflows).not.toMatch(/\n\s+uses: [^\n]+@(?![0-9a-f]{40} # v)/)
-    expect(statusGuide).toContain('Their seven jobs declare only the access they use')
-    expect(statusGuide).toContain('All 22 action invocations are pinned')
+    expect(statusGuide).toContain('Their eight jobs declare only the access they use')
+    expect(statusGuide).toContain('All 26 action invocations are pinned')
     expect(statusGuide).toContain('release build job receives attestation and OIDC write access')
   })
 

@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "zigcss-benchmark-v1",
+  "repository": "vyakymenko/zigcss",
+  "branch": "main",
+  "schedule": "17 4 * * 1",
+  "runner": {
+    "type": "self-hosted",
+    "labels": [
+      "self-hosted",
+      "linux",
+      "x64",
+      "zigcss-benchmark-v1"
+    ],
+    "platform": "linux",
+    "architecture": "x64",
+    "fingerprintFields": [
+      "platform",
+      "architecture",
+      "cpuModel",
+      "logicalCpuCount",
+      "totalMemoryBytes"
+    ]
+  },
+  "concurrencyGroup": "zigcss-benchmark-v1",
+  "artifact": {
+    "report": "benchmark-report.json",
+    "manifest": "benchmark-archive.json",
+    "retentionDays": 90
+  }
+}
