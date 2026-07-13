@@ -45,7 +45,9 @@ describe('published experimental format matrix', () => {
   })
 
   test('keeps the executable matrix in package scripts and CI', () => {
-    expect(packageMetadata.scripts['test:formats']).toBe('node tests/formats/validate.mjs')
+    expect(packageMetadata.scripts['test:formats']).toBe(
+      'node --test tests/formats/validate.test.mjs && node tests/formats/validate.mjs',
+    )
     expect(workflow).toContain('npm run test:formats')
     expect(sidebar).toContain('Format compatibility')
     expect(sidebar).toContain('/docs/guide/format-compatibility')
