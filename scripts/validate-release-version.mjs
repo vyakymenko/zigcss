@@ -49,6 +49,12 @@ function same(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function normalizeCheckoutText(source, relativePath) {
+  const normalized = source.replaceAll('\r\n', '\n')
+  if (normalized.includes('\r')) fail(`${relativePath} contains an unsupported bare carriage return`)
+  return normalized
+}
+
 export function parseReleaseVersion(value, label = 'version') {
   if (typeof value !== 'string') fail(`${label} must be a string`)
   const match = value.match(semverPattern)
@@ -276,7 +282,7 @@ export function readReleaseSources(root = repositoryRoot) {
     if (confinement === '..' || confinement.startsWith(`..${path.sep}`) || path.isAbsolute(confinement)) {
       fail(`${relativePath} escapes the repository`)
     }
-    return [relativePath, fs.readFileSync(canonical, 'utf8')]
+    return [relativePath, normalizeCheckoutText(fs.readFileSync(canonical, 'utf8'), relativePath)]
   }))
 }
 

@@ -145,3 +145,29 @@ test('release source inventory rejects symlink substitution', () => {
     fs.rmSync(temporary, { recursive: true, force: true })
   }
 })
+
+test('release source inventory normalizes checkout CRLF and rejects bare carriage returns', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-version-crlf-'))
+  try {
+    for (const relativePath of releaseSourcePaths) {
+      const destination = path.join(temporary, relativePath)
+      fs.mkdirSync(path.dirname(destination), { recursive: true })
+      const source = fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8')
+      fs.writeFileSync(destination, source.replaceAll('\n', '\r\n'))
+    }
+
+    assert.deepEqual(validateReleaseVersion(temporary), {
+      version: '0.4.0-rc.1',
+      vscodeVersion: '0.4.0',
+      surfaces: 28,
+    })
+
+    fs.writeFileSync(path.join(temporary, 'VERSION'), '0.4.0-rc.1\r')
+    assert.throws(
+      () => readReleaseSources(temporary),
+      /VERSION contains an unsupported bare carriage return/,
+    )
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true })
+  }
+})
