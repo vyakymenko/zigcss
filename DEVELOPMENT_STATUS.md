@@ -16,10 +16,10 @@ Last updated: 2026-07-15
 
 - Milestone: Milestone 7 external release publication plus Milestone 8 controlled benchmark evidence
 - Work package: `REL-006` publish `0.4.0-rc.1` through the guarded tag workflow; `BENCH-007` remains hardware-gated
-- State: `IMPLEMENTED`
-- Active phase: checkpoint `a0115c5` adds npm authority/version preflight before native release work, exact `next`-channel provenance publication without source mutation, immutable-version and distribution-tag readback, and closed workflow/version/documentation policy; local release gates are green and hosted integration is next
+- State: `BLOCKED`
+- Active phase: exact integrated commit `0348ddc` passed Build run `29434897118` and Documentation run `29434897069`; tag-triggered Release run `29435369415` then failed closed at the first npm authority check because the existing `NPM_TOKEN` returned `E401`, and every native release, GitHub release, and npm publication job was skipped
 - Quality closure: `QUAL-001` is verified at `3eced86`; repository-wide Zig formatting debt is zero and the final local validation matrix is green
-- Next eligible package: integrate `REL-006` on the authorized branch and `main`, require a fully green Build run, then create exact tag `v0.4.0-rc.1` and verify the GitHub/npm publication; resume `BENCH-007` only when its exact native Linux x64 scheduled archive exists
+- Next eligible package: the operator has restored the npm browser session; after explicit account-change confirmation, create a seven-day least-privilege token with package read/write, no organization access, and CI 2FA bypass, replace only the repository `NPM_TOKEN`, rerun Release `29435369415`, and verify all GitHub/npm publication evidence; resume `BENCH-007` only when its exact native Linux x64 scheduled archive exists
 
 ## Milestone 0 package ledger
 
