@@ -79,6 +79,10 @@ export const workflowPolicy = Object.freeze({
     }),
   }),
   'release.yml': Object.freeze({
+    'npm-preflight': Object.freeze({
+      permissions: Object.freeze({ contents: 'read' }),
+      actions: Object.freeze(['actions/checkout', 'actions/setup-node']),
+    }),
     release: Object.freeze({
       permissions: Object.freeze({ attestations: 'write', contents: 'read', 'id-token': 'write' }),
       actions: Object.freeze([
@@ -99,7 +103,7 @@ export const workflowPolicy = Object.freeze({
       ]),
     }),
     'publish-npm': Object.freeze({
-      permissions: Object.freeze({ contents: 'read' }),
+      permissions: Object.freeze({ contents: 'read', 'id-token': 'write' }),
       actions: Object.freeze(['actions/checkout', 'actions/setup-node']),
     }),
   }),

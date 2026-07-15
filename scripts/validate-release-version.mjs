@@ -17,6 +17,7 @@ export const releaseSourcePaths = Object.freeze([
   'Dockerfile.docs',
   'Dockerfile.release',
   'Formula/zigcss.rb',
+  'NPM_PUBLISH.md',
   'README.md',
   'VERSION',
   'build.zig.zon',
@@ -197,6 +198,7 @@ export function validateReleaseSources(sources) {
   const readme = sources.get('README.md')
   const status = sources.get('docs/src/content/docs/guide/status.md')
   expectLiteralCount(readme, version, 4, 'README release claims')
+  expectLiteralCount(sources.get('NPM_PUBLISH.md'), version, 2, 'npm publishing guide release claims')
   expectLiteralCount(status, version, 5, 'status guide release claims')
   expectLiteralCount(sources.get('docs/src/content/docs/guide/build-from-source.md'), version, 1, 'build guide release claims')
   expectLiteralCount(sources.get('docs/src/app/components/GettingStarted.tsx'), version, 1, 'getting-started release claims')
@@ -219,10 +221,35 @@ export function validateReleaseSources(sources) {
   }
 
   const releaseWorkflow = sources.get('.github/workflows/release.yml')
-  const setupNode = releaseWorkflow.indexOf('- name: Setup Node.js')
-  const releaseGate = releaseWorkflow.indexOf('npm run check:version -- --tag "$GITHUB_REF_NAME"', setupNode)
+  const releaseTagCheck = 'npm run check:version -- --tag "$GITHUB_REF_NAME"'
+  if (releaseWorkflow.split(releaseTagCheck).length - 1 !== 2) {
+    fail('release workflow must reject a mismatched tag before building any release artifact')
+  }
+  const npmPreflight = releaseWorkflow.indexOf('\n  npm-preflight:\n')
+  const releaseJob = releaseWorkflow.indexOf('\n  release:\n', npmPreflight + 1)
+  const preflightSetup = releaseWorkflow.indexOf('- name: Setup Node.js', npmPreflight)
+  const preflightGate = releaseWorkflow.indexOf(
+    releaseTagCheck,
+    preflightSetup,
+  )
+  const npmAuthority = releaseWorkflow.indexOf('- name: Verify npm publication authority', preflightGate)
+  const releaseSetup = releaseWorkflow.indexOf('- name: Setup Node.js', releaseJob)
+  const releaseGate = releaseWorkflow.indexOf(
+    releaseTagCheck,
+    releaseSetup,
+  )
   const releaseBuild = releaseWorkflow.indexOf('- name: Build Release Binary', releaseGate)
-  if (setupNode === -1 || releaseGate <= setupNode || releaseBuild <= releaseGate) {
+  if (
+    npmPreflight === -1 ||
+    releaseJob <= npmPreflight ||
+    preflightSetup <= npmPreflight ||
+    preflightGate <= preflightSetup ||
+    npmAuthority <= preflightGate ||
+    npmAuthority >= releaseJob ||
+    releaseSetup <= releaseJob ||
+    releaseGate <= releaseSetup ||
+    releaseBuild <= releaseGate
+  ) {
     fail('release workflow must reject a mismatched tag before building any release artifact')
   }
   if (/ZigCSS 0\.\d/.test(releaseWorkflow)) fail('release workflow body must use its computed version instead of a hard-coded product line')

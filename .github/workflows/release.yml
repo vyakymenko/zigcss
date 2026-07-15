@@ -8,8 +8,40 @@ on:
 permissions: {}
 
 jobs:
+  npm-preflight:
+    name: Verify npm Publication
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify synchronized release version for publication
+        run: npm run check:version -- --tag "$GITHUB_REF_NAME"
+
+      - name: Verify npm publication authority
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          versions="$RUNNER_TEMP/zigcss-npm-versions.json"
+          npm whoami
+          npm view zigcss versions --json > "$versions"
+          node scripts/check-npm-version-availability.mjs \
+            --version "$version" \
+            --versions-file "$versions"
+
   release:
     name: Release ${{ matrix.target }}
+    needs: npm-preflight
     runs-on: ${{ matrix.os }}
     permissions:
       attestations: write
@@ -243,6 +275,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -253,16 +286,14 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Get Version
-        id: version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Update package.json version
-        run: |
-          npm version ${{ steps.version.outputs.VERSION }} --no-git-tag-version
-
       - name: Publish to npm
-        run: npm publish
+        run: npm publish --tag next --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify npm prerelease publication
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$(npm view "zigcss@$version" version)" = "$version"
+          test "$(npm view zigcss dist-tags.next)" = "$version"

@@ -1,113 +1,44 @@
 # npm Package Publishing Guide
 
-## Prerequisites
+ZigCSS packages are published only by the tag-triggered GitHub release workflow. Do not run `npm publish` manually from a workstation.
 
-1. **npm account** with access to publish `zigcss` package
-2. **GitHub releases** set up (binaries must be available)
-3. **Version** updated in `package.json`
+## Release-candidate contract
 
-## Publishing Steps
+The `v0.4.0-rc.1` tag must point at the exact integrated `main` commit whose synchronized version, release metadata, consumers, native targets, and workflow policy are green.
 
-### 1. Update Version
+Before any release asset is built, the workflow:
+
+1. checks the tag against every versioned surface;
+2. authenticates the repository-owned npm token with `npm whoami`;
+3. obtains the registry's complete immutable `zigcss` version inventory; and
+4. fails if `0.4.0-rc.1` already exists or the registry response is malformed.
+
+All five native jobs then build and execute architecture-matched archives, validate the npm install path offline, generate checksums and SPDX SBOMs, sign provenance and SBOM attestations, and upload the closed release inventory. GitHub Release creation occurs only after every native job passes.
+
+The npm job publishes with:
 
 ```bash
-# Update version in package.json (e.g., 0.1.0 -> 0.1.1)
-npm version patch|minor|major
+npm publish --tag next --provenance
 ```
 
-### 2. Create GitHub Release
+The explicit `next` channel prevents an experimental release candidate from replacing stable `latest`. OIDC-backed npm provenance is mandatory. The workflow finally reads back both the immutable version and `dist-tags.next`; any mismatch fails the release run.
+
+## Required repository authority
+
+- The `NPM_TOKEN` GitHub Actions secret must identify an npm principal allowed to publish `zigcss`.
+- The npm package remains public.
+- The release workflow alone receives the token, and only its preflight and publish jobs use it.
+- The publish job alone receives the OIDC permission needed for npm provenance.
+
+## Consumer behavior
+
+The five-file npm package contains the JavaScript wrapper and installer, not a bundled native executable. During installation, `install.js` selects one of the five release targets, downloads only the matching GitHub Release archive and checksum manifest, verifies SHA-256 and executable architecture, extracts exactly one executable, and replaces the local binary only after every check passes.
+
+Use the prerelease explicitly:
 
 ```bash
-# Create and push tag
-git tag v0.1.1
-git push origin v0.1.1
-```
-
-GitHub Actions will automatically:
-- Build binaries for all platforms
-- Create GitHub release with assets
-
-### 3. Wait for Release
-
-Wait for GitHub Actions to complete and create the release with binaries.
-
-### 4. Publish to npm
-
-```bash
-# Make sure you're logged in
-npm login
-
-# Publish
-npm publish
-```
-
-## Testing Before Publishing
-
-### Test Install Script Locally
-
-```bash
-# Test install.js
-node install.js
-
-# Verify binary works
-./bin/zigcss --version
-```
-
-### Test Package Locally
-
-```bash
-# Create a test package
-npm pack
-
-# In another directory, install the tarball
-npm install /path/to/zigcss-0.1.0.tgz
-
-# Test the binary
+npm install --global zigcss@next
 zigcss --version
 ```
 
-### Test npm link
-
-```bash
-# In zigcss directory
-npm link
-
-# In another project
-npm link zigcss
-zigcss input.css -o output.css
-```
-
-## Package Contents
-
-The published package includes:
-- `index.js` - Node.js wrapper script
-- `install.js` - Post-install binary downloader
-- `package.json` - Package metadata
-- `README.md` - Documentation
-- `LICENSE` - License file
-- `bin/` - Created during install (not in package)
-
-## Binary Distribution
-
-Binaries are downloaded from GitHub Releases during `npm install`:
-- Automatically detects platform (darwin/linux/win32)
-- Downloads appropriate binary
-- Extracts and makes executable
-- Falls back gracefully if binary unavailable
-
-## Troubleshooting
-
-### Binary Download Fails
-
-- Check GitHub Releases exist for the version
-- Verify platform/arch mapping in `install.js`
-- Check network connectivity
-
-### Build from Source
-
-If binary unavailable, users can build:
-```bash
-git clone https://github.com/vyakymenko/zigcss.git
-cd zigcss
-zig build -Doptimize=ReleaseFast
-```
+Source builds remain the fallback documented in `README.md` and the public build guide. Publication does not expand the experimental feature boundary or authorize performance claims.

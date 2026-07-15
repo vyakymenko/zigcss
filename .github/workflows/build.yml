@@ -173,7 +173,7 @@ jobs:
         run: npm run test:version && npm run check:version
 
       - name: Verify release artifact metadata policy
-        run: npm run test:release-metadata && npm run check:release-metadata
+        run: npm run test:release-metadata && npm run check:release-metadata && npm run test:npm-publication
 
       - name: Test release consumer paths
         run: npm run test:release-smoke && npm run test:release-consumers && npm run test:release-container && npm run test:release-homebrew

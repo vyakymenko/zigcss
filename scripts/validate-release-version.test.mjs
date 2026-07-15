@@ -28,7 +28,7 @@ test('all release, package, runtime, editor, container, formula, and documentati
   assert.deepEqual(validateReleaseVersion(), {
     version: '0.4.0-rc.1',
     vscodeVersion: '0.4.0',
-    surfaces: 27,
+    surfaces: 28,
   })
 })
 
@@ -104,6 +104,10 @@ test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {
   const docs = cloneSources()
   replace(docs, 'README.md', 'ZigCSS 0.4.0-rc.1', 'ZigCSS 9.9.9')
   assert.throws(() => validateReleaseSources(docs), /README release claims/)
+
+  const npmGuide = cloneSources()
+  replace(npmGuide, 'NPM_PUBLISH.md', '0.4.0-rc.1', '9.9.9')
+  assert.throws(() => validateReleaseSources(npmGuide), /npm publishing guide release claims/)
 })
 
 test('CI ordering, release-tag preflight, and VS Code prerelease packaging fail closed', () => {

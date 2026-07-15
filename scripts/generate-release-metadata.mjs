@@ -535,8 +535,26 @@ export function validateReleaseWorkflowSource(source) {
   expectLiteralCount(source, 'npm run check:release-metadata', 1, 'release workflow self-check')
   expectLiteralCount(source, '- name: Smoke Native Archive and npm Installation', 1, 'native release smoke step')
   expectLiteralCount(source, 'node scripts/smoke-release-artifact.mjs \\', 1, 'native release smoke command')
+  expectLiteralCount(source, '- name: Verify npm publication authority', 1, 'npm publication preflight')
+  expectLiteralCount(source, '          npm whoami', 1, 'npm publication credential preflight')
+  expectLiteralCount(
+    source,
+    '          node scripts/check-npm-version-availability.mjs \\',
+    1,
+    'npm immutable-version preflight',
+  )
+  expectLiteralCount(source, '        run: npm publish --tag next --provenance', 1, 'npm prerelease publication')
+  expectLiteralCount(source, 'npm version ', 0, 'npm package version mutation')
+  expectLiteralCount(source, '- name: Verify npm prerelease publication', 1, 'npm publication readback')
+  expectLiteralCount(source, 'npm view zigcss dist-tags.next', 1, 'npm next-channel readback')
+  expectLiteralCount(source, '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', 2, 'bounded npm token use')
 
   expectOrdered(source, [
+    '  npm-preflight:',
+    '- name: Verify synchronized release version for publication',
+    '- name: Verify npm publication authority',
+    '  release:',
+    '    needs: npm-preflight',
     '- name: Verify synchronized release version',
     '- name: Build Release Binary',
     '- name: Verify Target Architecture',
@@ -553,6 +571,11 @@ export function validateReleaseWorkflowSource(source) {
     '  create-release:',
     '    needs: release',
     '- name: Create Release',
+    '  publish-npm:',
+    '    needs: create-release',
+    '- name: Publish to npm',
+    'npm publish --tag next --provenance',
+    '- name: Verify npm prerelease publication',
   ])
 
   validateWorkflowSource('release.yml', source)
@@ -562,6 +585,9 @@ export function validateReleaseWorkflowSource(source) {
     nativeSmokes: 1,
     attestations: 2,
     signatureVerifications: 2,
+    npmPreflight: true,
+    npmChannel: 'next',
+    npmProvenance: true,
   }
 }
 
@@ -578,7 +604,7 @@ export function validateReleaseBuildGate(source) {
   expectLiteralCount(source, '- name: Verify release artifact metadata policy', 1, 'release metadata CI step')
   expectLiteralCount(
     source,
-    'npm run test:release-metadata && npm run check:release-metadata',
+    'npm run test:release-metadata && npm run check:release-metadata && npm run test:npm-publication',
     1,
     'release metadata CI command',
   )
@@ -647,7 +673,7 @@ function main() {
   if (same(args, ['--check-workflow'])) {
     const result = validateReleaseWorkflow()
     process.stdout.write(
-      `Release workflow metadata verified: ${result.targets} native-smoked targets, ${result.assetsPerTarget} assets each, ${result.attestations} signed attestations, ${result.signatureVerifications} cryptographic verifications.\n`,
+      `Release workflow metadata verified: ${result.targets} native-smoked targets, ${result.assetsPerTarget} assets each, ${result.attestations} signed attestations, ${result.signatureVerifications} cryptographic verifications, npm ${result.npmChannel} preflight with provenance.\n`,
     )
     return
   }

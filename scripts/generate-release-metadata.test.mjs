@@ -236,6 +236,9 @@ test('release workflow generates, signs, verifies, and uploads the closed five-t
     nativeSmokes: 1,
     attestations: 2,
     signatureVerifications: 2,
+    npmPreflight: true,
+    npmChannel: 'next',
+    npmProvenance: true,
   })
 })
 
@@ -264,6 +267,21 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     /closed release asset upload/,
   )
   assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace('- name: Verify npm publication authority', '- name: Removed npm publication authority')),
+    /npm publication preflight/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace('npm publish --tag next --provenance', 'npm publish --tag latest')),
+    /npm prerelease publication/,
+  )
+  assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace(
+      '- name: Publish to npm',
+      '- name: Rewrite package version\n        run: npm version 0.4.0-rc.1 --no-git-tag-version\n\n      - name: Publish to npm',
+    )),
+    /npm package version mutation/,
+  )
+  assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('- name: Verify release artifact metadata policy', '- name: Removed release metadata policy')),
     /release metadata CI step/,
   )
@@ -274,6 +292,10 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-smoke', 'npm run removed:release-smoke')),
     /release smoke policy CI command/,
+  )
+  assert.throws(
+    () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:npm-publication', 'npm run removed:npm-publication')),
+    /release metadata CI command/,
   )
   assert.throws(
     () => validateReleaseBuildGate(buildWorkflow.replace('npm run test:release-container', 'npm run removed:release-container')),

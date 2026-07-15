@@ -41,10 +41,10 @@ describe('native artifact workflows', () => {
     ].join('\n')
 
     expect(workflows.match(/^permissions: \{\}$/gm)).toHaveLength(4)
-    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(26)
+    expect(workflows.match(/\n\s+uses:/g)).toHaveLength(28)
     expect(workflows).not.toMatch(/\n\s+uses: [^\n]+@(?![0-9a-f]{40} # v)/)
-    expect(statusGuide).toContain('Their eight jobs declare only the access they use')
-    expect(statusGuide).toContain('All 26 action invocations are pinned')
+    expect(statusGuide).toContain('Their nine jobs declare only the access they use')
+    expect(statusGuide).toContain('All 28 action invocations are pinned')
     expect(statusGuide).toContain('release build job receives attestation and OIDC write access')
   })
 
