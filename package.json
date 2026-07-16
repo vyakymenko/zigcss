@@ -4,7 +4,7 @@
   "description": "Experimental native CSS compiler and Zig library focused on deterministic, semantics-preserving output",
   "main": "index.js",
   "bin": {
-    "zigcss": "./index.js"
+    "zigcss": "index.js"
   },
   "files": [
     "index.js",
@@ -49,7 +49,7 @@
     "test:version": "node --test scripts/validate-release-version.test.mjs",
     "check:release-metadata": "node scripts/generate-release-metadata.mjs --check-workflow",
     "test:release-metadata": "node --test scripts/generate-release-metadata.test.mjs",
-    "test:npm-publication": "node --test scripts/check-npm-version-availability.test.mjs",
+    "test:npm-publication": "node --test scripts/check-npm-version-availability.test.mjs scripts/verify-npm-publication.test.mjs",
     "test:release-smoke": "node --test scripts/smoke-release-artifact.test.mjs",
     "test:release-consumers": "node --test scripts/verify-release-consumers.test.mjs",
     "test:release-container": "node scripts/test-release-container.mjs",
@@ -64,7 +64,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/vyakymenko/zigcss.git"
+    "url": "git+https://github.com/vyakymenko/zigcss.git"
   },
   "keywords": [
     "experimental",

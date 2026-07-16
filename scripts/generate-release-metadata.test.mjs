@@ -305,6 +305,10 @@ test('release workflow evidence fails closed when authority or artifact steps dr
     /npm prerelease publication/,
   )
   assert.throws(
+    () => validateReleaseWorkflowSource(workflow.replace('node scripts/verify-npm-publication.mjs', 'node scripts/removed-readback.mjs')),
+    /bounded npm publication readback/,
+  )
+  assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace(
       '- name: Publish to npm',
       '- name: Rewrite package version\n        run: npm version 0.4.0-rc.3 --no-git-tag-version\n\n      - name: Publish to npm',

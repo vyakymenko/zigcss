@@ -292,8 +292,4 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Verify npm prerelease publication
-        shell: bash
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          test "$(npm view "zigcss@$version" version)" = "$version"
-          test "$(npm view zigcss dist-tags.next)" = "$version"
+        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}"

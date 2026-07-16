@@ -8,6 +8,17 @@ import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
+test('npm package metadata is canonical before registry publication', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
+  const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
+  assert.deepEqual(manifest.bin, { zigcss: 'index.js' })
+  assert.deepEqual(lock.packages[''].bin, manifest.bin)
+  assert.deepEqual(manifest.repository, {
+    type: 'git',
+    url: 'git+https://github.com/vyakymenko/zigcss.git',
+  })
+})
+
 function withWrapperFixture(run) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-wrapper-'))
   try {

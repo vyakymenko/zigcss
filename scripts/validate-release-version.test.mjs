@@ -126,6 +126,10 @@ test('CI ordering, release-tag preflight, and VS Code prerelease packaging fail 
   const inventory = cloneSources()
   inventory.set('unowned-version.txt', '0.4.0-rc.3\n')
   assert.throws(() => validateReleaseSources(inventory), /release surface inventory changed/)
+
+  const npmPolicy = cloneSources()
+  replace(npmPolicy, 'package.json', ' scripts/verify-npm-publication.test.mjs', '')
+  assert.throws(() => validateReleaseSources(npmPolicy), /npm publication policy test script/)
 })
 
 test('release source inventory rejects symlink substitution', () => {

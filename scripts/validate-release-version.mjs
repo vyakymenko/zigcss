@@ -151,6 +151,11 @@ export function validateReleaseSources(sources) {
     'node --test scripts/validate-release-version.test.mjs',
     'version test script',
   )
+  expectEqual(
+    rootManifest.scripts?.['test:npm-publication'],
+    'node --test scripts/check-npm-version-availability.test.mjs scripts/verify-npm-publication.test.mjs',
+    'npm publication policy test script',
+  )
 
   const zigVersion = singleCapture(sources.get('build.zig.zon'), /^\s*\.version\s*=\s*"([^"]+)",$/gm, 'Zig package version')
   expectEqual(zigVersion, version, 'Zig package version')

@@ -553,7 +553,12 @@ export function validateReleaseWorkflowSource(source) {
   expectLiteralCount(source, '        run: npm publish --tag next --provenance', 1, 'npm prerelease publication')
   expectLiteralCount(source, 'npm version ', 0, 'npm package version mutation')
   expectLiteralCount(source, '- name: Verify npm prerelease publication', 1, 'npm publication readback')
-  expectLiteralCount(source, 'npm view zigcss dist-tags.next', 1, 'npm next-channel readback')
+  expectLiteralCount(
+    source,
+    '        run: node scripts/verify-npm-publication.mjs --version "${GITHUB_REF_NAME#v}"',
+    1,
+    'bounded npm publication readback',
+  )
   expectLiteralCount(source, '          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}', 2, 'bounded npm token use')
 
   expectOrdered(source, [
