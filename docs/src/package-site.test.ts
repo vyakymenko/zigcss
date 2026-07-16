@@ -32,6 +32,19 @@ describe('consumer package website', () => {
     expect(read('docs/index.html')).toContain("window.history.replaceState")
   })
 
+  test('makes the README a visual front door to the package website', () => {
+    const readme = read('README.md')
+    const installHeading = readme.indexOf('## Install')
+
+    expect(readme).toContain(
+      '[![ZigCSS — Compile CSS. Keep the meaning.](https://vyakymenko.github.io/zigcss/og.png)](https://vyakymenko.github.io/zigcss/)',
+    )
+    expect(readme).toContain('**Compile CSS. Keep the meaning.**')
+    expect(readme).toContain('[Website](https://vyakymenko.github.io/zigcss/)')
+    expect(readme).toContain('[npm](https://www.npmjs.com/package/zigcss)')
+    expect(readme.indexOf('[Website]')).toBeLessThan(installHeading)
+  })
+
   test('states the CSS-only input boundary on package surfaces', () => {
     for (const relativePath of [
       'README.md',

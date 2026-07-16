@@ -1,11 +1,24 @@
+[![ZigCSS — Compile CSS. Keep the meaning.](https://vyakymenko.github.io/zigcss/og.png)](https://vyakymenko.github.io/zigcss/)
+
 # ZigCSS
 
 [![Build](https://github.com/vyakymenko/zigcss/actions/workflows/build.yml/badge.svg)](https://github.com/vyakymenko/zigcss/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-17201b.svg)](LICENSE)
 
-ZigCSS is a native CSS compiler and Zig library focused on deterministic output, semantic preservation, and explicit safety boundaries.
+**Compile CSS. Keep the meaning.**
+
+**Native binary. Deterministic output. Semantics first.** ZigCSS is an experimental CSS compiler and Zig library built for people who want transformations they can inspect, repeat, and trust. Stable transforms cross semantic-equivalence and independent-parser gates; unproven boundaries stay explicit instead of becoming silent rewrites.
+
+[Website](https://vyakymenko.github.io/zigcss/) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [CSS compatibility](https://vyakymenko.github.io/zigcss/docs/guide/css-compatibility) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
 > **Experimental release candidate:** ZigCSS 0.4.0-rc.3 is ready for evaluation, not unrestricted production adoption. CSS coverage is matrix-tested but not complete, and public performance comparisons remain withdrawn until the controlled benchmark gate closes.
+
+## Why ZigCSS
+
+- **Meaning before shortcuts.** Parser, emitter, and accepted transforms are checked for structural equivalence rather than judged only by smaller output.
+- **Deterministic by design.** Stable ordering, explicit options, atomic writes, and reproducible packaging make compiler behavior reviewable.
+- **Native where developers work.** The npm launcher installs the matching Zig-built binary for Linux, macOS, or Windows across five supported target combinations.
+- **Honest boundaries.** CSS support is published as an executable compatibility matrix; SCSS, Sass, Less, Stylus, and other preprocessors are never disguised as supported CSS input.
 
 ## Install
 
