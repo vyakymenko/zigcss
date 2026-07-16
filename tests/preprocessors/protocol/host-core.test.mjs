@@ -8,6 +8,10 @@ import {
   validateResponse,
 } from '../../../preprocessor/protocol.mjs'
 import { processHostInput } from '../../../preprocessor/host-core.mjs'
+import {
+  ProviderFailure,
+  normalizeDiagnostics,
+} from '../../../preprocessor/metadata.mjs'
 import { makeRequest } from './helpers.mjs'
 
 function registryWith(compile) {
@@ -62,6 +66,7 @@ test('provider throws, timeouts, invalid results, and output overflow fail witho
   })
   assert.equal(thrown.ok, false)
   assert.equal(thrown.error.code, 'HOST_PROVIDER_FAILURE')
+  assert.deepEqual(thrown.error.diagnostics, [])
   assert.doesNotMatch(thrown.error.message, /secret|stack|filesystem/i)
   assert.equal('result' in thrown, false)
 
@@ -101,6 +106,70 @@ test('provider throws, timeouts, invalid results, and output overflow fail witho
   assert.equal(overflow.ok, false)
   assert.equal(overflow.error.code, 'HOST_OUTPUT_LIMIT')
   assert.equal('result' in overflow, false)
+})
+
+test('normalized provider failures preserve public diagnostics but never css', async () => {
+  const diagnostics = normalizeDiagnostics([{
+    severity: 'error',
+    code: 'sass.parse',
+    message: 'Expected expression',
+    sourceUrl: 'file:///workspace/input.scss',
+    line: 1,
+    column: 8,
+  }], { provider: 'dart-sass', defaultSourceUrl: null })
+  const response = await exchange(makeRequest(), {
+    registry: registryWith(async () => {
+      throw new ProviderFailure(
+        'SASS_COMPILE_ERROR',
+        'Dart Sass rejected the input',
+        diagnostics,
+      )
+    }),
+    providerTimeoutMs: 100,
+  })
+
+  assert.deepEqual(response, {
+    protocol: PROTOCOL_VERSION,
+    requestId: 'request-001',
+    ok: false,
+    error: {
+      code: 'SASS_COMPILE_ERROR',
+      message: 'Dart Sass rejected the input',
+      diagnostics: [{
+        severity: 'error',
+        code: 'sass.parse',
+        message: 'Expected expression',
+        sourceUrl: 'file:///workspace/input.scss',
+        line: 1,
+        column: 8,
+      }],
+    },
+  })
+  assert.equal('result' in response, false)
+  assert.equal('css' in response, false)
+})
+
+test('oversized provider diagnostics collapse to one bounded css-free host failure', async () => {
+  const diagnostics = normalizeDiagnostics([{
+    severity: 'error',
+    code: 'sass.parse',
+    message: 'x'.repeat(4000),
+    sourceUrl: 'file:///workspace/input.scss',
+    line: 1,
+    column: 1,
+  }], { provider: 'dart-sass' })
+  const response = await exchange(makeRequest(), {
+    registry: registryWith(async () => {
+      throw new ProviderFailure('SASS_COMPILE_ERROR', 'Compilation failed', diagnostics)
+    }),
+    providerTimeoutMs: 100,
+    maxResponseBytes: 512,
+  })
+
+  assert.equal(response.ok, false)
+  assert.equal(response.error.code, 'HOST_OUTPUT_LIMIT')
+  assert.deepEqual(response.error.diagnostics, [])
+  assert.equal('result' in response, false)
 })
 
 test('missing providers and malformed or extra input produce one framed failure', async () => {

@@ -1,6 +1,6 @@
 # ZigCSS canonical preprocessor host
 
-Status: internal `PRE-002`/`PRE-003` boundary. SCSS, indented Sass, Less, and Stylus are still publicly unavailable. The production registry recognizes their accepted provider IDs but deliberately contains no provider implementation until each adapter package lands and passes its own admission gates.
+Status: internal `PRE-002` through `PRE-004` boundary. SCSS, indented Sass, Less, and Stylus are still publicly unavailable. The production registry recognizes their accepted provider IDs but deliberately contains no provider implementation until each adapter package lands and passes its own admission gates.
 
 ## Wire contract
 
@@ -16,7 +16,7 @@ The compile request contains the protocol name, a bounded opaque request ID, the
 | `less` | `less` | `less` `4.6.7` |
 | `stylus` | `stylus` | `stylus` `0.64.0` |
 
-A success contains complete CSS, a nullable source map, ordered diagnostics, and ordered dependencies. A failure contains only a bounded code and sanitized message—never CSS, a partial result, a stack, or an internal filesystem error. Request IDs must match across the exchange.
+A success contains complete CSS, a nullable source map, ordered diagnostics, and ordered dependencies. A failure contains only a bounded code, sanitized message, and ordered normalized diagnostics—never CSS, a partial result, a stack, or an internal filesystem error. Generic host failures use an empty diagnostic list. Request IDs must match across the exchange.
 
 ## Fixed ceilings
 
@@ -38,7 +38,15 @@ The outer supervisor validates and frames the request before spawn, executes the
 
 The host core imports no networking or child-process modules and performs no dynamic imports. The production provider registry is closed and version-bound; it does not discover packages from user input or ambient paths. Provider source bytes are framed stdin data and are never command arguments or shell text.
 
-`PRE-003` adds canonical local-path confinement before providers may load dependencies. `PRE-004` will complete normalized diagnostics, dependency facts, and two-stage source-map ownership. Executable plugins, custom functions, and custom importers remain outside this protocol's default trust boundary and require the separately gated `trusted-project-code mode` from ADR-012.
+`PRE-003` adds canonical local-path confinement before providers may load dependencies. `PRE-004` adds normalized diagnostics, canonical dependency facts, and two-stage source-map ownership. Executable plugins, custom functions, and custom importers remain outside this protocol's default trust boundary and require the separately gated `trusted-project-code mode` from ADR-012.
+
+## Result metadata and source maps
+
+`PRE-004` accepts only the exact normalized diagnostic shape: severity, optional bounded code, sanitized message, canonical local source URL, and nullable one-based line and column. Provider deprecations become warnings, provider order is preserved, and ANSI/control bytes are removed before the result crosses the host boundary. Compile failures may own those same diagnostics but can never own CSS or a partial result.
+
+Dependency facts contain only a canonical local file URL and one of `import`, `use`, `forward`, or `reference`. They preserve first-success order and deduplicate by URL. The confined loader remains the authority for file bytes; metadata normalization does not grant filesystem access.
+
+When both stages emit maps, composition parses only strict non-indexed Source Map v3 JSON. Every final ZigCSS mapping must target the one named intermediate CSS source. Each mapped segment is traced through the provider map with greatest-lower-bound lookup; generated or unmapped regions stay unmapped. UTF-16 columns, provider source content, source roots, and names are preserved. Unknown extensions, malformed VLQ data, invalid indices, duplicate intermediate sources, oversized maps, or either missing map reject the entire composition without returning a partial map.
 
 ## Confined local loader
 
@@ -48,4 +56,4 @@ The loader accepts only absolute `file:` URLs under explicit regular directory r
 
 Each compilation owns one session. The default ceilings are 10 MiB per file, 40 MiB across reads, 4,096 unique files, 8,192 read attempts, and 64 ancestry levels; callers may lower but never raise the hard limits. Canonical ancestry is explicit and root-confined, so duplicate ancestry, candidate cycles, and excessive depth fail before bytes become a provider result. Successful reads return owned bytes and one canonical URL. Dependency facts are ordered by first successful load and deduplicated by canonical URL, while duplicate reads still consume read and byte budgets.
 
-No provider is connected yet. `PRE-003` establishes the file authority that the `SASS-011`, `LESS-011`, and `STYLUS-011` adapters must consume; it does not make any preprocessor syntax available.
+No provider is connected yet. These boundaries establish the file and result authority that the `SASS-011`, `LESS-011`, and `STYLUS-011` adapters must consume. This work does not make any preprocessor syntax available.

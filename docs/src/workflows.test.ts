@@ -121,7 +121,7 @@ describe('native artifact workflows', () => {
     expect(transforms).toBeGreaterThan(compatibility)
   })
 
-  test('validates package metadata, wrapper, bounded preprocessor host, and a real path dependency before CSS oracles', () => {
+  test('validates package metadata, bounded preprocessing, and result ownership before CSS oracles', () => {
     const metadata = buildWorkflow.indexOf('npm run test:zig-package')
     const nativeTests = buildWorkflow.lastIndexOf('zig build test --summary all', metadata)
     const wrapper = buildWorkflow.indexOf('npm run test:node-wrapper', metadata)
@@ -130,7 +130,11 @@ describe('native artifact workflows', () => {
       'npm run test:preprocessor-resolver',
       preprocessorHost,
     )
-    const formats = buildWorkflow.indexOf('npm run test:formats', preprocessorResolver)
+    const preprocessorMetadata = buildWorkflow.indexOf(
+      'npm run test:preprocessor-metadata',
+      preprocessorResolver,
+    )
+    const formats = buildWorkflow.indexOf('npm run test:formats', preprocessorMetadata)
     const packageConsumer = buildWorkflow.indexOf('working-directory: tests/package-consumer', formats)
     const consumerTests = buildWorkflow.indexOf('zig build test --summary all', packageConsumer)
     const compatibility = buildWorkflow.indexOf('npm run test:compat', consumerTests)
@@ -139,7 +143,8 @@ describe('native artifact workflows', () => {
     expect(wrapper).toBeGreaterThan(metadata)
     expect(preprocessorHost).toBeGreaterThan(wrapper)
     expect(preprocessorResolver).toBeGreaterThan(preprocessorHost)
-    expect(formats).toBeGreaterThan(preprocessorResolver)
+    expect(preprocessorMetadata).toBeGreaterThan(preprocessorResolver)
+    expect(formats).toBeGreaterThan(preprocessorMetadata)
     expect(packageConsumer).toBeGreaterThan(formats)
     expect(consumerTests).toBeGreaterThan(packageConsumer)
     expect(compatibility).toBeGreaterThan(consumerTests)

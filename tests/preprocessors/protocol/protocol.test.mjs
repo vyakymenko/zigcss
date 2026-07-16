@@ -42,6 +42,8 @@ test('host core has no network, shell, eval, or ambient module-loading authority
     'preprocessor/protocol.mjs',
     'preprocessor/environment.mjs',
     'preprocessor/resolver.mjs',
+    'preprocessor/metadata.mjs',
+    'preprocessor/source-map.mjs',
     'preprocessor/provider-registry.mjs',
     'preprocessor/host-core.mjs',
     'preprocessor/host.mjs',
@@ -121,6 +123,8 @@ test('request validation is closed, provider-aware, and byte bounded', () => {
     [makeRequest({ provider: 'unknown' }), 'HOST_PROVIDER_UNKNOWN'],
     [makeRequest({ provider: 'less', syntax: 'scss' }), 'HOST_SYNTAX_PROVIDER_MISMATCH'],
     [makeRequest({ sourceUrl: 'https://example.com/input.scss' }), 'HOST_SOURCE_URL'],
+    [makeRequest({ sourceUrl: 'file://server/share/input.scss' }), 'HOST_SOURCE_URL'],
+    [makeRequest({ sourceUrl: 'file:///workspace/input.scss?raw=1' }), 'HOST_SOURCE_URL'],
     [makeRequest({ options: { style: 'tiny', sourceMap: true, loadPaths: [] } }), 'HOST_OPTIONS'],
     [makeRequest({ options: { style: 'expanded', sourceMap: 'yes', loadPaths: [] } }), 'HOST_OPTIONS'],
     [makeRequest({ options: { style: 'expanded', sourceMap: true, loadPaths: ['relative'] } }), 'HOST_OPTIONS'],
@@ -157,6 +161,7 @@ test('response validation admits one complete result or one css-free failure', (
     error: {
       code: 'HOST_PROVIDER_FAILURE',
       message: 'Canonical provider compilation failed',
+      diagnostics: [],
     },
   }
   assert.deepEqual(validateResponse(success), success)
@@ -175,6 +180,16 @@ test('response validation admits one complete result or one css-free failure', (
   )
   assert.throws(
     () => validateResponse({ ...failure, css: '.partial{}' }),
+    hasCode('HOST_RESPONSE_SHAPE'),
+  )
+  assert.throws(
+    () => validateResponse({
+      ...success,
+      result: {
+        ...success.result,
+        dependencies: [{ url: null, kind: 'import' }],
+      },
+    }),
     hasCode('HOST_RESPONSE_SHAPE'),
   )
 })

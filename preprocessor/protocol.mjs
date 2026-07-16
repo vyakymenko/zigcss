@@ -116,6 +116,16 @@ function validateSourceUrl(value) {
   if (parsed.protocol !== 'file:' || parsed.username !== '' || parsed.password !== '') {
     fail('HOST_SOURCE_URL', 'sourceUrl must be null or an absolute file URL')
   }
+  if (
+    parsed.hostname !== '' ||
+    parsed.search !== '' ||
+    parsed.hash !== '' ||
+    !parsed.pathname.startsWith('/') ||
+    /%2f|%5c/i.test(parsed.pathname) ||
+    parsed.href !== value
+  ) {
+    fail('HOST_SOURCE_URL', 'sourceUrl must be a canonical local file URL without aliases')
+  }
 }
 
 function validateOptions(options) {
@@ -185,17 +195,29 @@ function validateDiagnostic(value) {
   }
   if (value.code !== null) {
     requireBoundedString(value.code, 128, 'HOST_RESPONSE_SHAPE', 'diagnostic code')
+    if (!/^[A-Za-z0-9_.-]+$/.test(value.code)) {
+      fail('HOST_RESPONSE_SHAPE', 'diagnostic code is invalid')
+    }
   }
   requireBoundedString(value.message, MAX_MESSAGE_BYTES, 'HOST_RESPONSE_SHAPE', 'diagnostic message')
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(value.message)) {
+    fail('HOST_RESPONSE_SHAPE', 'diagnostic message contains control bytes')
+  }
   validateSourceUrl(value.sourceUrl)
   if (value.line !== null) requireInteger(value.line, 1, 0x7fffffff, 'HOST_RESPONSE_SHAPE', 'line')
   if (value.column !== null) {
     requireInteger(value.column, 1, 0x7fffffff, 'HOST_RESPONSE_SHAPE', 'column')
   }
+  if (value.line === null && value.column !== null) {
+    fail('HOST_RESPONSE_SHAPE', 'diagnostic column requires a line')
+  }
 }
 
 function validateDependency(value) {
   requireExactKeys(value, ['url', 'kind'], 'HOST_RESPONSE_SHAPE', 'dependency')
+  if (typeof value.url !== 'string') {
+    fail('HOST_RESPONSE_SHAPE', 'dependency URL must be a local file URL')
+  }
   validateSourceUrl(value.url)
   if (!['import', 'use', 'forward', 'reference'].includes(value.kind)) {
     fail('HOST_RESPONSE_SHAPE', 'dependency kind is invalid')
@@ -236,7 +258,7 @@ function validateSuccess(value) {
 
 function validateFailure(value) {
   requireExactKeys(value, ['protocol', 'requestId', 'ok', 'error'], 'HOST_RESPONSE_SHAPE', 'response')
-  requireExactKeys(value.error, ['code', 'message'], 'HOST_RESPONSE_SHAPE', 'error')
+  requireExactKeys(value.error, ['code', 'message', 'diagnostics'], 'HOST_RESPONSE_SHAPE', 'error')
   if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(value.error.code)) {
     fail('HOST_RESPONSE_SHAPE', 'error code is invalid')
   }
@@ -244,6 +266,10 @@ function validateFailure(value) {
   if (/[\u0000-\u001f\u007f]/.test(value.error.message)) {
     fail('HOST_RESPONSE_SHAPE', 'error message contains control bytes')
   }
+  if (!Array.isArray(value.error.diagnostics) || value.error.diagnostics.length > MAX_DIAGNOSTICS) {
+    fail('HOST_RESPONSE_SHAPE', 'failure diagnostics must be a bounded array')
+  }
+  for (const diagnostic of value.error.diagnostics) validateDiagnostic(diagnostic)
 }
 
 function validateResponseRequestId(value) {

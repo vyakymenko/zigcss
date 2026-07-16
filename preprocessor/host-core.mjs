@@ -9,6 +9,7 @@ import {
   validateRequest,
   validateResponse,
 } from './protocol.mjs'
+import { ProviderFailure } from './metadata.mjs'
 
 const messages = {
   HOST_INVALID_PROVIDER_RESULT: 'Canonical provider returned an invalid result',
@@ -18,17 +19,17 @@ const messages = {
   HOST_PROVIDER_UNAVAILABLE: 'Canonical provider is not installed in this host',
 }
 
-function failure(requestId, code, message = 'Preprocessor request was rejected') {
+function failure(requestId, code, message = 'Preprocessor request was rejected', diagnostics = []) {
   return {
     protocol: PROTOCOL_VERSION,
     requestId,
     ok: false,
-    error: { code, message },
+    error: { code, message, diagnostics },
   }
 }
 
-function failureFrame(requestId, code, maxResponseBytes, message) {
-  const response = failure(requestId, code, message ?? messages[code])
+function failureFrame(requestId, code, maxResponseBytes, message, diagnostics = []) {
+  const response = failure(requestId, code, message ?? messages[code], diagnostics)
   validateResponse(response)
   return encodeFrame(response, { maxBytes: maxResponseBytes })
 }
@@ -92,7 +93,23 @@ export async function processHostInput(
   let outcome
   try {
     outcome = await compileWithTimeout(provider.compile, request, providerTimeoutMs)
-  } catch {
+  } catch (error) {
+    if (error instanceof ProviderFailure) {
+      try {
+        return failureFrame(
+          request.requestId,
+          error.code,
+          maxResponseBytes,
+          error.message,
+          error.diagnostics,
+        )
+      } catch (frameError) {
+        const code = frameError instanceof ProtocolError && frameError.code === 'HOST_PROTOCOL_FRAME_LIMIT'
+          ? 'HOST_OUTPUT_LIMIT'
+          : 'HOST_PROVIDER_FAILURE'
+        return failureFrame(request.requestId, code, maxResponseBytes)
+      }
+    }
     return failureFrame(request.requestId, 'HOST_PROVIDER_FAILURE', maxResponseBytes)
   }
   if (outcome.timedOut) {
