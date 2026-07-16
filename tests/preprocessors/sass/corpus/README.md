@@ -53,7 +53,7 @@ the separately opt-in trusted-project-code package in ADR-012.
 
 Given the checksum-verified upstream archive extracted at `/path/to/sass-spec`:
 
-```sh
+```bash
 node scripts/vendor-sass-spec-corpus.mjs \
   --source /path/to/sass-spec \
   --archive /path/to/sass-spec-1b03109a.tar.gz \
