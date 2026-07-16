@@ -3,7 +3,7 @@ class Zigcss < Formula
   homepage "https://github.com/vyakymenko/zigcss"
   # Pin the verified recovery checkpoint until an authorized release publishes a tag.
   url "https://github.com/vyakymenko/zigcss/archive/3fada2359ab1fa262b782a33e9ab2a7bab2c46ca.tar.gz"
-  version "0.4.0-rc.1"
+  version "0.4.0-rc.2"
   sha256 "2fc630a41af5b5fef1d1e4db551604deac048c1b02ff249d5abbb061ebd5c906"
   license "MIT"
 
