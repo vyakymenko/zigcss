@@ -37,7 +37,7 @@ test('process supervisor uses framed stdin without shell interpretation', async 
   }
 })
 
-test('production host reaches the internal Dart Sass adapter without admitting other providers', async () => {
+test('production host reaches only the admitted internal Dart Sass and Less adapters', async () => {
   const response = await runPreprocessorHost(makeRequest({
     options: {
       style: 'compressed',
@@ -80,10 +80,29 @@ test('production host reaches the internal Dart Sass adapter without admitting o
   assert.equal(rejected.error.diagnostics[0].message, 'Expected expression.')
   assert.equal('result' in rejected, false)
 
-  const unavailable = await runPreprocessorHost(makeRequest({
+  const less = await runPreprocessorHost(makeRequest({
     provider: 'less',
     syntax: 'less',
     source: '@color: red; .card { color: @color; }',
+    sourceUrl: 'file:///workspace/input.less',
+    options: {
+      style: 'expanded',
+      sourceMap: true,
+      loadPaths: [],
+      providerOptions: {},
+    },
+  }), { timeoutMs: 5000 })
+  assert.equal(less.ok, true)
+  assert.equal(less.result.css, '.card {\n  color: red;\n}\n')
+  assert.equal(parseSourceMap(less.result.sourceMap).sources[0], 'file:///workspace/input.less')
+  assert.deepEqual(less.result.diagnostics, [])
+  assert.deepEqual(less.result.dependencies, [])
+
+  const unavailable = await runPreprocessorHost(makeRequest({
+    provider: 'stylus',
+    syntax: 'stylus',
+    source: 'color = red\n.card\n  color color\n',
+    sourceUrl: 'file:///workspace/input.styl',
     options: {
       style: 'expanded',
       sourceMap: true,

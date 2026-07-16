@@ -1,4 +1,5 @@
 import { createDartSassProvider } from './providers/dart-sass.mjs'
+import { createLessProvider } from './providers/less.mjs'
 
 export const CANONICAL_PROVIDERS = Object.freeze({
   'dart-sass': Object.freeze({
@@ -32,7 +33,9 @@ export function createProductionRegistry() {
     Object.keys(CANONICAL_PROVIDERS).map(providerId => {
       const implementation = providerId === 'dart-sass'
         ? createDartSassProvider()
-        : { syntaxes: PROVIDER_SYNTAXES[providerId], compile: null }
+        : providerId === 'less'
+          ? createLessProvider()
+          : { syntaxes: PROVIDER_SYNTAXES[providerId], compile: null }
       return [providerId, Object.freeze({
         metadata: CANONICAL_PROVIDERS[providerId],
         syntaxes: implementation.syntaxes,
