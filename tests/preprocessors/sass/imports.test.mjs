@@ -356,6 +356,10 @@ test('rejects missing, escaping, linked, and invalid-encoding imports with stabl
       compile(first, { source: '@use "https://example.com/theme";' }),
       rejectsWithCode('SASS_IMPORT_POLICY'),
     )
+    await assert.rejects(
+      compile(first, { source: '@use "pkg:untrusted";' }),
+      rejectsWithCode('SASS_IMPORT_POLICY'),
+    )
 
     const invalid = path.join(first, '_invalid.scss')
     fs.writeFileSync(invalid, Buffer.from([0xff, 0xfe]))
