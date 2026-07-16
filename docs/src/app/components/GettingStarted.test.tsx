@@ -8,16 +8,23 @@ function renderGettingStarted() {
 }
 
 describe('GettingStarted', () => {
-  it('labels the compiler as an evaluation-only prototype', () => {
+  it('starts with the npm prerelease installation path', () => {
     renderGettingStarted()
-    expect(screen.getByRole('heading', { name: /build the experimental compiler/i })).toBeInTheDocument()
-    expect(screen.getByText(/contribution and evaluation only/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /start compiling css/i })).toBeInTheDocument()
+    expect(screen.getByText('npm install --save-dev zigcss@next')).toBeInTheDocument()
+    expect(screen.getAllByText(/release candidate/i)).toHaveLength(2)
   })
 
   it('shows the verified source build and test commands', () => {
     renderGettingStarted()
     expect(screen.getByText(/zig build test --summary all/)).toBeInTheDocument()
     expect(screen.getByText(/zig-out\/bin\/zigcss input\.css -o output\.css/)).toBeInTheDocument()
+  })
+
+  it('does not present Sass, SCSS, or Less as accepted inputs', () => {
+    renderGettingStarted()
+    expect(screen.getByText(/input must be css/i)).toBeInTheDocument()
+    expect(screen.getByText(/scss, sass, and less are rejected/i)).toBeInTheDocument()
   })
 
   it('links to the current status', () => {

@@ -1,7 +1,7 @@
 {
   "name": "zigcss",
   "version": "0.4.0-rc.2",
-  "description": "Experimental Zig CSS compiler prototype under correctness-first recovery",
+  "description": "Experimental native CSS compiler and Zig library focused on deterministic, semantics-preserving output",
   "main": "index.js",
   "bin": {
     "zigcss": "./index.js"
@@ -77,7 +77,7 @@
   "bugs": {
     "url": "https://github.com/vyakymenko/zigcss/issues"
   },
-  "homepage": "https://github.com/vyakymenko/zigcss#readme",
+  "homepage": "https://vyakymenko.github.io/zigcss/",
   "engines": {
     "node": ">=14.0.0"
   },

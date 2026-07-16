@@ -8,23 +8,26 @@ function renderHome() {
 }
 
 describe('Home', () => {
-  it('identifies the recovery build as experimental', () => {
+  it('introduces the package and identifies the release candidate honestly', () => {
     renderHome()
-    expect(screen.getByRole('heading', { name: 'ZigCSS' })).toBeInTheDocument()
-    expect(screen.getByText(/experimental release candidate/i)).toBeInTheDocument()
-    expect(screen.getByText(/not production use/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /compile css with zig/i })).toBeInTheDocument()
+    expect(screen.getByText(/0\.4\.0-rc\.2.*experimental/i)).toBeInTheDocument()
+    expect(screen.getByText(/evaluate before production/i)).toBeInTheDocument()
   })
 
-  it('links to current status and source-build instructions', () => {
+  it('leads with installation and links to package documentation', () => {
     renderHome()
-    expect(screen.getByRole('link', { name: /read current status/i })).toHaveAttribute('href', '/docs/guide/status')
-    expect(screen.getByRole('link', { name: /build from source/i })).toHaveAttribute('href', '/getting-started')
+    expect(screen.getByText('npm install --save-dev zigcss@next')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /get started/i })).toHaveAttribute('href', '/getting-started')
+    expect(screen.getByRole('link', { name: /explore css support/i })).toHaveAttribute('href', '/features')
   })
 
-  it('describes correctness-first recovery priorities', () => {
+  it('states the language boundary without implying preprocessor support', () => {
     renderHome()
-    expect(screen.getByRole('heading', { name: /recovery priorities/i })).toBeInTheDocument()
-    expect(screen.getByText(/contain unsafe surfaces/i)).toBeInTheDocument()
-    expect(screen.getByText(/make failures executable/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /css in\. css out\./i })).toBeInTheDocument()
+    expect(screen.getByText('SCSS / Sass')).toBeInTheDocument()
+    expect(screen.getByText('Less')).toBeInTheDocument()
+    expect(screen.getAllByText('Not supported')).toHaveLength(2)
+    expect(screen.getByText(/semantics before speed/i)).toBeInTheDocument()
   })
 })

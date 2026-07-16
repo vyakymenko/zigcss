@@ -79,8 +79,11 @@ test('every tracked internal link and code fence has an owned validation path', 
   assert.ok(summary.fences >= 50)
   assert.ok(summary.internalLinks >= 25)
   assert.ok(summary.literalRoutes >= 10)
-  assert.equal(summary.siteFences, 3)
-  assert.deepEqual(extractSiteCodeFences(repositoryRoot).map(fence => fence.language), ['bash', 'css', 'bash'])
+  assert.equal(summary.siteFences, 7)
+  assert.deepEqual(
+    extractSiteCodeFences(repositoryRoot).map(fence => fence.language),
+    ['bash', 'bash', 'bash', 'css', 'bash', 'css', 'css'],
+  )
 })
 
 test('executable fence validation fails closed on invalid shell, JSON, CSS, Lua, and Vim input', () => {

@@ -80,18 +80,23 @@ test('evidence anchors cannot escape through a symlink', () => {
   }
 })
 
-test('README and status guide contain the exact generated table', () => {
+test('status guide contains the exact generated table', () => {
   const metadata = validateMetadata(loadMetadata())
   const table = renderTable(metadata)
   const targets = expectedTargets(metadata)
 
-  assert.equal(targets.length, 2)
+  assert.equal(targets.length, 1)
   for (const { target, content } of targets) {
     assert.equal(content, fs.readFileSync(target, 'utf8'), path.relative(repositoryRoot, target))
     assert.equal(content.split(startMarker).length, 2)
     assert.equal(content.split(endMarker).length, 2)
     assert.ok(content.includes(table))
   }
+
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(repositoryRoot, 'README.md'), 'utf8'),
+    /<!-- capability-status:(?:start|end) -->/,
+  )
 })
 
 test('generator check is deterministic and the site consumes metadata directly', () => {
@@ -100,7 +105,7 @@ test('generator check is deterministic and the site consumes metadata directly',
     encoding: 'utf8',
   })
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /21 rows, 19 executable evidence gates, 2 Markdown tables/)
+  assert.match(result.stdout, /21 rows, 19 executable evidence gates, 1 Markdown table/)
 
   const features = fs.readFileSync(path.join(repositoryRoot, 'docs/src/app/components/Features.tsx'), 'utf8')
   assert.match(features, /data\/capabilities\.json/)

@@ -51,14 +51,14 @@ describe('evidence-linked capability status metadata', () => {
     expect([...used].sort()).toEqual(Object.keys(capabilityMetadata.gates).sort())
   })
 
-  test('publishes one byte-identical generated table in both Markdown surfaces', () => {
-    const rootTable = generatedTable(read('README.md'))
+  test('publishes the canonical generated table in the detailed status guide', () => {
     const docsTable = generatedTable(read('docs/src/content/docs/guide/status.md'))
 
-    expect(rootTable).toBe(docsTable)
-    expect(rootTable.match(/^\| /gm)).toHaveLength(capabilityMetadata.capabilities.length + 1)
+    expect(read('README.md')).not.toContain(startMarker)
+    expect(read('README.md')).not.toContain(endMarker)
+    expect(docsTable.match(/^\| /gm)).toHaveLength(capabilityMetadata.capabilities.length + 1)
     for (const capability of capabilityMetadata.capabilities) {
-      expect(rootTable).toContain(`| ${capability.surface} | ${capability.status} |`)
+      expect(docsTable).toContain(`| ${capability.surface} | ${capability.status} |`)
     }
   })
 

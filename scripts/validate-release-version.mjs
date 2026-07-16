@@ -203,7 +203,7 @@ export function validateReleaseSources(sources) {
 
   const readme = sources.get('README.md')
   const status = sources.get('docs/src/content/docs/guide/status.md')
-  expectLiteralCount(readme, version, 4, 'README release claims')
+  expectLiteralCount(readme, version, 2, 'README release claims')
   expectLiteralCount(sources.get('NPM_PUBLISH.md'), version, 2, 'npm publishing guide release claims')
   expectLiteralCount(status, version, 5, 'status guide release claims')
   expectLiteralCount(sources.get('docs/src/content/docs/guide/build-from-source.md'), version, 1, 'build guide release claims')

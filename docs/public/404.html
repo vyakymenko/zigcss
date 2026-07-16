@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Redirecting to ZigCSS…</title>
+    <script>
+      (function redirectGitHubPagesRoute(location) {
+        var pathSegmentsToKeep = 1;
+        var repositoryRoot = location.pathname
+          .split("/")
+          .slice(0, 1 + pathSegmentsToKeep)
+          .join("/");
+        var route = location.pathname
+          .slice(1)
+          .split("/")
+          .slice(pathSegmentsToKeep)
+          .join("/")
+          .replace(/&/g, "~and~");
+        location.replace(
+          location.protocol + "//" + location.hostname + (location.port ? ":" + location.port : "") +
+          repositoryRoot + "/?/" + route +
+          (location.search ? "&" + location.search.slice(1).replace(/&/g, "~and~") : "") +
+          location.hash
+        );
+      })(window.location);
+    </script>
+  </head>
+  <body>
+    <p>Redirecting to ZigCSS…</p>
+  </body>
+</html>

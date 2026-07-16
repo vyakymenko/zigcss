@@ -1,6 +1,6 @@
-# ZigCSS documentation
+# ZigCSS package website
 
-Documentation for the experimental ZigCSS recovery project. The site publishes the current capability boundary, verified source-build instructions, and recovery CLI contract. The public playground is disabled.
+The React site publishes the consumer-facing ZigCSS overview, installation path, explicit CSS and alternate-format boundaries, and evidence-linked documentation. The public compile playground remains disabled.
 
 ## Run locally
 
@@ -9,31 +9,23 @@ npm ci --ignore-scripts
 npm run dev
 ```
 
-Open the URL shown in the terminal (e.g. http://localhost:5173/zigcss/).
+Open the Vite URL under `/zigcss/`, for example `http://localhost:5173/zigcss/`.
 
-## Build
+## Test and build
 
-From the docs folder:
+From the documentation folder:
 
 ```bash
+npm run test:run
 npm run build
 ```
 
-From the repo root:
+From the repository root:
 
 ```bash
 npm run build:website
 ```
 
-Output is in `docs/dist/`. Deploy the **contents** of `dist/` to your host. The app is built with `base: '/zigcss/'`, so:
+Output is written to `docs/dist/`. The production base is `/zigcss/`, matching the GitHub Pages project URL `https://vyakymenko.github.io/zigcss/`. `public/404.html` and the route-restoration script in `index.html` preserve direct links to client-side routes on GitHub Pages.
 
-- **GitHub Pages** (project site): set the publish directory to `docs/dist` and set the base URL in the repo to `/<repo-name>/` (e.g. `/zigcss/`), or use a custom domain and set base to `/`.
-- **Static host (Netlify, Vercel, etc.)**: upload `dist/` and set the site to be served at `https://yourdomain.com/zigcss/`, or set base to `/` in `vite.config.ts` and serve at the root.
-
-## Test
-
-```bash
-npm run test:run
-```
-
-Runs unit tests with Vitest. Use `npm run test` for watch mode.
+The workflow in `.github/workflows/docs.yml` tests, builds, uploads, and deploys the directory. Do not publish the source tree or development server.

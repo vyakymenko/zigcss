@@ -46,7 +46,7 @@ export function DocView() {
   }
 
   return (
-    <article className="prose prose-slate max-w-none prose-headings:font-semibold prose-a:text-indigo-600 prose-pre:bg-slate-900 prose-pre:text-slate-100">
+    <article className="prose prose-slate max-w-none border border-[#d0cbc0] bg-[#faf7ef] p-6 prose-headings:tracking-[-0.025em] prose-a:text-[#36570d] prose-pre:bg-[#101914] prose-pre:text-[#f7f3e8] sm:p-9 lg:p-12">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: DocLink }}>
         {content}
       </ReactMarkdown>

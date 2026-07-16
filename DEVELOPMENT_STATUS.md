@@ -1,6 +1,6 @@
 # ZigCSS Development Status
 
-Last updated: 2026-07-15
+Last updated: 2026-07-16
 
 ## Execution context
 
@@ -10,16 +10,24 @@ Last updated: 2026-07-15
 - Verified execution model: `gpt-5.6-sol`, ultra reasoning, as explicitly configured and approved in the autonomous-development handoff.
 - Worktree: isolated Codex worktree `/Users/vyakymenko/.codex/worktrees/9302/zigcss`; the user's main checkout is out of scope.
 - Inherited changes preserved: the approved `DEVELOPMENT_PLAN.md` was untracked at autonomous start and is being committed unchanged as the roadmap.
-- External actions: on 2026-07-13 the operator explicitly authorized automatic non-force pushes of each clean green checkpoint to `origin` at the same current `vale/*` branch, then explicitly authorized merging that branch to `origin/main` without a pull request. On 2026-07-14 the operator authorized completing the remaining external gates; workflow-based GitHub Pages was enabled and its existing deployment workflow was dispatched on exact integrated `main`. On 2026-07-15 the operator explicitly resumed the remaining unproven work, including published packages and release artifacts; publishing the reviewed `0.4.0-rc.1` tag, GitHub prerelease, and npm prerelease through the closed tag workflow is authorized. Other branches/remotes and unrelated external-system changes remain unauthorized.
+- External actions: on 2026-07-13 the operator explicitly authorized automatic non-force pushes of each clean green checkpoint to `origin` at the same current `vale/*` branch, then explicitly authorized merging that branch to `origin/main` without a pull request. On 2026-07-14 the operator authorized completing the remaining external gates; workflow-based GitHub Pages was enabled and its existing deployment workflow was dispatched on exact integrated `main`. On 2026-07-15 the operator explicitly resumed the remaining unproven work, including published packages and release artifacts. On 2026-07-16 the operator instructed continuation after the failed public `v0.4.0-rc.1` tag could no longer be moved safely, so the release advanced to the new `0.4.0-rc.2` identity instead of rewriting public history. Publishing its GitHub prerelease and npm `next` package through the closed tag workflow remains authorized. Other branches/remotes and unrelated external-system changes remain unauthorized.
 
 ## Current work
 
 - Milestone: Milestone 7 external release publication plus Milestone 8 controlled benchmark evidence
-- Work package: `REL-006` publish `0.4.0-rc.1` through the guarded tag workflow; `BENCH-007` remains hardware-gated
-- State: `BLOCKED`
-- Active phase: Release run `29435369415` attempt 2 proved the replacement `NPM_TOKEN` through the npm preflight and completed the full signed/verified release path on x86_64/aarch64 Linux and macOS, but its Windows version gate failed on checkout CRLF before building; GitHub release creation and npm publication were skipped. Portability checkpoint `9fde324` normalizes checkout CRLF across all 28 release surfaces while rejecting bare carriage returns, and exact-main Build run `29436541028` is fully green across the Test Suite and all five native jobs, including Windows
+- Work package: `REL-006` publish `0.4.0-rc.2` through the guarded tag workflow; `BENCH-007` remains hardware-gated
+- State: `IN_PROGRESS`
+- Active phase: all 28 synchronized release surfaces now use `0.4.0-rc.2`; immutable source checkpoint `f498f7d9f08a85a8f031701e1d3198bce667f871` and SHA-256 `a1eda39965844c1ccb2429d0e1a38d690c0be5187695c2901375fed59432d127` passed the real Homebrew download/build/version/CSS smoke, then the consumer README and GitHub Pages package site were rebuilt around installation, usage, honest CSS-only language boundaries, the canonical `/zigcss/` deployment base, direct-route recovery, and a 1200×630 social card
 - Quality closure: `QUAL-001` is verified at `3eced86`; repository-wide Zig formatting debt is zero and the final local validation matrix is green
-- Next eligible package: choose a release identity without silently mutating public history: either explicitly authorize deleting/recreating public tag `v0.4.0-rc.1` at the green portability checkpoint, or advance all 28 synchronized surfaces and the approved target to `0.4.0-rc.2` and create a new tag. The existing tag still points to `0348ddc`; no GitHub release or npm `0.4.0-rc.1` exists, and npm `latest` remains `0.3.0`. Resume `BENCH-007` only when its exact native Linux x64 scheduled archive exists
+- Next eligible package: checkpoint and push the green consumer release surfaces, fast-forward exact `origin/main`, create immutable tag `v0.4.0-rc.2`, and monitor the guarded GitHub/npm publication. Resume `BENCH-007` only when its exact native Linux x64 scheduled archive exists; repository development ledgers remain authoritative until both external gates close
+
+## Release continuation ledger
+
+| Package | State | Evidence / decision | Commit |
+|---|---|---|---|
+| `REL-006-RC2` | `VERIFIED` | Advanced all 28 release surfaces from the unusable public rc.1 identity to `0.4.0-rc.2` without moving the old tag. Debug and ReleaseSafe each pass 491/491; version 7/7, capability 7/7, release metadata 5/5, release smoke 5/5, release consumers 17/17, workflow 5/5, dependency 4/4, production audits 0/0/0, documentation 126/126 plus production build, npm dry run, and real Homebrew immutable-source smoke pass. | `f498f7d`, `f6eda45` |
+| `REL-006-SITE` | `VERIFIED` | Replaced the internal-first README with install/use/language/API/release guidance while retaining compiled Zig examples and exact release claims. The existing React/Vite site is now the consumer package website at the real GitHub Pages project base, with direct-route recovery, package metadata, favicon, and one checked 1200×630 social card. CSS is labeled experimental and matrix-tested rather than complete; SCSS, Sass, and Less are explicitly unsupported. Full docs pass 130/130 and build; documentation integrity passes 7/7 over 31 Markdown files, 60 fences (50 executable; 7 site-rendered), 51 links, and 24 routes. Capability 7/7, version 7/7, package 7/7, wrapper 2/2, release metadata 5/5, release smoke 5/5, release consumers 17/17, workflow 5/5, dependency 4/4, format/compatibility/transform gates, live 0/0/0 production audits, and the exact five-file/34,429-byte npm dry run pass. | This checkpoint |
+| `BENCH-007` | `BLOCKED` | The controlled scheduled Linux x64 benchmark cannot produce provenance-bound evidence because the repository still has no runner matching `[self-hosted, linux, x64, zigcss-benchmark-v1]`. No timing, ranking, or ratio claim is published. | — |
 
 ## Milestone 0 package ledger
 

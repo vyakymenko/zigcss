@@ -1,76 +1,98 @@
 # ZigCSS
 
-> **Experimental recovery status:** ZigCSS 0.4.0-rc.2 is an unpublished release candidate produced by a correctness-first rebuild. It is not suitable for production stylesheets.
+[![Build](https://github.com/vyakymenko/zigcss/actions/workflows/build.yml/badge.svg)](https://github.com/vyakymenko/zigcss/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-17201b.svg)](LICENSE)
 
-The repository contains a rebuilt CSS source/token/syntax/parser/emitter pipeline alongside inherited prototype transforms, format adapters, an LSP, documentation, packaging, and benchmarks. The stable CLI delegates compilation to the owned public `zigcss.compile` facade over the rebuilt pipeline, while the remaining program still prioritizes security and semantics before features or speed.
+ZigCSS is a native CSS compiler and Zig library focused on deterministic output, semantic preservation, and explicit safety boundaries.
 
-The authoritative roadmap is [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Execution evidence and package state are tracked in [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md).
+> **Experimental release candidate:** ZigCSS 0.4.0-rc.2 is ready for evaluation, not unrestricted production adoption. CSS coverage is matrix-tested but not complete, and public performance comparisons remain withdrawn until the controlled benchmark gate closes.
 
-## Autonomous development operations
+## Install
 
-The repository keeps its persistent Codex procedure in [docs/operations/codex-loop-protocol.md](docs/operations/codex-loop-protocol.md). An Alvo-style single-lane Bash supervisor runs bounded, serialized `codex exec` passes with the approved `gpt-5.6-sol` model and `ultra` reasoning. It never delegates or falls back. Model passes cannot push; after independently proving a new clean checkpoint, the supervisor automatically pushes only the current `vale/*` branch to the approved `origin`. Publication and deployment remain unavailable.
-
-```bash
-scripts/autodevelop/ctl.sh doctor
-scripts/autodevelop/ctl.sh start
-scripts/autodevelop/ctl.sh status
-```
-
-Use `pause`, `resume`, `stop`, and `logs` through the same control script. One pass may own at most one dependency-eligible roadmap package; the outer loop verifies and pushes each clean checkpoint before continuing, backs off on transient limits, and pauses only after the same stable blocker code repeats three times or failures exhaust their bound. Rewording an unchanged blocker does not reset its count. A rejected push stops the supervisor with the checkpoint safely local. Runtime state, caches, and transcripts live in ignored `.autodevelop/` storage inside this isolated worktree. `start` uses an installed `screen` command as a detached per-login session so it survives terminal/task boundaries while retaining access to linked-worktree metadata; it does not install a LaunchAgent or modify system startup. Systems without `screen` retain the `nohup` fallback. Pause the loop before doing manual work in the same worktree.
-
-The separate orientation helper remains read-only and can be run at any time:
+Install the prerelease channel from npm:
 
 ```bash
-bash scripts/autodevelop/orient.sh
+npm install --save-dev zigcss@next
 ```
 
-## Current contract
+Pin the exact candidate for reproducible evaluation:
 
-<!-- capability-status:start -->
-| Surface | Status | Current behavior |
+```bash
+npm install --save-dev zigcss@0.4.0-rc.2
+```
+
+The npm launcher downloads the matching native binary during installation. Release archives are built for:
+
+| Platform | Architecture |
+|---|---|
+| Linux | x64, arm64 |
+| macOS | x64, arm64 |
+| Windows | x64 |
+
+You can also use the signed assets on [GitHub Releases](https://github.com/vyakymenko/zigcss/releases), install the repository [Homebrew formula](Formula/zigcss.rb), or build from source.
+
+## Use
+
+Compile one CSS file:
+
+```bash
+npx zigcss input.css -o output.css
+```
+
+Minify whitespace:
+
+```bash
+npx zigcss input.css -o output.css --minify
+```
+
+Run the closed, acceptance-gated optimizer preset:
+
+```bash
+npx zigcss input.css -o output.css --optimize --minify
+```
+
+Standard input and output are explicit:
+
+```bash
+printf '.notice { color: red; }' | npx zigcss - -o - --minify
+```
+
+The result is:
+
+```css
+.notice{color:red}
+```
+
+Run `npx zigcss --help` for the authoritative option list. Successful commands exit `0`, compilation or I/O failures exit `1`, and usage/configuration failures exit `2`.
+
+## Language support
+
+ZigCSS does **not** claim full CSS, SCSS, Sass, or Less support.
+
+| Input | Current status | Boundary |
 |---|---|---|
-| .css parsing and emission | Experimental, matrix-tested | Strict file/stdin and file/stdout modes delegate to `zigcss.compile`; version, syntax, options, and 0/1/2 exit statuses are executable contracts. |
-| Zig compile API | Experimental, consumer-tested | `zigcss.compile` returns owned CSS, maps, located diagnostics, ordered imports, optional module exports, and metrics; accepted transforms and borrowed canonical targets are explicit options. |
-| Zig package metadata | Experimental, consumer-tested | Package `zigcss` 0.4.0-rc.2 declares minimum Zig 0.15.2 and a minimal source allowlist; path and fresh fetched-cache consumers resolve module `zigcss`. |
-| Zig build helper | Experimental, consumer-tested | `@import("zigcss").helpers.addCssCompile` uses declared lazy inputs and generated outputs with a host compiler artifact; unavailable CLI features have no helper path. |
-| Native plugins | Experimental, trusted/library-only | Explicit `.experimental` options run borrowed `plugin.`-namespaced Zig callbacks through bounded deterministic pass plans; there is no stable ABI, sandbox, CLI, or HTTP path. |
-| --minify | Experimental | Compacts emitted whitespace without enabling AST transforms and remains independent of `--optimize`. |
-| Output planning | Safety boundary verified | Rejects input/output aliases and duplicate final destinations; batch names are deterministic and every file destination is atomically replaced. |
-| --profile | Experimental, measured | Reports one monotonic public compile total, actual stage intervals, and allocator-requested allocation, live, and retained metrics from the owned API result. |
-| Verified optimizer preset | Experimental, acceptance-gated | `--optimize` runs exactly seven verified analysis, cleanup, and semantic passes to a bounded byte-stable fixed point; separately authorized classes remain excluded. |
-| Dead-code and critical-CSS extraction | Experimental, library/test-only | Two bounded passes use complete class/ID inventories and require separate experimental plus extraction authority; stable CLI flags remain unavailable. |
-| Target prefix rewrite | Experimental, library-only | One verified pass covers eight pinned property, value, selector, and at-rule features through the pass manager and test driver; it is not a general autoprefixer. |
-| Source maps | Experimental, library-only | The library pipeline produces deterministic separately owned mappings; the CLI output policy remains unavailable. |
-| Browser target queries | Experimental, library-only | A strict explicit-minimum grammar over six browsers configures pinned BCD 8.0.0 data; `--browsers` and `--autoprefix` remain unavailable in the CLI. |
-| CSS Modules | Experimental, Zig-library-only native subset | Explicit `.syntax = .css_modules` provides source-specific class names, functional scope, plain-class composition references and dependencies, and local values with owned results; CLI and LSP exposure remain unavailable. |
-| Alternate format adapters | Unavailable | SCSS, Sass, Less, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like compiler adapters are removed; their extensions are rejected before output. |
-| LSP | Experimental, stress-tested | Bounded framing, JSON-RPC lifecycle, full sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features pass large-document, Unicode, malformed-request, leak, and editor-integration gates. |
-| VS Code extension | Experimental, package-tested | Marketplace version 0.4.0 maps to core 0.4.0-rc.2 and packages only with the pre-release marker; its exact lockfile, CSS-only trust boundaries, deterministic executable discovery, 13 tests, and five-file VSIX are verified; no binary is bundled or published. |
-| Neovim configuration | Experimental, integration-tested | The CSS-only built-in config resolves one trusted absolute executable and passes real Neovim 0.11.7 and 0.12.4 command, capability, diagnostic, hover, rejection, and shutdown smokes; no plugin or binary is bundled. |
-| Release archives | Experimental, native-smoke-gated | The tag workflow builds on five architecture-matched runners, then executes each archive directly and through an offline real npm pack/postinstall/wrapper lifecycle before attestation; SHA-256 manifests, deterministic SPDX 2.3 SBOMs, and signed SLSA/SBOM verification remain mandatory before upload. This recovery run has not published a release. |
-| Performance benchmark report | Unavailable | The BENCH-007 generator accepts only a committed, provenance-bound controlled scheduled archive and renders its 43 complete series deterministically; no archive is selected, so the current report contains no timing, ranking, or ratio claim. |
-| Public compile API and playground | Disabled | Public compile routes return HTTP 503 until bounded process and request isolation is implemented. |
-<!-- capability-status:end -->
+| CSS (`.css`) | Experimental, matrix-tested | Stable CLI input. The published compatibility matrix defines the tested grammar. |
+| CSS Modules | Experimental Zig-library subset | Opt-in native API syntax; not exposed by the CLI or LSP. |
+| SCSS / Sass | Not supported | Extensions are rejected before output; there is no preprocessor adapter. |
+| Less | Not supported | Extensions are rejected before output; there is no preprocessor adapter. |
+| Stylus, CSS-in-JS, PostCSS, Tailwind adapters | Not supported | No alternate-format or ecosystem adapter is shipped. |
 
-This table, the published status guide, and the site feature page consume `docs/src/data/capabilities.json`. Every row names executable evidence gates, and `npm run check:capability-status` rejects metadata, evidence-anchor, or generated-table drift.
+See the [CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md), [format compatibility guide](docs/src/content/docs/guide/format-compatibility.md), and [complete capability status](docs/src/content/docs/guide/status.md) before adopting the candidate.
 
-## Experimental Zig compile API
+## What is verified
 
-`build.zig` registers one external module named `zigcss` at `src/lib.zig`. `zigcss.compile` accepts `CompileOptions` for syntax, output format, separate source maps, verified CSS transforms, a borrowed canonical target query, bounded dependency/module reporting, and opt-in profiling. Its move-only-by-convention `CompileResult` owns CSS, optional map bytes, located structured diagnostics, ordered decoded top-level `@import` dependencies, optional module exports, and optional measured compile metrics through one idempotent `deinit` path.
+- The CSS tokenizer, parser, emitter, CLI, and output planner have regression and independent-parser gates.
+- Output files are planned deterministically and replaced atomically; aliases and duplicate destinations fail closed.
+- `--minify` is independent from the seven-pass `--optimize` preset.
+- Debug and ReleaseSafe test suites exercise the same public compile path used by the CLI.
+- Release archives must pass native execution, offline npm lifecycle, SHA-256, SPDX SBOM, SLSA provenance, and signed-SBOM verification before upload.
+- Browser-target prefixing, source maps, extraction, plugins, and CSS Modules remain explicitly library-only or experimental where documented.
 
-The stable CSS path returns `module_exports = null`. Explicit `.syntax = .css_modules` selects the [experimental native subset](docs/src/content/docs/guide/css-modules.md): local-by-default classes receive versioned source-specific SHA-256 names; functional local/global scope is occurrence-sensitive; plain-class composition owns ordered local/global/dependency references; and sequential local values share the first-authored export namespace. Module dependencies are facts, never implicit loads. The CLI remains CSS-only. CSS Modules reject optimizer/prefix/plugin composition, imported values, raw ICSS, and syntax outside the closed grammar without partial CSS or metadata; incoherent options return owned `API0001` diagnostics.
+A successful compile is not a browser-equivalence guarantee. Property values outside the typed transforms are often preserved as lossless component trees, and computed-style validation is not yet a release gate.
 
-With `.profile = true`, the result includes one monotonic end-to-end duration plus measured parse, validation, dependency, optimizer, plugin/prefix transform, emit, result-promotion, and cleanup stages. A forwarding allocator records successful allocation/free/resize events, cumulative requested/freed bytes, peak live requested bytes, and result bytes retained after compiler cleanup. These are allocator-requested byte metrics, not operating-system RSS. Profiling-disabled calls install no wrapper; an unavailable monotonic timer fails explicitly instead of returning invented zeroes.
+## Zig API
 
-`build.zig.zon` gives the source package stable identity `zigcss`, version 0.4.0-rc.2, fingerprint `0xae272a4871e93d07`, and minimum Zig 0.15.2. Its allowlist contains only `build.zig`, the manifest, supported `build_helpers.zig`, `src`, README, and license. `tests/package-consumer` is a real path dependency that resolves `zigcss.module("zigcss")`; an isolated `zig fetch .` copy with only allowlisted files passes the same API smoke. No remote package URL is published.
-
-The dependency build module exports `helpers.addCssCompile`. Each call accepts one input `std.Build.LazyPath`, a bounded portable `.css` output basename, and optional `optimize`/`minify` booleans. It returns the generated output `LazyPath` for checks, installs, or other downstream steps. The helper uses `addFileArg` and `addOutputFileArg`, so unchanged runs are cached and source-byte changes invalidate them. It never mutates the graph during execution and exposes no source-map, autoprefix, browser, arbitrary-argument, or output-directory escape hatch. The supplied compiler artifact must run on the build host; cross-target projects need a separate host-tool dependency instance.
-
-`examples/build-integration` is the complete consumer reference. It resolves separate application-target and host-tool dependency instances, imports the public library, compiles and exact-checks CSS through the helper, installs the generated stylesheet, builds an executable, and runs an API test. CI builds its `test` step in Debug and ReleaseSafe; the root build independently compiles `examples/public_api.zig` in both full local test modes.
-
-Native plugins are a separate trusted-only experiment. `PluginOptions.experimental` borrows `plugin.`-namespaced pass definitions, requests, callbacks, and user state only until `compile` returns. The pass manager closes dependencies and orders execution by phase, priority, and stable ID independent of registration order. Exact safety/maturity permissions remain deny-by-default. Invalid configuration returns `API0002`; callback or validator failure transactionally returns `API0003` without CSS; successful warnings remain owned diagnostics. Active plugins cannot request source maps, do not enter the CLI or HTTP service, and are not a stable ABI or sandbox.
-
-A minimal repository consumer uses the owned high-level result:
+The public Zig API returns one owned result containing CSS, diagnostics, ordered imports, optional source maps, optional module exports, and optional profiling metrics. Call `deinit` exactly once after use.
 
 <!-- api-example:start -->
 ```zig
@@ -98,13 +120,7 @@ pub fn main() !void {
 ```
 <!-- api-example:end -->
 
-## Current limitations
-
-The tested grammar boundary is published in [the CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md) and backed by `tests/compatibility/matrix.json`. Pretty and minified fixture output must parse in pinned Lightning CSS with error recovery disabled.
-
-Property-specific values are usually preserved as lossless component trees rather than fully validated semantics. Browser computed-style validation, broader prefix data and prefix CLI exposure, element/attribute or dynamic-DOM extraction, optimized source-map composition, CLI source-map output, filesystem-backed LSP workspace loading, editor publication/binary distribution, CSS Modules ID/keyframe scoping, imported values/raw ICSS, other alternate formats, and resource-bounded public compilation remain incomplete.
-
-Do not use current output in a production pipeline. A successful compile is not yet a standards-compatibility guarantee.
+`build.zig.zon` gives the source package stable identity `zigcss` and a minimal allowlist. The build module exposes `helpers.addCssCompile`, which accepts one declared CSS input, produces one generated output, and participates in Zig's build cache. The complete consumer example is in [examples/build-integration](examples/build-integration).
 
 ## Build from source
 
@@ -121,69 +137,34 @@ zig build test-documentation-examples --summary all
 
 The executable is written to `zig-out/bin/zigcss`.
 
-For a characterization run, start with deliberately simple CSS:
+## Editor integration
 
-```css
-.notice {
-  color: red;
-}
-```
+The experimental LSP covers bounded JSON-RPC framing, full document sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features. Its stress tests pass large-document, Unicode, malformed-request, leak, and editor-integration gates.
 
-```bash
-zig-out/bin/zigcss input.css -o output.css
-```
+- The VS Code preview uses Marketplace version 0.4.0 and requires a separately installed ZigCSS binary.
+- The [Neovim configuration](neovim-config/README.md) uses the built-in LSP client and an explicit trusted executable path.
 
-The CLI prints an experimental-build warning to standard error.
+Neither integration bundles a compiler binary.
 
-After building, the independent grammar gate can be run with Node.js:
+## Documentation
 
-```bash
-npm ci --ignore-scripts
-npm run test:prefix-data
-npm run check:prefix-data
-npm run test:capability-status
-npm run check:capability-status
-NVIM=/absolute/path/to/nvim npm run test:documentation
-npm run check:documentation
-npm run test:dependencies
-npm run check:dependencies
-npm run audit:production
-npm run test:zig-package
-npm run test:vscode
-NVIM=/absolute/path/to/nvim npm run test:neovim
-npm run test:compat
-npm run test:transforms
-```
-
-## Recovery CLI
-
-Run `zig-out/bin/zigcss --help` for the authoritative option list.
-
-Available recovery options include file or bounded stdin input (`-`), file or stdout output (`-`), explicit `--syntax css`, output selection, explicit batch output planning, whitespace-only `--minify`, the closed verified `--optimize` preset, single-file `--watch`, `--profile`, and synchronized `--version`. The experimental `--lsp` server is separately labeled.
-
-Single-file, watch, and batch CSS compilation all construct public `CompileOptions` and consume owned `CompileResult` values from one `zigcss.compile` call site. The executable retains argument parsing, path planning, file I/O, diagnostic rendering, and writes; it has no runtime import or parallel implementation of the parser, emitter, optimizer, alternate-format adapters, or autoprefixer.
-
-Informational commands and successful compilation exit `0`. CSS diagnostics and operational I/O failures exit `1`; invalid, duplicate, missing, unavailable, or incoherent arguments exit `2`. Help and version text use stdout, while diagnostics, warnings, and usage errors use stderr. Stdin is single-input only and cannot be watched or mixed into batch mode; batch output cannot target stdout. The npm launcher inherits stdin/stdout/stderr, preserves all native exit codes, and re-raises POSIX termination signals instead of reporting false success.
-
-File output creates missing parent directories only when committing a successful compilation, writes through a same-directory temporary file, and atomically replaces the destination without following a destination symlink or hard link. Batch outputs use `<stem>.css` when unique, add a deterministic normalized-path hash when stems collide, and fall back to a bounded hash name for long basenames. Compilation failure creates no output directory; after all inputs compile, each batch destination is committed atomically but the set of files is not a multi-file transaction if a later write or rename fails.
-
-Watch mode hashes each root snapshot once and compiles those already-read bytes, eliminating the former poll-then-reread race. After a successful parse it also watches unique direct local relative `@import` paths, resolving them from the root stylesheet and ignoring remote, scheme-bearing, protocol-relative, origin-absolute, and filesystem-absolute URLs. Query and fragment suffixes do not become filesystem path bytes. A failed compile retains the last valid dependency set, and every observed root/dependency state is recorded before the attempt so unchanged read, parse, transform, or write errors are not retried every 500 ms.
-
-Batch compilation uses a dynamic queue with at most eight workers and never shares a result allocator between tasks. The first observed task failure closes the queue; already-running tasks finish safely, unclaimed tasks become explicitly cancelled, and no destination is written unless every task succeeds. Worker-spawn failure cancels and joins every started thread before ownership unwinds. Diagnostics, atomic output commits, and status lines are processed in original argument order rather than completion order.
-
-Unavailable options—`--source-map`, `--autoprefix`, `--browsers`, and `--critical-*`—are rejected with an explanation. Unknown and malformed arguments are also rejected.
-
-The optimizer preset reaches only seven verified order-preserving passes and repeats them under a 32-round safety bound until emitted bytes are stable. The rebuilt extraction passes are separate library/test-driver experiments, not CLI tree shaking and never part of `--optimize`. A complete class/ID inventory must describe the whole document snapshot or a closed critical selector-matching tree; missing or dynamic DOM evidence cannot be inferred from CSS.
+- [Package website](https://vyakymenko.github.io/zigcss/)
+- [Getting started](https://vyakymenko.github.io/zigcss/getting-started)
+- [Current capability status](docs/src/content/docs/guide/status.md)
+- [Recovery CLI contract](docs/src/content/docs/guide/recovery-cli.md)
+- [CSS Modules subset](docs/src/content/docs/guide/css-modules.md)
+- [Build and package integration](docs/src/content/docs/guide/build-from-source.md)
+- [Benchmark evidence status](BENCHMARK_REPORT.md)
 
 ## Performance claims
 
-Public performance comparisons are withdrawn. Historical timings did not first prove equivalent output, and some measurements included incomparable process startup paths. The replacement pipeline now validates semantics, modes, raw statistics, and controlled archive provenance, but no scheduled archive is selected for publication. [Benchmark evidence status](BENCHMARK_REPORT.md) is generated only after the BENCH-007 gate accepts that retained archive.
+ZigCSS currently publishes no comparative speed ranking or multiplier. The benchmark pipeline requires equivalent output, pinned modes, complete statistics, controlled Linux x64 provenance, and a retained scheduled archive before it can update [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md).
 
 ## Contributing
 
-Work in dependency order from `DEVELOPMENT_PLAN.md`. Each package should reproduce or measure first, add or strengthen tests, implement the smallest correct change, run proportionate verification, update `DEVELOPMENT_STATUS.md`, and commit a coherent checkpoint.
+Please open a focused issue or pull request with a minimal reproduction and semantic expectation. Run the relevant Debug and ReleaseSafe gates before submitting parser, emitter, or transform changes.
 
-Do not re-enable a transform based only on smaller output or faster timing. Semantic equivalence is the gate.
+The internal [development plan](DEVELOPMENT_PLAN.md) and [execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the release and controlled benchmark gates are complete; they are not package usage documentation.
 
 ## License
 

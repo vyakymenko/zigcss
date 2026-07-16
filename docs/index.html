@@ -3,7 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ZigCSS Docs</title>
+    <meta name="theme-color" content="#101914" />
+    <meta
+      name="description"
+      content="ZigCSS is an experimental native CSS compiler and Zig library focused on deterministic, semantics-preserving output."
+    />
+    <link rel="canonical" href="https://vyakymenko.github.io/zigcss/" />
+    <link rel="icon" href="/zigcss/favicon.svg" type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ZigCSS" />
+    <meta property="og:title" content="ZigCSS — native CSS compiler in Zig" />
+    <meta
+      property="og:description"
+      content="Compile CSS with a native Zig toolchain built around deterministic output and semantic preservation."
+    />
+    <meta property="og:url" content="https://vyakymenko.github.io/zigcss/" />
+    <meta property="og:image" content="https://vyakymenko.github.io/zigcss/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ZigCSS — native CSS compiler in Zig" />
+    <meta name="twitter:image" content="https://vyakymenko.github.io/zigcss/og.png" />
+    <title>ZigCSS — native CSS compiler in Zig</title>
+    <script>
+      (function restoreGitHubPagesRoute(location) {
+        if (location.search.slice(0, 2) !== "?/") return;
+        var decoded = location.search
+          .slice(1)
+          .split("&")
+          .map(function restoreAmpersand(value) { return value.replace(/~and~/g, "&"); })
+          .join("?");
+        window.history.replaceState(null, "", location.pathname.slice(0, -1) + decoded + location.hash);
+      })(window.location);
+    </script>
   </head>
   <body>
     <div id="root"></div>

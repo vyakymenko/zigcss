@@ -8,7 +8,6 @@ export const metadataPath = path.join(repositoryRoot, 'docs', 'src', 'data', 'ca
 export const startMarker = '<!-- capability-status:start -->'
 export const endMarker = '<!-- capability-status:end -->'
 export const generatedTargets = [
-  path.join(repositoryRoot, 'README.md'),
   path.join(repositoryRoot, 'docs', 'src', 'content', 'docs', 'guide', 'status.md'),
 ]
 
@@ -166,7 +165,7 @@ function main() {
     throw new Error(`generated capability tables are stale: ${stale.map(({ target }) => path.relative(repositoryRoot, target)).join(', ')}`)
   }
   process.stdout.write(
-    `Capability status ${mode === '--write' ? 'generated' : 'verified'}: ${metadata.capabilities.length} rows, ${Object.keys(metadata.gates).length} executable evidence gates, ${targets.length} Markdown tables.\n`,
+    `Capability status ${mode === '--write' ? 'generated' : 'verified'}: ${metadata.capabilities.length} rows, ${Object.keys(metadata.gates).length} executable evidence gates, ${targets.length} Markdown table${targets.length === 1 ? '' : 's'}.\n`,
   )
 }
 

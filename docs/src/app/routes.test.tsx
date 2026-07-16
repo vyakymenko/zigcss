@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { router } from './routes'
 
 describe('router', () => {
-  it('uses basename /', () => {
-    expect(router.basename).toBe('/')
+  it('uses the GitHub Pages project basename', () => {
+    expect(router.basename).toBe('/zigcss')
   })
 
   it('has root route with path /', () => {
