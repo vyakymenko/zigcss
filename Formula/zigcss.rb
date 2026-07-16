@@ -2,9 +2,9 @@ class Zigcss < Formula
   desc "Experimental CSS compiler prototype built with Zig"
   homepage "https://github.com/vyakymenko/zigcss"
   # Pin the verified recovery checkpoint until an authorized release publishes a tag.
-  url "https://github.com/vyakymenko/zigcss/archive/3fada2359ab1fa262b782a33e9ab2a7bab2c46ca.tar.gz"
+  url "https://github.com/vyakymenko/zigcss/archive/f498f7d9f08a85a8f031701e1d3198bce667f871.tar.gz"
   version "0.4.0-rc.2"
-  sha256 "2fc630a41af5b5fef1d1e4db551604deac048c1b02ff249d5abbb061ebd5c906"
+  sha256 "a1eda39965844c1ccb2429d0e1a38d690c0be5187695c2901375fed59432d127"
   license "MIT"
 
   depends_on "zig@0.15" => :build
