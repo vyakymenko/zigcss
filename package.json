@@ -59,6 +59,7 @@
     "test:vscode": "npm --prefix vscode-extension test && npm --prefix vscode-extension run package:check",
     "test:neovim": "node --test scripts/verify-neovim-config.test.mjs && node scripts/test-neovim-integration.mjs",
     "test:preprocessor-host": "node --test tests/preprocessors/protocol/*.test.mjs",
+    "test:preprocessor-resolver": "node --test tests/preprocessors/imports/*.test.mjs",
     "test:formats": "node --test tests/formats/validate.test.mjs && node tests/formats/validate.mjs",
     "test:compat": "node tests/compatibility/validate.mjs",
     "test:transforms": "node tests/transforms/validate.mjs"

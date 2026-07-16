@@ -41,6 +41,7 @@ test('host core has no network, shell, eval, or ambient module-loading authority
   const hostSources = [
     'preprocessor/protocol.mjs',
     'preprocessor/environment.mjs',
+    'preprocessor/resolver.mjs',
     'preprocessor/provider-registry.mjs',
     'preprocessor/host-core.mjs',
     'preprocessor/host.mjs',
@@ -122,6 +123,8 @@ test('request validation is closed, provider-aware, and byte bounded', () => {
     [makeRequest({ sourceUrl: 'https://example.com/input.scss' }), 'HOST_SOURCE_URL'],
     [makeRequest({ options: { style: 'tiny', sourceMap: true, loadPaths: [] } }), 'HOST_OPTIONS'],
     [makeRequest({ options: { style: 'expanded', sourceMap: 'yes', loadPaths: [] } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: { style: 'expanded', sourceMap: true, loadPaths: ['relative'] } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: { style: 'expanded', sourceMap: true, loadPaths: ['/one', '/one'] } }), 'HOST_OPTIONS'],
     [makeRequest({ options: { style: 'expanded', sourceMap: true, loadPaths: [], plugin: 'x' } }), 'HOST_OPTIONS'],
     [{ ...makeRequest(), unexpected: true }, 'HOST_REQUEST_SHAPE'],
   ]

@@ -239,6 +239,9 @@ jobs:
       - name: Verify bounded preprocessor host
         run: npm run test:preprocessor-host
 
+      - name: Verify confined preprocessor resolver
+        run: npm run test:preprocessor-resolver
+
       - name: Verify experimental format matrix
         run: npm run test:formats
 

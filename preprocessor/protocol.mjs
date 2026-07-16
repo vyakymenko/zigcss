@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 export const PROTOCOL_VERSION = 'zigcss-preprocessor-v1'
 export const MAX_SOURCE_BYTES = 10 * 1024 * 1024
 export const MAX_OUTPUT_BYTES = 20 * 1024 * 1024
@@ -129,6 +131,12 @@ function validateOptions(options) {
   }
   for (const loadPath of options.loadPaths) {
     requireBoundedString(loadPath, MAX_URL_BYTES, 'HOST_OPTIONS', 'load path')
+    if (!path.isAbsolute(loadPath) || /[\u0000\r\n]/.test(loadPath)) {
+      fail('HOST_OPTIONS', 'load paths must be absolute local paths')
+    }
+  }
+  if (new Set(options.loadPaths).size !== options.loadPaths.length) {
+    fail('HOST_OPTIONS', 'load paths must be unique')
   }
 }
 
