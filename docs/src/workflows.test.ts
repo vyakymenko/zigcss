@@ -121,18 +121,20 @@ describe('native artifact workflows', () => {
     expect(transforms).toBeGreaterThan(compatibility)
   })
 
-  test('validates package metadata wrapper behavior and a real path dependency before CSS oracles', () => {
+  test('validates package metadata, wrapper, bounded preprocessor host, and a real path dependency before CSS oracles', () => {
     const metadata = buildWorkflow.indexOf('npm run test:zig-package')
     const nativeTests = buildWorkflow.lastIndexOf('zig build test --summary all', metadata)
     const wrapper = buildWorkflow.indexOf('npm run test:node-wrapper', metadata)
-    const formats = buildWorkflow.indexOf('npm run test:formats', wrapper)
+    const preprocessorHost = buildWorkflow.indexOf('npm run test:preprocessor-host', wrapper)
+    const formats = buildWorkflow.indexOf('npm run test:formats', preprocessorHost)
     const packageConsumer = buildWorkflow.indexOf('working-directory: tests/package-consumer', formats)
     const consumerTests = buildWorkflow.indexOf('zig build test --summary all', packageConsumer)
     const compatibility = buildWorkflow.indexOf('npm run test:compat', consumerTests)
 
     expect(metadata).toBeGreaterThan(nativeTests)
     expect(wrapper).toBeGreaterThan(metadata)
-    expect(formats).toBeGreaterThan(wrapper)
+    expect(preprocessorHost).toBeGreaterThan(wrapper)
+    expect(formats).toBeGreaterThan(preprocessorHost)
     expect(packageConsumer).toBeGreaterThan(formats)
     expect(consumerTests).toBeGreaterThan(packageConsumer)
     expect(compatibility).toBeGreaterThan(consumerTests)

@@ -236,6 +236,9 @@ jobs:
       - name: Verify npm CLI wrapper
         run: npm run test:node-wrapper
 
+      - name: Verify bounded preprocessor host
+        run: npm run test:preprocessor-host
+
       - name: Verify experimental format matrix
         run: npm run test:formats
 
