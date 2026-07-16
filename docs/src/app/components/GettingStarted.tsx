@@ -18,7 +18,7 @@ export function GettingStarted() {
         <div className="mb-10 flex gap-4 border border-[#d0a43f] bg-[#fff2bf] p-5 text-[#4d3a0e]">
           <AlertTriangle className="mt-0.5 size-5 flex-shrink-0" />
           <p className="leading-7">
-            ZigCSS 0.4.0-rc.2 is an experimental release candidate. Evaluate before production and report semantic differences with a minimal reproduction.
+            ZigCSS 0.4.0-rc.3 is an experimental release candidate. Evaluate before production and report semantic differences with a minimal reproduction.
           </p>
         </div>
 

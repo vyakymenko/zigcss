@@ -5,7 +5,7 @@
 
 ZigCSS is a native CSS compiler and Zig library focused on deterministic output, semantic preservation, and explicit safety boundaries.
 
-> **Experimental release candidate:** ZigCSS 0.4.0-rc.2 is ready for evaluation, not unrestricted production adoption. CSS coverage is matrix-tested but not complete, and public performance comparisons remain withdrawn until the controlled benchmark gate closes.
+> **Experimental release candidate:** ZigCSS 0.4.0-rc.3 is ready for evaluation, not unrestricted production adoption. CSS coverage is matrix-tested but not complete, and public performance comparisons remain withdrawn until the controlled benchmark gate closes.
 
 ## Install
 
@@ -18,7 +18,7 @@ npm install --save-dev zigcss@next
 Pin the exact candidate for reproducible evaluation:
 
 ```bash
-npm install --save-dev zigcss@0.4.0-rc.2
+npm install --save-dev zigcss@0.4.0-rc.3
 ```
 
 The npm launcher downloads the matching native binary during installation. Release archives are built for:

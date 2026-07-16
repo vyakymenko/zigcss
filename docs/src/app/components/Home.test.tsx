@@ -11,7 +11,7 @@ describe('Home', () => {
   it('introduces the package and identifies the release candidate honestly', () => {
     renderHome()
     expect(screen.getByRole('heading', { name: /compile css with zig/i })).toBeInTheDocument()
-    expect(screen.getByText(/0\.4\.0-rc\.2.*experimental/i)).toBeInTheDocument()
+    expect(screen.getByText(/0\.4\.0-rc\.3.*experimental/i)).toBeInTheDocument()
     expect(screen.getByText(/evaluate before production/i)).toBeInTheDocument()
   })
 

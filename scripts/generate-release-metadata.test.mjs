@@ -16,7 +16,7 @@ import {
   writeReleaseMetadata,
 } from './generate-release-metadata.mjs'
 
-const version = '0.4.0-rc.2'
+const version = '0.4.0-rc.3'
 const commit = 'a'.repeat(40)
 const sourceDateEpoch = 1_700_000_000
 
@@ -76,11 +76,11 @@ test('release metadata is deterministic, bounded SPDX 2.3 with exact SHA-256 sub
     checkReleaseMetadata(options)
 
     assert.deepEqual(first.assets, {
-      archive: 'zigcss-v0.4.0-rc.2-x86_64-linux.tar.gz',
-      sbom: 'zigcss-v0.4.0-rc.2-x86_64-linux.spdx.json',
-      checksums: 'zigcss-v0.4.0-rc.2-x86_64-linux.sha256',
-      provenanceBundle: 'zigcss-v0.4.0-rc.2-x86_64-linux.provenance.sigstore.jsonl',
-      sbomBundle: 'zigcss-v0.4.0-rc.2-x86_64-linux.sbom.sigstore.jsonl',
+      archive: 'zigcss-v0.4.0-rc.3-x86_64-linux.tar.gz',
+      sbom: 'zigcss-v0.4.0-rc.3-x86_64-linux.spdx.json',
+      checksums: 'zigcss-v0.4.0-rc.3-x86_64-linux.sha256',
+      provenanceBundle: 'zigcss-v0.4.0-rc.3-x86_64-linux.provenance.sigstore.jsonl',
+      sbomBundle: 'zigcss-v0.4.0-rc.3-x86_64-linux.sbom.sigstore.jsonl',
     })
 
     const archiveBytes = fs.readFileSync(path.join(root, options.archive))
@@ -242,6 +242,36 @@ test('release workflow generates, signs, verifies, and uploads the closed five-t
   })
 })
 
+test('workflow validation normalizes Windows CRLF and rejects bare carriage returns', () => {
+  const workflow = fs.readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+  const buildWorkflow = fs.readFileSync(new URL('../.github/workflows/build.yml', import.meta.url), 'utf8')
+  const expected = {
+    targets: 5,
+    assetsPerTarget: 5,
+    nativeSmokes: 1,
+    attestations: 2,
+    signatureVerifications: 2,
+    npmPreflight: true,
+    npmChannel: 'next',
+    npmProvenance: true,
+  }
+
+  assert.deepEqual(validateReleaseWorkflowSource(workflow.replaceAll('\n', '\r\n')), expected)
+  assert.equal(validateReleaseBuildGate(buildWorkflow.replaceAll('\n', '\r\n')), true)
+  assert.throws(() => validateReleaseWorkflowSource(`${workflow}\r`), /bare carriage return/)
+  assert.throws(() => validateReleaseBuildGate(`${buildWorkflow}\r`), /bare carriage return/)
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-release-workflow-crlf-'))
+  try {
+    fs.mkdirSync(path.join(root, '.github', 'workflows'), { recursive: true })
+    fs.writeFileSync(path.join(root, '.github', 'workflows', 'release.yml'), workflow.replaceAll('\n', '\r\n'))
+    fs.writeFileSync(path.join(root, '.github', 'workflows', 'build.yml'), buildWorkflow.replaceAll('\n', '\r\n'))
+    assert.deepEqual(validateReleaseWorkflow(root), expected)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('release workflow evidence fails closed when authority or artifact steps drift', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
   const buildWorkflow = fs.readFileSync(new URL('../.github/workflows/build.yml', import.meta.url), 'utf8')
@@ -277,7 +307,7 @@ test('release workflow evidence fails closed when authority or artifact steps dr
   assert.throws(
     () => validateReleaseWorkflowSource(workflow.replace(
       '- name: Publish to npm',
-      '- name: Rewrite package version\n        run: npm version 0.4.0-rc.2 --no-git-tag-version\n\n      - name: Publish to npm',
+      '- name: Rewrite package version\n        run: npm version 0.4.0-rc.3 --no-git-tag-version\n\n      - name: Publish to npm',
     )),
     /npm package version mutation/,
   )

@@ -489,6 +489,12 @@ function expectOrdered(source, labels) {
   }
 }
 
+function normalizeWorkflowSource(source, label) {
+  const normalized = source.replaceAll('\r\n', '\n')
+  if (normalized.includes('\r')) fail(`${label} contains an unsupported bare carriage return`)
+  return normalized
+}
+
 function workflowTargets(source) {
   const expression = /          - os: ([^\n]+)\n            arch: ([^\n]+)\n            target: ([^\n]+)\n            archive-extension: ([^\n]+)\n            zig-version: ([^\n]+)\n            binary-name: ([^\n]+)/g
   return [...source.matchAll(expression)].map(match => ({
@@ -503,6 +509,7 @@ function workflowTargets(source) {
 
 export function validateReleaseWorkflowSource(source) {
   if (typeof source !== 'string' || source.length > 256 * 1024) fail('release workflow is missing or oversized')
+  source = normalizeWorkflowSource(source, 'release workflow')
   if (source.includes('continue-on-error')) fail('release workflow must fail closed without continue-on-error')
   const permissions = '    permissions:\n      attestations: write\n      contents: read\n      id-token: write'
   expectLiteralCount(source, permissions, 1, 'release attestation permissions')
@@ -593,6 +600,7 @@ export function validateReleaseWorkflowSource(source) {
 
 export function validateReleaseBuildGate(source) {
   if (typeof source !== 'string' || source.length > 256 * 1024) fail('build workflow is missing or oversized')
+  source = normalizeWorkflowSource(source, 'build workflow')
   const testJobStart = source.indexOf('\n  test:\n')
   if (testJobStart < 0) fail('release consumer test job is missing')
   expectLiteralCount(

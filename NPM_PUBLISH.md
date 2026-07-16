@@ -4,14 +4,14 @@ ZigCSS packages are published only by the tag-triggered GitHub release workflow.
 
 ## Release-candidate contract
 
-The `v0.4.0-rc.2` tag must point at the exact integrated `main` commit whose synchronized version, release metadata, consumers, native targets, and workflow policy are green.
+The `v0.4.0-rc.3` tag must point at the exact integrated `main` commit whose synchronized version, release metadata, consumers, native targets, and workflow policy are green.
 
 Before any release asset is built, the workflow:
 
 1. checks the tag against every versioned surface;
 2. authenticates the repository-owned npm token with `npm whoami`;
 3. obtains the registry's complete immutable `zigcss` version inventory; and
-4. fails if `0.4.0-rc.2` already exists or the registry response is malformed.
+4. fails if `0.4.0-rc.3` already exists or the registry response is malformed.
 
 All five native jobs then build and execute architecture-matched archives, validate the npm install path offline, generate checksums and SPDX SBOMs, sign provenance and SBOM attestations, and upload the closed release inventory. GitHub Release creation occurs only after every native job passes.
 

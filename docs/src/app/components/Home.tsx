@@ -44,7 +44,7 @@ export function Home() {
           <div>
             <div className="mb-7 inline-flex items-center gap-2 border border-[#b7f34a]/40 bg-[#b7f34a]/10 px-3 py-1.5 font-mono text-xs uppercase tracking-[0.18em] text-[#ccff73]">
               <span className="size-1.5 rounded-full bg-[#b7f34a]" />
-              0.4.0-rc.2 · experimental
+              0.4.0-rc.3 · experimental
             </div>
 
             <h1 className="display-type max-w-3xl text-5xl leading-[0.95] tracking-[-0.055em] sm:text-6xl md:text-7xl">

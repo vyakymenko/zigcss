@@ -503,7 +503,7 @@ Target: after `0.4.0-beta.1`
 ## Milestone 7: Documentation, packaging, and release integrity
 
 Estimated effort: 10-15 engineer days  
-Target: `0.4.0-rc.2`
+Target: `0.4.0-rc.3`
 
 ### Work packages
 
@@ -741,7 +741,7 @@ The following decisions should be captured under `docs/adr/` during implementati
 - Strict CLI.
 - Working package manifest, build helpers, examples, watch mode, parallel compilation, and profiler.
 
-### `0.4.0-rc.2`
+### `0.4.0-rc.3`
 
 - LSP/editor validation.
 - Documentation and packaging synchronized.
