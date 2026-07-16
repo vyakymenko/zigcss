@@ -68,6 +68,63 @@ test('loads owned bytes from regular local files and records deterministic first
   })
 })
 
+test('serializes concurrent loads before first-success dependency admission', async () => {
+  await withFixture(async ({ root }) => {
+    const first = path.join(root, 'first.scss')
+    const second = path.join(root, 'second.scss')
+    fs.writeFileSync(first, 'a')
+    fs.writeFileSync(second, 'bb')
+    const session = createConfinedResolver({ roots: [root] }).createSession()
+
+    const [firstSecond, duplicateSecond, loadedFirst] = await Promise.all([
+      session.load(url(second), { kind: 'use', ancestry: [] }),
+      session.load(url(second), { kind: 'forward', ancestry: [] }),
+      session.load(url(first), { kind: 'import', ancestry: [] }),
+    ])
+
+    assert.equal(firstSecond.contents.toString('utf8'), 'bb')
+    assert.equal(duplicateSecond.contents.toString('utf8'), 'bb')
+    assert.equal(loadedFirst.contents.toString('utf8'), 'a')
+    assert.deepEqual(session.dependencies(), [
+      { url: canonicalUrl(second), kind: 'use' },
+      { url: canonicalUrl(first), kind: 'import' },
+    ])
+    assert.deepEqual(session.stats(), { reads: 3, files: 2, bytes: 5 })
+  })
+})
+
+test('loads synchronous owned bytes only when no asynchronous read is pending', async () => {
+  await withFixture(async ({ root }) => {
+    const first = path.join(root, 'first.bin')
+    const second = path.join(root, 'second.bin')
+    fs.writeFileSync(first, 'abc')
+    fs.writeFileSync(second, 'defg')
+    const session = createConfinedResolver({ roots: [root] }).createSession()
+
+    const loaded = session.loadSync(url(first), { kind: 'reference', ancestry: [] })
+    assert.equal(loaded.url, canonicalUrl(first))
+    assert.equal(loaded.contents.toString('utf8'), 'abc')
+    assert.deepEqual(session.dependencies(), [{
+      url: canonicalUrl(first),
+      kind: 'reference',
+    }])
+
+    const pending = session.load(url(second), { kind: 'import', ancestry: [] })
+    assert.throws(
+      () => session.loadSync(url(first), { kind: 'reference', ancestry: [] }),
+      rejectsWithCode('RESOLVER_SESSION_BUSY'),
+    )
+    await pending
+    const duplicate = session.loadSync(url(first), { kind: 'use', ancestry: [] })
+    assert.equal(duplicate.contents.toString('utf8'), 'abc')
+    assert.deepEqual(session.dependencies(), [
+      { url: canonicalUrl(first), kind: 'reference' },
+      { url: canonicalUrl(second), kind: 'import' },
+    ])
+    assert.deepEqual(session.stats(), { reads: 3, files: 2, bytes: 10 })
+  })
+})
+
 test('rejects network schemes, malformed file URLs, query/fragment aliases, and lexical escapes', async () => {
   await withFixture(async ({ root, outside }) => {
     const inside = path.join(root, 'inside.scss')
@@ -171,6 +228,17 @@ test('rejects symlink files whether they remain inside a root or escape it', {
       }),
       rejectsWithCode('RESOLVER_SYMLINK'),
     )
+    assert.throws(
+      () => session.loadSync(url(insideLink), { kind: 'reference', ancestry: [] }),
+      rejectsWithCode('RESOLVER_SYMLINK'),
+    )
+    assert.throws(
+      () => session.loadSync(url(path.join(outsideDirectoryLink, 'outside.scss')), {
+        kind: 'reference',
+        ancestry: [],
+      }),
+      rejectsWithCode('RESOLVER_SYMLINK'),
+    )
     assert.deepEqual(session.dependencies(), [])
   })
 })
@@ -186,6 +254,10 @@ test('rejects unreadable files without creating dependency facts', {
       const session = createConfinedResolver({ roots: [root] }).createSession()
       await assert.rejects(
         session.load(url(file), { kind: 'import', ancestry: [] }),
+        rejectsWithCode('RESOLVER_UNREADABLE'),
+      )
+      assert.throws(
+        () => session.loadSync(url(file), { kind: 'reference', ancestry: [] }),
         rejectsWithCode('RESOLVER_UNREADABLE'),
       )
       assert.deepEqual(session.dependencies(), [])
@@ -242,6 +314,10 @@ test('enforces per-file, cumulative-byte, unique-file, and read-count limits', a
     }).createSession()
     await assert.rejects(
       perFile.load(url(first), { kind: 'import', ancestry: [] }),
+      rejectsWithCode('RESOLVER_FILE_LIMIT'),
+    )
+    assert.throws(
+      () => perFile.loadSync(url(first), { kind: 'reference', ancestry: [] }),
       rejectsWithCode('RESOLVER_FILE_LIMIT'),
     )
 

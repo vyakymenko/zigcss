@@ -89,7 +89,12 @@ test('production host reaches only the admitted internal Dart Sass and Less adap
       style: 'expanded',
       sourceMap: true,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: {
+        math: 'parens-division',
+        quietDeprecations: false,
+        rewriteUrls: 'off',
+        strictUnits: false,
+      },
     },
   }), { timeoutMs: 5000 })
   assert.equal(less.ok, true)

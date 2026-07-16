@@ -149,6 +149,26 @@ function validateProviderOptions(options, provider) {
     }
     return
   }
+  if (provider === 'less') {
+    requireExactKeys(
+      options,
+      ['math', 'quietDeprecations', 'rewriteUrls', 'strictUnits'],
+      'HOST_OPTIONS',
+      'options.providerOptions',
+    )
+    if (!['always', 'parens-division', 'parens'].includes(options.math)) {
+      fail('HOST_OPTIONS', 'options.providerOptions.math is invalid')
+    }
+    if (!['off', 'local', 'all'].includes(options.rewriteUrls)) {
+      fail('HOST_OPTIONS', 'options.providerOptions.rewriteUrls is invalid')
+    }
+    for (const name of ['quietDeprecations', 'strictUnits']) {
+      if (typeof options[name] !== 'boolean') {
+        fail('HOST_OPTIONS', `options.providerOptions.${name} must be boolean`)
+      }
+    }
+    return
+  }
   requireExactKeys(options, [], 'HOST_OPTIONS', 'options.providerOptions')
 }
 

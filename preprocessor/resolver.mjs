@@ -164,6 +164,29 @@ async function inspectPathComponents(base, candidate) {
   }
 }
 
+function inspectPathComponentsSync(base, candidate) {
+  const relative = path.relative(base, candidate)
+  const components = relative === '' ? [] : relative.split(path.sep)
+  let current = base
+  for (let index = 0; index < components.length; index += 1) {
+    current = path.join(current, components[index])
+    let stat
+    try {
+      stat = fs.lstatSync(current)
+    } catch (error) {
+      fail(filesystemCode(error, 'RESOLVER_UNREADABLE'), 'dependency path cannot be inspected')
+    }
+    if (stat.isSymbolicLink()) fail('RESOLVER_SYMLINK', 'dependency path contains a symlink')
+    if (index < components.length - 1 && !stat.isDirectory()) {
+      fail('RESOLVER_PARENT_NOT_DIRECTORY', 'dependency parent is not a directory')
+    }
+    if (index === components.length - 1 && !stat.isFile()) {
+      if (stat.isDirectory()) fail('RESOLVER_DIRECTORY', 'dependency is a directory')
+      fail('RESOLVER_NOT_REGULAR', 'dependency is not a regular file')
+    }
+  }
+}
+
 async function canonicalCandidate(roots, candidateUrl) {
   const candidate = parseFileUrl(candidateUrl)
   const lexical = lexicalRoot(roots, candidate)
@@ -171,6 +194,25 @@ async function canonicalCandidate(roots, candidateUrl) {
   let canonical
   try {
     canonical = await fs.promises.realpath(candidate)
+  } catch (error) {
+    fail(filesystemCode(error, 'RESOLVER_UNREADABLE'), 'dependency path cannot be resolved')
+  }
+  if (!roots.some(root => containsPath(root.canonical, canonical))) {
+    fail('RESOLVER_PATH_ESCAPE', 'canonical dependency path escapes every explicit root')
+  }
+  return {
+    filename: canonical,
+    url: pathToFileURL(canonical).href,
+  }
+}
+
+function canonicalCandidateSync(roots, candidateUrl) {
+  const candidate = parseFileUrl(candidateUrl)
+  const lexical = lexicalRoot(roots, candidate)
+  inspectPathComponentsSync(lexical.base, candidate)
+  let canonical
+  try {
+    canonical = fs.realpathSync(candidate)
   } catch (error) {
     fail(filesystemCode(error, 'RESOLVER_UNREADABLE'), 'dependency path cannot be resolved')
   }
@@ -291,6 +333,80 @@ async function stableRead(filename, limits, consumedBytes) {
   }
 }
 
+function stableReadSync(filename, limits, consumedBytes) {
+  const noFollow = fs.constants.O_NOFOLLOW ?? 0
+  let descriptor
+  try {
+    descriptor = fs.openSync(filename, fs.constants.O_RDONLY | noFollow)
+  } catch (error) {
+    fail(filesystemCode(error, 'RESOLVER_UNREADABLE'), 'dependency cannot be opened')
+  }
+  try {
+    let before
+    try {
+      before = fs.fstatSync(descriptor, { bigint: true })
+    } catch {
+      fail('RESOLVER_UNREADABLE', 'dependency identity cannot be read')
+    }
+    if (!before.isFile()) fail('RESOLVER_NOT_REGULAR', 'dependency is not a regular file')
+    if (before.size > BigInt(limits.maxFileBytes)) {
+      fail('RESOLVER_FILE_LIMIT', 'dependency exceeds its per-file byte limit')
+    }
+    if (BigInt(consumedBytes) + before.size > BigInt(limits.maxTotalBytes)) {
+      fail('RESOLVER_TOTAL_LIMIT', 'dependencies exceed their cumulative byte limit')
+    }
+
+    const size = Number(before.size)
+    const contents = Buffer.allocUnsafe(size)
+    let offset = 0
+    while (offset < size) {
+      let bytesRead
+      try {
+        bytesRead = fs.readSync(descriptor, contents, offset, size - offset, offset)
+      } catch {
+        fail('RESOLVER_UNREADABLE', 'dependency cannot be read')
+      }
+      if (bytesRead === 0) fail('RESOLVER_FILE_CHANGED', 'dependency changed while loading')
+      offset += bytesRead
+    }
+    const probe = Buffer.allocUnsafe(1)
+    let extra
+    try {
+      extra = fs.readSync(descriptor, probe, 0, 1, size)
+    } catch {
+      fail('RESOLVER_UNREADABLE', 'dependency cannot be read')
+    }
+    if (extra !== 0) {
+      if (size >= limits.maxFileBytes) {
+        fail('RESOLVER_FILE_LIMIT', 'dependency exceeds its per-file byte limit')
+      }
+      fail('RESOLVER_FILE_CHANGED', 'dependency changed while loading')
+    }
+
+    let after
+    let pathIdentity
+    try {
+      after = fs.fstatSync(descriptor, { bigint: true })
+      pathIdentity = fs.lstatSync(filename, { bigint: true })
+    } catch {
+      fail('RESOLVER_FILE_CHANGED', 'dependency changed while loading')
+    }
+    if (
+      !after.isFile() ||
+      !pathIdentity.isFile() ||
+      !sameIdentity(before, after) ||
+      !sameIdentity(after, pathIdentity)
+    ) {
+      fail('RESOLVER_FILE_CHANGED', 'dependency changed while loading')
+    }
+    return contents
+  } finally {
+    try {
+      fs.closeSync(descriptor)
+    } catch {}
+  }
+}
+
 class ResolutionSession {
   constructor(roots, limits) {
     this.roots = roots
@@ -300,9 +416,31 @@ class ResolutionSession {
     this.bytes = 0
     this.dependencyList = []
     this.dependencyUrls = new Set()
+    this.loadTail = Promise.resolve()
+    this.pendingLoads = 0
   }
 
   async load(candidateUrl, options = {}) {
+    const { kind, lineage } = this.prepareLoad(options)
+    this.pendingLoads += 1
+    const operation = this.loadTail.then(() => this.loadSerial(candidateUrl, kind, lineage))
+    this.loadTail = operation.then(() => undefined, () => undefined)
+    try {
+      return await operation
+    } finally {
+      this.pendingLoads -= 1
+    }
+  }
+
+  loadSync(candidateUrl, options = {}) {
+    const { kind, lineage } = this.prepareLoad(options)
+    if (this.pendingLoads !== 0) {
+      fail('RESOLVER_SESSION_BUSY', 'synchronous dependency reads require an idle session')
+    }
+    return this.loadSerialSync(candidateUrl, kind, lineage)
+  }
+
+  prepareLoad(options) {
     if (this.closed) fail('RESOLVER_SESSION_CLOSED', 'resolver session is closed')
     if (
       !isPlainObject(options) ||
@@ -312,7 +450,13 @@ class ResolutionSession {
     }
     const { kind, ancestry } = options
     if (!allowedKinds.has(kind)) fail('RESOLVER_KIND_INVALID', 'dependency kind is invalid')
-    const lineage = canonicalAncestry(this.roots, ancestry, this.limits)
+    return {
+      kind,
+      lineage: canonicalAncestry(this.roots, ancestry, this.limits),
+    }
+  }
+
+  async loadSerial(candidateUrl, kind, lineage) {
     const candidate = await canonicalCandidate(this.roots, candidateUrl)
     if (lineage.includes(candidate.url)) fail('RESOLVER_CYCLE', 'dependency ancestry contains a cycle')
     if (this.reads >= this.limits.maxReads) {
@@ -324,6 +468,26 @@ class ResolutionSession {
     }
     this.reads += 1
     const contents = await stableRead(candidate.filename, this.limits, this.bytes)
+    this.bytes += contents.length
+    if (isNew) {
+      this.dependencyUrls.add(candidate.url)
+      this.dependencyList.push(Object.freeze({ url: candidate.url, kind }))
+    }
+    return Object.freeze({ url: candidate.url, contents })
+  }
+
+  loadSerialSync(candidateUrl, kind, lineage) {
+    const candidate = canonicalCandidateSync(this.roots, candidateUrl)
+    if (lineage.includes(candidate.url)) fail('RESOLVER_CYCLE', 'dependency ancestry contains a cycle')
+    if (this.reads >= this.limits.maxReads) {
+      fail('RESOLVER_READ_COUNT_LIMIT', 'dependency read count exceeds its limit')
+    }
+    const isNew = !this.dependencyUrls.has(candidate.url)
+    if (isNew && this.dependencyList.length >= this.limits.maxFiles) {
+      fail('RESOLVER_FILE_COUNT_LIMIT', 'unique dependency count exceeds its limit')
+    }
+    this.reads += 1
+    const contents = stableReadSync(candidate.filename, this.limits, this.bytes)
     this.bytes += contents.length
     if (isNew) {
       this.dependencyUrls.add(candidate.url)

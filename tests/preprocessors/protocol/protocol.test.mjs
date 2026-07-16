@@ -154,12 +154,47 @@ test('request validation is closed, provider-aware, and byte bounded', () => {
     [makeRequest({
       provider: 'less',
       syntax: 'less',
-      options: { ...makeRequest().options, providerOptions: {} },
+      options: {
+        ...makeRequest().options,
+        providerOptions: {
+          math: 'parens-division',
+          quietDeprecations: false,
+          rewriteUrls: 'off',
+          strictUnits: false,
+        },
+      },
     }), null],
     [makeRequest({
       provider: 'less',
       syntax: 'less',
-      options: { ...makeRequest().options },
+      options: { ...makeRequest().options, providerOptions: {} },
+    }), 'HOST_OPTIONS'],
+    [makeRequest({
+      provider: 'less',
+      syntax: 'less',
+      options: {
+        ...makeRequest().options,
+        providerOptions: {
+          math: 'unsafe',
+          quietDeprecations: false,
+          rewriteUrls: 'off',
+          strictUnits: false,
+        },
+      },
+    }), 'HOST_OPTIONS'],
+    [makeRequest({
+      provider: 'less',
+      syntax: 'less',
+      options: {
+        ...makeRequest().options,
+        providerOptions: {
+          functions: {},
+          math: 'parens-division',
+          quietDeprecations: false,
+          rewriteUrls: 'off',
+          strictUnits: false,
+        },
+      },
     }), 'HOST_OPTIONS'],
     [{ ...makeRequest(), unexpected: true }, 'HOST_REQUEST_SHAPE'],
   ]

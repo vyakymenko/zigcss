@@ -16,6 +16,16 @@ import { makeRequest } from '../protocol/helpers.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 
+function providerOptions(overrides = {}) {
+  return {
+    math: 'parens-division',
+    quietDeprecations: false,
+    rewriteUrls: 'off',
+    strictUnits: false,
+    ...overrides,
+  }
+}
+
 function rejectsWithCode(code) {
   return error => error instanceof ProviderFailure && error.code === code
 }
@@ -30,7 +40,7 @@ function request(overrides = {}) {
       style: 'expanded',
       sourceMap: false,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: providerOptions(),
       ...(overrides.options ?? {}),
     },
     ...overrides,
@@ -67,9 +77,11 @@ test('binds the private adapter and lockfile to exact Less 4.6.7 with no public 
 
   assert.equal(LESS_VERSION, '4.6.7')
   assert.equal(manifest.devDependencies.less, LESS_VERSION)
+  assert.equal(manifest.devDependencies['image-size'], '0.5.5')
   assert.equal(manifest.dependencies?.less, undefined)
   assert.equal(manifest.files.includes('preprocessor'), false)
   assert.equal(lock.packages[''].devDependencies.less, LESS_VERSION)
+  assert.equal(lock.packages[''].devDependencies['image-size'], '0.5.5')
   assert.equal(lock.packages['node_modules/less'].version, LESS_VERSION)
   assert.equal(
     lock.packages['node_modules/less'].integrity,
@@ -108,7 +120,7 @@ test('renders canonical Less semantics in exact expanded and compressed styles',
       style: 'compressed',
       sourceMap: false,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: providerOptions(),
     },
   })
 
@@ -130,10 +142,67 @@ test('renders canonical Less semantics in exact expanded and compressed styles',
   assert.deepEqual(compressed, {
     css: '.card{border-radius:4px;width:8px}.card:hover{color:red}',
     sourceMap: null,
-    diagnostics: [],
+    diagnostics: [{
+      severity: 'warning',
+      code: 'less.deprecation.compress',
+      message: 'The compress option has been deprecated. We recommend you use a dedicated css minifier, for instance see less-plugin-clean-css.',
+      sourceUrl: 'file:///workspace/input.less',
+      line: null,
+      column: null,
+    }],
     dependencies: [],
   })
   assert.deepEqual(await compile({ source }), expanded)
+})
+
+test('maps only the closed non-executable Less provider options', async () => {
+  const source = '.value { division: 6 / 3; parens: (6 / 3); }'
+  const defaultMath = await compile({ source })
+  const alwaysMath = await compile({
+    source,
+    options: {
+      style: 'expanded',
+      sourceMap: false,
+      loadPaths: [],
+      providerOptions: providerOptions({ math: 'always' }),
+    },
+  })
+  const strictMath = await compile({
+    source,
+    options: {
+      style: 'expanded',
+      sourceMap: false,
+      loadPaths: [],
+      providerOptions: providerOptions({ math: 'parens' }),
+    },
+  })
+
+  assert.equal(defaultMath.css, '.value {\n  division: 6 / 3;\n  parens: 2;\n}\n')
+  assert.equal(alwaysMath.css, '.value {\n  division: 2;\n  parens: 2;\n}\n')
+  assert.equal(strictMath.css, defaultMath.css)
+  await assert.rejects(
+    compile({
+      source: '.value { width: 1px + 1s; }',
+      options: {
+        style: 'expanded',
+        sourceMap: false,
+        loadPaths: [],
+        providerOptions: providerOptions({ strictUnits: true }),
+      },
+    }),
+    rejectsWithCode('LESS_COMPILE_ERROR'),
+  )
+  await assert.rejects(
+    compile({
+      options: {
+        style: 'expanded',
+        sourceMap: false,
+        loadPaths: [],
+        providerOptions: { math: 'parens-division' },
+      },
+    }),
+    rejectsWithCode('LESS_REQUEST_INVALID'),
+  )
 })
 
 test('locks and license-reviews the complete Less dependency closure', () => {
@@ -184,7 +253,7 @@ test('owns deterministic Source Map v3 bytes for only the virtual entry', async 
       style: 'expanded',
       sourceMap: true,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: providerOptions(),
     },
   })
   const repeated = await compile({
@@ -193,7 +262,7 @@ test('owns deterministic Source Map v3 bytes for only the virtual entry', async 
       style: 'expanded',
       sourceMap: true,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: providerOptions(),
     },
   })
 
@@ -205,7 +274,7 @@ test('owns deterministic Source Map v3 bytes for only the virtual entry', async 
   assert.deepEqual(result.dependencies, [])
 })
 
-test('rejects native imports and load paths before adjacent filesystem bytes can compile', async () => {
+test('requires confined roots before adjacent filesystem bytes can compile', async () => {
   await withFixture(async temporary => {
     const entry = path.join(temporary, 'input.less')
     const secret = path.join(temporary, 'secret.less')
@@ -245,19 +314,21 @@ test('rejects native imports and load paths before adjacent filesystem bytes can
       diagnostics: [],
       dependencies: [],
     })
-    await assert.rejects(
-      compile({
-        source: '.entry { color: red; }',
-        sourceUrl: pathToFileURL(entry).href,
-        options: {
-          style: 'expanded',
-          sourceMap: false,
-          loadPaths: [temporary],
-          providerOptions: {},
-        },
-      }),
-      rejectsWithCode('LESS_IMPORTS_UNAVAILABLE'),
-    )
+    assert.deepEqual(await compile({
+      source: '.entry { color: red; }',
+      sourceUrl: pathToFileURL(entry).href,
+      options: {
+        style: 'expanded',
+        sourceMap: false,
+        loadPaths: [temporary],
+        providerOptions: providerOptions(),
+      },
+    }), {
+      css: '.entry {\n  color: red;\n}\n',
+      sourceMap: null,
+      diagnostics: [],
+      dependencies: [],
+    })
   })
 })
 
@@ -300,6 +371,21 @@ test('normalizes parse failures without returning partial CSS', async () => {
   )
 })
 
+test('fails closed when Less exceeds the diagnostic ceiling', async () => {
+  const source = Array.from({ length: 1001 }, (_, index) => (
+    `.item-${index}:extend(.missing-${index}) {}`
+  )).join('\n')
+  await assert.rejects(
+    compile({ source }),
+    error => {
+      assert.equal(error.code, 'LESS_DIAGNOSTIC_LIMIT')
+      assert.equal(error.diagnostics.length, 0)
+      assert.equal('css' in error, false)
+      return true
+    },
+  )
+})
+
 test('rejects invalid requests and cancellation without provider output', async () => {
   await assert.rejects(
     compile({ syntax: 'scss' }),
@@ -315,7 +401,7 @@ test('rejects invalid requests and cancellation without provider output', async 
         style: 'expanded',
         sourceMap: false,
         loadPaths: [],
-        providerOptions: {},
+        providerOptions: providerOptions(),
         plugins: [],
       },
     }),
@@ -367,6 +453,10 @@ test('documents the virtual Less boundary and preserves unavailable public admis
     'asynchronous programmatic `less.render` API',
     'stable virtual filename',
     '`javascriptEnabled: false`',
+    '`math`, `quietDeprecations`, `rewriteUrls`, and `strictUnits`',
+    '`data-uri()` and the three image metadata functions',
+    'first-success dependency order',
+    '`LESS-012`',
     'public `.less` row remains unavailable and unverified',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
