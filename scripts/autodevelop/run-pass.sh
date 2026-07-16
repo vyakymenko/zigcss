@@ -15,6 +15,7 @@ Hard execution contract:
 - Work only in this isolated worktree and preserve every inherited or unrelated change. Never access or modify the user's main checkout.
 - Read DEVELOPMENT_PLAN.md completely before changing code. Treat it as the authoritative roadmap, dependency graph, gates, safety policy, and definition of done.
 - Read DEVELOPMENT_STATUS.md and run scripts/autodevelop/orient.sh before selecting work. If a coherent interrupted package is dirty, resume it before selecting another.
+- Milestone 9 canonical frontend work is active and dependency-eligible in this order: SCSS/Sass through SASS-012, Less through LESS-012, Stylus through STYLUS-012, then PRE-005/PRE-006/PRE-008/PRE-009. A pending external BENCH-007 runner must not block eligible preprocessor correctness work.
 - Execute at most one smallest dependency-ordered work package in this pass: reproduce or measure, add/strengthen tests, implement the smallest correct change, run proportionate gates, search sibling surfaces, update the ledger, and commit intentional green checkpoints.
 - Prioritize security, parser correctness, semantic preservation, determinism, and regression evidence. Do not weaken tests or quality gates.
 - Do not push from this model pass. The outer Bash supervisor alone may push the independently verified clean checkpoint to the approved origin branch. Do not publish, deploy, create a PR/tag/release, send messages, spend money, use secrets, or modify any other external system.
