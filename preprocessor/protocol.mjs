@@ -128,8 +128,31 @@ function validateSourceUrl(value) {
   }
 }
 
-function validateOptions(options) {
-  requireExactKeys(options, ['style', 'sourceMap', 'loadPaths'], 'HOST_OPTIONS', 'options')
+function validateProviderOptions(options, provider) {
+  if (provider === 'dart-sass') {
+    requireExactKeys(
+      options,
+      ['charset', 'quietDeps', 'verbose'],
+      'HOST_OPTIONS',
+      'options.providerOptions',
+    )
+    for (const name of ['charset', 'quietDeps', 'verbose']) {
+      if (typeof options[name] !== 'boolean') {
+        fail('HOST_OPTIONS', `options.providerOptions.${name} must be boolean`)
+      }
+    }
+    return
+  }
+  requireExactKeys(options, [], 'HOST_OPTIONS', 'options.providerOptions')
+}
+
+function validateOptions(options, provider) {
+  requireExactKeys(
+    options,
+    ['style', 'sourceMap', 'loadPaths', 'providerOptions'],
+    'HOST_OPTIONS',
+    'options',
+  )
   if (options.style !== 'expanded' && options.style !== 'compressed') {
     fail('HOST_OPTIONS', 'options.style must be expanded or compressed')
   }
@@ -148,6 +171,7 @@ function validateOptions(options) {
   if (new Set(options.loadPaths).size !== options.loadPaths.length) {
     fail('HOST_OPTIONS', 'load paths must be unique')
   }
+  validateProviderOptions(options.providerOptions, provider)
 }
 
 export function validateRequest(value) {
@@ -179,7 +203,7 @@ export function validateRequest(value) {
     fail('HOST_SOURCE_LIMIT', 'source exceeds the byte limit')
   }
   validateSourceUrl(value.sourceUrl)
-  validateOptions(value.options)
+  validateOptions(value.options, value.provider)
   return value
 }
 

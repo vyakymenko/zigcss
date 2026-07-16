@@ -106,14 +106,24 @@ test('request validation is closed, provider-aware, and byte bounded', () => {
         provider: 'dart-sass',
         syntax: 'sass',
         sourceUrl: null,
-        options: { style: 'compressed', sourceMap: false, loadPaths: [] },
+        options: {
+          style: 'compressed',
+          sourceMap: false,
+          loadPaths: [],
+          providerOptions: { charset: false, quietDeps: true, verbose: true },
+        },
       }),
     ),
     makeRequest({
       provider: 'dart-sass',
       syntax: 'sass',
       sourceUrl: null,
-      options: { style: 'compressed', sourceMap: false, loadPaths: [] },
+      options: {
+        style: 'compressed',
+        sourceMap: false,
+        loadPaths: [],
+        providerOptions: { charset: false, quietDeps: true, verbose: true },
+      },
     }),
   )
 
@@ -126,14 +136,36 @@ test('request validation is closed, provider-aware, and byte bounded', () => {
     [makeRequest({ sourceUrl: 'https://example.com/input.scss' }), 'HOST_SOURCE_URL'],
     [makeRequest({ sourceUrl: 'file://server/share/input.scss' }), 'HOST_SOURCE_URL'],
     [makeRequest({ sourceUrl: 'file:///workspace/input.scss?raw=1' }), 'HOST_SOURCE_URL'],
-    [makeRequest({ options: { style: 'tiny', sourceMap: true, loadPaths: [] } }), 'HOST_OPTIONS'],
-    [makeRequest({ options: { style: 'expanded', sourceMap: 'yes', loadPaths: [] } }), 'HOST_OPTIONS'],
-    [makeRequest({ options: { style: 'expanded', sourceMap: true, loadPaths: ['relative'] } }), 'HOST_OPTIONS'],
-    [makeRequest({ options: { style: 'expanded', sourceMap: true, loadPaths: ['/one', '/one'] } }), 'HOST_OPTIONS'],
-    [makeRequest({ options: { style: 'expanded', sourceMap: true, loadPaths: [], plugin: 'x' } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: { ...makeRequest().options, style: 'tiny' } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: { ...makeRequest().options, sourceMap: 'yes' } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: { ...makeRequest().options, loadPaths: ['relative'] } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: { ...makeRequest().options, loadPaths: ['/one', '/one'] } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: { ...makeRequest().options, plugin: 'x' } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: {
+      ...makeRequest().options,
+      providerOptions: { charset: true, quietDeps: false },
+    } }), 'HOST_OPTIONS'],
+    [makeRequest({ options: {
+      ...makeRequest().options,
+      providerOptions: { charset: true, quietDeps: false, verbose: false, functions: {} },
+    } }), 'HOST_OPTIONS'],
+    [makeRequest({
+      provider: 'less',
+      syntax: 'less',
+      options: { ...makeRequest().options, providerOptions: {} },
+    }), null],
+    [makeRequest({
+      provider: 'less',
+      syntax: 'less',
+      options: { ...makeRequest().options },
+    }), 'HOST_OPTIONS'],
     [{ ...makeRequest(), unexpected: true }, 'HOST_REQUEST_SHAPE'],
   ]
   for (const [request, code] of invalid) {
+    if (code === null) {
+      assert.deepEqual(validateRequest(request), request)
+      continue
+    }
     assert.throws(() => validateRequest(request), hasCode(code), code)
   }
 

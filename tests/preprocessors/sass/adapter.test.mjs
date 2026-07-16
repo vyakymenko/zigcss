@@ -26,6 +26,7 @@ function request(overrides = {}) {
       style: 'expanded',
       sourceMap: false,
       loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
       ...(overrides.options ?? {}),
     },
     ...overrides,
@@ -124,7 +125,12 @@ test('compiles SCSS through the modern API in exact expanded and compressed styl
   const expanded = await compile({ source })
   const compressed = await compile({
     source,
-    options: { style: 'compressed', sourceMap: false, loadPaths: [] },
+    options: {
+      style: 'compressed',
+      sourceMap: false,
+      loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
   })
 
   assert.deepEqual(expanded, {
@@ -140,6 +146,42 @@ test('compiles SCSS through the modern API in exact expanded and compressed styl
     dependencies: [],
   })
   assert.deepEqual(await compile({ source }), expanded)
+})
+
+test('maps the closed Dart Sass provider options without executable extension points', async () => {
+  const source = '.icon::before { content: "✓"; }'
+  const withCharset = await compile({
+    source,
+    options: {
+      style: 'compressed',
+      sourceMap: false,
+      loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
+  })
+  const withoutCharset = await compile({
+    source,
+    options: {
+      style: 'compressed',
+      sourceMap: false,
+      loadPaths: [],
+      providerOptions: { charset: false, quietDeps: false, verbose: false },
+    },
+  })
+
+  assert.equal(withCharset.css, '\ufeff.icon::before{content:"✓"}')
+  assert.equal(withoutCharset.css, '.icon::before{content:"✓"}')
+  await assert.rejects(
+    compile({
+      options: {
+        style: 'expanded',
+        sourceMap: false,
+        loadPaths: [],
+        providerOptions: { charset: true, quietDeps: false },
+      },
+    }),
+    rejectsWithCode('SASS_REQUEST_INVALID'),
+  )
 })
 
 test('maps the protocol sass syntax to Dart Sass indented syntax without rewriting bytes', async () => {
@@ -160,11 +202,21 @@ test('owns deterministic provider Source Map v3 bytes and rewrites only the virt
   const source = '$color: red;\n.card { color: $color; }\n'
   const result = await compile({
     source,
-    options: { style: 'expanded', sourceMap: true, loadPaths: [] },
+    options: {
+      style: 'expanded',
+      sourceMap: true,
+      loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
   })
   const repeated = await compile({
     source,
-    options: { style: 'expanded', sourceMap: true, loadPaths: [] },
+    options: {
+      style: 'expanded',
+      sourceMap: true,
+      loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
   })
 
   assert.equal(result.sourceMap, repeated.sourceMap)
@@ -202,7 +254,12 @@ test('allows built-in Sass modules but fails closed before any filesystem import
       sourceUrl: entryUrl,
     },
     {
-      options: { style: 'expanded', sourceMap: false, loadPaths: [fixtureDirectory] },
+      options: {
+        style: 'expanded',
+        sourceMap: false,
+        loadPaths: [fixtureDirectory],
+        providerOptions: { charset: true, quietDeps: false, verbose: false },
+      },
     },
   ]) {
     await assert.rejects(compile(overrides), rejectsWithCode('SASS_IMPORTS_UNAVAILABLE'))

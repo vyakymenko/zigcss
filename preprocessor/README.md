@@ -8,7 +8,7 @@ Status: internal `PRE-002` through `PRE-004` and `SASS-010` boundary. SCSS, inde
 
 A frame is a four-byte unsigned big-endian payload length followed by that many UTF-8 JSON bytes. Zero-length, truncated, oversized, malformed, second, or trailing frames fail. Request and response objects use exact field sets; unknown fields fail rather than being ignored.
 
-The compile request contains the protocol name, a bounded opaque request ID, the literal `compile` operation, an exact provider ID, its matching syntax, source text, a null or absolute local file source URL, and the closed common options `style`, `sourceMap`, and `loadPaths`. Provider ownership is fixed:
+The compile request contains the protocol name, a bounded opaque request ID, the literal `compile` operation, an exact provider ID, its matching syntax, source text, a null or absolute local file source URL, and the closed common options `style`, `sourceMap`, `loadPaths`, and `providerOptions`. Dart Sass accepts exactly the boolean provider options `charset`, `quietDeps`, and `verbose`; Less and Stylus currently accept an empty provider-option object. Unknown, missing, cross-provider, executable, and dynamically discovered options fail validation. Provider ownership is fixed:
 
 | Provider ID | Syntaxes | Accepted package baseline | Internal stage |
 |---|---|---|---|
@@ -50,7 +50,7 @@ When both stages emit maps, composition parses only strict non-indexed Source Ma
 
 ## Internal Dart Sass adapter
 
-`SASS-010` pins `sass` `1.101.0`/MIT and calls the modern asynchronous `compileStringAsync` API for both protocol syntaxes: `scss` maps to Dart Sass `scss`, while `sass` maps to its `indented` syntax. Expanded and compressed output, warnings, parse failures, cancellation ownership, and provider Source Map v3 bytes have exact regressions. The pinned package requires Node.js 20.19.0 or newer; that future npm runtime floor is not a public package claim until `PRE-006` updates and validates every release surface.
+`SASS-010` pins `sass` `1.101.0`/MIT and calls the modern asynchronous `compileStringAsync` API for both protocol syntaxes: `scss` maps to Dart Sass `scss`, while `sass` maps to its `indented` syntax. Expanded and compressed output, warnings, parse failures, cancellation ownership, and provider Source Map v3 bytes have exact regressions. The closed provider options map directly to Dart Sass's `charset`, `quietDeps`, and `verbose` booleans; colored alerts are always disabled so diagnostics remain deterministic. The pinned package requires Node.js 20.19.0 or newer; that future npm runtime floor is not a public package claim until `PRE-006` updates and validates every release surface.
 
 This stage deliberately compiles each entry under a stable non-file virtual URL. Built-in `sass:` modules remain available, while every other importer callback and every nonempty load-path request fails without CSS. This prevents Dart Sass's normal entry-relative filesystem importer from bypassing `PRE-003`. `SASS-011` must replace the rejecting importer with the confined loader, normalize loaded dependencies and full provider options, and connect two-stage map ownership; `SASS-012` must then pass the pinned corpus and direct canonical differential gate. Until those packages and product graduation pass, `.scss` and `.sass` remain rejected by the public CLI.
 

@@ -38,6 +38,15 @@ function detectedVersion() {
   return match?.[1] ?? null
 }
 
+function hasExactKeys(value, expected) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) return false
+  const actual = Object.keys(value).sort()
+  const wanted = [...expected].sort()
+  return JSON.stringify(actual) === JSON.stringify(wanted)
+}
+
 function validateRequest(request) {
   if (
     request === null ||
@@ -49,7 +58,11 @@ function validateRequest(request) {
     typeof request.options !== 'object' ||
     !['expanded', 'compressed'].includes(request.options.style) ||
     typeof request.options.sourceMap !== 'boolean' ||
-    !Array.isArray(request.options.loadPaths)
+    !Array.isArray(request.options.loadPaths) ||
+    !hasExactKeys(request.options.providerOptions, ['charset', 'quietDeps', 'verbose']) ||
+    typeof request.options.providerOptions.charset !== 'boolean' ||
+    typeof request.options.providerOptions.quietDeps !== 'boolean' ||
+    typeof request.options.providerOptions.verbose !== 'boolean'
   ) {
     throw failure('SASS_REQUEST_INVALID', 'Dart Sass received an invalid host request')
   }
@@ -189,12 +202,16 @@ async function compileDartSass(request, { signal } = {}) {
   }
 
   const options = {
+    alertColor: false,
+    charset: request.options.providerOptions.charset,
+    quietDeps: request.options.providerOptions.quietDeps,
     syntax: request.syntax === 'sass' ? 'indented' : 'scss',
     style: request.options.style,
     sourceMap: request.options.sourceMap,
     url: entryUrl,
     importers: [createRejectingImporter(importState)],
     logger,
+    verbose: request.options.providerOptions.verbose,
   }
   if (request.options.sourceMap) options.sourceMapIncludeSources = true
 

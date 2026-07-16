@@ -11,6 +11,11 @@ export function makeRequest(overrides = {}) {
       style: 'expanded',
       sourceMap: true,
       loadPaths: [],
+      providerOptions: {
+        charset: true,
+        quietDeps: false,
+        verbose: false,
+      },
       ...(overrides.options ?? {}),
     },
     ...overrides,

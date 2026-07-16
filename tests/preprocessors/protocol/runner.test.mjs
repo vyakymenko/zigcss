@@ -38,7 +38,12 @@ test('process supervisor uses framed stdin without shell interpretation', async 
 
 test('production host reaches the internal Dart Sass adapter without admitting other providers', async () => {
   const response = await runPreprocessorHost(makeRequest({
-    options: { style: 'compressed', sourceMap: true, loadPaths: [] },
+    options: {
+      style: 'compressed',
+      sourceMap: true,
+      loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
   }), { timeoutMs: 5000 })
   assert.equal(response.result.css, '.card{color:red}')
   assert.equal(parseSourceMap(response.result.sourceMap).sources[0], 'file:///workspace/input.scss')
@@ -57,6 +62,12 @@ test('production host reaches the internal Dart Sass adapter without admitting o
     provider: 'less',
     syntax: 'less',
     source: '@color: red; .card { color: @color; }',
+    options: {
+      style: 'expanded',
+      sourceMap: true,
+      loadPaths: [],
+      providerOptions: {},
+    },
   }), { timeoutMs: 5000 })
   assert.equal(unavailable.ok, false)
   assert.equal(unavailable.error.code, 'HOST_PROVIDER_UNAVAILABLE')
