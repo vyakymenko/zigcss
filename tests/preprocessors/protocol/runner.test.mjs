@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   runPreprocessorHost,
   sanitizedHostEnvironment,
@@ -13,6 +13,7 @@ import { makeRequest } from './helpers.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 const fixtureHost = path.join(repositoryRoot, 'tests/preprocessors/fixtures/child-behavior.mjs')
+const sassFixtureDirectory = path.join(repositoryRoot, 'tests/preprocessors/sass/fixtures')
 
 function rejectsWithCode(code) {
   return error => error?.code === code
@@ -49,6 +50,27 @@ test('production host reaches the internal Dart Sass adapter without admitting o
   assert.equal(parseSourceMap(response.result.sourceMap).sources[0], 'file:///workspace/input.scss')
   assert.deepEqual(response.result.diagnostics, [])
   assert.deepEqual(response.result.dependencies, [])
+
+  const imported = await runPreprocessorHost(makeRequest({
+    source: '@use "tokens";\n.card { color: tokens.$accent; }',
+    sourceUrl: pathToFileURL(path.join(sassFixtureDirectory, 'input.scss')).href,
+    options: {
+      style: 'expanded',
+      sourceMap: true,
+      loadPaths: [sassFixtureDirectory],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
+  }), { timeoutMs: 5000 })
+  assert.equal(imported.ok, true)
+  assert.equal(imported.result.css, '.card {\n  color: rebeccapurple;\n}')
+  assert.deepEqual(imported.result.dependencies, [{
+    url: pathToFileURL(path.join(sassFixtureDirectory, '_tokens.scss')).href,
+    kind: 'reference',
+  }])
+  assert.deepEqual(new Set(parseSourceMap(imported.result.sourceMap).sources), new Set([
+    pathToFileURL(path.join(sassFixtureDirectory, 'input.scss')).href,
+    pathToFileURL(path.join(sassFixtureDirectory, '_tokens.scss')).href,
+  ]))
 
   const rejected = await runPreprocessorHost(makeRequest({
     source: '$color: ;\n.card { color: $color; }',

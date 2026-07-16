@@ -1,6 +1,6 @@
 # ZigCSS canonical preprocessor host
 
-Status: internal `PRE-002` through `PRE-004` and `SASS-010` boundary. SCSS, indented Sass, Less, and Stylus are still publicly unavailable. The production registry connects the exact Dart Sass adapter only for internal admission work; Less and Stylus still have no implementation. No provider becomes a public format until its remaining adapter, product, packaging, and graduation gates pass.
+Status: internal `PRE-002` through `PRE-004`, `SASS-010`, and the confined-import slice of `SASS-011`. SCSS, indented Sass, Less, and Stylus are still publicly unavailable. The production registry connects the exact Dart Sass adapter only for internal admission work; Less and Stylus still have no implementation. No provider becomes a public format until its remaining adapter, product, packaging, and graduation gates pass.
 
 ## Wire contract
 
@@ -12,7 +12,7 @@ The compile request contains the protocol name, a bounded opaque request ID, the
 
 | Provider ID | Syntaxes | Accepted package baseline | Internal stage |
 |---|---|---|---|
-| `dart-sass` | `scss`, `sass` | `sass` `1.101.0` | `SASS-010`; compile only, imports fail closed |
+| `dart-sass` | `scss`, `sass` | `sass` `1.101.0` | `SASS-011`; confined imports internal only |
 | `less` | `less` | `less` `4.6.7` | Not connected |
 | `stylus` | `stylus` | `stylus` `0.64.0` | Not connected |
 
@@ -52,7 +52,11 @@ When both stages emit maps, composition parses only strict non-indexed Source Ma
 
 `SASS-010` pins `sass` `1.101.0`/MIT and calls the modern asynchronous `compileStringAsync` API for both protocol syntaxes: `scss` maps to Dart Sass `scss`, while `sass` maps to its `indented` syntax. Expanded and compressed output, warnings, parse failures, cancellation ownership, and provider Source Map v3 bytes have exact regressions. The closed provider options map directly to Dart Sass's `charset`, `quietDeps`, and `verbose` booleans; colored alerts are always disabled so diagnostics remain deterministic. The pinned package requires Node.js 20.19.0 or newer; that future npm runtime floor is not a public package claim until `PRE-006` updates and validates every release surface.
 
-This stage deliberately compiles each entry under a stable non-file virtual URL. Built-in `sass:` modules remain available, while every other importer callback and every nonempty load-path request fails without CSS. This prevents Dart Sass's normal entry-relative filesystem importer from bypassing `PRE-003`. `SASS-011` must replace the rejecting importer with the confined loader, normalize loaded dependencies and full provider options, and connect two-stage map ownership; `SASS-012` must then pass the pinned corpus and direct canonical differential gate. Until those packages and product graduation pass, `.scss` and `.sass` remain rejected by the public CLI.
+Each entry still compiles under a stable non-file virtual URL, so Dart Sass never receives native entry-file or native load-path authority. Built-in `sass:` modules remain available. A filesystem load requires at least one explicit confined root. Entry-relative lookup runs only when the declared source URL is inside an explicit root; otherwise ordered load-path importers own lookup. Absolute `file:` URLs are admitted only when the confined resolver proves the resulting stylesheet belongs to those same roots. Network and unknown schemes, lexical or canonical escapes, links, special or unreadable files, unstable reads, invalid UTF-8, ambiguity, cycles, and exhausted limits fail without CSS.
+
+The adapter reproduces Dart Sass's partial/full ambiguity groups, `.sass`/`.scss` before `.css`, explicit-extension behavior, directory indexes, and legacy `.import` precedence. `@use` and `@forward` loads are recorded as `reference` because Dart Sass's public importer context distinguishes only legacy `@import`; legacy loads retain `import`. Facts preserve first-success order and canonical local URLs. Imported diagnostics use their owned file identity, provider maps include source content for the entry and every dependency, and real Unicode provider maps pass the strict two-stage composer. The adapter deliberately lowers its ancestry ceiling to 32: a red measurement found that constructing Dart Sass's nested failure above its safe callback depth could amplify memory before the host deadline, so ZigCSS rejects earlier through `PRE-003`.
+
+`quietDeps` follows Dart Sass ownership: ordered load-path dependencies may be silenced, while entry-relative warnings remain visible. `verbose` owns deprecation repetition and `charset` owns emitted UTF-8 markers; colored alerts remain disabled. Custom functions, package importers, user importers, and every executable extension point remain outside the default trust boundary. `SASS-011` still requires its remaining negative/platform closure, and `SASS-012` must pass the pinned corpus and direct canonical differential gate. Until those packages and product graduation pass, `.scss` and `.sass` remain rejected by the public CLI.
 
 ## Confined local loader
 
@@ -62,4 +66,4 @@ The loader accepts only absolute `file:` URLs under explicit regular directory r
 
 Each compilation owns one session. The default ceilings are 10 MiB per file, 40 MiB across reads, 4,096 unique files, 8,192 read attempts, and 64 ancestry levels; callers may lower but never raise the hard limits. Canonical ancestry is explicit and root-confined, so duplicate ancestry, candidate cycles, and excessive depth fail before bytes become a provider result. Successful reads return owned bytes and one canonical URL. Dependency facts are ordered by first successful load and deduplicated by canonical URL, while duplicate reads still consume read and byte budgets.
 
-Only the pre-admission Dart Sass compile adapter is connected. These boundaries establish the file and result authority that `SASS-011`, `LESS-011`, and `STYLUS-011` must consume. This work does not make any preprocessor syntax available publicly.
+Only the pre-admission Dart Sass adapter is connected, and its canonical importer consumes this loader for every dependency byte. These boundaries remain the file and result authority that `LESS-011` and `STYLUS-011` must consume. This work does not make any preprocessor syntax available publicly.

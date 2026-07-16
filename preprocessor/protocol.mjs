@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const PROTOCOL_VERSION = 'zigcss-preprocessor-v1'
 export const MAX_SOURCE_BYTES = 10 * 1024 * 1024
@@ -124,6 +125,11 @@ function validateSourceUrl(value) {
     /%2f|%5c/i.test(parsed.pathname) ||
     parsed.href !== value
   ) {
+    fail('HOST_SOURCE_URL', 'sourceUrl must be a canonical local file URL without aliases')
+  }
+  try {
+    fileURLToPath(parsed)
+  } catch {
     fail('HOST_SOURCE_URL', 'sourceUrl must be a canonical local file URL without aliases')
   }
 }

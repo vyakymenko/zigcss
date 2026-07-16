@@ -155,9 +155,10 @@ async function inspectPathComponents(base, candidate) {
     }
     if (stat.isSymbolicLink()) fail('RESOLVER_SYMLINK', 'dependency path contains a symlink')
     if (index < components.length - 1 && !stat.isDirectory()) {
-      fail('RESOLVER_NOT_REGULAR', 'dependency parent is not a directory')
+      fail('RESOLVER_PARENT_NOT_DIRECTORY', 'dependency parent is not a directory')
     }
     if (index === components.length - 1 && !stat.isFile()) {
+      if (stat.isDirectory()) fail('RESOLVER_DIRECTORY', 'dependency is a directory')
       fail('RESOLVER_NOT_REGULAR', 'dependency is not a regular file')
     }
   }

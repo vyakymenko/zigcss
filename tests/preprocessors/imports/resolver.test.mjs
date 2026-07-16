@@ -103,7 +103,7 @@ test('rejects network schemes, malformed file URLs, query/fragment aliases, and 
   })
 })
 
-test('rejects missing paths, directories, invalid dependency kinds, and closed sessions', async () => {
+test('distinguishes missing paths, directories, and non-directory parents for adapter probing', async () => {
   await withFixture(async ({ root }) => {
     const directory = path.join(root, 'directory')
     const file = path.join(root, 'file.scss')
@@ -117,7 +117,11 @@ test('rejects missing paths, directories, invalid dependency kinds, and closed s
     )
     await assert.rejects(
       session.load(url(directory), { kind: 'import', ancestry: [] }),
-      rejectsWithCode('RESOLVER_NOT_REGULAR'),
+      rejectsWithCode('RESOLVER_DIRECTORY'),
+    )
+    await assert.rejects(
+      session.load(url(path.join(file, 'nested.scss')), { kind: 'import', ancestry: [] }),
+      rejectsWithCode('RESOLVER_PARENT_NOT_DIRECTORY'),
     )
     await assert.rejects(
       session.load(url(file), { kind: 'plugin', ancestry: [] }),

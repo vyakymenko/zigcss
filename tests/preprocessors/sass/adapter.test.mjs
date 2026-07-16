@@ -182,6 +182,51 @@ test('maps the closed Dart Sass provider options without executable extension po
     }),
     rejectsWithCode('SASS_REQUEST_INVALID'),
   )
+  await assert.rejects(
+    compile({ sourceUrl: 'https://example.com/input.scss' }),
+    rejectsWithCode('SASS_REQUEST_INVALID'),
+  )
+  await assert.rejects(
+    compile({
+      options: {
+        style: 'expanded',
+        sourceMap: false,
+        loadPaths: [],
+        providerOptions: { charset: true, quietDeps: false, verbose: false },
+        functions: {},
+      },
+    }),
+    rejectsWithCode('SASS_REQUEST_INVALID'),
+  )
+
+  const repeatedDeprecations = Array.from(
+    { length: 6 },
+    (_, index) => `.item-${index} { color: darken(red, ${index + 1}%); }`,
+  ).join('\n')
+  const terse = await compile({
+    source: repeatedDeprecations,
+    sourceUrl: null,
+    options: {
+      style: 'expanded',
+      sourceMap: false,
+      loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
+  })
+  const verbose = await compile({
+    source: repeatedDeprecations,
+    sourceUrl: null,
+    options: {
+      style: 'expanded',
+      sourceMap: false,
+      loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: true },
+    },
+  })
+  assert.equal(terse.diagnostics.length, 11)
+  assert.equal(terse.diagnostics.at(-1).code, 'sass.warning')
+  assert.equal(verbose.diagnostics.length, 12)
+  assert.equal(verbose.diagnostics.every(diagnostic => diagnostic.code.startsWith('sass.deprecation.')), true)
 })
 
 test('maps the protocol sass syntax to Dart Sass indented syntax without rewriting bytes', async () => {
@@ -232,7 +277,7 @@ test('owns deterministic provider Source Map v3 bytes and rewrites only the virt
   assert.deepEqual(result.dependencies, [])
 })
 
-test('allows built-in Sass modules but fails closed before any filesystem import or load path', async () => {
+test('allows built-ins, requires explicit roots, and admits only confined filesystem imports', async () => {
   const builtIn = await compile({
     source: '@use "sass:math";\n.card { width: math.div(2, 2) * 1px; }',
     sourceUrl: entryUrl,
@@ -246,24 +291,50 @@ test('allows built-in Sass modules but fails closed before any filesystem import
       sourceUrl: entryUrl,
     },
     {
-      source: '@use "file:///etc/passwd";',
-      sourceUrl: entryUrl,
-    },
-    {
       source: '@use "sass:meta";\n.card { @include meta.load-css("tokens"); }',
       sourceUrl: entryUrl,
     },
-    {
-      options: {
-        style: 'expanded',
-        sourceMap: false,
-        loadPaths: [fixtureDirectory],
-        providerOptions: { charset: true, quietDeps: false, verbose: false },
-      },
-    },
   ]) {
-    await assert.rejects(compile(overrides), rejectsWithCode('SASS_IMPORTS_UNAVAILABLE'))
+    await assert.rejects(compile(overrides), rejectsWithCode('SASS_IMPORT_ROOT_REQUIRED'))
   }
+
+  const absoluteTokenUrl = pathToFileURL(path.join(fixtureDirectory, '_tokens.scss')).href
+  await assert.rejects(
+    compile({
+      source: `@use "${absoluteTokenUrl}" as tokens;\n.card { color: tokens.$accent; }`,
+      sourceUrl: entryUrl,
+    }),
+    rejectsWithCode('SASS_COMPILE_ERROR'),
+  )
+
+  const confined = await compile({
+    source: '@use "tokens";\n.card { color: tokens.$accent; }',
+    sourceUrl: entryUrl,
+    options: {
+      style: 'expanded',
+      sourceMap: false,
+      loadPaths: [fixtureDirectory],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
+  })
+  assert.equal(confined.css, '.card {\n  color: rebeccapurple;\n}')
+  assert.deepEqual(confined.dependencies, [{
+    url: pathToFileURL(path.join(fixtureDirectory, '_tokens.scss')).href,
+    kind: 'reference',
+  }])
+
+  const confinedAbsolute = await compile({
+    source: `@use "${absoluteTokenUrl}" as tokens;\n.card { color: tokens.$accent; }`,
+    sourceUrl: entryUrl,
+    options: {
+      style: 'expanded',
+      sourceMap: false,
+      loadPaths: [fixtureDirectory],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
+  })
+  assert.equal(confinedAbsolute.css, confined.css)
+  assert.deepEqual(confinedAbsolute.dependencies, confined.dependencies)
 })
 
 test('normalizes warnings and parse failures without returning partial CSS', async () => {

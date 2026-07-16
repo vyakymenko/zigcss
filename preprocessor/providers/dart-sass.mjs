@@ -1,22 +1,34 @@
 import * as sass from 'sass'
+import { fileURLToPath } from 'node:url'
 import {
   ProviderFailure,
   normalizeDiagnostics,
 } from '../metadata.mjs'
+import { createConfinedResolver } from '../resolver.mjs'
 import { parseSourceMap } from '../source-map.mjs'
+import { createSassImportAuthority } from './sass-importer.mjs'
 
 export const DART_SASS_VERSION = '1.101.0'
+export const SASS_MAX_IMPORT_DEPTH = 32
 
-const IMPORT_SENTINEL = 'ZIGCSS_SASS_IMPORTS_UNAVAILABLE'
+const IMPORT_SENTINEL = 'ZIGCSS_SASS_IMPORT_ROOT_REQUIRED'
 const MAX_CAPTURED_DIAGNOSTICS = 1000
 const syntaxes = Object.freeze(['scss', 'sass'])
-const entryUrlStrings = Object.freeze({
-  scss: 'zigcss-entry:input.scss',
-  sass: 'zigcss-entry:input.sass',
+const entryFilenames = Object.freeze({
+  scss: 'input.scss',
+  sass: 'input.sass',
 })
+
+function entryUrlForRequest(request) {
+  const pathname = request.sourceUrl === null
+    ? `/${entryFilenames[request.syntax]}`
+    : new URL(request.sourceUrl).pathname
+  return new URL(`zigcss-entry://entry${pathname}`)
+}
 
 function createRejectingImporter(state) {
   return Object.freeze({
+    nonCanonicalScheme: Object.freeze(['file', 'http', 'https', 'zigcss-entry']),
     canonicalize() {
       state.rejected = true
       throw new Error(IMPORT_SENTINEL)
@@ -47,6 +59,35 @@ function hasExactKeys(value, expected) {
   return JSON.stringify(actual) === JSON.stringify(wanted)
 }
 
+function validSourceUrl(value) {
+  if (value === null) return true
+  if (typeof value !== 'string') return false
+  let parsed
+  try {
+    parsed = new URL(value)
+  } catch {
+    return false
+  }
+  const valid = (
+    parsed.protocol === 'file:' &&
+    parsed.hostname === '' &&
+    parsed.username === '' &&
+    parsed.password === '' &&
+    parsed.search === '' &&
+    parsed.hash === '' &&
+    parsed.pathname.startsWith('/') &&
+    !/%2f|%5c/i.test(parsed.pathname) &&
+    parsed.href === value
+  )
+  if (!valid) return false
+  try {
+    fileURLToPath(parsed)
+  } catch {
+    return false
+  }
+  return true
+}
+
 function validateRequest(request) {
   if (
     request === null ||
@@ -54,8 +95,10 @@ function validateRequest(request) {
     request.provider !== 'dart-sass' ||
     !syntaxes.includes(request.syntax) ||
     typeof request.source !== 'string' ||
+    !validSourceUrl(request.sourceUrl) ||
     request.options === null ||
     typeof request.options !== 'object' ||
+    !hasExactKeys(request.options, ['style', 'sourceMap', 'loadPaths', 'providerOptions']) ||
     !['expanded', 'compressed'].includes(request.options.style) ||
     typeof request.options.sourceMap !== 'boolean' ||
     !Array.isArray(request.options.loadPaths) ||
@@ -65,12 +108,6 @@ function validateRequest(request) {
     typeof request.options.providerOptions.verbose !== 'boolean'
   ) {
     throw failure('SASS_REQUEST_INVALID', 'Dart Sass received an invalid host request')
-  }
-  if (request.options.loadPaths.length !== 0) {
-    throw failure(
-      'SASS_IMPORTS_UNAVAILABLE',
-      'Dart Sass filesystem imports are not enabled in this adapter stage',
-    )
   }
 }
 
@@ -127,23 +164,37 @@ function ownDiagnostics(raw, request) {
   }
 }
 
-function providerMap(sourceMap, entryUrl, requestSourceUrl) {
+function providerSourceUrl(source, entryUrl, requestSourceUrl, authority) {
+  if (source === entryUrl.href) return requestSourceUrl ?? source
+  return authority?.actualUrlForProviderUrl(source) ?? null
+}
+
+function diagnosticSourceUrl(span, entryUrl, requestSourceUrl, authority) {
+  const value = span?.url
+  if (value === undefined || value === null) return requestSourceUrl
+  const source = String(value)
+  if (source === entryUrl.href) return requestSourceUrl
+  return authority?.actualUrlForProviderUrl(source) ?? requestSourceUrl
+}
+
+function providerMap(sourceMap, entryUrl, requestSourceUrl, authority) {
   let parsed
   try {
     parsed = parseSourceMap(JSON.stringify(sourceMap))
   } catch {
     throw failure('SASS_SOURCE_MAP_INVALID', 'Dart Sass returned an invalid source map')
   }
-  if (parsed.sources.some(source => source !== entryUrl.href)) {
+  const sources = parsed.sources.map(source => (
+    providerSourceUrl(source, entryUrl, requestSourceUrl, authority)
+  ))
+  if (sources.some(source => source === null)) {
     throw failure('SASS_IMPORT_BOUNDARY', 'Dart Sass crossed the filesystem import boundary')
   }
 
   const output = { version: 3 }
   if (Object.hasOwn(parsed, 'file')) output.file = parsed.file
   if (Object.hasOwn(parsed, 'sourceRoot')) output.sourceRoot = parsed.sourceRoot
-  output.sources = parsed.sources.map(source => (
-    source === entryUrl.href && requestSourceUrl !== null ? requestSourceUrl : source
-  ))
+  output.sources = sources
   if (Object.hasOwn(parsed, 'sourcesContent')) {
     output.sourcesContent = [...parsed.sourcesContent]
   }
@@ -159,7 +210,7 @@ function providerMap(sourceMap, entryUrl, requestSourceUrl) {
   return serialized
 }
 
-function validateResult(result, entryUrl) {
+function validateResult(result, entryUrl, authority) {
   if (
     result === null ||
     typeof result !== 'object' ||
@@ -168,7 +219,9 @@ function validateResult(result, entryUrl) {
   ) {
     throw failure('SASS_RESULT_INVALID', 'Dart Sass returned an invalid result')
   }
-  if (result.loadedUrls.some(url => String(url) !== entryUrl.href)) {
+  if (result.loadedUrls.some(url => (
+    String(url) !== entryUrl.href && (authority?.actualUrlForProviderUrl(url) ?? null) === null
+  ))) {
     throw failure('SASS_IMPORT_BOUNDARY', 'Dart Sass crossed the filesystem import boundary')
   }
 }
@@ -180,8 +233,27 @@ async function compileDartSass(request, { signal } = {}) {
   }
   if (signal?.aborted === true) throw cancellation()
 
-  const entryUrl = new URL(entryUrlStrings[request.syntax])
+  const entryUrl = entryUrlForRequest(request)
   const importState = { rejected: false }
+  let authority = null
+  if (request.options.loadPaths.length !== 0) {
+    try {
+      const resolver = createConfinedResolver({
+        roots: request.options.loadPaths,
+        limits: { maxDepth: SASS_MAX_IMPORT_DEPTH },
+      })
+      authority = createSassImportAuthority({
+        resolver,
+        session: resolver.createSession(),
+        loadPaths: request.options.loadPaths,
+        sourceUrl: request.sourceUrl,
+        entryUrl,
+        signal,
+      })
+    } catch {
+      throw failure('SASS_IMPORT_ROOT_INVALID', 'Dart Sass received an invalid confined load path')
+    }
+  }
   const rawDiagnostics = []
   let diagnosticOverflow = false
   const logger = {
@@ -195,7 +267,7 @@ async function compileDartSass(request, { signal } = {}) {
         warningCode(options),
         message,
         options?.span,
-        request.sourceUrl,
+        diagnosticSourceUrl(options?.span, entryUrl, request.sourceUrl, authority),
       ))
     },
     debug() {},
@@ -209,65 +281,85 @@ async function compileDartSass(request, { signal } = {}) {
     style: request.options.style,
     sourceMap: request.options.sourceMap,
     url: entryUrl,
-    importers: [createRejectingImporter(importState)],
+    importer: authority?.importer ?? createRejectingImporter(importState),
     logger,
     verbose: request.options.providerOptions.verbose,
   }
+  if (authority !== null) options.importers = authority.loadPathImporters
   if (request.options.sourceMap) options.sourceMapIncludeSources = true
 
-  let result
   try {
-    result = await sass.compileStringAsync(request.source, options)
-  } catch (error) {
-    if (signal?.aborted === true) throw cancellation()
-    if (
-      importState.rejected &&
-      typeof error?.sassMessage === 'string' &&
-      error.sassMessage.startsWith(IMPORT_SENTINEL)
-    ) {
-      throw failure(
-        'SASS_IMPORTS_UNAVAILABLE',
-        'Dart Sass filesystem imports are not enabled in this adapter stage',
+    let result
+    try {
+      result = await sass.compileStringAsync(request.source, options)
+    } catch (error) {
+      if (signal?.aborted === true) throw cancellation()
+      if (
+        importState.rejected &&
+        typeof error?.sassMessage === 'string' &&
+        error.sassMessage.startsWith(IMPORT_SENTINEL)
+      ) {
+        throw failure(
+          'SASS_IMPORT_ROOT_REQUIRED',
+          'Dart Sass imports require at least one explicit confined load path',
+        )
+      }
+      const importFailure = authority?.failure()
+      if (importFailure?.code === 'SASS_CANCELLED') throw cancellation()
+      if (importFailure !== null && importFailure !== undefined) {
+        const diagnostics = ownDiagnostics([
+          ...rawDiagnostics,
+          rawDiagnostic(
+            'error',
+            'sass.import',
+            importFailure.message,
+            error?.span,
+            diagnosticSourceUrl(error?.span, entryUrl, request.sourceUrl, authority),
+          ),
+        ], request)
+        throw new ProviderFailure(importFailure.code, importFailure.message, diagnostics)
+      }
+      const message = typeof error?.sassMessage === 'string'
+        ? error.sassMessage
+        : 'Dart Sass compilation failed'
+      const diagnostics = ownDiagnostics([
+        ...rawDiagnostics,
+        rawDiagnostic(
+          'error',
+          'sass.compile',
+          message,
+          error?.span,
+          diagnosticSourceUrl(error?.span, entryUrl, request.sourceUrl, authority),
+        ),
+      ], request)
+      throw new ProviderFailure(
+        'SASS_COMPILE_ERROR',
+        'Dart Sass rejected the input',
+        diagnostics,
       )
     }
-    const message = typeof error?.sassMessage === 'string'
-      ? error.sassMessage
-      : 'Dart Sass compilation failed'
-    const diagnostics = ownDiagnostics([
-      ...rawDiagnostics,
-      rawDiagnostic(
-        'error',
-        'sass.compile',
-        message,
-        error?.span,
-        request.sourceUrl,
-      ),
-    ], request)
-    throw new ProviderFailure(
-      'SASS_COMPILE_ERROR',
-      'Dart Sass rejected the input',
-      diagnostics,
-    )
-  }
 
-  if (signal?.aborted === true) throw cancellation()
-  if (diagnosticOverflow) {
-    throw failure('SASS_DIAGNOSTIC_LIMIT', 'Dart Sass exceeded the diagnostic limit')
-  }
-  validateResult(result, entryUrl)
-  const diagnostics = ownDiagnostics(rawDiagnostics, request)
-  let sourceMap = null
-  if (request.options.sourceMap) {
-    if (result.sourceMap === undefined) {
-      throw failure('SASS_SOURCE_MAP_INVALID', 'Dart Sass did not return a requested source map')
+    if (signal?.aborted === true) throw cancellation()
+    if (diagnosticOverflow) {
+      throw failure('SASS_DIAGNOSTIC_LIMIT', 'Dart Sass exceeded the diagnostic limit')
     }
-    sourceMap = providerMap(result.sourceMap, entryUrl, request.sourceUrl)
-  }
-  return {
-    css: result.css,
-    sourceMap,
-    diagnostics,
-    dependencies: [],
+    validateResult(result, entryUrl, authority)
+    const diagnostics = ownDiagnostics(rawDiagnostics, request)
+    let sourceMap = null
+    if (request.options.sourceMap) {
+      if (result.sourceMap === undefined) {
+        throw failure('SASS_SOURCE_MAP_INVALID', 'Dart Sass did not return a requested source map')
+      }
+      sourceMap = providerMap(result.sourceMap, entryUrl, request.sourceUrl, authority)
+    }
+    return {
+      css: result.css,
+      sourceMap,
+      diagnostics,
+      dependencies: authority?.dependencies() ?? [],
+    }
+  } finally {
+    authority?.close()
   }
 }
 
