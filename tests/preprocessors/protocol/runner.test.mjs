@@ -8,6 +8,7 @@ import {
   runPreprocessorHost,
   sanitizedHostEnvironment,
 } from '../../../preprocessor/runner.mjs'
+import { parseSourceMap } from '../../../preprocessor/source-map.mjs'
 import { makeRequest } from './helpers.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -35,11 +36,31 @@ test('process supervisor uses framed stdin without shell interpretation', async 
   }
 })
 
-test('production host recognizes canonical ids but keeps providers unavailable before adapters land', async () => {
-  const response = await runPreprocessorHost(makeRequest(), { timeoutMs: 1000 })
-  assert.equal(response.ok, false)
-  assert.equal(response.error.code, 'HOST_PROVIDER_UNAVAILABLE')
-  assert.equal('result' in response, false)
+test('production host reaches the internal Dart Sass adapter without admitting other providers', async () => {
+  const response = await runPreprocessorHost(makeRequest({
+    options: { style: 'compressed', sourceMap: true, loadPaths: [] },
+  }), { timeoutMs: 5000 })
+  assert.equal(response.result.css, '.card{color:red}')
+  assert.equal(parseSourceMap(response.result.sourceMap).sources[0], 'file:///workspace/input.scss')
+  assert.deepEqual(response.result.diagnostics, [])
+  assert.deepEqual(response.result.dependencies, [])
+
+  const rejected = await runPreprocessorHost(makeRequest({
+    source: '$color: ;\n.card { color: $color; }',
+  }), { timeoutMs: 5000 })
+  assert.equal(rejected.ok, false)
+  assert.equal(rejected.error.code, 'SASS_COMPILE_ERROR')
+  assert.equal(rejected.error.diagnostics[0].message, 'Expected expression.')
+  assert.equal('result' in rejected, false)
+
+  const unavailable = await runPreprocessorHost(makeRequest({
+    provider: 'less',
+    syntax: 'less',
+    source: '@color: red; .card { color: @color; }',
+  }), { timeoutMs: 5000 })
+  assert.equal(unavailable.ok, false)
+  assert.equal(unavailable.error.code, 'HOST_PROVIDER_UNAVAILABLE')
+  assert.equal('result' in unavailable, false)
 })
 
 test('process supervisor kills timeout and stdout overflow and rejects stderr, malformed, extra, and nonzero exits', async () => {

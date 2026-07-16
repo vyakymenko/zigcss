@@ -1,3 +1,5 @@
+import { createDartSassProvider } from './providers/dart-sass.mjs'
+
 export const CANONICAL_PROVIDERS = Object.freeze({
   'dart-sass': Object.freeze({
     package: 'sass',
@@ -27,13 +29,15 @@ export const PROVIDER_SYNTAXES = Object.freeze({
 
 export function createProductionRegistry() {
   return new Map(
-    Object.keys(CANONICAL_PROVIDERS).map(providerId => [
-      providerId,
-      Object.freeze({
+    Object.keys(CANONICAL_PROVIDERS).map(providerId => {
+      const implementation = providerId === 'dart-sass'
+        ? createDartSassProvider()
+        : { syntaxes: PROVIDER_SYNTAXES[providerId], compile: null }
+      return [providerId, Object.freeze({
         metadata: CANONICAL_PROVIDERS[providerId],
-        syntaxes: PROVIDER_SYNTAXES[providerId],
-        compile: null,
-      }),
-    ]),
+        syntaxes: implementation.syntaxes,
+        compile: implementation.compile,
+      })]
+    }),
   )
 }

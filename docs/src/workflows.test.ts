@@ -134,7 +134,11 @@ describe('native artifact workflows', () => {
       'npm run test:preprocessor-metadata',
       preprocessorResolver,
     )
-    const formats = buildWorkflow.indexOf('npm run test:formats', preprocessorMetadata)
+    const preprocessorSass = buildWorkflow.indexOf(
+      'npm run test:preprocessor-sass',
+      preprocessorMetadata,
+    )
+    const formats = buildWorkflow.indexOf('npm run test:formats', preprocessorSass)
     const packageConsumer = buildWorkflow.indexOf('working-directory: tests/package-consumer', formats)
     const consumerTests = buildWorkflow.indexOf('zig build test --summary all', packageConsumer)
     const compatibility = buildWorkflow.indexOf('npm run test:compat', consumerTests)
@@ -144,7 +148,8 @@ describe('native artifact workflows', () => {
     expect(preprocessorHost).toBeGreaterThan(wrapper)
     expect(preprocessorResolver).toBeGreaterThan(preprocessorHost)
     expect(preprocessorMetadata).toBeGreaterThan(preprocessorResolver)
-    expect(formats).toBeGreaterThan(preprocessorMetadata)
+    expect(preprocessorSass).toBeGreaterThan(preprocessorMetadata)
+    expect(formats).toBeGreaterThan(preprocessorSass)
     expect(packageConsumer).toBeGreaterThan(formats)
     expect(consumerTests).toBeGreaterThan(packageConsumer)
     expect(compatibility).toBeGreaterThan(consumerTests)

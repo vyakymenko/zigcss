@@ -44,6 +44,7 @@ test('host core has no network, shell, eval, or ambient module-loading authority
     'preprocessor/resolver.mjs',
     'preprocessor/metadata.mjs',
     'preprocessor/source-map.mjs',
+    'preprocessor/providers/dart-sass.mjs',
     'preprocessor/provider-registry.mjs',
     'preprocessor/host-core.mjs',
     'preprocessor/host.mjs',
