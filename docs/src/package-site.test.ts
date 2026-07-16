@@ -35,7 +35,6 @@ describe('consumer package website', () => {
   test('states the CSS-only input boundary on package surfaces', () => {
     for (const relativePath of [
       'README.md',
-      'docs/src/app/components/Home.tsx',
       'docs/src/app/components/GettingStarted.tsx',
     ]) {
       const content = read(relativePath)
@@ -44,5 +43,11 @@ describe('consumer package website', () => {
       expect(content).toMatch(/Less/i)
       expect(content).not.toMatch(/\b(?:supports?|accepts?)\s+(?:full\s+)?(?:SCSS|Sass|Less)\b/i)
     }
+
+    expect(read('docs/src/app/components/Home.tsx')).toMatch(/<FormatShowcase\s*\/>/)
+    const showcase = read('docs/src/app/components/FormatShowcase.tsx')
+    for (const format of ['SCSS', 'Sass', 'Less', 'Stylus']) expect(showcase).toMatch(new RegExp(format, 'i'))
+    expect(showcase).toMatch(/No CSS emitted/i)
+    expect(showcase).not.toMatch(/\b(?:supports?|accepts?)\s+(?:full\s+)?(?:SCSS|Sass|Less|Stylus)\b/i)
   })
 })

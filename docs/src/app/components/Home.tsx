@@ -2,39 +2,11 @@ import { Link } from "react-router";
 import {
   ArrowRight,
   Braces,
-  CheckCircle2,
-  CircleOff,
   Layers3,
   ShieldCheck,
   Terminal,
 } from "lucide-react";
-
-const languageRows = [
-  {
-    language: "CSS",
-    status: "Experimental",
-    detail: "Matrix-tested CLI input with an explicit compatibility boundary.",
-    available: true,
-  },
-  {
-    language: "CSS Modules",
-    status: "Library subset",
-    detail: "Opt-in Zig API surface; not available through the CLI or LSP.",
-    available: true,
-  },
-  {
-    language: "SCSS / Sass",
-    status: "Not supported",
-    detail: "No preprocessor adapter. These extensions fail before output.",
-    available: false,
-  },
-  {
-    language: "Less",
-    status: "Not supported",
-    detail: "No preprocessor adapter. These extensions fail before output.",
-    available: false,
-  },
-] as const;
+import { FormatShowcase } from "./FormatShowcase";
 
 export function Home() {
   return (
@@ -48,10 +20,10 @@ export function Home() {
             </div>
 
             <h1 className="display-type max-w-3xl text-5xl leading-[0.95] tracking-[-0.055em] sm:text-6xl md:text-7xl">
-              Compile CSS with Zig.
+              Compile CSS. Keep the meaning.
             </h1>
             <p className="mt-7 max-w-2xl text-lg leading-8 text-[#cbd4cc] md:text-xl">
-              A native compiler and Zig library built around deterministic output, semantic preservation, and boundaries you can inspect.
+              Native Zig. Deterministic output. Release gates that fail closed. ZigCSS turns stylesheet compilation into a contract you can inspect.
             </p>
             <p className="mt-4 max-w-2xl text-sm leading-6 text-[#97a59b]">
               This is a release candidate with matrix-tested CSS coverage. Evaluate before production; it does not claim complete browser or language compatibility.
@@ -131,36 +103,7 @@ export function Home() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-5 py-20 sm:px-8 md:py-28 lg:px-10">
-        <div className="grid gap-12 lg:grid-cols-[0.72fr_1.28fr]">
-          <div>
-            <p className="font-mono text-xs uppercase tracking-[0.2em] text-[#476f14]">Language boundary</p>
-            <h2 className="display-type mt-4 text-4xl tracking-[-0.04em] sm:text-5xl">CSS in. CSS out.</h2>
-            <p className="mt-6 max-w-lg text-lg leading-8 text-[#586159]">
-              ZigCSS is not a universal stylesheet front end. The stable CLI accepts CSS only, and even that support remains explicitly experimental.
-            </p>
-            <Link to="/docs/guide/format-compatibility" className="mt-7 inline-flex items-center gap-2 font-semibold text-[#36570d] hover:underline">
-              Read the format policy <ArrowRight className="size-4" />
-            </Link>
-          </div>
-
-          <div className="border border-[#bdb8aa] bg-[#f9f6ed]">
-            {languageRows.map((row, index) => (
-              <div
-                key={row.language}
-                className={`grid gap-3 p-5 sm:grid-cols-[0.55fr_0.55fr_1.4fr] sm:items-center sm:p-6 ${index !== 0 ? "border-t border-[#d6d1c5]" : ""}`}
-              >
-                <p className="font-semibold">{row.language}</p>
-                <p className={`inline-flex items-center gap-2 text-sm font-semibold ${row.available ? "text-[#476f14]" : "text-[#7b493f]"}`}>
-                  {row.available ? <CheckCircle2 className="size-4" /> : <CircleOff className="size-4" />}
-                  {row.status}
-                </p>
-                <p className="text-sm leading-6 text-[#626a62]">{row.detail}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      <FormatShowcase />
 
       <section className="bg-[#b7f34a] text-[#101914]">
         <div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-14 sm:px-8 md:flex-row md:items-center md:justify-between lg:px-10">

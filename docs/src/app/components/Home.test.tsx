@@ -10,9 +10,10 @@ function renderHome() {
 describe('Home', () => {
   it('introduces the package and identifies the release candidate honestly', () => {
     renderHome()
-    expect(screen.getByRole('heading', { name: /compile css with zig/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /compile css\. keep the meaning/i })).toBeInTheDocument()
     expect(screen.getByText(/0\.4\.0-rc\.3.*experimental/i)).toBeInTheDocument()
     expect(screen.getByText(/evaluate before production/i)).toBeInTheDocument()
+    expect(screen.getByText(/native zig\. deterministic output/i)).toBeInTheDocument()
   })
 
   it('leads with installation and links to package documentation', () => {
@@ -24,10 +25,10 @@ describe('Home', () => {
 
   it('states the language boundary without implying preprocessor support', () => {
     renderHome()
-    expect(screen.getByRole('heading', { name: /css in\. css out\./i })).toBeInTheDocument()
-    expect(screen.getByText('SCSS / Sass')).toBeInTheDocument()
-    expect(screen.getByText('Less')).toBeInTheDocument()
-    expect(screen.getAllByText('Not supported')).toHaveLength(2)
+    expect(screen.getByRole('heading', { name: /five syntaxes\. one honest boundary/i })).toBeInTheDocument()
+    for (const format of ['CSS', 'SCSS', 'Sass', 'Less', 'Stylus']) {
+      expect(screen.getByRole('tab', { name: format })).toBeInTheDocument()
+    }
     expect(screen.getByText(/semantics before speed/i)).toBeInTheDocument()
   })
 })
