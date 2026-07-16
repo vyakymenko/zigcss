@@ -13,5 +13,6 @@ Architecture Decision Records capture choices that constrain more than one work 
 | [ADR-007](ADR-007-source-map-policy-for-generated-nodes.md) | Accepted | Source-map policy for generated nodes |
 | [ADR-010](ADR-010-autonomous-model-requirement.md) | Accepted | Autonomous model and single-agent gate |
 | [ADR-011](ADR-011-native-plugin-contract.md) | Accepted | Experimental native plugin ordering, ownership, and failure behavior |
+| [ADR-012](ADR-012-canonical-preprocessor-host.md) | Accepted | Version-pinned canonical preprocessors behind one bounded host |
 
 The remaining ADR backlog is listed in `DEVELOPMENT_PLAN.md` and will be resolved when its owning milestone becomes dependency-eligible.

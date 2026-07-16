@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "implementationDefinitions": {
     "LegacyCharacterized": "Heuristic adapter source remains only behind the test-only legacy boundary.",
     "LimitedNative": "A closed ZigCSS-native subset uses the rebuilt parser and public result ownership boundary.",
@@ -14,8 +14,29 @@
     "NativeSubset": "Only the exact published ZigCSS-native grammar and result contract are supported; this is not full ecosystem compatibility."
   },
   "strategyDefinitions": {
+    "canonical-integration": "Integrate an exact canonical provider version through the bounded zigcss-preprocessor-v1 host and graduate only after its complete admission gate passes.",
     "limited-native-subset": "Implement only a closed named grammar with strict errors outside it.",
     "remove-until-funded": "Expose no adapter or ecosystem claim unless a later funded program accepts a new decision."
+  },
+  "canonicalProviders": {
+    "dart-sass": {
+      "package": "sass",
+      "version": "1.101.0",
+      "license": "MIT",
+      "adapters": ["scss", "sass"]
+    },
+    "less": {
+      "package": "less",
+      "version": "4.6.7",
+      "license": "Apache-2.0",
+      "adapters": ["less"]
+    },
+    "stylus": {
+      "package": "stylus",
+      "version": "0.64.0",
+      "license": "MIT",
+      "adapters": ["stylus"]
+    }
   },
   "adapters": [
     {
@@ -27,8 +48,9 @@
       "availability": "Unavailable",
       "compatibility": "Unverified",
       "implementation": "Removed",
-      "strategy": "remove-until-funded",
-      "ownerPackages": ["SCSS-001", "SCSS-002"],
+      "strategy": "canonical-integration",
+      "providerId": "dart-sass",
+      "ownerPackages": ["SCSS-001", "SCSS-002", "SASS-010", "SASS-011", "SASS-012"],
       "removedBy": "SCSS-001",
       "removedSourceFiles": ["src/formats/scss.zig"],
       "sourceFiles": [],
@@ -53,8 +75,9 @@
       "availability": "Unavailable",
       "compatibility": "Unverified",
       "implementation": "Removed",
-      "strategy": "remove-until-funded",
-      "ownerPackages": ["SCSS-001", "SCSS-002"],
+      "strategy": "canonical-integration",
+      "providerId": "dart-sass",
+      "ownerPackages": ["SCSS-001", "SCSS-002", "SASS-010", "SASS-011", "SASS-012"],
       "removedBy": "SCSS-001",
       "removedSourceFiles": ["src/formats/sass.zig"],
       "sourceFiles": [],
@@ -79,8 +102,9 @@
       "availability": "Unavailable",
       "compatibility": "Unverified",
       "implementation": "Removed",
-      "strategy": "remove-until-funded",
-      "ownerPackages": ["LESS-001"],
+      "strategy": "canonical-integration",
+      "providerId": "less",
+      "ownerPackages": ["LESS-001", "LESS-010", "LESS-011", "LESS-012"],
       "removedBy": "LESS-001",
       "removedSourceFiles": ["src/formats/less.zig"],
       "sourceFiles": [],
@@ -105,8 +129,9 @@
       "availability": "Unavailable",
       "compatibility": "Unverified",
       "implementation": "Removed",
-      "strategy": "remove-until-funded",
-      "ownerPackages": ["STYLUS-001"],
+      "strategy": "canonical-integration",
+      "providerId": "stylus",
+      "ownerPackages": ["STYLUS-001", "STYLUS-010", "STYLUS-011", "STYLUS-012"],
       "removedBy": "STYLUS-001",
       "removedSourceFiles": ["src/formats/stylus.zig"],
       "sourceFiles": [],

@@ -9,7 +9,30 @@ const scriptPath = fileURLToPath(import.meta.url)
 const scriptDirectory = path.dirname(scriptPath)
 const repositoryRoot = path.resolve(scriptDirectory, '../..')
 const matrixPath = path.join(scriptDirectory, 'matrix.json')
-const strategyPath = path.join(repositoryRoot, 'docs/adr/ADR-005-preprocessor-strategy.md')
+const strategyPaths = [
+  path.join(repositoryRoot, 'docs/adr/ADR-005-preprocessor-strategy.md'),
+  path.join(repositoryRoot, 'docs/adr/ADR-012-canonical-preprocessor-host.md'),
+]
+const expectedCanonicalProviders = {
+  'dart-sass': {
+    package: 'sass',
+    version: '1.101.0',
+    license: 'MIT',
+    adapters: ['scss', 'sass'],
+  },
+  less: {
+    package: 'less',
+    version: '4.6.7',
+    license: 'Apache-2.0',
+    adapters: ['less'],
+  },
+  stylus: {
+    package: 'stylus',
+    version: '0.64.0',
+    license: 'MIT',
+    adapters: ['stylus'],
+  },
+}
 const expectedAdapterIds = [
   'scss',
   'sass',
@@ -119,9 +142,41 @@ function syntaxTagsFromSource(source) {
     .filter(line => line.length > 0 && !line.startsWith('//'))
 }
 
+function validateCanonicalProviders(matrix) {
+  const providers = matrix.canonicalProviders
+  if (providers === null || typeof providers !== 'object' || Array.isArray(providers)) {
+    fail('canonicalProviders must be an object')
+  }
+  expectExactSet(
+    Object.keys(providers),
+    Object.keys(expectedCanonicalProviders),
+    'canonical provider inventory',
+  )
+  const claimedAdapters = []
+  for (const [providerId, expected] of Object.entries(expectedCanonicalProviders)) {
+    const provider = providers[providerId]
+    if (provider === null || typeof provider !== 'object' || Array.isArray(provider)) {
+      fail(`${providerId}: canonical provider must be an object`)
+    }
+    expectExactSet(Object.keys(provider), Object.keys(expected), `${providerId}: provider fields`)
+    for (const field of ['package', 'version', 'license']) {
+      if (provider[field] !== expected[field]) {
+        fail(`${providerId}: expected ${field} ${expected[field]}, found ${provider[field]}`)
+      }
+    }
+    if (!/^\d+\.\d+\.\d+$/.test(provider.version)) {
+      fail(`${providerId}: version must be an exact semantic version`)
+    }
+    if (!Array.isArray(provider.adapters)) fail(`${providerId}: adapters must be an array`)
+    expectExactSet(provider.adapters, expected.adapters, `${providerId}: adapter ownership`)
+    claimedAdapters.push(...provider.adapters)
+  }
+  expectExactSet(claimedAdapters, ['scss', 'sass', 'less', 'stylus'], 'canonical adapter ownership')
+}
+
 function validateMatrix() {
   const matrix = JSON.parse(fs.readFileSync(matrixPath, 'utf8'))
-  if (matrix.schemaVersion !== 1) fail(`unsupported matrix schema: ${matrix.schemaVersion}`)
+  if (matrix.schemaVersion !== 2) fail(`unsupported matrix schema: ${matrix.schemaVersion}`)
   const availability = new Set(Object.keys(matrix.availabilityDefinitions ?? {}))
   const compatibility = new Set(Object.keys(matrix.compatibilityDefinitions ?? {}))
   const implementations = new Set(Object.keys(matrix.implementationDefinitions ?? {}))
@@ -137,12 +192,13 @@ function validateMatrix() {
   if (!Array.isArray(matrix.adapters) || matrix.adapters.length === 0) {
     fail('matrix adapters must be nonempty')
   }
+  validateCanonicalProviders(matrix)
 
   const ids = new Set()
   const publicSyntaxes = new Set()
   const coveredSources = new Set()
   const coveredLegacySources = new Set()
-  const strategyDocument = fs.readFileSync(strategyPath, 'utf8')
+  const strategyDocument = strategyPaths.map(strategyPath => fs.readFileSync(strategyPath, 'utf8')).join('\n')
   for (const adapter of matrix.adapters) {
     if (ids.has(adapter.id)) fail(`duplicate adapter id: ${adapter.id}`)
     ids.add(adapter.id)
@@ -163,6 +219,24 @@ function validateMatrix() {
       fail(`${adapter.id}: unknown implementation ${adapter.implementation}`)
     }
     if (!strategies.has(adapter.strategy)) fail(`${adapter.id}: unknown strategy ${adapter.strategy}`)
+    if (adapter.strategy === 'canonical-integration') {
+      if (typeof adapter.providerId !== 'string') {
+        fail(`${adapter.id}: canonical integration requires providerId`)
+      }
+      const provider = matrix.canonicalProviders[adapter.providerId]
+      if (provider === undefined || !provider.adapters.includes(adapter.id)) {
+        fail(`${adapter.id}: providerId does not own the adapter`)
+      }
+      if (
+        adapter.availability !== 'Unavailable' ||
+        adapter.compatibility !== 'Unverified' ||
+        adapter.implementation !== 'Removed'
+      ) {
+        fail(`${adapter.id}: schema v2 canonical integration must remain unavailable before admission`)
+      }
+    } else if (adapter.providerId !== undefined) {
+      fail(`${adapter.id}: non-canonical strategy cannot name providerId`)
+    }
     if (!Array.isArray(adapter.extensions) || adapter.extensions.length === 0) {
       fail(`${adapter.id}: extensions must be nonempty`)
     }
@@ -280,7 +354,7 @@ function validateMatrix() {
     }
     const strategyRow = `| \`${adapter.id}\` | \`${adapter.strategy}\` |`
     if (!strategyDocument.includes(strategyRow)) {
-      fail(`${adapter.id}: ADR-005 does not record strategy ${adapter.strategy}`)
+      fail(`${adapter.id}: accepted strategy ADRs do not record strategy ${adapter.strategy}`)
     }
   }
   expectExactSet(ids, expectedAdapterIds, 'adapter inventory')

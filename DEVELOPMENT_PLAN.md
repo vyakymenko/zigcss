@@ -1,14 +1,16 @@
 # ZigCSS Development Plan
 
-Status: Proposed for approval  
-Plan version: 1.0  
+Status: Approved and in execution
+Plan version: 1.1
 Prepared: 2026-07-11  
+Amended: 2026-07-16 (owner-approved canonical preprocessor expansion)
 Primary target: a trustworthy, standards-oriented CSS compiler, minifier, Zig library, and CLI  
-First target release: `0.4.0-alpha.1`
+Core target release: `0.4.0`
+Preprocessor expansion target: `0.5.0`
 
 ## 1. Purpose
 
-This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and future autonomous work.
+This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.1 preserves the completed `0.4.x` CSS recovery program and adds the owner-approved `0.5.x` canonical preprocessor program defined by ADR-012.
 
 The current repository is an ambitious prototype. It has useful scaffolding for parsing, optimization, preprocessors, a CLI, an LSP, documentation, packaging, and benchmarks, but the core parser and optimizer are not yet safe enough for production CSS. Development must therefore prioritize correctness and security before new features or performance work.
 
@@ -17,7 +19,7 @@ The current repository is an ambitious prototype. It has useful scaffolding for 
 The following decisions are defaults for the autonomous program. Changing one requires an Architecture Decision Record (ADR) and project-owner approval.
 
 1. The stable product scope for `0.4.x` is standards-oriented CSS compilation, formatting, minification, a Zig library, and a CLI.
-2. SCSS, SASS, LESS, Stylus, CSS-in-JS, PostCSS-like transforms, CSS Modules, and Tailwind-like `@apply` behavior remain experimental until each has its own compatibility contract and test suite.
+2. SCSS, indented Sass, Less, and Stylus are funded `0.5.x` canonical-integration targets under ADR-012. They remain unavailable until their individual conformance, isolation, packaging, and documentation gates pass. CSS-in-JS, PostCSS-like transforms, CSS Modules, and Tailwind-like `@apply` behavior retain their separately documented experimental or unavailable boundaries.
 3. Correctness takes priority over speed. A transformation is disabled unless semantic equivalence is demonstrated.
 4. Parsing, transformation, and emission are separate stages. Code generation must not mutate or optimize the AST.
 5. Unsupported syntax and unavailable functionality fail explicitly. The compiler must not silently delete, reinterpret, or ignore input.
@@ -115,8 +117,6 @@ Autonomous work pauses rather than guessing when:
 
 ### 4.2 Experimental scope
 
-- SCSS/SASS subset processing.
-- LESS and Stylus subset processing.
 - CSS Modules transformations.
 - CSS-in-JS extraction.
 - PostCSS-inspired directives.
@@ -142,6 +142,27 @@ Experimental functionality must:
 - Unproven global CSS custom-property evaluation.
 - Automatic logical-to-physical property conversion.
 
+### 4.4 Planned `0.5.x` canonical preprocessor scope
+
+- Full canonical SCSS and indented Sass language behavior for the exact admitted Dart Sass version.
+- Full canonical Less language behavior for the exact admitted Less version.
+- Full canonical Stylus language behavior for the exact admitted Stylus version.
+- One bounded, versioned `zigcss-preprocessor-v1` host shared by all providers.
+- Confined local imports/modules, ordered dependency facts, normalized diagnostics, and two-stage Source Map v3 composition.
+- Generated CSS validation and continued compilation through the stable ZigCSS CSS parser, transform pipeline, and emitter.
+- CLI, batch, watch, stdin/stdout, npm installation, offline-after-install, and claimed-platform behavior covered by integration tests.
+- Exact provider versions, licenses, lockfile integrity, corpus evidence, and compatibility status published from machine-readable metadata.
+
+Full canonical language behavior is not the same claim as universal ecosystem-plugin compatibility. Arbitrary JavaScript plugins, custom functions, custom importers, and executable project configuration require a separate opt-in `trusted-project-code mode`; they remain unavailable to untrusted/public compilation. The direct Zig library and standalone native binary remain CSS-only unless an explicitly configured compatible host is present.
+
+### 4.5 Explicit non-goals for `0.5.0`
+
+- Reimplementing Dart Sass, Less, or Stylus semantics natively in Zig.
+- Automatically supporting unpinned future provider releases.
+- Claiming parity with every third-party plugin, custom callback, package resolver, or executable configuration.
+- Enabling project-code execution in the public compile service.
+- Silently falling back to CSS or returning partial CSS after a provider, protocol, import, limit, or validation failure.
+
 ## 5. Target architecture
 
 The implementation should converge on this pipeline:
@@ -155,6 +176,19 @@ SourceFile
   -> Emitter + source map builder
   -> CompileResult
 ```
+
+For admitted `0.5.x` preprocessor input, a bounded canonical stage precedes that CSS pipeline:
+
+```text
+Preprocessor source
+  -> zigcss-preprocessor-v1 framed request
+  -> exact canonical provider in bounded Node host
+  -> complete CSS + provider map + diagnostics + dependencies
+  -> recovery-disabled ZigCSS CSS pipeline
+  -> composed source map + normalized CompileResult
+```
+
+Protocol, provider, confinement, or generated-CSS failure produces a structured failure and no partial CSS. The host does not become part of the native CSS parser or transform architecture.
 
 Recommended module boundaries:
 
@@ -436,17 +470,21 @@ pub const CompileResult = struct {
 - Profiling completes without leaks and measures the actual stages.
 - Single and parallel compilation produce deterministic identical results.
 
-## Milestone 5: Experimental format strategy
+## Milestone 5: Experimental format containment and CSS Modules
 
 Estimated effort: separate per-format estimates; not on the core `0.4.0` critical path
 
+Historical state: complete for the `0.4.x` boundary. This milestone removed unsafe heuristic preprocessors and admitted only the documented CSS Modules native subset. ADR-012 supersedes ADR-005's future strategy for SCSS, Sass, Less, and Stylus; their new implementation work is Milestone 9 and does not restore any removed code.
+
 ### Required ADR
 
-Before further preprocessor work, create `ADR-005-preprocessor-strategy.md` and choose one approach per language:
+Before the original containment work, create `ADR-005-preprocessor-strategy.md` and choose one approach per language:
 
 1. A clearly named, limited native subset with strict unsupported-syntax errors.
 2. Integration with the canonical external implementation.
 3. Removal until a dedicated implementation program is funded.
+
+That program was funded on 2026-07-16. `ADR-012-canonical-preprocessor-host.md` is the accepted superseding decision for the four preprocessor languages; CSS-in-JS, PostCSS-like behavior, and Tailwind-like behavior retain ADR-005's current strategy.
 
 ### Work packages
 
@@ -556,6 +594,73 @@ Target: after correctness release gates are green
 - Public claims are generated from archived results rather than manually copied.
 - Performance regression gates use statistically meaningful thresholds.
 
+## Milestone 9: Canonical SCSS, Sass, Less, and Stylus integration
+
+Estimated effort: 25-45 engineer days
+Target: staged `0.5.0` alpha, beta, release-candidate, and final releases
+Decision authority: ADR-012
+
+Milestone 9 depends on the verified CSS parser/emitter, public result ownership, CLI orchestration, and release-integrity boundaries from Milestones 2, 4, and 7. It may proceed in parallel with Milestone 8's external scheduled-hardware evidence; missing benchmark hardware does not block preprocessor correctness work.
+
+### Common host packages
+
+| ID | Work package | Depends on |
+|---|---|---|
+| `PRE-001` | Accept ADR-012; pin provider/version/license authority; publish machine-readable pre-admission state and package graph | Milestones 2, 4, and 7 |
+| `PRE-002` | Implement the bounded framed `zigcss-preprocessor-v1` Node host, protocol parser, provider registry, cancellation, limits, fail-closed lifecycle, and hermetic harness | `PRE-001` |
+| `PRE-003` | Implement a confined local import/dependency resolver with explicit roots, canonical path policy, symlink-escape rejection, cycle/depth/count/byte limits, and deterministic dependency order | `PRE-002` |
+| `PRE-004` | Normalize provider diagnostics and dependencies; compose provider and ZigCSS Source Map v3 mappings; test Unicode, generated nodes, missing maps, and failure ownership | `PRE-002`, `PRE-003`, `MAP-001`, `DIAG-001` |
+
+### Canonical adapter packages
+
+| ID | Work package | Depends on |
+|---|---|---|
+| `SASS-010` | Add exact Dart Sass `sass` `1.101.0` adapters for SCSS and indented Sass through the modern compile API | `PRE-002` |
+| `SASS-011` | Integrate Sass load paths, `@use`/`@forward`/imports, documented non-executable options, dependency/watch facts, diagnostics, and maps | `SASS-010`, `PRE-003`, `PRE-004` |
+| `SASS-012` | Pass a pinned, license-reviewed Sass-spec/integration corpus, strict negative/limit fixtures, and direct canonical differential checks | `SASS-011` |
+| `LESS-010` | Add exact Less `less` `4.6.7` canonical rendering through the host | `PRE-002` |
+| `LESS-011` | Integrate Less imports, load paths, documented non-executable options, dependency/watch facts, diagnostics, and maps | `LESS-010`, `PRE-003`, `PRE-004` |
+| `LESS-012` | Pass a pinned, license-reviewed official/integration corpus, strict negative/limit fixtures, and direct canonical differential checks | `LESS-011` |
+| `STYLUS-010` | Add exact Stylus `stylus` `0.64.0` canonical rendering through the host | `PRE-002` |
+| `STYLUS-011` | Integrate Stylus imports/includes, documented non-executable options, dependency/watch facts, diagnostics, and maps | `STYLUS-010`, `PRE-003`, `PRE-004` |
+| `STYLUS-012` | Pass a pinned, license-reviewed official/integration corpus, strict negative/limit fixtures, and direct canonical differential checks | `STYLUS-011` |
+
+### Product and release packages
+
+| ID | Work package | Depends on |
+|---|---|---|
+| `PRE-005` | Integrate admitted syntaxes with CLI selection/detection, stdin/stdout, files, atomic batch output, watch invalidation, bounded parallel execution, exit codes, and the npm-facing API | `SASS-012`, `LESS-012`, `STYLUS-012`, `CLI-011`, `WATCH-001`, `PARALLEL-001` |
+| `PRE-006` | Package exact production dependencies and lock integrity; enforce supported Node/platform policy, install/offline smoke, license/SBOM/provenance, advisory, archive, and clean-consumer gates | `PRE-005`, `REL-002`, `REL-005` |
+| `PRE-007` | Add separately opt-in `trusted-project-code mode` for reviewed provider extension points with process isolation, visible non-hermetic results, and a permanent public-service prohibition | `PRE-006`; not required for canonical language graduation |
+| `PRE-008` | Graduate each passing matrix row independently; update CLI help, README, website input/output lab, guides, claims, examples, and versioned compatibility evidence without overstating plugin parity | `PRE-006` and the corresponding `*-012` package |
+| `PRE-009` | Run the complete `0.5.0` release gate, create immutable artifact evidence, and prepare publication; publishing still requires explicit release authorization | `PRE-008` |
+
+### `zigcss-preprocessor-v1` safety contract
+
+- Requests and responses use bounded length-prefixed frames with a protocol/version discriminator; no shell, eval, ambient executable lookup, or free-form command construction is allowed.
+- Each request owns one terminal success or failure. Timeout, cancellation, provider crash, malformed output, extra output, import-policy rejection, and limit exhaustion return no partial CSS.
+- The host must not perform network access or package installation. Provider resolution is exact and repository/package confined.
+- Input bytes, output bytes, diagnostics, dependency count/bytes, import depth, wall time, worker count, and queued work have explicit tested limits.
+- Local loads are rooted in explicit allowed directories and reject traversal, symlink escape, special files, unstable duplicate identities, and non-local URLs unless a later ADR adds a closed scheme.
+- Provider CSS is parsed by ZigCSS with recovery disabled before transforms or writes. Watch and batch commits retain existing deterministic and atomic boundaries.
+- Default mode executes no project JavaScript. Any later executable provider extension is restricted to `trusted-project-code mode` and never shares the untrusted public compile-service boundary.
+
+### Full-language graduation criteria
+
+Each adapter remains publicly unavailable until all criteria below pass for its exact provider version:
+
+- canonical parsing/evaluation, variables, nesting, mixins/functions, control structures, interpolation, imports/modules where defined, and error semantics match the provider;
+- every documented integrated option has exact positive and negative tests, while unsupported host options fail explicitly;
+- import resolution is confined and deterministic, dependency/watch facts are complete, and cycles, missing files, unreadable files, traversal, links, limits, and cancellation are covered;
+- diagnostics preserve severity, message, source identity, and useful spans; composed source maps resolve representative Unicode and transformed positions through both stages;
+- no failure path emits partial CSS, falls back to CSS, leaks a process/file/result, commits output, or leaves a worker/watch task alive;
+- official/versioned corpus evidence and independent wrapper differentials pass on all claimed operating systems and supported Node versions;
+- clean npm installation works without a compiler toolchain, compilation works offline after install, production dependency audits and license policy pass, and release assets reproduce the admitted provider graph;
+- generated CSS passes the stable ZigCSS parser/emitter and repeated, serial, batch, watch, and parallel runs are deterministic; and
+- machine metadata, CLI help, README, package website, examples, changelog, SBOM, and release notes name the exact provider/version scope and keep ecosystem-plugin parity separate.
+
+One adapter may graduate without the others. The umbrella “full SCSS, Sass, Less, and Stylus support” claim requires all four matrix rows to meet these gates on the same release commit.
+
 ## 7. Dependency graph
 
 ```mermaid
@@ -570,6 +675,9 @@ flowchart TD
     M4 --> M7
     M6 --> M7
     M7 --> M8["M8 Benchmarks"]
+    M2 --> M9["M9 Canonical Preprocessors"]
+    M4 --> M9
+    M7 --> M9
 ```
 
 Parallel work is allowed only where the graph permits it. In particular:
@@ -579,6 +687,7 @@ Parallel work is allowed only where the graph permits it. In particular:
 - LSP feature work waits for source spans and recoverable parsing.
 - Optimizer work waits for a correct AST and emitter.
 - Benchmark claims wait for correctness and release integrity.
+- Canonical preprocessor work waits for the CSS parser, owned API/CLI results, and release integrity, but may run in parallel with controlled benchmark collection.
 
 ## 8. Test and validation architecture
 
@@ -600,6 +709,13 @@ tests/build-integration/
 tests/lsp/
 tests/security/
 tests/fuzz-seeds/
+tests/preprocessors/protocol/
+tests/preprocessors/imports/
+tests/preprocessors/source-maps/
+tests/preprocessors/scss/
+tests/preprocessors/sass/
+tests/preprocessors/less/
+tests/preprocessors/stylus/
 ```
 
 ### Pull request gates
@@ -612,6 +728,7 @@ tests/fuzz-seeds/
 - npm package dry run and local install smoke.
 - JavaScript/TypeScript lint and type checking.
 - Production dependency audit.
+- Bounded preprocessor-host protocol, import confinement, provider smoke, generated-CSS validation, diagnostic, dependency, and source-map tests once Milestone 9 starts.
 - No dirty generated artifacts.
 
 ### Nightly gates
@@ -621,6 +738,7 @@ tests/fuzz-seeds/
 - Run deep nesting and resource-limit tests.
 - Cross-compile all supported targets and inspect architectures.
 - Run differential corpus validation.
+- Run pinned canonical preprocessor corpora and wrapper differentials under serial, parallel, limit, cancellation, and watch scenarios.
 - Build and security-test containers.
 
 ### Release gates
@@ -631,6 +749,7 @@ tests/fuzz-seeds/
 - Reproducibility comparison where supported.
 - Checksums, SBOM, signatures/provenance.
 - npm, Docker, and Homebrew installation smoke tests.
+- Exact preprocessor provider graph, license/SBOM/provenance, clean install, offline-after-install, and every claimed syntax/platform smoke when a `0.5.x` release claims those formats.
 - Documentation capability matrix generated from the release commit.
 - No unresolved P0 or P1 correctness/security issue.
 
@@ -690,7 +809,9 @@ Work-Package: TOK-002
 |---|---|---|
 | Continuing to patch the current byte parser | Repeated corruption and architectural debt | Replace it through Milestones 1-2 rather than extending it |
 | Optimizer scope explosion | Long delays and unsafe releases | Enable one proven pass at a time |
-| Preprocessor parity claims | Multi-quarter scope hidden as minor features | Keep adapters experimental and require an ADR per language |
+| Preprocessor parity claims | Multi-quarter scope hidden as minor features | Use exact canonical provider versions, bounded-host admission gates, upstream corpora, independent differentials, and separately scoped plugin claims under ADR-012 |
+| Canonical Node host expands the supply chain | Runtime compromise, install drift, or unsupported native/package behavior | Exact versions and lock integrity, license/SBOM/provenance review, no lifecycle authority, clean/offline install smoke, production audits, and release-bound provider metadata |
+| Project extension execution crosses trust boundaries | Arbitrary code execution or non-reproducible builds | Default-deny all executable extensions; isolate explicit trusted-project-code mode and permanently prohibit it for public untrusted compilation |
 | Source-map accuracy after transforms | Incorrect debugging information | Preserve spans and define generated-node mapping policies before transforms |
 | Public untrusted compilation | Remote denial of service or information exposure | Disable initially; later use strict limits, isolation, and security tests |
 | Compatibility data becoming stale | Incorrect prefixing | Generate versioned tables and record their source/version |
@@ -701,7 +822,7 @@ Work-Package: TOK-002
 
 ## 12. ADR backlog
 
-The following decisions should be captured under `docs/adr/` during implementation:
+The following decisions are captured or queued under `docs/adr/` during implementation:
 
 - `ADR-001-core-product-scope.md`
 - `ADR-002-tokenizer-and-syntax-tree.md`
@@ -713,6 +834,8 @@ The following decisions should be captured under `docs/adr/` during implementati
 - `ADR-008-lsp-workspace-index.md`
 - `ADR-009-release-signing-and-provenance.md`
 - `ADR-010-autonomous-model-requirement.md`
+- `ADR-011-native-plugin-contract.md`
+- `ADR-012-canonical-preprocessor-host.md`
 
 ## 13. Release roadmap
 
@@ -754,6 +877,30 @@ The following decisions should be captured under `docs/adr/` during implementati
 - Experimental adapters clearly separated.
 - No unresolved P0/P1 correctness or security issue.
 
+### `0.5.0-alpha.1`
+
+- Bounded `zigcss-preprocessor-v1` host and confined dependency resolver.
+- Exact canonical provider registry and initial SCSS, Sass, Less, and Stylus adapters behind unavailable/experimental admission gates.
+- No broad format-support claim.
+
+### `0.5.0-beta.1`
+
+- Provider imports/modules, diagnostics, dependencies, source-map composition, limits, batch/watch/parallel orchestration, and generated-CSS validation.
+- Pinned corpus and independent differential evidence for every candidate language.
+- Individual adapters may be documented as beta only when their own matrix row passes.
+
+### `0.5.0-rc.1`
+
+- Exact production dependency graph, license/SBOM/provenance, clean install, offline-after-install, platform archive, and npm consumer gates.
+- README, website input/output lab, guides, CLI help, examples, and release notes generated from admitted machine metadata.
+- Executable provider extensions remain separately labeled and default-off.
+
+### `0.5.0`
+
+- All four canonical language rows pass the full-language graduation criteria for the exact published provider versions.
+- No fallback, partial-output, import-confinement, diagnostic, source-map, packaging, determinism, correctness, or P0/P1 security gap remains in the claimed preprocessor surface.
+- Publication occurs only through the separately authorized, fail-closed release workflow.
+
 ### `1.0.0`
 
 - Stable public API and compatibility policy.
@@ -779,6 +926,8 @@ The autonomous recovery program is complete when:
 - Benchmarks validate output before timing and are reproducible.
 - The repository passes formatting, Debug, ReleaseSafe, differential, fuzz, leak, docs, packaging, and release gates.
 - No P0 or P1 issue remains open for the stable scope.
+- The completed `0.4.x` CSS recovery remains valid independently, but Milestone 9 and the expanded autonomous program are complete only when SCSS, Sass, Less, and Stylus each pass the canonical graduation gate for the exact published provider version.
+- The bounded host, import confinement, diagnostics, dependencies, two-stage source maps, canonical corpora, generated-CSS validation, deterministic CLI/batch/watch/parallel behavior, clean/offline package installation, audits, SBOM/provenance, and public compatibility metadata all pass on one `0.5.0` release commit.
 
 ## 15. First autonomous sequence
 
@@ -796,3 +945,21 @@ After plan approval and model verification, the autonomous run starts with this 
 10. Begin `ARCH-001` and `TOK-001`.
 
 No feature work outside this sequence is eligible until Milestone 0 is verified.
+
+## 16. First canonical-preprocessor autonomous sequence
+
+Milestones 0-7 are already verified. After the 2026-07-16 owner approval and ADR-012 acceptance, autonomous Milestone 9 work follows this exact dependency-ordered sequence while the external `BENCH-007` schedule may remain pending:
+
+1. Complete `PRE-001`: record exact providers, versions, licenses, trust boundary, graduation gates, dependency graph, machine matrix, roadmap, and durable status without changing compiler behavior.
+2. Complete `PRE-002`: first add red protocol/lifecycle/limit/process tests, then implement the smallest dependency-free bounded host and fake-provider harness. Do not install or expose canonical providers yet.
+3. Complete `PRE-003`: add red traversal, symlink, cycle, duplicate, missing, unreadable, scheme, depth/count/byte, and deterministic-order tests before implementing filesystem resolution.
+4. Complete `PRE-004`: add diagnostic/dependency normalization and two-stage source-map fixtures before connecting public result ownership.
+5. Implement and conformance-gate Dart Sass in `SASS-010` through `SASS-012`, covering both SCSS and indented Sass from one provider authority.
+6. Implement and conformance-gate Less in `LESS-010` through `LESS-012`.
+7. Implement and conformance-gate Stylus in `STYLUS-010` through `STYLUS-012`.
+8. Complete `PRE-005` and `PRE-006`: expose only passing adapters through the npm CLI/API, batch, watch, and parallel paths; close packaging, offline, platform, dependency, license, SBOM, provenance, and consumer gates.
+9. Complete `PRE-008`: graduate rows and public docs one at a time from tested machine metadata. Keep failed or unfinished adapters unavailable and keep plugin parity claims separate.
+10. Run `PRE-009` against one immutable `0.5.0` candidate. Prepare, but do not publish, release artifacts without explicit publication authorization.
+11. Implement optional `PRE-007` trusted-project-code extensions only after the canonical language surface is green; its absence does not weaken or delay the exact canonical language claim.
+
+Every package uses the common work loop: reproduce or measure, add/strengthen tests, implement the smallest correct change, run proportionate and milestone gates, inspect security/ownership/determinism, update `DEVELOPMENT_STATUS.md`, commit a coherent green checkpoint, and perform only externally authorized push/integration actions. Public website input/output panels must continue showing unavailable states until the corresponding matrix row actually graduates.

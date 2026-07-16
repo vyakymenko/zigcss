@@ -22,6 +22,7 @@ describe('foundational architecture decisions', () => {
     'ADR-007-source-map-policy-for-generated-nodes.md',
     'ADR-010-autonomous-model-requirement.md',
     'ADR-011-native-plugin-contract.md',
+    'ADR-012-canonical-preprocessor-host.md',
   ]
 
   test.each(decisions)('%s is accepted and records consequences', name => {
@@ -137,6 +138,21 @@ describe('foundational architecture decisions', () => {
     ]) {
       expect(adr).toContain(`| \`${id}\` |`)
     }
+  })
+
+  test('funds version-pinned canonical preprocessors behind one bounded host', () => {
+    const adr = read('ADR-012-canonical-preprocessor-host.md')
+
+    expect(adr).toContain('`zigcss-preprocessor-v1`')
+    expect(adr).toContain('`sass` `1.101.0`')
+    expect(adr).toContain('`less` `4.6.7`')
+    expect(adr).toContain('`stylus` `0.64.0`')
+    expect(adr).toContain('MIT')
+    expect(adr).toContain('Apache-2.0')
+    expect(adr).toContain('full language compatibility')
+    expect(adr).toContain('trusted-project-code mode')
+    expect(adr).toContain('must not perform network access')
+    expect(adr).toContain('remain unavailable until')
   })
 
   test('defines deterministic explicit targets and pinned generated compatibility data', () => {
