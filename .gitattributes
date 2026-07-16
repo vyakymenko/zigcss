@@ -1,0 +1,2 @@
+# Official Sass-spec fixtures intentionally exercise trailing and blank-line whitespace.
+tests/preprocessors/sass/corpus/cases/** -whitespace

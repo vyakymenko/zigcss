@@ -1,0 +1,6 @@
+Error: $index: 0.5 is not an int.
+  ,
+2 | a {b: string.insert("", "", 0.5)}
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  '
+  input.scss 2:7  root stylesheet

@@ -1,0 +1,6 @@
+$a: b;
+@keyframes #{$a} {
+  to {
+    c: d;
+  }
+}

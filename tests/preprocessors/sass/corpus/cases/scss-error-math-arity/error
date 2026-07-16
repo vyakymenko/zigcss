@@ -1,0 +1,10 @@
+Error: Missing argument $number2.
+  ,--> input.scss
+2 | a {b: math.div(6)}
+  |       ^^^^^^^^^^^ invocation
+  '
+  ,--> sass:math
+1 | @function div($number1, $number2) {
+  |           ======================= declaration
+  '
+  input.scss 2:7  root stylesheet

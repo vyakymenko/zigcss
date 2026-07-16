@@ -1,0 +1,6 @@
+Error: Style rules may not be used within keyframe blocks.
+  ,
+2 |   to {to {c: d}}
+  |       ^^^^^^^^^
+  '
+  input.scss 2:7  root stylesheet

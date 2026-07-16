@@ -1,0 +1,6 @@
+Error: Expected digit.
+  ,
+1 | a {a: .}
+  |        ^
+  '
+  input.scss 1:8  root stylesheet

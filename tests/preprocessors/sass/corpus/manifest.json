@@ -1,0 +1,2177 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/sass/sass-spec",
+    "revision": "1b03109a6205c8cff146defeae8488094b147c88",
+    "tree": "2e2c5127e220ccc6fc1cbeef7b74f79fbadcb32c",
+    "archiveSha256": "a7918374582d19cb4e403411a888c91499a7286f021b6f91278219f471b76790",
+    "packageVersion": "3.5.4",
+    "packageSha256": "5253c05b5c2e838bea12d1ab72f354e19b56b270a3c01daacfe0a800df85fe21",
+    "license": "MIT",
+    "licenseSha256": "d51e586775405c2734ca4c0b39cd70c5184a9011f880339a15f84690f479a106",
+    "dartSassVersion": "1.101.0",
+    "dartSassTagCommit": "63b9922f5ddbf34bc742b50949e0ee5c47f4686d"
+  },
+  "licenseFile": {
+    "path": "SASS_SPEC_LICENSE",
+    "sha256": "d51e586775405c2734ca4c0b39cd70c5184a9011f880339a15f84690f479a106"
+  },
+  "caseCount": 80,
+  "cases": [
+    {
+      "id": "scss-variable-scope",
+      "feature": "variables",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/variables/semi_global.hrx",
+        "case": "in_local/double_nested",
+        "sourceSha256": "000ae7aeb539868871187629c0ad6c7653e9f134b980d8b249d4268de4cb9172"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 127,
+          "sha256": "8c9d3fa9916aac17b9f14b76add2e8ea8dcb0f61f72deca92dd7e6c31e8ff265"
+        },
+        {
+          "path": "output.css",
+          "bytes": 19,
+          "sha256": "387792c5f422d8ed337f6d1b86f37aa6d530741982035cb433361ceeae5e3bcc"
+        }
+      ]
+    },
+    {
+      "id": "scss-operator-precedence",
+      "feature": "operators",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/parser/operator_precedence.hrx",
+        "case": "mixed",
+        "sourceSha256": "6b30b56e0b1ca7a96408d18eba818d377ea68f62961899b6110fcd439cdf90af"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 79,
+          "sha256": "5715fc27d4d56aade316e4a3c4a7a7103acac277115bbcd3076ee214112e4e1b"
+        },
+        {
+          "path": "output.css",
+          "bytes": 17,
+          "sha256": "c699dbdd0ce0ec12d0d16e47e0e7adbb73fc1400fe9098c037d6508818dff02e"
+        }
+      ]
+    },
+    {
+      "id": "scss-plus-comments",
+      "feature": "operators",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/operators/plus.hrx",
+        "case": "syntax/comment/both",
+        "sourceSha256": "560eb057cc319bfbe9dc727fed17714be9a1eb40fda8b2ebc0828df897438391"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 19,
+          "sha256": "0b9aaf5754df98c21e0ef83c1e1f9702d45218897f553d11f4dad63b5e82bee8"
+        },
+        {
+          "path": "output.css",
+          "bytes": 15,
+          "sha256": "198d00cea08c471124ff8bb7a26a3b4810da5063351bcc998b0bc997247fbdca"
+        }
+      ]
+    },
+    {
+      "id": "scss-minus-whitespace",
+      "feature": "operators",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/operators/minus.hrx",
+        "case": "syntax/whitespace/both",
+        "sourceSha256": "5a4d03a7857663323f4aca37290ba152d4f6ca57b25fee1b9597f73a45046f22"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 13,
+          "sha256": "381138ada716a51577d1f754e66aaab092bb628933d6e3e50334a4e94631ab66"
+        },
+        {
+          "path": "output.css",
+          "bytes": 16,
+          "sha256": "e87f7391b0308f221b620c582734874f99c7d5f9aace79f71b099837cffda719"
+        }
+      ]
+    },
+    {
+      "id": "scss-if-escaped",
+      "feature": "control-flow",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/if/escaped.hrx",
+        "case": "with_else",
+        "sourceSha256": "7461b4cd14e3a3cb98baf677ba6c410d0af3c42bd3c27c9c53ba578d940d5526"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 59,
+          "sha256": "945430f93e5e94fa24e0ca9a9d088bb5b04b606933fe91395da35b9ffaed18b9"
+        },
+        {
+          "path": "output.css",
+          "bytes": 15,
+          "sha256": "fdc5cd37ef172c5140f62169a5f1a41dd25f2cfdf8a24b7bb06c4fd6b46d4e2a"
+        }
+      ]
+    },
+    {
+      "id": "scss-for-inclusive",
+      "feature": "control-flow",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/for/for.hrx",
+        "case": "inclusive_forward/scss",
+        "sourceSha256": "4934241c100e1f712f132e99ce77b00623d7cf0b64aa3547365a081f9555cc29"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 42,
+          "sha256": "c0647e2ef590ac3ef5f6b22aad265710417d6faba04d5bb9ce79e0f28015b1c2"
+        },
+        {
+          "path": "output.css",
+          "bytes": 46,
+          "sha256": "0971d1d08b474d9ba301c4f02e0fb8dd75674d0d3159056b3df5fa003a7f3a83"
+        }
+      ]
+    },
+    {
+      "id": "scss-for-compatible-units",
+      "feature": "control-flow",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/for/for.hrx",
+        "case": "unit/compatible",
+        "sourceSha256": "4934241c100e1f712f132e99ce77b00623d7cf0b64aa3547365a081f9555cc29"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 46,
+          "sha256": "a1a863f24a7d829c6fe098f99de443bf3296844370198653b69d282c5a9f3437"
+        },
+        {
+          "path": "output.css",
+          "bytes": 67,
+          "sha256": "738e6c80f1e20ea9c1e2fd744cc91ec80abfdc73f83a5e48c052336e5cade30f"
+        }
+      ]
+    },
+    {
+      "id": "scss-function-double-underscore",
+      "feature": "functions",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/function/name.hrx",
+        "case": "double_underscore",
+        "sourceSha256": "3c584eed2272a91dea8f9a768b715fbb0f95e509f7956edd01baaf1305d867aa"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 41,
+          "sha256": "7fdeb0fc71fedc04de8bef7f52d9b8db7cdcb2b5b6cbe8376b3de78180c9ccde"
+        },
+        {
+          "path": "output.css",
+          "bytes": 14,
+          "sha256": "32542ede7ace933bd2be3daa6cac38ca5537a013a6b1882e767ff3bedb6eca5b"
+        }
+      ]
+    },
+    {
+      "id": "scss-function-escaped",
+      "feature": "functions",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/function/escaped.hrx",
+        "case": ".",
+        "sourceSha256": "d7b44df5857c1dd551b13d85edd1688d8a9f66b81cf52227e9ba75a448a1d7b9"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 143,
+          "sha256": "14cccee5042c70ddc2fcf37b3c9ec18790229781c91abf4779b112279b131474"
+        },
+        {
+          "path": "output.css",
+          "bytes": 14,
+          "sha256": "5a74656c9d085ef97320564c02b76b74dd98126d625cb65710588557f96eef62"
+        }
+      ]
+    },
+    {
+      "id": "scss-mixin-content",
+      "feature": "mixins",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/mixin/whitespace.hrx",
+        "case": "include/before_block/scss",
+        "sourceSha256": "be1ae9070d6d09b8bd4dcce89b1e759b7177c7d8291e96114fde52ab62fb08d3"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 38,
+          "sha256": "f948b3dfb93f57c0f7a5eb8631fe0aa391d0edd79a69165b45bb879d7f077124"
+        },
+        {
+          "path": "output.css",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "id": "scss-extend-pseudo",
+      "feature": "extend",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/extend/pseudo.hrx",
+        "case": "into_pseudo/extends_after",
+        "sourceSha256": "66447fc8ce5896e46e9d5beb7d32e5a6f9709b4a781dffb5543427072e14b827"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 253,
+          "sha256": "c53c003196f05d0f7e9c4f8f3b0d3ea54a16e036cde68a0b4a0111c6445d3dd7"
+        },
+        {
+          "path": "output.css",
+          "bytes": 65,
+          "sha256": "50e2cec5632db5a7b6a528a92164bba461eb56369aa0ab3c4ed7eefa36197d2d"
+        }
+      ]
+    },
+    {
+      "id": "scss-at-root-keyframes",
+      "feature": "at-root",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/at_root/keyframes.hrx",
+        "case": "all",
+        "sourceSha256": "e509b3a0e5bba7d8bbdc0a084b731448519f3396fe4812899934c5531ad191bc"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 62,
+          "sha256": "3c4b1b58f2603d20af29574d1bb6ec96bd5ba3cc1af4ae787f944850a045e186"
+        },
+        {
+          "path": "output.css",
+          "bytes": 30,
+          "sha256": "1ea00c1ba20a442a98ab12a2806c0b49762b321b7a9fbb24acbc5f8859c56a3d"
+        }
+      ]
+    },
+    {
+      "id": "scss-map-values",
+      "feature": "maps",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/maps/map-values.hrx",
+        "case": ".",
+        "sourceSha256": "7e8d06124f2c63a4534f89575f1a885dec29c697212720a4bb1230c7ad37249d"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 107,
+          "sha256": "5a23558f497dfd3746fe7fef3503d3eaa8458892c66cb2624ef3cef8ea644140"
+        },
+        {
+          "path": "output.css",
+          "bytes": 37,
+          "sha256": "2fe90e24808620608bcb13aff857f72f9ad306d34a982f5b9f737609077e4bf4"
+        }
+      ]
+    },
+    {
+      "id": "scss-map-get-nested",
+      "feature": "modules",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/core_functions/map/get.hrx",
+        "case": "nested/found/full_path",
+        "sourceSha256": "155f9b5f6d8a10b8511e10497ffb4b0de39958b5e07c05af4e85f544635dced5"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 59,
+          "sha256": "d7e7fa35a2f266b05670c7730961dedc50f413a9fa1d1c6bde1958b7cfc35850"
+        },
+        {
+          "path": "output.css",
+          "bytes": 14,
+          "sha256": "0b2e8028a0381ebbbdd64d77622f4702c24bce73628872d66e9560e2a77a769b"
+        }
+      ]
+    },
+    {
+      "id": "scss-map-get-missing",
+      "feature": "modules",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/core_functions/map/get.hrx",
+        "case": "nested/not_found/deep",
+        "sourceSha256": "155f9b5f6d8a10b8511e10497ffb4b0de39958b5e07c05af4e85f544635dced5"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 91,
+          "sha256": "8c5cf21e310327682725db49224bf8333cd98d2b2019c913597ef5720d4a3a50"
+        },
+        {
+          "path": "output.css",
+          "bytes": 17,
+          "sha256": "c24a922b5810c727f5aa028623a77611ce65406943a34c4210480ed4df238351"
+        }
+      ]
+    },
+    {
+      "id": "scss-math-div-incompatible",
+      "feature": "math",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/core_functions/math/div.hrx",
+        "case": "unit/incompatible",
+        "sourceSha256": "00742e3e6cec7834731e81a37b298ae205fd5866449855b6796a28df6a3fabb7"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 48,
+          "sha256": "a409f67afbc0f3bba9b506c6df66c33f51be0ad13b73db1fc43ee531a11f51ff"
+        },
+        {
+          "path": "output.css",
+          "bytes": 16,
+          "sha256": "f42d21bd5d1dca06b0d6de5b50065bda7a704932fbc262b8a25e46166fa8c4ac"
+        }
+      ]
+    },
+    {
+      "id": "scss-string-insert-combining",
+      "feature": "strings",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/core_functions/string/insert.hrx",
+        "case": "combining_character",
+        "sourceSha256": "7d8d3600091fcfeb64c66d63d6325d8663baef0cef578d6d6ffdfc159215604f"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 321,
+          "sha256": "e4b7a659e0b59d884d2c922fa13611902a063d5ae02b388d9b32579a22a857f7"
+        },
+        {
+          "path": "output.css",
+          "bytes": 37,
+          "sha256": "21879ee23ce6e48b372342d1a7de175f7400cbddb7306a3e64dbaf04677da486"
+        }
+      ]
+    },
+    {
+      "id": "scss-string-insert-double-width",
+      "feature": "strings",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/core_functions/string/insert.hrx",
+        "case": "double_width_character",
+        "sourceSha256": "7d8d3600091fcfeb64c66d63d6325d8663baef0cef578d6d6ffdfc159215604f"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 264,
+          "sha256": "fd9ee796945f4170cfc7b5613e2189a7a6cc7ee51c4db48f8b28bec6789bb630"
+        },
+        {
+          "path": "output.css",
+          "bytes": 38,
+          "sha256": "726122a076b675680835a34d32d3447b6ca03a4d44fed8482c51ed88f5c65179"
+        }
+      ]
+    },
+    {
+      "id": "scss-calc-nested",
+      "feature": "calculations",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/calculation/calc/simplify.hrx",
+        "case": "nested",
+        "sourceSha256": "083871295e49db7944197b7c32f00c49f70b52c57959bfe928098c0a83c75ca6"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 28,
+          "sha256": "fdadeada41384af45c526e56de0d363359d43442d770d2fced020855109fa011"
+        },
+        {
+          "path": "output.css",
+          "bytes": 27,
+          "sha256": "656c09de8428d1f99051eeb8b8c1938a4bb6123b6b05112abe3efc1bbc12da34"
+        }
+      ]
+    },
+    {
+      "id": "scss-calc-multiply",
+      "feature": "calculations",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/calculation/calc/simplify.hrx",
+        "case": "times/right",
+        "sourceSha256": "083871295e49db7944197b7c32f00c49f70b52c57959bfe928098c0a83c75ca6"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 26,
+          "sha256": "92b3419e49f6ae5cd38e3a8ae7812604f61d35835d8a825eb61d14187b71a4c4"
+        },
+        {
+          "path": "output.css",
+          "bytes": 27,
+          "sha256": "cb1183bdefb476416299f5c4248cbd2706295b7f3ff4ab3647ca554ceaab5833"
+        }
+      ]
+    },
+    {
+      "id": "scss-color-legacy-cross-space",
+      "feature": "colors",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/colors/equality.hrx",
+        "case": "true/legacy/different_space/no_none",
+        "sourceSha256": "dbfabcf17712aee374ea8c6dd834d32058c78d78272775aa981d298278c9b75a"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 50,
+          "sha256": "5f9058628abae65f3626c34873023d0f77332495d561415b9f3c05dde631d460"
+        },
+        {
+          "path": "output.css",
+          "bytes": 17,
+          "sha256": "c699dbdd0ce0ec12d0d16e47e0e7adbb73fc1400fe9098c037d6508818dff02e"
+        }
+      ]
+    },
+    {
+      "id": "scss-color-alpha",
+      "feature": "colors",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/colors/equality.hrx",
+        "case": "true/alpha",
+        "sourceSha256": "dbfabcf17712aee374ea8c6dd834d32058c78d78272775aa981d298278c9b75a"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 86,
+          "sha256": "b7b5b62598e11ce548f8197efe573a3db221550393a278995b4641375b35316d"
+        },
+        {
+          "path": "output.css",
+          "bytes": 17,
+          "sha256": "c699dbdd0ce0ec12d0d16e47e0e7adbb73fc1400fe9098c037d6508818dff02e"
+        }
+      ]
+    },
+    {
+      "id": "scss-list-nested-bracketed",
+      "feature": "lists",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/lists/brackets.hrx",
+        "case": "nested/multiple",
+        "sourceSha256": "1445a8592309d4e93e55bb7b111a65bd6dcc90a76220262db5321dc9c6e8b7da"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 17,
+          "sha256": "0b4cfb3a38db56fb48a9c61c50dc3d3fda9d3277f1c7e3122721f6d1078537c3"
+        },
+        {
+          "path": "output.css",
+          "bytes": 22,
+          "sha256": "f69aa255694efaaf4a9c78e14d1b4077266dfedf51cfa5421a2ed538bbe740a1"
+        }
+      ]
+    },
+    {
+      "id": "scss-number-boundary",
+      "feature": "numbers",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/numbers/precision.hrx",
+        "case": "very_small/positive/at_boundary",
+        "sourceSha256": "af0479315b8a5ea66d15e3a242d5bf5334bd0882d1e2269105728d253f575980"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 43,
+          "sha256": "13fc280d523c269cb197d7f9e840bb34a2ccfb111240bebe6fa954a3e89922e2"
+        },
+        {
+          "path": "output.css",
+          "bytes": 14,
+          "sha256": "d8978901f63a0c66bd38d2dbb4ab7ddf4c3111b1c89db237f824b1f63b92d9e9"
+        }
+      ]
+    },
+    {
+      "id": "scss-unit-cancellation",
+      "feature": "numbers",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/numbers/units/multiple.hrx",
+        "case": "division/cancels/both",
+        "sourceSha256": "a68a1fa9a18c415fd908e86de0ce0300570974be73c015abe36ab5492af171a4"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 79,
+          "sha256": "a75f4324b99047a136126dc15b9ef38bc0b85af301511ef47de4b26e8970c2f6"
+        },
+        {
+          "path": "output.css",
+          "bytes": 29,
+          "sha256": "c174f45477a09abbdde9320095f122ed1163b0ddac1578b9da702c5b89e2bb64"
+        }
+      ]
+    },
+    {
+      "id": "scss-string-escaped-newline",
+      "feature": "strings",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/strings.hrx",
+        "case": "new-line/scss/escaped",
+        "sourceSha256": "ae9acc5e0c9e1092932b7c7e673f78d58e39fad14f0083670760ee544fbf4089"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 34,
+          "sha256": "e62e8731b82351ca359b5807332ff232e3cfb959f862da18e01890b61e36f921"
+        },
+        {
+          "path": "output.css",
+          "bytes": 32,
+          "sha256": "10a86a84d6c1505e47c18096e71ccf6cfcc7b839e98ddef1897a43db6ecdaf89"
+        }
+      ]
+    },
+    {
+      "id": "scss-custom-property-string",
+      "feature": "custom-properties",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/custom_properties/value_interpolation.hrx",
+        "case": "scss/in-string",
+        "sourceSha256": "55cc2fead356a70fa2dd79ef3a7e5da71229a15e789edb6f3982b70c0c0bb6db"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 26,
+          "sha256": "c740751ace07824578429241a0abe929008979d2c3ce7f0ee66144f8cac74c95"
+        },
+        {
+          "path": "output.css",
+          "bytes": 20,
+          "sha256": "27defdc119c79b28a7fc0b0b9a52a64a4b2c21de5a41c588961f2d559f447456"
+        }
+      ]
+    },
+    {
+      "id": "scss-custom-property-uri",
+      "feature": "custom-properties",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/custom_properties/value_interpolation.hrx",
+        "case": "scss/in-uri",
+        "sourceSha256": "55cc2fead356a70fa2dd79ef3a7e5da71229a15e789edb6f3982b70c0c0bb6db"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 29,
+          "sha256": "57d2589780b7edf8496c2a14ff78b14100d83130f6ca6818cd8eb8864d6d68fa"
+        },
+        {
+          "path": "output.css",
+          "bytes": 23,
+          "sha256": "a6ef2103d9a276403425edef170f5ff5c1b504da40afa04342555c31a06471b4"
+        }
+      ]
+    },
+    {
+      "id": "scss-keyframes-interpolated",
+      "feature": "keyframes",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/keyframes.hrx",
+        "case": "name/interpolated",
+        "sourceSha256": "aef34538de5dc30f751d9ce0d1b000f47bb5b036c10a729b4b9ec35ac494ce68"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 49,
+          "sha256": "49a35ac668fa981b8ba903982900068eda35d4ddaa315a510daad754c0fdf04b"
+        },
+        {
+          "path": "output.css",
+          "bytes": 38,
+          "sha256": "d288d88514752b76839ce13fa8af24382ca9c2b1eb5b5250740d752b1124d1d2"
+        }
+      ]
+    },
+    {
+      "id": "scss-keyframes-scientific",
+      "feature": "keyframes",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/keyframes.hrx",
+        "case": "selector/percentage/scientific/negative_exponent",
+        "sourceSha256": "aef34538de5dc30f751d9ce0d1b000f47bb5b036c10a729b4b9ec35ac494ce68"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 43,
+          "sha256": "9df6b6e0c34a889a486c4bf8af26471cbb83b7f45b30330d561b99430b97675d"
+        },
+        {
+          "path": "output.css",
+          "bytes": 43,
+          "sha256": "098fe0388f3c9cd0887b5f9b811d3363f43ebc517702350fbbb05654c653ac8d"
+        }
+      ]
+    },
+    {
+      "id": "scss-comment-multiple-stars",
+      "feature": "comments",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/comment.hrx",
+        "case": "multiple_stars",
+        "sourceSha256": "050319a7125984c08cc8aa84a5bf56db1c1fd2c565ba1d0a35b580247c482394"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 71,
+          "sha256": "c2f7dac3d055f55737ceba7e8b01a7ba11efeb3061501778f9c8377ce17a1105"
+        },
+        {
+          "path": "output.css",
+          "bytes": 64,
+          "sha256": "0595e26cdd9f96d5a461151e10d9f97839485e26373beaf0d6eb08cb2d3892d7"
+        }
+      ]
+    },
+    {
+      "id": "scss-css-function-interpolation",
+      "feature": "css-functions",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/function.hrx",
+        "case": "lowercase/result/interpolation",
+        "sourceSha256": "2e63ba1804ec89c3d553a60c8b7268315e1c4c0fa10aee9f51565628a17ccaaf"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 40,
+          "sha256": "941134cd74752a4d24450df7268f33e0369a44cfeff0b4173c4dbf857b72402e"
+        },
+        {
+          "path": "output.css",
+          "bytes": 33,
+          "sha256": "02dd1fa138bb5cdd90b3d950fe77b07d7de616214081b9da314f5a4a433cbcfc"
+        }
+      ]
+    },
+    {
+      "id": "scss-parent-complex",
+      "feature": "selectors",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/selector/parent.hrx",
+        "case": "complex/complex_parent",
+        "sourceSha256": "0f3285f31a3562556c877ca9c66b408f5cefa4a4c18695ebc13f64a8c26e0249"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 23,
+          "sha256": "9d78728d3c426bd8f806dacaa95c1a619301eb0a6a4bc96cb53c6d020e0c7922"
+        },
+        {
+          "path": "output.css",
+          "bytes": 20,
+          "sha256": "41d59609426c22d541bd4bc6811f1924608ea5147d7451020809ebaea25afb80"
+        }
+      ]
+    },
+    {
+      "id": "scss-selector-pseudo",
+      "feature": "selectors",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/selector/pseudoselector.hrx",
+        "case": "nested/adjacent_combinators",
+        "sourceSha256": "96163f45406423d79b687776e5a1decbaf9aee43338b733439c40af20a6c3a1f"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 67,
+          "sha256": "26daa7eaf383a5f8cbf8d973261712184350a15a959da80a9e19132bea9ee575"
+        },
+        {
+          "path": "output.css",
+          "bytes": 25,
+          "sha256": "78ee6876730238950ef39d13b2e687ca78deb6aed6690248ed9021a0fd48417b"
+        }
+      ]
+    },
+    {
+      "id": "scss-use-sass-extension",
+      "feature": "modules",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/use/load.hrx",
+        "case": "explicit_extension/sass",
+        "sourceSha256": "058ed06010dc6b6506db48fb61536b1dfbda36d83ff716a6a80befd6ae75dc6d"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 18,
+          "sha256": "da12703b73ee9d9c5232a02b7805e0068c11bc4d8c48406854668c8565e93e96"
+        },
+        {
+          "path": "other.css",
+          "bytes": 16,
+          "sha256": "cbe8d5379111d017508fd530effba89b7cd28210b561c04835430a43e3f5e7cc"
+        },
+        {
+          "path": "other.sass",
+          "bytes": 17,
+          "sha256": "36d6f18a8af2cc7b71b94bca155d3f5811345516ad07716cdfcb6c3039ad0193"
+        },
+        {
+          "path": "other.scss",
+          "bytes": 17,
+          "sha256": "54ce200982a33f2bbd5203ee099562451750d6ec1e53f3dd73d2f1ac644b2a3c"
+        },
+        {
+          "path": "output.css",
+          "bytes": 22,
+          "sha256": "4149d55eeb185d6f23dc03054bd7b8589b0a5d0b6e63ee89114b5aed157ef4a9"
+        }
+      ]
+    },
+    {
+      "id": "scss-use-scss-extension",
+      "feature": "modules",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/use/load.hrx",
+        "case": "explicit_extension/scss",
+        "sourceSha256": "058ed06010dc6b6506db48fb61536b1dfbda36d83ff716a6a80befd6ae75dc6d"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 18,
+          "sha256": "2f0cc0836ee5c3db3728eee4d90a7bbd0e1057fe9b381752623a0523ab2aae92"
+        },
+        {
+          "path": "other.css",
+          "bytes": 16,
+          "sha256": "cbe8d5379111d017508fd530effba89b7cd28210b561c04835430a43e3f5e7cc"
+        },
+        {
+          "path": "other.sass",
+          "bytes": 17,
+          "sha256": "36d6f18a8af2cc7b71b94bca155d3f5811345516ad07716cdfcb6c3039ad0193"
+        },
+        {
+          "path": "other.scss",
+          "bytes": 17,
+          "sha256": "54ce200982a33f2bbd5203ee099562451750d6ec1e53f3dd73d2f1ac644b2a3c"
+        },
+        {
+          "path": "output.css",
+          "bytes": 22,
+          "sha256": "cca6158bef8f3d6bd3a66663ddfd40167bc069082af9d51633c55f0866a71fa2"
+        }
+      ]
+    },
+    {
+      "id": "scss-use-import-only-exclusion",
+      "feature": "modules",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/use/load.hrx",
+        "case": "precedence/ignores_import_only",
+        "sourceSha256": "058ed06010dc6b6506db48fb61536b1dfbda36d83ff716a6a80befd6ae75dc6d"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 14,
+          "sha256": "6f030637e6f7032410b51514c49b8b1cfcf862a0e1f01b34732280845f4c5968"
+        },
+        {
+          "path": "other.import.scss",
+          "bytes": 22,
+          "sha256": "1dbd4ae7a2ecef4c36ad1431d3e361ca68011dde0d910c44296e66f2478a4265"
+        },
+        {
+          "path": "other.scss",
+          "bytes": 23,
+          "sha256": "cf312eb32b3ad125a13960af2a427b9ed6b092375bcc3f9a01f02f1136415bf1"
+        },
+        {
+          "path": "output.css",
+          "bytes": 28,
+          "sha256": "c76ce267b5f64f74b2a63315c9fe88917dbd978cf01f1bda43576c1c92184b27"
+        }
+      ]
+    },
+    {
+      "id": "scss-use-partial-index",
+      "feature": "modules",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/use/load.hrx",
+        "case": "index/partial",
+        "sourceSha256": "058ed06010dc6b6506db48fb61536b1dfbda36d83ff716a6a80befd6ae75dc6d"
+      },
+      "files": [
+        {
+          "path": "dir/_index.scss",
+          "bytes": 17,
+          "sha256": "22c690ec720497056ce610cf47c34f19c14da85b0d427752d9f51c8f06f56203"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 12,
+          "sha256": "64e69617c4e5fe141a7c1160b5b0ce4f9a6cb15bcd70c82bba56b1295941ed80"
+        },
+        {
+          "path": "output.css",
+          "bytes": 17,
+          "sha256": "22c690ec720497056ce610cf47c34f19c14da85b0d427752d9f51c8f06f56203"
+        }
+      ]
+    },
+    {
+      "id": "scss-forward-config",
+      "feature": "modules",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/forward/with/single.hrx",
+        "case": ".",
+        "sourceSha256": "aa16c3426aef9a4cd9efb7ec3772d55f56d1e8b89de95bc818cd9846253ec1d8"
+      },
+      "files": [
+        {
+          "path": "_midstream.scss",
+          "bytes": 43,
+          "sha256": "376f4f9f77f2d672f4f7dca1141a01740917b7dfb450437a09006aeac1cea267"
+        },
+        {
+          "path": "_upstream.scss",
+          "bytes": 33,
+          "sha256": "ca838bef202e7f53ab91ba50308f4b99c4182ffe9d7de68712b2eb98b33c7a6a"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 18,
+          "sha256": "ea84c358fc661ac0ca95f28d39e1b0e320b1ed2afc8272542501f89c848df621"
+        },
+        {
+          "path": "output.css",
+          "bytes": 23,
+          "sha256": "51d96b965cb241ddbb75e244f2690f8eb9f161ac8f8847677047307c84875aed"
+        }
+      ]
+    },
+    {
+      "id": "scss-meta-load-css",
+      "feature": "modules",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/at_root/load_css.hrx",
+        "case": ".",
+        "sourceSha256": "dcda1e7db3ca1e3bac2bb7921d6d50c33513533f963d02edb88125df26e0efc7"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 60,
+          "sha256": "535c44105c807cba81f3e10828b6cd47c4ca35f2f8699d2cf24285174837da3e"
+        },
+        {
+          "path": "other.scss",
+          "bytes": 33,
+          "sha256": "5f97bfca146a2314f96a72e032a1e57a1966a02350e056fda352fca773543f74"
+        },
+        {
+          "path": "output.css",
+          "bytes": 16,
+          "sha256": "dc8f33241944093b4ca43ae488616c9f50977e1e6dc02c4bf2658f4094b40342"
+        }
+      ]
+    },
+    {
+      "id": "scss-import-import-only",
+      "feature": "legacy-imports",
+      "syntax": "scss",
+      "outcome": "success",
+      "entry": "input.scss",
+      "expected": "output.css",
+      "warning": "warning",
+      "upstream": {
+        "source": "spec/directives/import/load.hrx",
+        "case": "precedence/import_only/implicit_extension",
+        "sourceSha256": "3bd9d7b6c3b1a924adf7abb6abfe200608c87555fdbd96ff7893ea44f708eeb5"
+      },
+      "files": [
+        {
+          "path": "input.scss",
+          "bytes": 119,
+          "sha256": "ca6433728d8e91458cd773d55cb88c5b8fde66d8c9b71516fafbfa7e43f6edf2"
+        },
+        {
+          "path": "other.import.sass",
+          "bytes": 22,
+          "sha256": "c5cf95bdace8a9fa129957cbd41b7bb4a82e884d75540341fa5f0c50c633f5a1"
+        },
+        {
+          "path": "other.scss",
+          "bytes": 23,
+          "sha256": "cf312eb32b3ad125a13960af2a427b9ed6b092375bcc3f9a01f02f1136415bf1"
+        },
+        {
+          "path": "output.css",
+          "bytes": 27,
+          "sha256": "6d35707ce22016abcf240af7c92814485a246fab5cd4efe3e994b049e29b2467"
+        },
+        {
+          "path": "warning",
+          "bytes": 256,
+          "sha256": "787f41c2184c67f19137ddaa9254b3d4314192aa669dedfb38d3d39e6b844c7e"
+        }
+      ]
+    },
+    {
+      "id": "sass-interpolation-whitespace",
+      "feature": "interpolation",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/parser/interpolation.hrx",
+        "case": "whitespace/after_open",
+        "sourceSha256": "a516c70dc81be1679468f4e35b47b6f66c580edffb5e8dce40ce4b486c5b9aa4"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 20,
+          "sha256": "72d94030561591485f4135f2634aeb9522b6ee6b302163f3a44ce65667d04e0a"
+        },
+        {
+          "path": "output.css",
+          "bytes": 14,
+          "sha256": "a98108c5f4c11fc7e89a23e34a8c45913a024731a3bb3b2a07bce83466cbc049"
+        }
+      ]
+    },
+    {
+      "id": "sass-interpolation-multiline",
+      "feature": "interpolation",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/parser/interpolation.hrx",
+        "case": "whitespace/between_vals",
+        "sourceSha256": "a516c70dc81be1679468f4e35b47b6f66c580edffb5e8dce40ce4b486c5b9aa4"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 18,
+          "sha256": "16c70dccfb4bd4534dd1e5fdce5383be975e4bffe2c329836fbc7d6721869341"
+        },
+        {
+          "path": "output.css",
+          "bytes": 16,
+          "sha256": "178850a7ccc3ce40f79247c173347c792041977c459ab5053dbc555651585c0c"
+        }
+      ]
+    },
+    {
+      "id": "sass-for-inclusive",
+      "feature": "control-flow",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/for/for.hrx",
+        "case": "inclusive_forward/sass",
+        "sourceSha256": "4934241c100e1f712f132e99ce77b00623d7cf0b64aa3547365a081f9555cc29"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 39,
+          "sha256": "bb87d0fb5133bac87476494310126cc66bd950e706f0bca6fc5c80102360d483"
+        },
+        {
+          "path": "output.css",
+          "bytes": 46,
+          "sha256": "0971d1d08b474d9ba301c4f02e0fb8dd75674d0d3159056b3df5fa003a7f3a83"
+        }
+      ]
+    },
+    {
+      "id": "sass-for-exclusive-backward",
+      "feature": "control-flow",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/for/for.hrx",
+        "case": "exclusive_backward/sass",
+        "sourceSha256": "4934241c100e1f712f132e99ce77b00623d7cf0b64aa3547365a081f9555cc29"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 35,
+          "sha256": "1a74c04ca2253be73ab6ef67d6ef3c1377a7bc78ef99c39461815a3c28e87dbc"
+        },
+        {
+          "path": "output.css",
+          "bytes": 38,
+          "sha256": "d36d97492a4972b7969c5e9fe21e75c9d29f057fc8420094c39ab9856f250532"
+        }
+      ]
+    },
+    {
+      "id": "sass-each-inline",
+      "feature": "control-flow",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/each.hrx",
+        "case": "sass/inline",
+        "sourceSha256": "d88a3fad17747fea423a104d694dba403ed4a4b152c693ef83e332533d9ce03c"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 36,
+          "sha256": "e89caad997d3e386f18d1e4357cbdd2860e0ab93c2b765d2d6f4a2971225eb69"
+        },
+        {
+          "path": "output.css",
+          "bytes": 31,
+          "sha256": "9374c77b7e5f234e7831d6b36f1079cf62bef6379229cf550490007452de457b"
+        }
+      ]
+    },
+    {
+      "id": "sass-each-destructure",
+      "feature": "control-flow",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/each.hrx",
+        "case": "sass/destructured/multiline/after_comma",
+        "sourceSha256": "d88a3fad17747fea423a104d694dba403ed4a4b152c693ef83e332533d9ce03c"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 44,
+          "sha256": "1d7dc20e8b46cde89c2f39eb868867e30c21e98c7cf79d2f592cabb3c79ac9bd"
+        },
+        {
+          "path": "output.css",
+          "bytes": 15,
+          "sha256": "5a33984853c9c9c94861e69f9a696514bc6e0574641b5f925b2347bb7cc21945"
+        }
+      ]
+    },
+    {
+      "id": "sass-function-newline",
+      "feature": "functions",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/expressions/functions.hrx",
+        "case": "newlines/after_comma",
+        "sourceSha256": "69199558928dd664de448821aa7c519497596745a47c4fd3df6ee321053a1d68"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 50,
+          "sha256": "57cbc9026afbe5180b491ae4f67ed40ac837490b101e2cffbe641e5d4ef13e1e"
+        },
+        {
+          "path": "output.css",
+          "bytes": 18,
+          "sha256": "19c61b4975fb5f9a0f2e8cc99db7a05208b1ac4609615f7417665f9e60b38c24"
+        }
+      ]
+    },
+    {
+      "id": "sass-function-paren",
+      "feature": "functions",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/expressions/functions.hrx",
+        "case": "newlines/before_paren",
+        "sourceSha256": "69199558928dd664de448821aa7c519497596745a47c4fd3df6ee321053a1d68"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 51,
+          "sha256": "999e76ecc6a5d6800e09b00830ad1223508f0c37f44a567647e71e514cee3f13"
+        },
+        {
+          "path": "output.css",
+          "bytes": 18,
+          "sha256": "19c61b4975fb5f9a0f2e8cc99db7a05208b1ac4609615f7417665f9e60b38c24"
+        }
+      ]
+    },
+    {
+      "id": "sass-mixin-include",
+      "feature": "mixins",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/mixin/whitespace.hrx",
+        "case": "include/before_name/sass",
+        "sourceSha256": "be1ae9070d6d09b8bd4dcce89b1e759b7177c7d8291e96114fde52ab62fb08d3"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 22,
+          "sha256": "d750dc57362f2032bea44a6003c023ad56145df65210f29475532596566a997a"
+        },
+        {
+          "path": "output.css",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "id": "sass-list-bracket-whitespace",
+      "feature": "lists",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/lists/brackets.hrx",
+        "case": "whitespace/multiple/before_rbracket/sass",
+        "sourceSha256": "1445a8592309d4e93e55bb7b111a65bd6dcc90a76220262db5321dc9c6e8b7da"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 18,
+          "sha256": "32bcb8eb1b4e942e6c466d8f2b2bc6ba52a9697380ce9e9b64b39d53ef449d0b"
+        },
+        {
+          "path": "output.css",
+          "bytes": 18,
+          "sha256": "da4eb473ca695f21c7e35c1bfe25173a7833e85899494752c060b6347465bd66"
+        }
+      ]
+    },
+    {
+      "id": "sass-list-parenthesized",
+      "feature": "lists",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/lists/sass.hrx",
+        "case": "paren/indented_under",
+        "sourceSha256": "bda4dea63ec367ca2cbca2f37c472c40dca7aafe4d993d2a3ce1431605cc544c"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 24,
+          "sha256": "a3471cd5f31c9f544838e104c4b5458c237d38e520107dff62e9f3f1d16d674a"
+        },
+        {
+          "path": "output.css",
+          "bytes": 17,
+          "sha256": "fb3a688b9d7a5f72e14549bc81c38d298b8ffdbaf4e421500edb7096a87470a1"
+        }
+      ]
+    },
+    {
+      "id": "sass-list-aligned",
+      "feature": "lists",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/lists/sass.hrx",
+        "case": "paren/value_aligned",
+        "sourceSha256": "bda4dea63ec367ca2cbca2f37c472c40dca7aafe4d993d2a3ce1431605cc544c"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 24,
+          "sha256": "75c6889d30a38228d934eb1c77dc174c0138a3eb64aaa7aa1725777d3cf7a2d3"
+        },
+        {
+          "path": "output.css",
+          "bytes": 16,
+          "sha256": "178850a7ccc3ce40f79247c173347c792041977c459ab5053dbc555651585c0c"
+        }
+      ]
+    },
+    {
+      "id": "sass-string-escaped-newline",
+      "feature": "strings",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/strings.hrx",
+        "case": "new-line/sass/escaped",
+        "sourceSha256": "ae9acc5e0c9e1092932b7c7e673f78d58e39fad14f0083670760ee544fbf4089"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 31,
+          "sha256": "8d396bfd4b73329f5779e49e557da4d78fdbc9f6edc78ef4da6405d2843e2036"
+        },
+        {
+          "path": "output.css",
+          "bytes": 32,
+          "sha256": "10a86a84d6c1505e47c18096e71ccf6cfcc7b839e98ddef1897a43db6ecdaf89"
+        }
+      ]
+    },
+    {
+      "id": "sass-custom-property-string",
+      "feature": "custom-properties",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/custom_properties/value_interpolation.hrx",
+        "case": "sass/in-string",
+        "sourceSha256": "55cc2fead356a70fa2dd79ef3a7e5da71229a15e789edb6f3982b70c0c0bb6db"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 22,
+          "sha256": "29a53ef94a5a1cc8717064b3a65ac6d1077ca3b7e6ff4a68bcbffa0d002ef1e3"
+        },
+        {
+          "path": "output.css",
+          "bytes": 20,
+          "sha256": "27defdc119c79b28a7fc0b0b9a52a64a4b2c21de5a41c588961f2d559f447456"
+        }
+      ]
+    },
+    {
+      "id": "sass-custom-property-linebreak",
+      "feature": "custom-properties",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/custom_properties/value_interpolation.hrx",
+        "case": "sass/linebreak_interpolation",
+        "sourceSha256": "55cc2fead356a70fa2dd79ef3a7e5da71229a15e789edb6f3982b70c0c0bb6db"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 29,
+          "sha256": "b34a72f86be52b39ee36d4bad2961aa02ae3a36cc6a6ce01a7d56b1cf528c1ca"
+        },
+        {
+          "path": "output.css",
+          "bytes": 16,
+          "sha256": "cd02c7a556b65c439461e24506dbc3b4ccba2c9a6755533562de593336cfde07"
+        }
+      ]
+    },
+    {
+      "id": "sass-comment-loud",
+      "feature": "comments",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/comment.hrx",
+        "case": "loud/multi_line/sass",
+        "sourceSha256": "050319a7125984c08cc8aa84a5bf56db1c1fd2c565ba1d0a35b580247c482394"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 31,
+          "sha256": "763b664e1e1c3815c40981582008fb4eb257c4168933b4073f464ad478a6823e"
+        },
+        {
+          "path": "output.css",
+          "bytes": 16,
+          "sha256": "2474f6fda9966b5ce7f7f72c9a6d137772a40ee1dc5d6c515da83217c2ec773a"
+        }
+      ]
+    },
+    {
+      "id": "sass-css-function-nested",
+      "feature": "css-functions",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/function.hrx",
+        "case": "interpolated/result/nested",
+        "sourceSha256": "2e63ba1804ec89c3d553a60c8b7268315e1c4c0fa10aee9f51565628a17ccaaf"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 38,
+          "sha256": "204179a96c2302b9ad132641779ba94db03e9c6fbcfa3c0a0befbee13a69fa37"
+        },
+        {
+          "path": "output.css",
+          "bytes": 35,
+          "sha256": "44f086ede27ca2c0cd7a1b1bc4c9048f804457265351b0e454a341a21491ba1f"
+        }
+      ]
+    },
+    {
+      "id": "sass-while",
+      "feature": "control-flow",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/while.hrx",
+        "case": "whitespace/before_var/sass",
+        "sourceSha256": "dc047d2188f058d555855bb91f34ed052748c0e21a4783cdb75ad885f664abce"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 15,
+          "sha256": "2229a617d122ebf674ca138d0a34d0b4208c689985c97fca4387bfc7dc647f2a"
+        },
+        {
+          "path": "output.css",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "id": "sass-selector-attribute",
+      "feature": "selectors",
+      "syntax": "sass",
+      "outcome": "success",
+      "entry": "input.sass",
+      "expected": "output.css",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/selector/pseudoselector.hrx",
+        "case": "with_attribute/sass",
+        "sourceSha256": "96163f45406423d79b687776e5a1decbaf9aee43338b733439c40af20a6c3a1f"
+      },
+      "files": [
+        {
+          "path": "input.sass",
+          "bytes": 16,
+          "sha256": "cfe951b2f9bc3876e191f6886bf32f70d6e07c700c3e8e1a4d8dfd1784008203"
+        },
+        {
+          "path": "output.css",
+          "bytes": 21,
+          "sha256": "d32ac9319965b6cf8f087792b8dd324c692a8ea2989195868e0150efe6d9ffd9"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-interpolation-bracket",
+      "feature": "negative-parser",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/parser/interpolation.hrx",
+        "case": "error/partial_bracket/scss",
+        "sourceSha256": "a516c70dc81be1679468f4e35b47b6f66c580edffb5e8dce40ce4b486c5b9aa4"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 108,
+          "sha256": "fef1da92e4ce8c28eb0da9020dfecfb0cec01caf2642d07271200121881fc865"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 22,
+          "sha256": "15b9155fd44ff7aa8bc081e558c3bd31a4ff969e3e9d694e19d142642205ecb3"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-single-dot",
+      "feature": "negative-parser",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/expressions/syntax.hrx",
+        "case": "error/single_dot",
+        "sourceSha256": "a677111ce3b7e80a869e435c9b9f88919172ad128b2004d1baa4c9c572303421"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 91,
+          "sha256": "2cce02af7efe2584755cbd2964a9934e03512b37f918c5df51756e5ea06fbb2c"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 9,
+          "sha256": "23460ec0a481cbcaec71760e1a670a3af67715ef39a3bf7a7db89632fa4a7453"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-for-type",
+      "feature": "negative-control-flow",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/for/for.hrx",
+        "case": "error/from_type",
+        "sourceSha256": "4934241c100e1f712f132e99ce77b00623d7cf0b64aa3547365a081f9555cc29"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 132,
+          "sha256": "3df9fc2ed69fde7bcd59fffa3d3a4adecc96cb2b714890ab9a543e7f8d3a3901"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 31,
+          "sha256": "da916ae72490fadb1e43db783de0bfcbda49aec0947fc61f771b97450b88ca0c"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-for-units",
+      "feature": "negative-control-flow",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/for/for.hrx",
+        "case": "error/incompatible_units",
+        "sourceSha256": "4934241c100e1f712f132e99ce77b00623d7cf0b64aa3547365a081f9555cc29"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 153,
+          "sha256": "d9b39c9e1df56b74e0c6a228b306244d94056f7508448c7a3cbe9a1d42a6c048"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 33,
+          "sha256": "94a2c97470e0760c5c1bb8bcd61b77600be29251c4a090d39741c6ee629aa8c7"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-map-function-name",
+      "feature": "negative-modules",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/core_functions/map/get.hrx",
+        "case": "error/wrong_name",
+        "sourceSha256": "155f9b5f6d8a10b8511e10497ffb4b0de39958b5e07c05af4e85f544635dced5"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 136,
+          "sha256": "b7a238534f97edec43fdadf0646b2f0c9620d45434db26402cd69f1206ed6e62"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 47,
+          "sha256": "0acfdd79c43551881ce78a42d37d1a8e904248fa995583ed99f9c951623de2b3"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-math-arity",
+      "feature": "negative-modules",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/core_functions/math/div.hrx",
+        "case": "error/too_few_args",
+        "sourceSha256": "00742e3e6cec7834731e81a37b298ae205fd5866449855b6796a28df6a3fabb7"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 257,
+          "sha256": "ee4e51624eb847eeb6be553c91d3f228dc2410ea4f16c9d030178cd85e8dcc1a"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 37,
+          "sha256": "0f18cd5e17aa1e267e480f0b5bd3ac5e550b988c833aab40060b0b22745daded"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-string-index",
+      "feature": "negative-strings",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/core_functions/string/insert.hrx",
+        "case": "error/decimal",
+        "sourceSha256": "7d8d3600091fcfeb64c66d63d6325d8663baef0cef578d6d6ffdfc159215604f"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 151,
+          "sha256": "a6440035b10f686f1f14829fd99930e1491bbd53fe0ef34ac9a68e4325ac32e5"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 54,
+          "sha256": "cef54baeb691f067631a769599dc4015ee4e1e0d8fe5653504b4fcbf848d7f1c"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-forbidden-function",
+      "feature": "negative-functions",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/function/name.hrx",
+        "case": "error/special/element/no_prefix/lowercase",
+        "sourceSha256": "3c584eed2272a91dea8f9a768b715fbb0f95e509f7956edd01baaf1305d867aa"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 131,
+          "sha256": "3b6e60195ace45286803bcfebdaa0331275b8737e5329db50e4a33c3992fe0c9"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 32,
+          "sha256": "f4c4cd819b49957c25488fa12008d307fbd3d1523d34ff41fe99ee861213a84d"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-raw-newline",
+      "feature": "negative-strings",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/strings.hrx",
+        "case": "new-line/scss/raw",
+        "sourceSha256": "ae9acc5e0c9e1092932b7c7e673f78d58e39fad14f0083670760ee544fbf4089"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 95,
+          "sha256": "64ec59ddb2acd8c934047aad5a99bdd13e6d11dbe2d75685d599ec5ad6457492"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 55,
+          "sha256": "66ac6ba26275b512c521120c8b5b6c1468b787185e97507bc1addab4e016fa40"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-custom-property-brace",
+      "feature": "negative-custom-properties",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/custom_properties/error.hrx",
+        "case": "brackets/curly",
+        "sourceSha256": "bb3851f9aba278e74d7d1e04fe5b3b6c22efdaed98f36f1fbf5f2df13fb54a00"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 76,
+          "sha256": "043c129b3d0790bf55b779fbb8fe4956950fc3bc4cdc9ea4b3fa6e8fc7011f5c"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 24,
+          "sha256": "711811f4958cd6054d2b12e6cf72ddaaee12ae5436f53430f95d96dd0382779c"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-keyframe-style",
+      "feature": "negative-keyframes",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/keyframes.hrx",
+        "case": "error/in_keyframe_block/style_rule",
+        "sourceSha256": "aef34538de5dc30f751d9ce0d1b000f47bb5b036c10a729b4b9ec35ac494ce68"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 142,
+          "sha256": "68dd62350fdf53556b436d6bcc57e7bb59da9165eaf7385fbb0ae4169fb5c716"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 34,
+          "sha256": "e24317ef7d65492a81aaedbf108407efd353464145fa540f7f87972f18f0c9b9"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-comment-unterminated",
+      "feature": "negative-comments",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/comment.hrx",
+        "case": "error/loud/unterminated/scss",
+        "sourceSha256": "050319a7125984c08cc8aa84a5bf56db1c1fd2c565ba1d0a35b580247c482394"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 83,
+          "sha256": "ccae432c5abdb1108aab6d207f16459a920f36291f1f9c5ce833fa2206b20cbd"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 18,
+          "sha256": "56877ca5b72a0b4a8b2efb3f521fe2ef92725d42763aa50ca126f526f40c5504"
+        }
+      ]
+    },
+    {
+      "id": "scss-error-parent-prefix",
+      "feature": "negative-selectors",
+      "syntax": "scss",
+      "outcome": "error",
+      "entry": "input.scss",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/selector/parent.hrx",
+        "case": "error/prefix",
+        "sourceSha256": "0f3285f31a3562556c877ca9c66b408f5cefa4a4c18695ebc13f64a8c26e0249"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 133,
+          "sha256": "a140c5d93a3f0588071edaae4b4b3d811e367dcac9910baf8ad9315ff3c13a37"
+        },
+        {
+          "path": "input.scss",
+          "bytes": 18,
+          "sha256": "b6c352baaca307e12f29b53083dd567433bdb1f30e9b34cd3ebf555fcd1c7f46"
+        }
+      ]
+    },
+    {
+      "id": "sass-error-interpolation-bracket",
+      "feature": "negative-parser",
+      "syntax": "sass",
+      "outcome": "error",
+      "entry": "input.sass",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/parser/interpolation.hrx",
+        "case": "error/partial_bracket/sass",
+        "sourceSha256": "a516c70dc81be1679468f4e35b47b6f66c580edffb5e8dce40ce4b486c5b9aa4"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 102,
+          "sha256": "9e98adb80eb60a0b70c55564e565edd824c73776e469541fdfe5ff611f0180a6"
+        },
+        {
+          "path": "input.sass",
+          "bytes": 23,
+          "sha256": "7ed04c37f21d399376712c818f12c63e086c7e9fb5b3b2d7a6a33a209eb00862"
+        }
+      ]
+    },
+    {
+      "id": "sass-error-selector-paren",
+      "feature": "negative-selectors",
+      "syntax": "sass",
+      "outcome": "error",
+      "entry": "input.sass",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/parser/interpolation.hrx",
+        "case": "error/selector/unmatched_close_paren",
+        "sourceSha256": "a516c70dc81be1679468f4e35b47b6f66c580edffb5e8dce40ce4b486c5b9aa4"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 91,
+          "sha256": "80842be0c604bd7b4f9488a5d817143ee6a0bed194410c87ae048b49f807e16d"
+        },
+        {
+          "path": "input.sass",
+          "bytes": 19,
+          "sha256": "1b50d5c35ba05a61cdda01f6603a24afc30a25d4b0c0e2ce478160d484f1dbda"
+        }
+      ]
+    },
+    {
+      "id": "sass-error-list-empty",
+      "feature": "negative-lists",
+      "syntax": "sass",
+      "outcome": "error",
+      "entry": "input.sass",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/lists/sass.hrx",
+        "case": "error/paren/empty/whitespace/between",
+        "sourceSha256": "bda4dea63ec367ca2cbca2f37c472c40dca7aafe4d993d2a3ce1431605cc544c"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 113,
+          "sha256": "86100cc578cabbb992e8d1385d65a945994af700b1e35ce5f41306f3671eea35"
+        },
+        {
+          "path": "input.sass",
+          "bytes": 13,
+          "sha256": "f93d33640ba120a19b6a09004e00744ac63ed924f4fdb63790d84398280e463e"
+        }
+      ]
+    },
+    {
+      "id": "sass-error-string-raw-newline",
+      "feature": "negative-strings",
+      "syntax": "sass",
+      "outcome": "error",
+      "entry": "input.sass",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/values/strings.hrx",
+        "case": "new-line/sass/raw",
+        "sourceSha256": "ae9acc5e0c9e1092932b7c7e673f78d58e39fad14f0083670760ee544fbf4089"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 95,
+          "sha256": "2cad6f3ddb65299b94731065247c9d273ea60e39edfd8327379787d919888703"
+        },
+        {
+          "path": "input.sass",
+          "bytes": 27,
+          "sha256": "5dd605b36fa34901e631db8b188acfef8d0e74147b20aae990edd08bb77ab052"
+        }
+      ]
+    },
+    {
+      "id": "sass-error-custom-property-nested",
+      "feature": "negative-custom-properties",
+      "syntax": "sass",
+      "outcome": "error",
+      "entry": "input.sass",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/custom_properties/error.hrx",
+        "case": "nested",
+        "sourceSha256": "bb3851f9aba278e74d7d1e04fe5b3b6c22efdaed98f36f1fbf5f2df13fb54a00"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 127,
+          "sha256": "54a0c0ebf6364e656fbb88dfd78e475cf63c66194d22b3fe6f2f769e8db8c92b"
+        },
+        {
+          "path": "input.sass",
+          "bytes": 38,
+          "sha256": "fdca8362abbefe5c9f2b6c0d8b76221e09b4bacd6aebdaffdcf14f62c63f472b"
+        }
+      ]
+    },
+    {
+      "id": "sass-error-comment-unterminated",
+      "feature": "negative-comments",
+      "syntax": "sass",
+      "outcome": "error",
+      "entry": "input.sass",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/css/comment.hrx",
+        "case": "error/loud/unterminated/sass",
+        "sourceSha256": "050319a7125984c08cc8aa84a5bf56db1c1fd2c565ba1d0a35b580247c482394"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 104,
+          "sha256": "1911e528ef383878a4134f398c1d1fa869b3cfe28d25f0f520a718e9528b4b1d"
+        },
+        {
+          "path": "input.sass",
+          "bytes": 14,
+          "sha256": "c8732d0e4ad2efe42aa0534fe8d8aaada63560d1e793ba91f182dbd31ca434ab"
+        }
+      ]
+    },
+    {
+      "id": "sass-error-mixin-using",
+      "feature": "negative-mixins",
+      "syntax": "sass",
+      "outcome": "error",
+      "entry": "input.sass",
+      "expected": "error",
+      "warning": null,
+      "upstream": {
+        "source": "spec/directives/mixin/whitespace.hrx",
+        "case": "error/include/before_using/sass",
+        "sourceSha256": "be1ae9070d6d09b8bd4dcce89b1e759b7177c7d8291e96114fde52ab62fb08d3"
+      },
+      "files": [
+        {
+          "path": "error",
+          "bytes": 296,
+          "sha256": "22c77822955ed706f13644b4f3ac1aba64937c3e8aa2519166e15baca550b9ff"
+        },
+        {
+          "path": "input.sass",
+          "bytes": 45,
+          "sha256": "c35b336d812a3682db40a7874acb58b6e719ae7a47e8d7e89f1a55c422ad858f"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+a {
+  @for $i from 5mm through 1cm {b: $i;}
+}

@@ -1,0 +1,4 @@
+// Regression test for sass/dart-sass#1038
+a {
+  b:c, > d {x: y}
+}

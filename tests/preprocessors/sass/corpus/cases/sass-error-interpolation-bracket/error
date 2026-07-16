@@ -1,0 +1,6 @@
+Error: expected "]".
+  ,
+1 | [a#{"]:is(b"})
+  |              ^
+  '
+  input.sass 1:14  root stylesheet

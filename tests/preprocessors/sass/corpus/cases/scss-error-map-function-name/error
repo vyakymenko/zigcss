@@ -1,0 +1,6 @@
+Error: Undefined function.
+  ,
+2 | a {b: map.map-get((c: d), c)}
+  |       ^^^^^^^^^^^^^^^^^^^^^^
+  '
+  input.scss 2:7  root stylesheet

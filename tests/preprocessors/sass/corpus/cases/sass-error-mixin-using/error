@@ -1,0 +1,16 @@
+WARNING: This selector doesn't have any properties and won't be rendered.
+
+  ,
+4 |   using ()
+  |   ^^^^^^^^
+  '
+    input.sass 4:3  root stylesheet
+
+Error: expected selector.
+  ,
+4 |   using ()
+  |         ^
+  '
+  input.sass 4:9  @content
+  input.sass 2:3  a()
+  input.sass 3:1  root stylesheet

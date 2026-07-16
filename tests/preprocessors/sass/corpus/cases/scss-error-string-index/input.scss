@@ -1,0 +1,2 @@
+@use "sass:string";
+a {b: string.insert("", "", 0.5)}

@@ -1,0 +1,2 @@
+@use "sass:map";
+a {b: map.map-get((c: d), c)}

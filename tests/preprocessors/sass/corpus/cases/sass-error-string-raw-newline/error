@@ -1,0 +1,6 @@
+Error: Expected '.
+  ,
+2 |   b: 'line1
+  |            ^
+  '
+  input.sass 2:12  root stylesheet

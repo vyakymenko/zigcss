@@ -1,0 +1,6 @@
+Error: expected more input.
+  ,
+2 |   b: c /* d
+  |            ^
+  '
+  input.sass 2:12  root stylesheet

@@ -1,0 +1,6 @@
+Error: expected more input.
+  ,
+3 | }
+  |  ^
+  '
+  input.scss 3:2  root stylesheet

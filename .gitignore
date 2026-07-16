@@ -12,6 +12,7 @@ zig-cache
 bin/
 node_modules/
 output.css
+!tests/preprocessors/sass/corpus/cases/**/output.css
 bench-*.css
 bench-*.html
 .idea/

@@ -1,0 +1,6 @@
+Error: "&" may only used at the beginning of a compound selector.
+  ,
+2 |   b& {c: d}
+  |    ^
+  '
+  input.scss 2:4  root stylesheet

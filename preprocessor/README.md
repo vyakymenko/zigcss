@@ -1,6 +1,6 @@
 # ZigCSS canonical preprocessor host
 
-Status: internal `PRE-002` through `PRE-004`, `SASS-010`, and the confined-import slice of `SASS-011`. SCSS, indented Sass, Less, and Stylus are still publicly unavailable. The production registry connects the exact Dart Sass adapter only for internal admission work; Less and Stylus still have no implementation. No provider becomes a public format until its remaining adapter, product, packaging, and graduation gates pass.
+Status: internal `PRE-002` through `PRE-004` and `SASS-010` through `SASS-012`. SCSS and indented Sass have passed the internal exact-provider, confined-import, pinned-corpus, negative, limit, determinism, and generated-CSS gates. SCSS, indented Sass, Less, and Stylus are still publicly unavailable. The production registry connects the exact Dart Sass adapter only for internal admission work; Less and Stylus still have no implementation. No provider becomes a public format until its remaining product, packaging, and graduation gates pass.
 
 ## Wire contract
 
@@ -12,7 +12,7 @@ The compile request contains the protocol name, a bounded opaque request ID, the
 
 | Provider ID | Syntaxes | Accepted package baseline | Internal stage |
 |---|---|---|---|
-| `dart-sass` | `scss`, `sass` | `sass` `1.101.0` | `SASS-011`; confined imports internal only |
+| `dart-sass` | `scss`, `sass` | `sass` `1.101.0` | `SASS-012`; canonical conformance internal only |
 | `less` | `less` | `less` `4.6.7` | Not connected |
 | `stylus` | `stylus` | `stylus` `0.64.0` | Not connected |
 
@@ -56,7 +56,11 @@ Each entry still compiles under a stable non-file virtual URL, so Dart Sass neve
 
 The adapter reproduces Dart Sass's partial/full ambiguity groups, `.sass`/`.scss` before `.css`, explicit-extension behavior, directory indexes, and legacy `.import` precedence. `@use` and `@forward` loads are recorded as `reference` because Dart Sass's public importer context distinguishes only legacy `@import`; legacy loads retain `import`. Facts preserve first-success order and canonical local URLs. Imported diagnostics use their owned file identity, provider maps include source content for the entry and every dependency, and real Unicode provider maps pass the strict two-stage composer. The adapter deliberately lowers its ancestry ceiling to 32: a red measurement found that constructing Dart Sass's nested failure above its safe callback depth could amplify memory before the host deadline, so ZigCSS rejects earlier through `PRE-003`.
 
-`quietDeps` follows Dart Sass ownership: ordered load-path dependencies may be silenced, while entry-relative warnings remain visible. `verbose` owns deprecation repetition and `charset` owns emitted UTF-8 markers; colored alerts remain disabled. Custom functions, package importers, user importers, and every executable extension point remain outside the default trust boundary. `SASS-011` still requires its remaining negative/platform closure, and `SASS-012` must pass the pinned corpus and direct canonical differential gate. Until those packages and product graduation pass, `.scss` and `.sass` remain rejected by the public CLI.
+`quietDeps` follows Dart Sass ownership: ordered load-path dependencies may be silenced, while entry-relative warnings remain visible. `verbose` owns deprecation repetition and `charset` owns emitted UTF-8 markers; colored alerts remain disabled. Custom functions, package importers, user importers, and every executable extension point remain outside the default trust boundary.
+
+`SASS-012` pins the MIT-licensed official Sass-spec revision `1b03109a6205c8cff146defeae8488094b147c88`, selected at the exact Dart Sass `1.101.0` tag timestamp. Its checksum-owned 80-case corpus contains 60 successes and 20 failures across SCSS and indented Sass. Every case matches the provider directly for CSS or terminal failure, diagnostics, and dependency order, then repeats identically with eight bounded workers. All 60 generated CSS results parse with independent recovery disabled and parse/emit idempotently through ZigCSS. A 1,001-warning regression proves the 1,000-diagnostic limit fails without CSS. The focused suites separately own protocol, source-map, cancellation, filesystem, ambiguity, cycle, encoding, and depth boundaries.
+
+This closes the internal canonical-language conformance package, not public admission. `.scss` and `.sass` remain rejected by the public CLI until `PRE-005`, `PRE-006`, and per-row `PRE-008` product, package, platform, and consumer gates pass. This work does not make any preprocessor syntax available publicly.
 
 ## Confined local loader
 

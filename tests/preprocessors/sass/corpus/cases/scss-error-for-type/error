@@ -1,0 +1,6 @@
+Error: "foo" is not a number.
+  ,
+1 | @for $i from "foo" through 4 {}
+  |              ^^^^^
+  '
+  input.scss 1:14  root stylesheet

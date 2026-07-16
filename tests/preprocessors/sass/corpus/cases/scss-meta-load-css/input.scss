@@ -1,0 +1,5 @@
+@use "sass:meta";
+
+a {
+  @include meta.load-css("other");
+}

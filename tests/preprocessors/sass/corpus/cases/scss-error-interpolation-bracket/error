@@ -1,0 +1,6 @@
+Error: expected "]".
+  ,
+1 | [a#{"]:is(b"}) {c:d}
+  |              ^
+  '
+  input.scss 1:14  root stylesheet

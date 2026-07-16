@@ -1,0 +1,4 @@
+$number: calc(1px * 1rad / 1ms / 1Hz);
+a {
+  b: calc($number / (1px / 1ms));
+}

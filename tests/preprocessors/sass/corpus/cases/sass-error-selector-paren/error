@@ -1,0 +1,6 @@
+Error: Unexpected ")".
+  ,
+1 | a:is(b))
+  |        ^
+  '
+  input.sass 1:8  root stylesheet

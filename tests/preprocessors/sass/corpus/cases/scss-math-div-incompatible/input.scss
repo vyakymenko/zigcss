@@ -1,0 +1,2 @@
+@use "sass:math";
+a {b: math.div(6in, 3s) * 1s}

@@ -1,0 +1,3 @@
+@use "sass:map";
+@use "sass:meta";
+a {b: meta.inspect(map.get((c: (d: (e: f))), c, d, g))}

@@ -1,0 +1,6 @@
+Error: Nothing may be indented beneath a custom property.
+  ,
+3 |     baz: qux
+  |     ^
+  '
+  input.sass 3:5  root stylesheet

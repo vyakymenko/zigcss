@@ -1,0 +1,6 @@
+Error: Invalid function name.
+  ,
+1 | @function element() {@return 1}
+  |           ^^^^^^^
+  '
+  input.scss 1:11  root stylesheet

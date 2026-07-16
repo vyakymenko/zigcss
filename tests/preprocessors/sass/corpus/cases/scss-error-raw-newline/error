@@ -1,0 +1,6 @@
+Error: Expected '.
+  ,
+3 |   b: 'line1
+  |            ^
+  '
+  input.scss 3:12  root stylesheet

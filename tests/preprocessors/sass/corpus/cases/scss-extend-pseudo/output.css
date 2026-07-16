@@ -1,0 +1,3 @@
+upstream, :is(midstream), :is(midstream, downstream) {
+  a: b;
+}

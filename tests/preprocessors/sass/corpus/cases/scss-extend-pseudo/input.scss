@@ -1,0 +1,8 @@
+// Regression test for sass/dart-sass#1297, where the root cause was that
+// extending an existing extension accidentally ignored simple selectors in
+// selector pseudos
+:is(midstream) {@extend upstream}
+
+downstream {@extend midstream}
+
+upstream {a: b}

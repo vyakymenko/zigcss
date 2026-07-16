@@ -1,0 +1,6 @@
+Error: Expected 42px to have unit %.
+  ,
+1 | @for $i from 100% through 42px {}
+  |                           ^^^^
+  '
+  input.scss 1:27  root stylesheet

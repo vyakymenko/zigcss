@@ -1,0 +1,7 @@
+Error: () isn't a valid CSS value.
+  ,
+2 |     b: (
+  | ,------^
+3 | \   )
+  '
+  input.sass 2:6  root stylesheet
