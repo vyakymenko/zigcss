@@ -71,6 +71,46 @@ const Numeric = struct {
     unit: ?[]const u8 = null,
 };
 
+const VariableAssignment = struct {
+    value: []const u8,
+    default: bool = false,
+    global: bool = false,
+};
+
+const ExpressionRange = struct {
+    start: usize,
+    end: usize,
+};
+
+const SplitSeparator = enum {
+    comma,
+    slash,
+    whitespace,
+};
+
+const Builtin = enum {
+    map_get,
+    nth,
+    length,
+};
+
+const LogicalOperator = enum {
+    logical_or,
+    logical_and,
+    equal,
+    not_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+};
+
+const OperatorMatch = struct {
+    operation: LogicalOperator,
+    start: usize,
+    end: usize,
+};
+
 const Engine = struct {
     allocator: std.mem.Allocator,
     sources: *const native_source.Table,
@@ -79,6 +119,8 @@ const Engine = struct {
     limits: Limits,
     values: native_value.Store,
     environment: native_environment.Environment,
+    global_scope: native_environment.ScopeId,
+    expression_depth: u16 = 0,
     selector_count: usize = 0,
     selector_bytes: usize = 0,
 
@@ -90,6 +132,8 @@ const Engine = struct {
         limits: Limits,
     ) Error!Engine {
         try validateLimits(limits);
+        var environment = try native_environment.Environment.init(allocator, limits.environment);
+        errdefer environment.deinit();
         return .{
             .allocator = allocator,
             .sources = sources,
@@ -97,7 +141,8 @@ const Engine = struct {
             .transaction = transaction,
             .limits = limits,
             .values = native_value.Store.init(allocator, limits.values),
-            .environment = try native_environment.Environment.init(allocator, limits.environment),
+            .environment = environment,
+            .global_scope = environment.root(),
         };
     }
 
@@ -113,7 +158,6 @@ const Engine = struct {
             try self.report(.syntax, root.span, "native Sass document root is not a stylesheet");
             return error.InvalidSassSyntax;
         }
-        var scope = self.environment.root();
         const children = self.document.children(self.document.root) catch
             return error.InvalidSassSyntax;
         for (children) |child_id| {
@@ -125,9 +169,9 @@ const Engine = struct {
                         try self.report(.syntax, child.span, "top-level Sass declaration is not a variable");
                         return error.InvalidSassSyntax;
                     }
-                    try self.assignVariable(child_id, &scope);
+                    try self.assignVariable(child_id, &self.global_scope);
                 },
-                .rule => try self.evaluateRule(child_id, null, scope, 1),
+                .rule => try self.evaluateRule(child_id, null, self.global_scope, 1),
                 .comment => try self.emitRootComment(child),
                 else => {
                     try self.report(
@@ -274,16 +318,100 @@ const Engine = struct {
         const normalized = try self.normalizeVariable(raw_name);
         defer self.allocator.free(normalized);
         const expression_bytes = try self.sources.slice(expression_node.text.?);
-        if (containsVariableModifier(expression_bytes)) {
-            try self.report(
-                .unsupported_feature,
-                expression_node.span,
-                "Sass variable modifiers are not implemented by the native evaluator yet",
-            );
-            return error.UnsupportedFeature;
+        const assignment = try self.parseVariableAssignment(expression_bytes, expression_node.span);
+        const lookup_scope = if (assignment.global) self.global_scope else scope.*;
+        const existing = try self.environment.lookup(lookup_scope, normalized);
+        if (assignment.default) {
+            if (existing) |item| {
+                if (item.* != .null_value) return;
+            }
         }
-        const item = try self.evaluateExpression(expression_node.text.?, scope.*);
-        scope.* = try self.environment.set(scope.*, normalized, item);
+        const item = try self.evaluateExpressionBytes(assignment.value, scope.*, expression_node.span);
+        if (assignment.global) {
+            if (existing == null) {
+                try self.transaction.report(
+                    .warning,
+                    .syntax,
+                    expression_node.span,
+                    "!global assignment declares a new variable; Sass 2.0 will reject it",
+                    &.{},
+                );
+            }
+            const is_global_cursor = scope == &self.global_scope;
+            self.global_scope = try self.environment.set(self.global_scope, normalized, item);
+            if (is_global_cursor) {
+                scope.* = self.global_scope;
+            } else {
+                scope.* = try self.environment.set(scope.*, normalized, item);
+            }
+        } else {
+            scope.* = try self.environment.set(scope.*, normalized, item);
+        }
+    }
+
+    fn parseVariableAssignment(
+        self: *Engine,
+        raw: []const u8,
+        span: native_source.Span,
+    ) Error!VariableAssignment {
+        var options = native_lexer.Options{};
+        options.max_input_bytes = @max(raw.len, 1);
+        options.max_tokens = self.limits.max_expression_tokens;
+        const tokens = try native_lexer.tokenizeAlloc(self.allocator, raw, .scss, options);
+        defer self.allocator.free(tokens);
+
+        var result = VariableAssignment{ .value = trimWhitespace(raw) };
+        var first_modifier: ?usize = null;
+        var depth: usize = 0;
+        var index: usize = 0;
+        while (index < tokens.len) : (index += 1) {
+            const token = tokens[index];
+            switch (token.kind) {
+                .open_paren, .open_square, .open_curly, .interpolation_start => {
+                    depth += 1;
+                    continue;
+                },
+                .close_paren, .close_square, .close_curly, .interpolation_end => {
+                    if (depth > 0) depth -= 1;
+                    continue;
+                },
+                else => {},
+            }
+            if (depth != 0 or isExpressionTrivia(token.kind) or token.kind == .eof) continue;
+
+            if (token.kind == .operator and std.mem.eql(u8, token.raw(raw), "!")) {
+                var word_index = index + 1;
+                while (word_index < tokens.len and isExpressionTrivia(tokens[word_index].kind)) {
+                    word_index += 1;
+                }
+                if (word_index < tokens.len and tokens[word_index].kind == .identifier) {
+                    const word = tokens[word_index].raw(raw);
+                    const is_default = std.ascii.eqlIgnoreCase(word, "default");
+                    const is_global = std.ascii.eqlIgnoreCase(word, "global");
+                    if (is_default or is_global) {
+                        if ((is_default and result.default) or (is_global and result.global)) {
+                            try self.report(.syntax, span, "duplicate Sass variable modifier");
+                            return error.InvalidExpression;
+                        }
+                        if (first_modifier == null) first_modifier = token.span.start;
+                        result.default = result.default or is_default;
+                        result.global = result.global or is_global;
+                        index = word_index;
+                        continue;
+                    }
+                }
+            }
+            if (first_modifier != null) {
+                try self.report(.syntax, span, "Sass variable modifiers must end the declaration");
+                return error.InvalidExpression;
+            }
+        }
+        if (first_modifier) |offset| result.value = trimWhitespace(raw[0..offset]);
+        if (result.value.len == 0) {
+            try self.report(.syntax, span, "Sass variable declaration is missing a value");
+            return error.InvalidExpression;
+        }
+        return result;
     }
 
     fn appendDeclaration(
@@ -344,6 +472,7 @@ const Engine = struct {
             } else {
                 const item = try self.evaluateExpression(expression_span, scope.*);
                 if (item.* != .null_value) {
+                    try self.ensureCssValue(item.*, expression_span);
                     try self.appendTemporary(output, prefix);
                     try self.appendTemporary(output, trimmed_property);
                     try self.appendTemporary(output, ": ");
@@ -391,40 +520,7 @@ const Engine = struct {
         span: native_source.Span,
         scope: native_environment.ScopeId,
     ) Error!*const native_value.Value {
-        const source_bytes = try self.sources.slice(span);
-        const raw = trimWhitespace(source_bytes);
-        try self.transaction.consumeOperations(@intCast(raw.len + 1));
-
-        if (raw.len > 0 and raw[0] == '$' and variableEnd(raw, 1) == raw.len) {
-            return self.lookupVariable(raw, scope, span);
-        }
-        if (std.mem.eql(u8, raw, "true")) return self.values.own(.{ .boolean = true });
-        if (std.mem.eql(u8, raw, "false")) return self.values.own(.{ .boolean = false });
-        if (std.mem.eql(u8, raw, "null")) return self.values.own(.{ .null_value = {} });
-
-        if (raw.len >= 2 and (raw[0] == '\'' or raw[0] == '"') and raw[raw.len - 1] == raw[0]) {
-            const rendered = try self.renderBytes(raw[1 .. raw.len - 1], scope, span, false);
-            defer self.allocator.free(rendered);
-            return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = true } });
-        }
-
-        if (try self.tryArithmetic(raw, scope, span)) |numeric| {
-            var units: [1][]const u8 = undefined;
-            const numerator_units: []const []const u8 = if (numeric.unit) |unit| blk: {
-                units[0] = unit;
-                break :blk units[0..1];
-            } else &.{};
-            return self.values.own(.{ .number = .{
-                .value = if (numeric.value == 0) 0 else numeric.value,
-                .numerator_units = numerator_units,
-            } });
-        }
-
-        const rendered = try self.renderBytes(raw, scope, span, true);
-        defer self.allocator.free(rendered);
-        return self.values.own(.{
-            .string = .{ .bytes = trimWhitespace(rendered), .quoted = false },
-        });
+        return self.evaluateExpressionBytes(try self.sources.slice(span), scope, span);
     }
 
     fn tryArithmetic(
@@ -434,6 +530,7 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!?Numeric {
         if (raw.len == 0) return null;
+        if (try self.hasTopLevelListStructure(raw)) return null;
         var options = native_lexer.Options{};
         options.max_input_bytes = @max(raw.len, 1);
         options.max_tokens = self.limits.max_expression_tokens;
@@ -542,6 +639,7 @@ const Engine = struct {
             {
                 const end = variableEnd(raw, index + 1);
                 const item = try self.lookupVariable(raw[index..end], scope, diagnostic_span);
+                try self.ensureCssValue(item.*, diagnostic_span);
                 try self.appendValue(&output, item.*, false);
                 index = end;
                 continue;
@@ -570,6 +668,7 @@ const Engine = struct {
             return error.InvalidExpression;
         }
         const item = try self.evaluateExpressionBytes(inner, scope, diagnostic_span);
+        try self.ensureCssValue(item.*, diagnostic_span);
         try self.appendValue(output, item.*, true);
         return closing + 1;
     }
@@ -581,12 +680,33 @@ const Engine = struct {
         diagnostic_span: native_source.Span,
     ) Error!*const native_value.Value {
         const trimmed = trimWhitespace(raw);
+        if (self.expression_depth >= self.limits.max_evaluation_depth) {
+            try self.report(.resource_limit, diagnostic_span, "native Sass expression depth exceeded");
+            return error.EvaluationDepthExceeded;
+        }
+        self.expression_depth += 1;
+        defer self.expression_depth -= 1;
+        try self.transaction.consumeOperations(@intCast(trimmed.len + 1));
         if (trimmed.len > 0 and trimmed[0] == '$' and variableEnd(trimmed, 1) == trimmed.len) {
             return self.lookupVariable(trimmed, scope, diagnostic_span);
         }
         if (std.mem.eql(u8, trimmed, "true")) return self.values.own(.{ .boolean = true });
         if (std.mem.eql(u8, trimmed, "false")) return self.values.own(.{ .boolean = false });
         if (std.mem.eql(u8, trimmed, "null")) return self.values.own(.{ .null_value = {} });
+        if (trimmed.len >= 2 and (trimmed[0] == '\'' or trimmed[0] == '"') and
+            trimmed[trimmed.len - 1] == trimmed[0])
+        {
+            const rendered = try self.renderBytes(
+                trimmed[1 .. trimmed.len - 1],
+                scope,
+                diagnostic_span,
+                false,
+            );
+            defer self.allocator.free(rendered);
+            return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = true } });
+        }
+        if (try self.tryBuiltinCall(trimmed, scope, diagnostic_span)) |item| return item;
+        if (try self.tryLogicalExpression(trimmed, scope, diagnostic_span)) |item| return item;
         if (try self.tryArithmetic(trimmed, scope, diagnostic_span)) |numeric| {
             var units: [1][]const u8 = undefined;
             const numerator_units: []const []const u8 = if (numeric.unit) |unit| blk: {
@@ -598,9 +718,473 @@ const Engine = struct {
                 .numerator_units = numerator_units,
             } });
         }
+        if (try self.tryCollection(trimmed, scope, diagnostic_span)) |item| return item;
         const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
         defer self.allocator.free(rendered);
         return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = false } });
+    }
+
+    fn hasTopLevelListStructure(self: *Engine, raw: []const u8) Error!bool {
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        if (try splitTopLevelRanges(self.allocator, raw, .comma, &ranges)) return true;
+        ranges.clearRetainingCapacity();
+        return try splitTopLevelRanges(self.allocator, raw, .whitespace, &ranges);
+    }
+
+    fn tryLogicalExpression(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        if (raw.len == 0 or try self.hasTopLevelListStructure(raw)) return null;
+        var options = native_lexer.Options{};
+        options.max_input_bytes = @max(raw.len, 1);
+        options.max_tokens = self.limits.max_expression_tokens;
+        const tokens = try native_lexer.tokenizeAlloc(self.allocator, raw, .scss, options);
+        defer self.allocator.free(tokens);
+
+        var depth: usize = 0;
+        var first: ?native_lexer.Token = null;
+        var logical_or: ?OperatorMatch = null;
+        var logical_and: ?OperatorMatch = null;
+        var equality: ?OperatorMatch = null;
+        var relational: ?OperatorMatch = null;
+        for (tokens) |token| {
+            switch (token.kind) {
+                .open_paren, .open_square, .open_curly, .interpolation_start => {
+                    depth += 1;
+                    continue;
+                },
+                .close_paren, .close_square, .close_curly, .interpolation_end => {
+                    if (depth > 0) depth -= 1;
+                    continue;
+                },
+                else => {},
+            }
+            if (depth != 0 or isExpressionTrivia(token.kind) or token.kind == .eof) continue;
+            if (first == null) first = token;
+            if (token.kind == .identifier) {
+                const word = token.raw(raw);
+                if (std.mem.eql(u8, word, "or")) {
+                    logical_or = .{ .operation = .logical_or, .start = token.span.start, .end = token.span.end };
+                } else if (std.mem.eql(u8, word, "and")) {
+                    logical_and = .{ .operation = .logical_and, .start = token.span.start, .end = token.span.end };
+                }
+                continue;
+            }
+            if (token.kind != .operator) continue;
+            const operation = token.raw(raw);
+            const match: ?LogicalOperator = if (std.mem.eql(u8, operation, "=="))
+                .equal
+            else if (std.mem.eql(u8, operation, "!="))
+                .not_equal
+            else if (std.mem.eql(u8, operation, "<"))
+                .less
+            else if (std.mem.eql(u8, operation, "<="))
+                .less_equal
+            else if (std.mem.eql(u8, operation, ">"))
+                .greater
+            else if (std.mem.eql(u8, operation, ">="))
+                .greater_equal
+            else
+                null;
+            if (match) |matched| {
+                const item = OperatorMatch{
+                    .operation = matched,
+                    .start = token.span.start,
+                    .end = token.span.end,
+                };
+                switch (matched) {
+                    .equal, .not_equal => equality = item,
+                    .less, .less_equal, .greater, .greater_equal => relational = item,
+                    else => unreachable,
+                }
+            }
+        }
+
+        if (logical_or) |match| return try self.evaluateLogicalMatch(raw, match, scope, span);
+        if (logical_and) |match| return try self.evaluateLogicalMatch(raw, match, scope, span);
+        if (equality) |match| return try self.evaluateLogicalMatch(raw, match, scope, span);
+        if (relational) |match| return try self.evaluateLogicalMatch(raw, match, scope, span);
+        if (first) |token| {
+            if (token.kind == .identifier and std.mem.eql(u8, token.raw(raw), "not")) {
+                const operand_raw = trimWhitespace(raw[token.span.end..]);
+                if (operand_raw.len == 0) {
+                    try self.report(.syntax, span, "not requires a native Sass expression");
+                    return error.InvalidExpression;
+                }
+                const operand = try self.evaluateExpressionBytes(operand_raw, scope, span);
+                return try self.values.own(.{ .boolean = !sassTruthy(operand.*) });
+            }
+        }
+        return null;
+    }
+
+    fn evaluateLogicalMatch(
+        self: *Engine,
+        raw: []const u8,
+        match: OperatorMatch,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const left_raw = trimWhitespace(raw[0..match.start]);
+        const right_raw = trimWhitespace(raw[match.end..]);
+        if (left_raw.len == 0 or right_raw.len == 0) {
+            try self.report(.syntax, span, "native Sass binary operator is missing an operand");
+            return error.InvalidExpression;
+        }
+        const left = try self.evaluateExpressionBytes(left_raw, scope, span);
+        switch (match.operation) {
+            .logical_or => {
+                if (sassTruthy(left.*)) return left;
+                return self.evaluateExpressionBytes(right_raw, scope, span);
+            },
+            .logical_and => {
+                if (!sassTruthy(left.*)) return left;
+                return self.evaluateExpressionBytes(right_raw, scope, span);
+            },
+            else => {},
+        }
+
+        const right = try self.evaluateExpressionBytes(right_raw, scope, span);
+        const result = switch (match.operation) {
+            .equal => sassValuesEqual(left.*, right.*),
+            .not_equal => !sassValuesEqual(left.*, right.*),
+            .less, .less_equal, .greater, .greater_equal => try self.compareValues(
+                left.*,
+                right.*,
+                match.operation,
+                span,
+            ),
+            else => unreachable,
+        };
+        return self.values.own(.{ .boolean = result });
+    }
+
+    fn compareValues(
+        self: *Engine,
+        left: native_value.Value,
+        right: native_value.Value,
+        operation: LogicalOperator,
+        span: native_source.Span,
+    ) Error!bool {
+        const left_number = switch (left) {
+            .number => |number| number,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass ordering requires numbers");
+                return error.InvalidExpression;
+            },
+        };
+        const right_number = switch (right) {
+            .number => |number| number,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass ordering requires numbers");
+                return error.InvalidExpression;
+            },
+        };
+        if (!sassNumbersComparable(left_number, right_number)) {
+            try self.report(.invalid_operation, span, "native Sass ordering uses incompatible units");
+            return error.IncompatibleUnits;
+        }
+        return switch (operation) {
+            .less => left_number.value < right_number.value,
+            .less_equal => left_number.value <= right_number.value,
+            .greater => left_number.value > right_number.value,
+            .greater_equal => left_number.value >= right_number.value,
+            else => unreachable,
+        };
+    }
+
+    fn tryBuiltinCall(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const opening = std.mem.indexOfScalar(u8, raw, '(') orelse return null;
+        if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
+        const name = raw[0..opening];
+        if (!isSimpleIdentifier(name)) return null;
+        const builtin: Builtin = if (sassNameEql(name, "map-get"))
+            .map_get
+        else if (sassNameEql(name, "nth"))
+            .nth
+        else if (sassNameEql(name, "length"))
+            .length
+        else
+            return null;
+
+        const body = raw[opening + 1 .. raw.len - 1];
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        for (ranges.items) |range| {
+            if (trimWhitespace(body[range.start..range.end]).len == 0) {
+                try self.report(.syntax, span, "empty native Sass function argument");
+                return error.InvalidExpression;
+            }
+        }
+
+        var arguments: std.ArrayList(*const native_value.Value) = .empty;
+        defer arguments.deinit(self.allocator);
+        for (ranges.items) |range| {
+            try arguments.append(
+                self.allocator,
+                try self.evaluateExpressionBytes(body[range.start..range.end], scope, span),
+            );
+        }
+
+        return switch (builtin) {
+            .map_get => try self.callMapGet(arguments.items, span),
+            .nth => try self.callNth(arguments.items, span),
+            .length => try self.callLength(arguments.items, span),
+        };
+    }
+
+    fn callMapGet(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 2) {
+            try self.report(.invalid_operation, span, "map-get() requires a map and at least one key");
+            return error.InvalidExpression;
+        }
+        var current = arguments[0];
+        for (arguments[1..]) |key| {
+            const map = switch (current.*) {
+                .map => |item| item,
+                else => {
+                    try self.report(.type_mismatch, span, "map-get() requires a map value");
+                    return error.InvalidExpression;
+                },
+            };
+            var found: ?*const native_value.Value = null;
+            for (map.entries, 0..) |entry, index| {
+                if (sassValuesEqual(entry.key, key.*)) {
+                    found = &map.entries[index].value;
+                    break;
+                }
+            }
+            current = found orelse return self.values.own(.{ .null_value = {} });
+        }
+        return current;
+    }
+
+    fn callNth(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(.invalid_operation, span, "nth() requires exactly two arguments");
+            return error.InvalidExpression;
+        }
+        const length: usize = switch (arguments[0].*) {
+            .list => |list| list.items.len,
+            .map => |map| map.entries.len,
+            else => 1,
+        };
+        const index = try self.resolveListIndex(arguments[1].*, length, span);
+        return switch (arguments[0].*) {
+            .list => |list| &list.items[index],
+            .map => |map| blk: {
+                const pair = [_]native_value.Value{
+                    map.entries[index].key,
+                    map.entries[index].value,
+                };
+                break :blk try self.values.own(.{ .list = .{
+                    .items = &pair,
+                    .separator = .space,
+                } });
+            },
+            else => arguments[0],
+        };
+    }
+
+    fn callLength(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "length() requires exactly one argument");
+            return error.InvalidExpression;
+        }
+        const length: usize = switch (arguments[0].*) {
+            .list => |list| list.items.len,
+            .map => |map| map.entries.len,
+            else => 1,
+        };
+        return self.values.own(.{ .number = .{ .value = @floatFromInt(length) } });
+    }
+
+    fn resolveListIndex(
+        self: *Engine,
+        item: native_value.Value,
+        length: usize,
+        span: native_source.Span,
+    ) Error!usize {
+        const number = switch (item) {
+            .number => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "Sass list index must be a unitless integer");
+                return error.InvalidExpression;
+            },
+        };
+        if (number.numerator_units.len != 0 or number.denominator_units.len != 0 or
+            !std.math.isFinite(number.value) or @floor(number.value) != number.value or
+            number.value == 0)
+        {
+            try self.report(.invalid_operation, span, "Sass list index must be a non-zero unitless integer");
+            return error.InvalidExpression;
+        }
+        const maximum: f64 = @floatFromInt(length);
+        if (number.value > maximum or number.value < -maximum) {
+            try self.report(.invalid_operation, span, "Sass list index is outside the list");
+            return error.InvalidExpression;
+        }
+        const magnitude: usize = @intFromFloat(@abs(number.value));
+        return if (number.value > 0) magnitude - 1 else length - magnitude;
+    }
+
+    fn tryCollection(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        var body = raw;
+        var parenthesized = false;
+        var bracketed = false;
+        if (fullyWrapped(raw, '(', ')')) {
+            parenthesized = true;
+            body = trimWhitespace(raw[1 .. raw.len - 1]);
+        } else if (fullyWrapped(raw, '[', ']')) {
+            bracketed = true;
+            body = trimWhitespace(raw[1 .. raw.len - 1]);
+        }
+
+        if (parenthesized) {
+            if (body.len == 0) {
+                return try self.values.own(.{ .list = .{ .items = &.{} } });
+            }
+            if (try self.tryMap(body, scope, span)) |map| return map;
+        } else if (bracketed and body.len == 0) {
+            return try self.values.own(.{ .list = .{ .items = &.{}, .bracketed = true } });
+        }
+
+        const separators = [_]struct {
+            split: SplitSeparator,
+            value: native_value.Separator,
+        }{
+            .{ .split = .comma, .value = .comma },
+            .{ .split = .slash, .value = .slash },
+            .{ .split = .whitespace, .value = .space },
+        };
+        for (separators) |separator| {
+            if (try self.trySeparatedList(body, scope, span, separator.split, separator.value, bracketed)) |list| {
+                return list;
+            }
+        }
+
+        if (bracketed) {
+            const child = try self.evaluateExpressionBytes(body, scope, span);
+            const items = [_]native_value.Value{child.*};
+            return try self.values.own(.{ .list = .{
+                .items = &items,
+                .separator = .undecided,
+                .bracketed = true,
+            } });
+        }
+        if (parenthesized) return try self.evaluateExpressionBytes(body, scope, span);
+        return null;
+    }
+
+    fn tryMap(
+        self: *Engine,
+        body: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        if (ranges.items.len == 0) return null;
+        const final = ranges.items[ranges.items.len - 1];
+        if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
+        if (ranges.items.len == 0) return null;
+        if (findTopLevelByte(body[ranges.items[0].start..ranges.items[0].end], ':') == null) {
+            return null;
+        }
+
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        for (ranges.items) |range| {
+            const entry_raw = body[range.start..range.end];
+            const colon = findTopLevelByte(entry_raw, ':') orelse {
+                try self.report(.syntax, span, "every native Sass map entry requires a key and value");
+                return error.InvalidExpression;
+            };
+            const key_raw = trimWhitespace(entry_raw[0..colon]);
+            const value_raw = trimWhitespace(entry_raw[colon + 1 ..]);
+            if (key_raw.len == 0 or value_raw.len == 0) {
+                try self.report(.syntax, span, "native Sass map entry has an empty key or value");
+                return error.InvalidExpression;
+            }
+            const key = try self.evaluateExpressionBytes(key_raw, scope, span);
+            const value = try self.evaluateExpressionBytes(value_raw, scope, span);
+            for (entries.items) |existing| {
+                if (sassValuesEqual(existing.key, key.*)) {
+                    try self.report(.duplicate_binding, span, "duplicate native Sass map key");
+                    return error.InvalidExpression;
+                }
+            }
+            try entries.append(self.allocator, .{ .key = key.*, .value = value.* });
+        }
+        return try self.values.own(.{ .map = .{ .entries = entries.items } });
+    }
+
+    fn trySeparatedList(
+        self: *Engine,
+        body: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+        split: SplitSeparator,
+        separator: native_value.Separator,
+        bracketed: bool,
+    ) Error!?*const native_value.Value {
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        if (!try splitTopLevelRanges(self.allocator, body, split, &ranges)) return null;
+        if (split == .comma and ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
+        }
+        if (ranges.items.len == 0) {
+            try self.report(.syntax, span, "native Sass list is missing an item");
+            return error.InvalidExpression;
+        }
+
+        var items: std.ArrayList(native_value.Value) = .empty;
+        defer items.deinit(self.allocator);
+        for (ranges.items) |range| {
+            const item_raw = trimWhitespace(body[range.start..range.end]);
+            if (item_raw.len == 0) {
+                try self.report(.syntax, span, "native Sass list contains an empty item");
+                return error.InvalidExpression;
+            }
+            const item = try self.evaluateExpressionBytes(item_raw, scope, span);
+            try items.append(self.allocator, item.*);
+        }
+        return try self.values.own(.{ .list = .{
+            .items = items.items,
+            .separator = separator,
+            .bracketed = bracketed,
+        } });
     }
 
     fn lookupVariable(
@@ -839,28 +1423,31 @@ const Engine = struct {
             },
             .list => |list| {
                 if (list.bracketed) try self.appendTemporary(output, "[");
-                for (list.items, 0..) |child, index| {
-                    if (index > 0) try self.appendTemporary(output, switch (list.separator) {
-                        .comma => ", ",
-                        .slash => " / ",
+                var emitted: usize = 0;
+                for (list.items) |child| {
+                    if (child == .null_value) continue;
+                    if (emitted > 0) try self.appendTemporary(output, switch (list.separator) {
+                        .comma => ",",
+                        .slash => "/",
                         .undecided, .space => " ",
                     });
                     try self.appendValue(output, child, interpolation);
+                    emitted += 1;
                 }
                 if (list.bracketed) try self.appendTemporary(output, "]");
             },
-            .map => |map| {
-                try self.appendTemporary(output, "(");
-                for (map.entries, 0..) |entry, index| {
-                    if (index > 0) try self.appendTemporary(output, ", ");
-                    try self.appendValue(output, entry.key, true);
-                    try self.appendTemporary(output, ": ");
-                    try self.appendValue(output, entry.value, interpolation);
-                }
-                try self.appendTemporary(output, ")");
-            },
-            .color, .callable => return error.UnsupportedFeature,
+            .map, .color, .callable => return error.InvalidExpression,
         }
+    }
+
+    fn ensureCssValue(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!void {
+        if (cssValueIsValid(item, 0)) return;
+        try self.report(.type_mismatch, span, "native Sass value cannot be emitted as CSS");
+        return error.InvalidExpression;
     }
 
     fn appendNumber(
@@ -1093,6 +1680,362 @@ fn validateLimits(limits: Limits) Error!void {
     }
 }
 
+fn fullyWrapped(input: []const u8, opening: u8, closing: u8) bool {
+    if (input.len < 2 or input[0] != opening) return false;
+    var depth: usize = 0;
+    var quote: ?u8 = null;
+    var index: usize = 0;
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 2;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 2;
+            continue;
+        }
+        if (commentEnd(input, index)) |end| {
+            index = end;
+            continue;
+        }
+        if (byte == opening) {
+            depth += 1;
+        } else if (byte == closing) {
+            if (depth == 0) return false;
+            depth -= 1;
+            if (depth == 0) return index == input.len - 1;
+        }
+        index += 1;
+    }
+    return false;
+}
+
+fn splitTopLevelRanges(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    separator: SplitSeparator,
+    output: *std.ArrayList(ExpressionRange),
+) std.mem.Allocator.Error!bool {
+    var start: usize = 0;
+    var index: usize = 0;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var curly_depth: usize = 0;
+    var quote: ?u8 = null;
+    var saw_separator = false;
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 2;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 2;
+            continue;
+        }
+        if (commentEnd(input, index)) |end| {
+            index = end;
+            continue;
+        }
+        switch (byte) {
+            '(' => paren_depth += 1,
+            ')' => if (paren_depth > 0) {
+                paren_depth -= 1;
+            },
+            '[' => square_depth += 1,
+            ']' => if (square_depth > 0) {
+                square_depth -= 1;
+            },
+            '{' => curly_depth += 1,
+            '}' => if (curly_depth > 0) {
+                curly_depth -= 1;
+            },
+            else => {},
+        }
+        const top_level = paren_depth == 0 and square_depth == 0 and curly_depth == 0;
+        const is_separator = top_level and switch (separator) {
+            .comma => byte == ',',
+            .slash => byte == '/',
+            .whitespace => isExpressionWhitespace(byte),
+        };
+        if (!is_separator) {
+            index += 1;
+            continue;
+        }
+
+        if (separator == .whitespace) {
+            var end = index + 1;
+            while (end < input.len and isExpressionWhitespace(input[end])) end += 1;
+            if (whitespaceIsOperatorPadding(input, index, end)) {
+                index = end;
+                continue;
+            }
+            if (trimWhitespace(input[start..index]).len == 0) {
+                start = end;
+                index = end;
+                continue;
+            }
+            if (trimWhitespace(input[end..]).len == 0) {
+                index = end;
+                continue;
+            }
+            try output.append(allocator, .{ .start = start, .end = index });
+            saw_separator = true;
+            start = end;
+            index = end;
+            continue;
+        }
+
+        try output.append(allocator, .{ .start = start, .end = index });
+        saw_separator = true;
+        start = index + 1;
+        index += 1;
+    }
+    if (input.len > 0 or saw_separator) {
+        try output.append(allocator, .{ .start = start, .end = input.len });
+    }
+    return saw_separator;
+}
+
+fn findTopLevelByte(input: []const u8, target: u8) ?usize {
+    var index: usize = 0;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var curly_depth: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 2;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 2;
+            continue;
+        }
+        if (commentEnd(input, index)) |end| {
+            index = end;
+            continue;
+        }
+        if (paren_depth == 0 and square_depth == 0 and curly_depth == 0 and byte == target) {
+            return index;
+        }
+        switch (byte) {
+            '(' => paren_depth += 1,
+            ')' => if (paren_depth > 0) {
+                paren_depth -= 1;
+            },
+            '[' => square_depth += 1,
+            ']' => if (square_depth > 0) {
+                square_depth -= 1;
+            },
+            '{' => curly_depth += 1,
+            '}' => if (curly_depth > 0) {
+                curly_depth -= 1;
+            },
+            else => {},
+        }
+        index += 1;
+    }
+    return null;
+}
+
+fn commentEnd(input: []const u8, start: usize) ?usize {
+    if (start + 1 >= input.len or input[start] != '/') return null;
+    if (input[start + 1] == '*') {
+        const closing = std.mem.indexOf(u8, input[start + 2 ..], "*/") orelse return input.len;
+        return start + 2 + closing + 2;
+    }
+    if (input[start + 1] == '/') {
+        const newline = std.mem.indexOfScalar(u8, input[start + 2 ..], '\n') orelse return input.len;
+        return start + 2 + newline;
+    }
+    return null;
+}
+
+fn isSimpleIdentifier(input: []const u8) bool {
+    if (input.len == 0 or !isVariableNameStart(input[0])) return false;
+    for (input[1..]) |byte| {
+        if (!isVariableNameContinue(byte)) return false;
+    }
+    return true;
+}
+
+fn sassNameEql(left: []const u8, right: []const u8) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |left_byte, right_byte| {
+        const normalized = if (left_byte == '_') '-' else left_byte;
+        if (normalized != right_byte) return false;
+    }
+    return true;
+}
+
+fn whitespaceIsOperatorPadding(input: []const u8, start: usize, end: usize) bool {
+    if (end < input.len) {
+        const next = input[end];
+        if (isSymbolicExpressionOperator(next) or startsSassWord(input, end, "and") or
+            startsSassWord(input, end, "or"))
+        {
+            return true;
+        }
+    }
+    if (start > 0) {
+        const previous = input[start - 1];
+        if (isSymbolicExpressionOperator(previous) or endsSassWord(input, start, "and") or
+            endsSassWord(input, start, "or") or endsSassWord(input, start, "not"))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn isSymbolicExpressionOperator(byte: u8) bool {
+    return switch (byte) {
+        '+', '-', '*', '/', '%', '=', '!', '<', '>', '&', '|', '^', '~', '?' => true,
+        else => false,
+    };
+}
+
+fn startsSassWord(input: []const u8, start: usize, word: []const u8) bool {
+    if (start + word.len > input.len or !std.mem.eql(u8, input[start .. start + word.len], word)) {
+        return false;
+    }
+    const end = start + word.len;
+    return end == input.len or !isVariableNameContinue(input[end]);
+}
+
+fn endsSassWord(input: []const u8, end: usize, word: []const u8) bool {
+    if (end < word.len or !std.mem.eql(u8, input[end - word.len .. end], word)) return false;
+    return end == word.len or !isVariableNameContinue(input[end - word.len - 1]);
+}
+
+fn sassTruthy(item: native_value.Value) bool {
+    return switch (item) {
+        .null_value => false,
+        .boolean => |value| value,
+        else => true,
+    };
+}
+
+fn sassValuesEqual(left: native_value.Value, right: native_value.Value) bool {
+    return sassValuesEqualDepth(left, right, 0);
+}
+
+fn sassValuesEqualDepth(left: native_value.Value, right: native_value.Value, depth: u16) bool {
+    if (depth > 64 or std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
+    return switch (left) {
+        .null_value => true,
+        .boolean => |value| value == right.boolean,
+        .number => |number| number.value == right.number.value and
+            unitSlicesEqual(number.numerator_units, right.number.numerator_units) and
+            unitSlicesEqual(number.denominator_units, right.number.denominator_units),
+        .color => |color| std.meta.eql(color, right.color),
+        .string => |string| std.mem.eql(u8, string.bytes, right.string.bytes),
+        .selector => |selector| std.mem.eql(u8, selector.bytes, right.selector.bytes),
+        .callable => |callable| std.meta.eql(callable, right.callable),
+        .list => |list| blk: {
+            const other = right.list;
+            if (list.separator != other.separator or list.bracketed != other.bracketed or
+                list.items.len != other.items.len)
+            {
+                break :blk false;
+            }
+            for (list.items, other.items) |item, other_item| {
+                if (!sassValuesEqualDepth(item, other_item, depth + 1)) break :blk false;
+            }
+            break :blk true;
+        },
+        .map => |map| blk: {
+            const other = right.map;
+            if (map.entries.len != other.entries.len) break :blk false;
+            for (map.entries) |entry| {
+                var matched = false;
+                for (other.entries) |other_entry| {
+                    if (sassValuesEqualDepth(entry.key, other_entry.key, depth + 1) and
+                        sassValuesEqualDepth(entry.value, other_entry.value, depth + 1))
+                    {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) break :blk false;
+            }
+            break :blk true;
+        },
+    };
+}
+
+fn sassNumbersComparable(left: native_value.Number, right: native_value.Number) bool {
+    if (left.denominator_units.len != 0 or right.denominator_units.len != 0 or
+        left.numerator_units.len > 1 or right.numerator_units.len > 1)
+    {
+        return false;
+    }
+    if (left.numerator_units.len == 0 or right.numerator_units.len == 0) return true;
+    return std.mem.eql(u8, left.numerator_units[0], right.numerator_units[0]);
+}
+
+fn unitSlicesEqual(left: []const []const u8, right: []const []const u8) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |unit, other| {
+        if (!std.mem.eql(u8, unit, other)) return false;
+    }
+    return true;
+}
+
+fn cssValueIsValid(item: native_value.Value, depth: u16) bool {
+    if (depth > 64) return false;
+    return switch (item) {
+        .null_value, .boolean, .number, .string, .selector => true,
+        .list => |list| blk: {
+            var emitted: usize = 0;
+            for (list.items) |child| {
+                if (child == .null_value) continue;
+                if (!cssValueIsValid(child, depth + 1)) break :blk false;
+                emitted += 1;
+            }
+            break :blk list.bracketed or emitted > 0;
+        },
+        .map, .color, .callable => false,
+    };
+}
+
+fn isExpressionWhitespace(byte: u8) bool {
+    return byte == ' ' or byte == '\t' or byte == '\r' or byte == '\n' or byte == '\x0c';
+}
+
 fn splitSelectors(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -1247,42 +2190,4 @@ fn slashDivisionEnabled(input: []const u8) bool {
     const trimmed = trimWhitespace(input);
     return std.mem.indexOfScalar(u8, trimmed, '$') != null or
         (trimmed.len >= 2 and trimmed[0] == '(' and trimmed[trimmed.len - 1] == ')');
-}
-
-fn containsVariableModifier(input: []const u8) bool {
-    var index: usize = 0;
-    var quote: ?u8 = null;
-    while (index < input.len) : (index += 1) {
-        const byte = input[index];
-        if (quote) |active| {
-            if (byte == '\\' and index + 1 < input.len) {
-                index += 1;
-            } else if (byte == active) {
-                quote = null;
-            }
-            continue;
-        }
-        if (byte == '\'' or byte == '"') {
-            quote = byte;
-            continue;
-        }
-        if (byte != '!') continue;
-        var word_start = index + 1;
-        while (word_start < input.len and
-            (input[word_start] == ' ' or input[word_start] == '\t' or input[word_start] == '\x0c'))
-        {
-            word_start += 1;
-        }
-        const words = [_][]const u8{ "default", "global" };
-        for (words) |word| {
-            if (word_start + word.len > input.len or
-                !std.ascii.eqlIgnoreCase(input[word_start .. word_start + word.len], word))
-            {
-                continue;
-            }
-            const end = word_start + word.len;
-            if (end == input.len or !isVariableNameContinue(input[end])) return true;
-        }
-    }
-    return false;
 }

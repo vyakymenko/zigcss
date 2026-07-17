@@ -181,16 +181,146 @@ test "native Sass preserves slash lists unless arithmetic is forced" {
     );
 }
 
-test "native Sass rejects unimplemented variable modifiers" {
+test "native Sass implements default global and null variable assignment semantics" {
+    const input =
+        \\$tone: red !default;
+        \\$tone: blue !default;
+        \\$gap: null;
+        \\$gap: 4px !default;
+        \\.a {
+        \\  before: $tone;
+        \\  $tone: green !global;
+        \\  after: $tone;
+        \\  gap: $gap;
+        \\}
+        \\.b { color: $tone; }
+    ;
+    var result = try compile(std.testing.allocator, "modifiers.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{before:red;after:green;gap:4px}.b{color:green}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass warns when global assignment creates a variable" {
+    const input = ".a { $new: blue !global; color: $new; } .b { color: $new; }";
+    var result = try compile(std.testing.allocator, "new-global.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{color:blue}.b{color:blue}", result.css());
+    try std.testing.expectEqual(@as(usize, 1), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        result.nativeDiagnostics()[0].severity,
+    );
+}
+
+test "native Sass variable modifier parsing ignores quoted text and rejects duplicates" {
+    var quoted = try compile(
+        std.testing.allocator,
+        "quoted-modifier.scss",
+        "$text: \"!default\"; .a { content: $text; }",
+        .scss,
+        .{},
+    );
+    defer quoted.deinit();
+    try std.testing.expectEqualStrings(".a{content:\"!default\"}", quoted.css());
+
     try std.testing.expectError(
-        error.UnsupportedFeature,
+        error.InvalidExpression,
         compile(
             std.testing.allocator,
-            "modifier.scss",
-            "$tone: red !default; .card { color: $tone; }",
+            "duplicate-modifier.scss",
+            "$tone: red !default !default; .a { color: $tone; }",
             .scss,
             .{},
         ),
+    );
+}
+
+test "native Sass evaluates typed lists maps and native accessors" {
+    const input =
+        \\$spaces: 2px 4px 8px;
+        \\$theme: (primary: red, spaces: $spaces, nested: (tone: blue));
+        \\.card {
+        \\  margin: $spaces;
+        \\  color: map-get($theme, primary);
+        \\  gap: nth(map-get($theme, spaces), 2);
+        \\  border-color: map-get($theme, nested, tone);
+        \\  count: length($spaces);
+        \\  pair: nth($theme, 1);
+        \\  tracks: [a, b];
+        \\  ratio: 16/9;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "collections.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".card{margin:2px 4px 8px;color:red;gap:4px;border-color:blue;count:3;pair:primary red;tracks:[a,b];ratio:16/9}",
+        result.css(),
+    );
+}
+
+test "native Sass rejects maps as CSS values and duplicate map keys" {
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "map-css-value.scss",
+            "$theme: (primary: red); .safe { color: blue; } .broken { value: $theme; }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "duplicate-map-key.scss",
+            "$theme: (primary: red, primary: blue); .a { color: red; }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
+test "native Sass bounds recursive collection evaluation" {
+    var limits = sass_evaluator.Limits{};
+    limits.max_evaluation_depth = 3;
+    try std.testing.expectError(
+        error.EvaluationDepthExceeded,
+        compile(
+            std.testing.allocator,
+            "collection-depth.scss",
+            "$tone: ((((red)))); .a { color: $tone; }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
+test "native Sass evaluates logical comparison and list precedence" {
+    const input =
+        \\$n: 2px;
+        \\$fallback: null;
+        \\.a {
+        \\  equal: $n * 2 == 4px;
+        \\  different: red != blue;
+        \\  ordered: 1px < 2px;
+        \\  selected: $fallback or red;
+        \\  guarded: true and 4px;
+        \\  inverse: not(false);
+        \\  quoted-equal: "foo" == foo;
+        \\  comma-precedence: a, b and c;
+        \\  space-precedence: a b and c;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "logic.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{equal:true;different:true;ordered:true;selected:red;guarded:4px;inverse:true;quoted-equal:true;comma-precedence:a,c;space-precedence:a c}",
+        result.css(),
     );
 }
 
@@ -331,7 +461,16 @@ fn exerciseAllocationFailures(
     const input =
         \\$size: 2px;
         \\$name: card;
-        \\.#{$name} { width: $size * 3; &:hover { margin: $size + 1px; } }
+        \\$spaces: 1px 2px 3px;
+        \\$theme: (tone: blue, spaces: $spaces);
+        \\$enabled: not false;
+        \\.#{$name} {
+        \\  width: $size * 3;
+        \\  color: map-get($theme, tone);
+        \\  gap: nth(map-get($theme, spaces), 2);
+        \\  enabled: $enabled and true;
+        \\  &:hover { margin: $size + 1px; }
+        \\}
     ;
     const source_id = try sources.add("allocation.scss", input);
     var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
@@ -350,7 +489,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true}.card:hover{margin:3px}",
         result.css(),
     );
 }

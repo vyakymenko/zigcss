@@ -127,7 +127,11 @@ const expectedImplementations = Object.freeze([
     adapters: Object.freeze(['scss', 'sass']),
     capabilities: Object.freeze([
       'variables',
+      'variable-modifiers',
       'numeric-arithmetic',
+      'typed-collections',
+      'collection-accessors',
+      'logical-comparison',
       'interpolation',
       'lexical-scope',
       'selector-nesting',

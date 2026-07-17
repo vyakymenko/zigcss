@@ -108,7 +108,11 @@
       "adapters": ["scss", "sass"],
       "capabilities": [
         "variables",
+        "variable-modifiers",
         "numeric-arithmetic",
+        "typed-collections",
+        "collection-accessors",
+        "logical-comparison",
         "interpolation",
         "lexical-scope",
         "selector-nesting",
