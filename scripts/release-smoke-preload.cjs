@@ -35,6 +35,8 @@ const allowed = new Map([archiveName, checksumsName].map(name => {
   ]
 }))
 
+if (process.env.ZIGCSS_RELEASE_SMOKE_RUNTIME === '1') allowed.clear()
+
 https.get = function smokeGet(url, options, callback) {
   if (typeof options === 'function' && callback === undefined) callback = options
   if (typeof callback !== 'function') fail('HTTPS callback is required')

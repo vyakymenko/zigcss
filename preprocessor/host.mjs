@@ -2,6 +2,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { sanitizeRuntimeEnvironment } from './environment.mjs'
 import { processHostInput } from './host-core.mjs'
+import { disableNetworkAccess } from './network-policy.mjs'
 import {
   MAX_REQUEST_FRAME_BYTES,
 } from './protocol.mjs'
@@ -24,6 +25,7 @@ async function readBoundedInput() {
 
 export async function main() {
   sanitizeRuntimeEnvironment()
+  disableNetworkAccess()
   const input = await readBoundedInput()
   const output = await processHostInput(input, {
     registry: createProductionRegistry(),

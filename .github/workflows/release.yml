@@ -20,8 +20,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '20'
+          node-version: '20.19.0'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify canonical preprocessor package
+        run: npm run test:preprocessor-package && npm run check:preprocessor-package
 
       - name: Verify synchronized release version for publication
         run: npm run check:version -- --tag "$GITHUB_REF_NAME"
@@ -94,7 +97,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: '20.19.0'
 
       - name: Verify synchronized release version
         shell: bash
@@ -283,7 +286,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '20'
+          node-version: '20.19.0'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Publish to npm

@@ -7,6 +7,10 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { releaseAssetsFor, releaseTargets } from './generate-release-metadata.mjs'
+import {
+  expectedPackedFiles,
+  validatePackageDescription,
+} from './validate-preprocessor-package.mjs'
 import { parseReleaseVersion } from './validate-release-version.mjs'
 import { assertArtifactMatchesTarget } from './verify-artifact-target.mjs'
 
@@ -16,6 +20,8 @@ export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 const maximumArchiveBytes = 512 * 1024 * 1024
 const maximumBinaryBytes = 256 * 1024 * 1024
 const maximumOutputBytes = 1024 * 1024
+const maximumInstalledBytes = 128 * 1024 * 1024
+const maximumInstalledEntries = 20_000
 const childTimeoutMs = 60 * 1000
 
 export const nativeSmokeTargets = Object.freeze([
@@ -295,13 +301,107 @@ function validatePackageInventory(packResult, version) {
     fail(`npm pack did not return JSON: ${error.message}`)
   }
   if (!Array.isArray(parsed) || parsed.length !== 1) fail('npm pack must return exactly one package description')
-  const item = parsed[0]
-  const expectedFiles = ['LICENSE', 'README.md', 'index.js', 'install.js', 'package.json']
-  const actualFiles = Array.isArray(item.files) ? item.files.map(file => file.path).sort() : []
-  if (item.id !== `zigcss@${version}` || !same(actualFiles, expectedFiles)) fail('npm package identity or five-file inventory changed')
-  if (!Number.isSafeInteger(item.size) || item.size <= 0 || item.size > 1024 * 1024) fail('npm package archive size is invalid')
-  if (typeof item.filename !== 'string' || path.basename(item.filename) !== item.filename) fail('npm package filename is invalid')
-  return item.filename
+  try {
+    return validatePackageDescription(parsed[0], version)
+  } catch (error) {
+    fail(error.message)
+  }
+}
+
+function treeInventory(root, relative = '') {
+  const directory = path.join(root, relative)
+  const rows = []
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const entryRelative = path.join(relative, entry.name)
+    const filename = path.join(root, entryRelative)
+    const stat = fs.lstatSync(filename)
+    if (entry.isDirectory()) {
+      if (stat.isSymbolicLink()) fail('installed tree contains a directory symlink')
+      rows.push(...treeInventory(root, entryRelative))
+    } else if (entry.isFile() || entry.isSymbolicLink()) {
+      rows.push({
+        path: entryRelative.split(path.sep).join('/'),
+        bytes: stat.size,
+      })
+    } else {
+      fail('installed tree contains a special file')
+    }
+    if (rows.length > maximumInstalledEntries) fail('installed tree exceeds its entry limit')
+  }
+  return rows
+}
+
+function measureInstalledTree(root) {
+  const rows = treeInventory(root)
+  const bytes = rows.reduce((total, row) => total + row.bytes, 0)
+  if (bytes <= 0 || bytes > maximumInstalledBytes) fail('installed tree exceeds its byte limit')
+  return { entries: rows.length, bytes }
+}
+
+function validateInstalledPackageFiles(installedRoot, binaryName) {
+  const rows = treeInventory(installedRoot)
+    .map(row => row.path)
+    .filter(relative => relative !== `bin/${binaryName}`)
+    .sort()
+  if (!same(rows, expectedPackedFiles)) fail('installed ZigCSS package file inventory changed')
+}
+
+function checkCanonicalPreprocessors(wrapper, working, environment) {
+  const cases = [
+    {
+      extension: 'scss',
+      source: '$color: red;\n.scss { color: $color; }\n',
+      expected: '.scss {\n  color: red;\n}\n',
+    },
+    {
+      extension: 'sass',
+      source: '$color: red\n.sass\n  color: $color\n',
+      expected: '.sass {\n  color: red;\n}\n',
+    },
+    {
+      extension: 'less',
+      source: '@color: red;\n.less { color: @color; }\n',
+      expected: '.less {\n  color: red;\n}\n',
+    },
+    {
+      extension: 'styl',
+      source: '.styl\n  color red\n',
+      expected: '.styl {\n  color: #f00;\n}\n',
+    },
+  ]
+  for (const item of cases) {
+    const input = path.join(working, `canonical.${item.extension}`)
+    fs.writeFileSync(input, item.source)
+    const result = child(process.execPath, [wrapper, input], {
+      cwd: working,
+      env: environment,
+      label: `${item.extension} offline compile smoke`,
+    })
+    if (result.stdout !== item.expected || result.stderr !== '') {
+      fail(`${item.extension} returned an unexpected offline compiler contract`)
+    }
+  }
+  return cases.length
+}
+
+function checkCanonicalApi(consumer, environment) {
+  const script = path.join(consumer, 'api-smoke.mjs')
+  fs.writeFileSync(script, [
+    "import { SUPPORTED_SYNTAXES, compileString } from 'zigcss/api'",
+    "const result = await compileString('$color: red; .api { color: $color; }', { syntax: 'scss' })",
+    "process.stdout.write(JSON.stringify({ syntaxes: SUPPORTED_SYNTAXES, css: result.css }))",
+    '',
+  ].join('\n'))
+  const result = child(process.execPath, [script], {
+    cwd: consumer,
+    env: environment,
+    label: 'npm API offline compile smoke',
+  })
+  const expected = JSON.stringify({
+    syntaxes: ['css', 'scss', 'sass', 'less', 'stylus'],
+    css: '.api {\n  color: red;\n}\n',
+  })
+  if (result.stdout !== expected || result.stderr !== '') fail('npm API returned an unexpected offline compiler contract')
 }
 
 function nodeOptionsRequire(filename) {
@@ -383,7 +483,24 @@ export function smokeReleaseArtifact(options) {
     ], { cwd: temporary, env: npmEnvironment, label: 'npm pack smoke' })
     const packageName = validatePackageInventory(packed, version)
     const packageArchive = path.join(packDirectory, packageName)
-    confinedRegularFile(packDirectory, packageName, 'npm package archive', 1024 * 1024)
+    confinedRegularFile(packDirectory, packageName, 'npm package archive', 2 * 1024 * 1024)
+
+    const warmConsumer = path.join(temporary, 'lifecycle-disabled-consumer')
+    fs.mkdirSync(warmConsumer)
+    fs.writeFileSync(path.join(warmConsumer, 'package.json'), '{"name":"zigcss-lifecycle-disabled-smoke","private":true,"version":"1.0.0"}\n')
+    runNpm([
+      'install', packageArchive,
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+    ], { cwd: warmConsumer, env: npmEnvironment, label: 'npm lifecycle-disabled clean install smoke' })
+    const warmInstalledRoot = path.join(warmConsumer, 'node_modules', 'zigcss')
+    confinedRegularFile(warmInstalledRoot, 'api.mjs', 'lifecycle-disabled npm API', 64 * 1024)
+    if (fs.existsSync(path.join(warmInstalledRoot, 'bin'))) {
+      fail('lifecycle-disabled installation unexpectedly created a native binary directory')
+    }
+    measureInstalledTree(path.join(warmConsumer, 'node_modules'))
+    fs.rmSync(warmConsumer, { recursive: true, force: true })
 
     const consumer = path.join(temporary, 'consumer')
     fs.mkdirSync(consumer)
@@ -413,16 +530,30 @@ export function smokeReleaseArtifact(options) {
     const wrapper = confinedRegularFile(installedRoot, 'index.js', 'npm wrapper', 64 * 1024)
     confinedExecutableShim(consumer, `node_modules/.bin/${shimName}`, wrapper)
     checkCompiler(process.execPath, [wrapper], temporary, version, 'npm wrapper')
+    validateInstalledPackageFiles(installedRoot, policy.binaryName)
 
     const installedEntries = fs.readdirSync(path.join(installedRoot, 'bin')).sort()
     if (!same(installedEntries, [policy.binaryName])) fail('npm binary directory contains unexpected files')
     if (fs.readdirSync(path.join(installedRoot, 'bin')).some(name => name.startsWith('.install-'))) fail('npm installer left temporary files')
 
+    fs.rmSync(npmEnvironment.npm_config_cache, { recursive: true, force: true })
+    const offlineEnvironment = {
+      ...installEnvironment,
+      npm_config_offline: 'true',
+      ZIGCSS_RELEASE_SMOKE_RUNTIME: '1',
+    }
+    const providerSmokes = checkCanonicalPreprocessors(wrapper, temporary, offlineEnvironment)
+    checkCanonicalApi(consumer, offlineEnvironment)
+    const installed = measureInstalledTree(path.join(consumer, 'node_modules'))
+
     return {
       target: policy.target,
       archiveSha256: hashFile(archive),
       checksumsSha256: hashFile(checksums),
+      installedBytes: installed.bytes,
+      installedEntries: installed.entries,
       npmPackage: packageName,
+      providerSmokes,
     }
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
@@ -433,7 +564,9 @@ function main() {
   try {
     const options = parseSmokeArguments(process.argv.slice(2))
     const result = smokeReleaseArtifact(options)
-    process.stdout.write(`Native release smoke passed for ${result.target}: direct archive and npm postinstall/wrapper.\n`)
+    process.stdout.write(
+      `Native release smoke passed for ${result.target}: direct archive, lifecycle-disabled clean install, offline postinstall, ${result.providerSmokes} canonical provider compiles, API, and ${result.installedEntries} installed entries/${result.installedBytes} bytes.\n`,
+    )
   } catch (error) {
     process.stderr.write(`${error.message}\n`)
     process.exitCode = 1

@@ -60,7 +60,7 @@ async function withFixture(run) {
   }
 }
 
-test('binds the private adapter and lockfile to exact Less 4.6.7 with no public admission', () => {
+test('binds the packaged adapter and lockfile to exact Less 4.6.7 before public graduation', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -76,12 +76,12 @@ test('binds the private adapter and lockfile to exact Less 4.6.7 with no public 
   )
 
   assert.equal(LESS_VERSION, '4.6.7')
-  assert.equal(manifest.devDependencies.less, LESS_VERSION)
-  assert.equal(manifest.devDependencies['image-size'], '0.5.5')
-  assert.equal(manifest.dependencies?.less, undefined)
-  assert.equal(manifest.files.includes('preprocessor'), false)
-  assert.equal(lock.packages[''].devDependencies.less, LESS_VERSION)
-  assert.equal(lock.packages[''].devDependencies['image-size'], '0.5.5')
+  assert.equal(manifest.dependencies.less, LESS_VERSION)
+  assert.equal(manifest.dependencies['image-size'], '0.5.5')
+  assert.equal(manifest.devDependencies?.less, undefined)
+  assert.equal(manifest.files.includes('preprocessor/providers/less.mjs'), true)
+  assert.equal(lock.packages[''].dependencies.less, LESS_VERSION)
+  assert.equal(lock.packages[''].dependencies['image-size'], '0.5.5')
   assert.equal(lock.packages['node_modules/less'].version, LESS_VERSION)
   assert.equal(
     lock.packages['node_modules/less'].integrity,

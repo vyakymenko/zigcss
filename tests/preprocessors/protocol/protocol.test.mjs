@@ -37,7 +37,7 @@ test('protocol and production provider metadata are exact and matrix-bound', () 
   })
 })
 
-test('host core has no network, shell, eval, or ambient module-loading authority', () => {
+test('host core has no outbound network, shell, eval, or ambient module-loading authority', () => {
   const hostSources = [
     'preprocessor/protocol.mjs',
     'preprocessor/environment.mjs',
@@ -50,10 +50,21 @@ test('host core has no network, shell, eval, or ambient module-loading authority
     'preprocessor/host-core.mjs',
     'preprocessor/host.mjs',
   ].map(relative => fs.readFileSync(path.join(repositoryRoot, relative), 'utf8')).join('\n')
+  const networkPolicy = fs.readFileSync(
+    path.join(repositoryRoot, 'preprocessor/network-policy.mjs'),
+    'utf8',
+  )
   const runner = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/runner.mjs'), 'utf8')
 
   assert.doesNotMatch(hostSources, /node:(?:child_process|http|https|net|tls|dgram)/)
   assert.doesNotMatch(hostSources, /\beval\s*\(|new\s+Function\s*\(|import\s*\(/)
+  for (const builtin of ['dgram', 'dns', 'http', 'https', 'net', 'tls']) {
+    assert.match(networkPolicy, new RegExp(`node:${builtin}`))
+  }
+  assert.match(networkPolicy, /ZIGCSS_NETWORK_DISABLED/)
+  assert.match(networkPolicy, /replaceMethod\(net\.Socket\?\.prototype, 'connect', throwDenied\)/)
+  assert.match(networkPolicy, /Object\.defineProperty\(globalThis, 'fetch'/)
+  assert.doesNotMatch(networkPolicy, /node:child_process|\beval\s*\(|new\s+Function\s*\(|import\s*\(/)
   assert.match(runner, /spawn\(process\.execPath/)
   assert.match(runner, /shell: false/)
   assert.match(runner, /env: sanitizedHostEnvironment\(\)/)

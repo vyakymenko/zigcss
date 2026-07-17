@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import test from 'node:test'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   archiveExecutable,
   nativeSmokeTargets,
@@ -130,9 +130,39 @@ test('npm lifecycle preload serves only the two exact local release URLs', () =>
     assert.equal(blocked.error, undefined)
     assert.equal(blocked.status, 0, blocked.stderr)
     assert.match(blocked.stdout, /blocked unexpected HTTPS request/)
+
+    const runtimeBlocked = spawnSync(process.execPath, ['-e', [
+      "const https = require('node:https')",
+      `https.get('https://github.com/vyakymenko/zigcss/releases/download/v0.4.0-rc.3/${archive}', () => { process.exitCode = 2 })`,
+      "  .on('error', error => process.stdout.write(error.message))",
+    ].join('\n')], {
+      encoding: 'utf8',
+      env: { ...env, ZIGCSS_RELEASE_SMOKE_RUNTIME: '1' },
+    })
+    assert.equal(runtimeBlocked.error, undefined)
+    assert.equal(runtimeBlocked.status, 0, runtimeBlocked.stderr)
+    assert.match(runtimeBlocked.stdout, /blocked unexpected HTTPS request/)
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true })
   }
+})
+
+test('canonical provider host installs a process-wide deny-network policy', () => {
+  const policy = path.join(repositoryRoot, 'preprocessor', 'network-policy.mjs')
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', [
+    "import https from 'node:https'",
+    "import net from 'node:net'",
+    `const { disableNetworkAccess } = await import(${JSON.stringify(pathToFileURL(policy).href)})`,
+    'disableNetworkAccess()',
+    "for (const operation of [() => https.get('https://example.invalid'), () => net.connect(443, 'example.invalid')]) {",
+    "  try { operation(); process.exit(2) } catch (error) { if (error.code !== 'ZIGCSS_NETWORK_DISABLED') throw error }",
+    '}',
+    'try { await fetch(\'https://example.invalid\'); process.exit(3) } catch (error) { if (error.code !== \'ZIGCSS_NETWORK_DISABLED\') throw error }',
+    "process.stdout.write('denied')",
+  ].join('\n')], { encoding: 'utf8' })
+  assert.equal(result.error, undefined)
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, 'denied')
 })
 
 test('build and release workflows require native archive and npm installation smokes', () => {

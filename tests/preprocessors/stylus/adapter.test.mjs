@@ -84,7 +84,7 @@ function stylusClosure(lock) {
   return [...seen].sort()
 }
 
-test('binds the private adapter and lockfile to exact Stylus 0.64.0 with no public admission', () => {
+test('binds the packaged adapter and lockfile to exact Stylus 0.64.0 before public graduation', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -104,10 +104,10 @@ test('binds the private adapter and lockfile to exact Stylus 0.64.0 with no publ
   )
 
   assert.equal(STYLUS_VERSION, '0.64.0')
-  assert.equal(manifest.devDependencies.stylus, STYLUS_VERSION)
-  assert.equal(manifest.dependencies?.stylus, undefined)
-  assert.equal(manifest.files.includes('preprocessor'), false)
-  assert.equal(lock.packages[''].devDependencies.stylus, STYLUS_VERSION)
+  assert.equal(manifest.dependencies.stylus, STYLUS_VERSION)
+  assert.equal(manifest.devDependencies?.stylus, undefined)
+  assert.equal(manifest.files.includes('preprocessor/providers/stylus.mjs'), true)
+  assert.equal(lock.packages[''].dependencies.stylus, STYLUS_VERSION)
   assert.equal(lock.packages['node_modules/stylus'].version, STYLUS_VERSION)
   assert.equal(
     lock.packages['node_modules/stylus'].integrity,
