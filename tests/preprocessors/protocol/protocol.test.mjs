@@ -196,6 +196,35 @@ test('request validation is closed, provider-aware, and byte bounded', () => {
         },
       },
     }), 'HOST_OPTIONS'],
+    [makeRequest({
+      provider: 'stylus',
+      syntax: 'stylus',
+      options: {
+        ...makeRequest().options,
+        providerOptions: { hoistAtrules: false, includeCss: true },
+      },
+    }), null],
+    [makeRequest({
+      provider: 'stylus',
+      syntax: 'stylus',
+      options: { ...makeRequest().options, providerOptions: {} },
+    }), 'HOST_OPTIONS'],
+    [makeRequest({
+      provider: 'stylus',
+      syntax: 'stylus',
+      options: {
+        ...makeRequest().options,
+        providerOptions: { hoistAtrules: 'yes', includeCss: false },
+      },
+    }), 'HOST_OPTIONS'],
+    [makeRequest({
+      provider: 'stylus',
+      syntax: 'stylus',
+      options: {
+        ...makeRequest().options,
+        providerOptions: { functions: {}, hoistAtrules: false, includeCss: false },
+      },
+    }), 'HOST_OPTIONS'],
     [{ ...makeRequest(), unexpected: true }, 'HOST_REQUEST_SHAPE'],
   ]
   for (const [request, code] of invalid) {

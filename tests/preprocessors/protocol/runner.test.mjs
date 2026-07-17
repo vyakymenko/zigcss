@@ -112,7 +112,7 @@ test('production host reaches only the admitted internal Dart Sass, Less, and St
       style: 'expanded',
       sourceMap: true,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: { hoistAtrules: false, includeCss: false },
     },
   }), { timeoutMs: 5000 })
   assert.equal(stylus.ok, true)

@@ -31,7 +31,7 @@ function request(overrides = {}) {
       style: 'expanded',
       sourceMap: false,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: { hoistAtrules: false, includeCss: false },
       ...(overrides.options ?? {}),
     },
     ...overrides,
@@ -98,6 +98,10 @@ test('binds the private adapter and lockfile to exact Stylus 0.64.0 with no publ
     path.join(repositoryRoot, 'preprocessor/providers/stylus.mjs'),
     'utf8',
   )
+  const importerSource = fs.readFileSync(
+    path.join(repositoryRoot, 'preprocessor/providers/stylus-importer.mjs'),
+    'utf8',
+  )
 
   assert.equal(STYLUS_VERSION, '0.64.0')
   assert.equal(manifest.devDependencies.stylus, STYLUS_VERSION)
@@ -121,6 +125,14 @@ test('binds the private adapter and lockfile to exact Stylus 0.64.0 with no publ
   assert.match(adapterSource, /stylus\(request\.source/)
   assert.match(adapterSource, /renderer\.render\(/)
   assert.match(adapterSource, /cache: false/)
+  assert.equal(lock.packages['node_modules/glob'].version, '10.5.0')
+  assert.equal(
+    lock.packages['node_modules/glob'].integrity,
+    'sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg==',
+  )
+  assert.match(importerSource, /stylusRequire\('glob'\)/)
+  assert.match(importerSource, /globSync\(/)
+  assert.doesNotMatch(importerSource, /node:child_process|\b(?:exec|spawn)(?:File|Sync)?\s*\(/)
   const adapter = matrix.adapters.find(candidate => candidate.id === 'stylus')
   assert.equal(adapter.availability, 'Unavailable')
   assert.equal(adapter.compatibility, 'Unverified')
@@ -145,7 +157,7 @@ test('renders canonical Stylus semantics in exact expanded and compressed styles
       style: 'compressed',
       sourceMap: false,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: { hoistAtrules: false, includeCss: false },
     },
   })
 
@@ -206,7 +218,7 @@ test('owns deterministic Source Map v3 bytes for only the virtual entry', async 
     style: 'expanded',
     sourceMap: true,
     loadPaths: [],
-    providerOptions: {},
+    providerOptions: { hoistAtrules: false, includeCss: false },
   }
   const result = await compile({ source, options })
   const repeated = await compile({ source, options })
@@ -223,7 +235,7 @@ test('owns deterministic Source Map v3 bytes for only the virtual entry', async 
   assert.doesNotMatch(result.css, /sourceMappingURL/)
 })
 
-test('denies project imports, remote imports, file helpers, and executable plugins', async () => {
+test('denies unauthorized project reads, file helpers, and executable plugins', async () => {
   await withFixture(async temporary => {
     const entry = path.join(temporary, 'input.styl')
     const dependency = path.join(temporary, 'secret.styl')
@@ -247,27 +259,41 @@ test('denies project imports, remote imports, file helpers, and executable plugi
     for (const source of [
       '@import "secret"\n.entry\n  color red',
       `@import ${JSON.stringify(dependency)}\n.entry\n  color red`,
-      '@import "https://example.invalid/theme.css"\n.entry\n  color red',
     ]) {
       await assert.rejects(compile({ source, sourceUrl }), error => {
-        assert.equal(rejectsWithCode('STYLUS_IMPORTS_UNAVAILABLE')(error), true)
+        assert.equal(rejectsWithCode('STYLUS_IMPORT_POLICY')(error), true)
         assert.equal('css' in error, false)
         assert.doesNotMatch(error.message, /fuchsia|secret bytes/i)
         return true
       })
     }
+    const remote = await compile({
+      source: '@import "https://example.invalid/theme.css"\n.entry\n  color red',
+      sourceUrl,
+    })
+    assert.equal(
+      remote.css,
+      '@import "https://example.invalid/theme.css";\n.entry {\n  color: #f00;\n}\n',
+    )
+    assert.deepEqual(remote.dependencies, [])
 
     for (const source of [
       `.entry\n  value json(${JSON.stringify(json)})`,
       `.entry\n  value image-size(${JSON.stringify(image)})`,
-      `.entry\n  value embedurl(${JSON.stringify(dependency)})`,
       `reader = json\n.entry\n  value reader(${JSON.stringify(json)})`,
-      `reader = embedurl\n.entry\n  value reader(${JSON.stringify(dependency)})`,
     ]) {
       await assert.rejects(
         compile({ source, sourceUrl }),
-        rejectsWithCode('STYLUS_FILESYSTEM_DISABLED'),
+        rejectsWithCode('STYLUS_IMPORT_POLICY'),
       )
+    }
+    for (const source of [
+      `.entry\n  value embedurl(${JSON.stringify(dependency)})`,
+      `reader = embedurl\n.entry\n  value reader(${JSON.stringify(dependency)})`,
+    ]) {
+      const literal = await compile({ source, sourceUrl })
+      assert.match(literal.css, /url\(".*secret\.styl"\)/)
+      assert.deepEqual(literal.dependencies, [])
     }
     await assert.rejects(
       compile({ source: `.entry\n  value use(${JSON.stringify(plugin)})`, sourceUrl }),
@@ -281,18 +307,17 @@ test('denies project imports, remote imports, file helpers, and executable plugi
       rejectsWithCode('STYLUS_PLUGIN_DISABLED'),
     )
     assert.equal(fs.existsSync(marker), false)
-    await assert.rejects(
-      compile({
-        sourceUrl,
-        options: {
-          style: 'expanded',
-          sourceMap: false,
-          loadPaths: [temporary],
-          providerOptions: {},
-        },
-      }),
-      rejectsWithCode('STYLUS_IMPORTS_UNAVAILABLE'),
-    )
+    const rooted = await compile({
+      sourceUrl,
+      options: {
+        style: 'expanded',
+        sourceMap: false,
+        loadPaths: [temporary],
+        providerOptions: { hoistAtrules: false, includeCss: false },
+      },
+    })
+    assert.equal(rooted.css, '.card {\n  color: #f00;\n}\n')
+    assert.deepEqual(rooted.dependencies, [])
   })
 })
 
@@ -387,7 +412,7 @@ test('rejects invalid requests and pre/post-render cancellation without provider
       style: 'expanded',
       sourceMap: false,
       loadPaths: [],
-      providerOptions: {},
+      providerOptions: { hoistAtrules: false, includeCss: false },
       plugins: [],
     } }),
     rejectsWithCode('STYLUS_REQUEST_INVALID'),

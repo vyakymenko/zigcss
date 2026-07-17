@@ -169,7 +169,17 @@ function validateProviderOptions(options, provider) {
     }
     return
   }
-  requireExactKeys(options, [], 'HOST_OPTIONS', 'options.providerOptions')
+  requireExactKeys(
+    options,
+    ['hoistAtrules', 'includeCss'],
+    'HOST_OPTIONS',
+    'options.providerOptions',
+  )
+  for (const name of ['hoistAtrules', 'includeCss']) {
+    if (typeof options[name] !== 'boolean') {
+      fail('HOST_OPTIONS', `options.providerOptions.${name} must be boolean`)
+    }
+  }
 }
 
 function validateOptions(options, provider) {

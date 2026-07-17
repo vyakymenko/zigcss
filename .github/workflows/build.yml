@@ -251,6 +251,9 @@ jobs:
       - name: Verify internal Less adapter
         run: npm run test:preprocessor-less
 
+      - name: Verify internal Stylus adapter
+        run: npm run test:preprocessor-stylus
+
       - name: Verify experimental format matrix
         run: npm run test:formats
 
