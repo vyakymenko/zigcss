@@ -955,8 +955,21 @@ fn readAt(file: std.fs.File, buffer: []u8, offset: u64) Error!usize {
         &overlapped,
     ) != 0) return amount;
     return switch (windows.GetLastError()) {
-        .IO_PENDING => windows.GetOverlappedResult(file.handle, &overlapped, true) catch
-            error.Unreadable,
+        .IO_PENDING => blk: {
+            var completed: windows.DWORD = 0;
+            if (windows.kernel32.GetOverlappedResult(
+                file.handle,
+                &overlapped,
+                &completed,
+                @intFromBool(true),
+            ) != 0) break :blk completed;
+            break :blk switch (windows.GetLastError()) {
+                // An overlapped read exactly at the end of a regular file
+                // reports HANDLE_EOF here rather than from ReadFile itself.
+                .HANDLE_EOF => 0,
+                else => error.Unreadable,
+            };
+        },
         .HANDLE_EOF => 0,
         else => error.Unreadable,
     };

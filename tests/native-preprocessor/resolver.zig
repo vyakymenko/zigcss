@@ -169,6 +169,29 @@ test "loads owned bytes and records deterministic first-success dependencies" {
     }
 }
 
+test "loads empty files across the exact end-of-file boundary" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/empty.scss", .data = "" });
+    const path = try fixture.path("empty.scss");
+    defer std.testing.allocator.free(path);
+    const url = try fileUrl(path);
+    defer std.testing.allocator.free(url);
+
+    var confined = try resolver.Resolver.init(std.testing.allocator, &.{fixture.root}, .{});
+    defer confined.deinit();
+    var session = confined.createSession(std.testing.allocator, .{});
+    defer session.deinit();
+    var loaded = try session.load(url, .{ .kind = .import, .ancestry = &.{} });
+    defer loaded.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), loaded.contents.len);
+    try std.testing.expectEqual(
+        resolver.Stats{ .attempts = 1, .files = 1, .bytes = 0 },
+        session.stats(),
+    );
+}
+
 test "canonical URLs percent-encode path bytes and round-trip Unicode input" {
     var fixture = try Fixture.init();
     defer fixture.deinit();
