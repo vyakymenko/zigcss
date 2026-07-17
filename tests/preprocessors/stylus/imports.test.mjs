@@ -130,30 +130,38 @@ test('matches canonical entry, load-path, extension, and nested import precedenc
 test('matches canonical sorted globs, directory/package lookup, and require-once semantics', async () => {
   await withFixture(async ({ first }) => {
     const globDirectory = path.join(first, 'glob')
+    const globNestedDirectory = path.join(globDirectory, 'nested')
     const indexed = path.join(first, 'indexed', 'index.styl')
     const named = path.join(first, 'named', 'named.styl')
     const packageDirectory = path.join(first, 'node_modules', 'theme')
     const packageJson = path.join(packageDirectory, 'package.json')
     const packageMain = path.join(packageDirectory, 'main.styl')
-    fs.mkdirSync(globDirectory)
+    const packageFallbackDirectory = path.join(first, 'node_modules', 'fallback.styl')
+    const packageFallback = path.join(packageFallbackDirectory, 'index.styl')
+    fs.mkdirSync(globNestedDirectory, { recursive: true })
     fs.mkdirSync(path.dirname(indexed))
     fs.mkdirSync(path.dirname(named))
     fs.mkdirSync(packageDirectory, { recursive: true })
+    fs.mkdirSync(packageFallbackDirectory, { recursive: true })
     const globA = path.join(globDirectory, 'a.styl')
     const globB = path.join(globDirectory, 'b.styl')
+    const globC = path.join(globNestedDirectory, 'c.styl')
     fs.writeFileSync(globB, '.glob-b\n  order 2\n')
     fs.writeFileSync(globA, '.glob-a\n  order 1\n')
+    fs.writeFileSync(globC, '.glob-c\n  order 3\n')
     fs.writeFileSync(indexed, '.indexed\n  color orange\n')
     fs.writeFileSync(named, '.named\n  color teal\n')
     fs.writeFileSync(packageJson, '{"main":"main.styl"}\n')
     fs.writeFileSync(packageMain, '.package-main\n  color gold\n')
+    fs.writeFileSync(packageFallback, '.package-fallback\n  color coral\n')
     const source = [
-      '@import "glob/*"',
+      '@import "glob/**/*"',
       '@import "indexed"',
       '@import "indexed"',
       '@require "named"',
       '@require "named"',
       '@import "theme"',
+      '@import "fallback"',
     ].join('\n')
     const direct = await renderDirect(source, path.join(first, 'input.styl'), [first])
     const result = await compile(first, { source })
@@ -162,13 +170,16 @@ test('matches canonical sorted globs, directory/package lookup, and require-once
     assert.equal((result.css.match(/\.indexed \{/g) ?? []).length, 2)
     assert.equal((result.css.match(/\.named \{/g) ?? []).length, 1)
     assert.ok(result.css.indexOf('.glob-a') < result.css.indexOf('.glob-b'))
+    assert.ok(result.css.indexOf('.glob-b') < result.css.indexOf('.glob-c'))
     assert.deepEqual(result.dependencies, [
       { url: canonicalUrl(globA), kind: 'import' },
       { url: canonicalUrl(globB), kind: 'import' },
+      { url: canonicalUrl(globC), kind: 'import' },
       { url: canonicalUrl(indexed), kind: 'import' },
       { url: canonicalUrl(named), kind: 'import' },
       { url: canonicalUrl(packageJson), kind: 'import' },
       { url: canonicalUrl(packageMain), kind: 'import' },
+      { url: canonicalUrl(packageFallback), kind: 'import' },
     ])
   })
 })
@@ -388,7 +399,7 @@ test('rejects missing authority, traversal, links, invalid bytes, and package me
       ['@import "invalid"', 'STYLUS_IMPORT_ENCODING'],
       ['@import "broken"', 'STYLUS_IMPORT_PACKAGE'],
       ['@import "missing"', 'STYLUS_IMPORT_MISSING'],
-      ['@import "**/*"', 'STYLUS_IMPORT_POLICY'],
+      ['@import "../outside/*"', 'STYLUS_IMPORT_POLICY'],
     ]) {
       await assert.rejects(compile(first, { source }), error => {
         assert.equal(rejectsWithCode(code)(error), true, source)

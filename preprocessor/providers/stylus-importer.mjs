@@ -9,7 +9,7 @@ export const STYLUS_IMPORT_SENTINEL = 'ZIGCSS_STYLUS_IMPORT_FAILURE'
 
 const require = createRequire(import.meta.url)
 const stylusRequire = createRequire(require.resolve('stylus/package.json'))
-const { globSync, hasMagic } = stylusRequire('glob')
+const { globIterateSync, hasMagic } = stylusRequire('glob')
 const absentCodes = new Set([
   'RESOLVER_MISSING',
   'RESOLVER_DIRECTORY',
@@ -315,43 +315,46 @@ export function createStylusImportAuthority({
   }
 
   function findGlob(pattern, bases, ancestry, kind) {
-    if (pattern.includes('**')) {
-      abort('STYLUS_IMPORT_POLICY', 'Recursive Stylus import globs are disabled')
-    }
-    const directoryPattern = path.dirname(pattern)
-    const namePattern = path.basename(pattern)
-    if (hasMagic(directoryPattern, { windowsPathsNoEscape: true })) {
-      abort('STYLUS_IMPORT_POLICY', 'Stylus import globs may match only filenames')
+    if (pattern.split(/[\\/]/).includes('..')) {
+      abort('STYLUS_IMPORT_POLICY', 'Stylus import globs cannot traverse parent directories')
     }
     const candidates = path.isAbsolute(pattern)
-      ? [{ directory: directoryPattern, name: namePattern }]
-      : bases.map(base => ({
-        directory: path.resolve(base, directoryPattern),
-        name: namePattern,
-      }))
+      ? [path.resolve(pattern)]
+      : bases.map(base => path.resolve(base, pattern))
     for (const candidate of candidates) {
-      const inspected = inspectDirectory(rootRecords, candidate.directory)
+      const parsed = path.parse(candidate)
+      const components = path.relative(parsed.root, candidate).split(path.sep)
+      let staticDirectory = parsed.root
+      for (const component of components) {
+        if (hasMagic(component, { windowsPathsNoEscape: true })) break
+        staticDirectory = path.join(staticDirectory, component)
+      }
+      const inspected = inspectDirectory(rootRecords, staticDirectory)
       if (inspected.failure !== undefined) abort(...inspected.failure)
       if (inspected.missing) continue
       checkCancellation()
-      let matches
+      const matches = []
       try {
-        matches = globSync(candidate.name, {
+        for (const filename of globIterateSync(candidate, {
           absolute: true,
           cwd: inspected.directory,
           follow: false,
-          maxDepth: 1,
+          maxDepth: 32,
           nodir: true,
           posix: true,
           windowsPathsNoEscape: true,
-        }).sort()
+        })) {
+          matches.push(filename)
+          if (matches.length > MAX_GLOB_MATCHES) {
+            abort('STYLUS_IMPORT_LIMIT', 'Stylus dependency resolution exceeded a resource limit')
+          }
+        }
       } catch {
+        if (failure !== null) throw new Error(STYLUS_IMPORT_SENTINEL)
         abort('STYLUS_IMPORT_FAILURE', 'Stylus dependency glob resolution failed')
       }
-      if (matches.length > MAX_GLOB_MATCHES) {
-        abort('STYLUS_IMPORT_LIMIT', 'Stylus dependency resolution exceeded a resource limit')
-      }
       if (matches.length === 0) continue
+      matches.sort()
       const loaded = matches.map(filename => loadCandidate(filename, ancestry, kind))
       if (loaded.some(value => value === null)) {
         abort('STYLUS_IMPORT_IO', 'A confined Stylus dependency changed during glob resolution')
@@ -380,7 +383,25 @@ export function createStylusImportAuthority({
         ancestry,
         kind,
       )
-      if (packageRecord === null) continue
+      if (packageRecord === null) {
+        if (!/\.styl$/i.test(packageName)) continue
+        const indexed = find(
+          path.join(packageDirectory, 'index.styl'),
+          bases,
+          ancestry,
+          kind,
+        )
+        if (indexed !== null) return indexed
+        return find(
+          path.join(
+            packageDirectory,
+            `${path.basename(packageDirectory).replace(/\.styl$/i, '')}.styl`,
+          ),
+          bases,
+          ancestry,
+          kind,
+        )
+      }
       const metadata = parsePackage(Buffer.from(packageRecord.source, 'utf8'))
       if (metadata === null) {
         abort('STYLUS_IMPORT_PACKAGE', 'A confined Stylus package has invalid metadata')

@@ -131,7 +131,7 @@ test('binds the private adapter and lockfile to exact Stylus 0.64.0 with no publ
     'sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg==',
   )
   assert.match(importerSource, /stylusRequire\('glob'\)/)
-  assert.match(importerSource, /globSync\(/)
+  assert.match(importerSource, /globIterateSync\(/)
   assert.doesNotMatch(importerSource, /node:child_process|\b(?:exec|spawn)(?:File|Sync)?\s*\(/)
   const adapter = matrix.adapters.find(candidate => candidate.id === 'stylus')
   assert.equal(adapter.availability, 'Unavailable')
@@ -468,7 +468,7 @@ test('documents the virtual Stylus boundary and preserves unavailable public adm
     'stable non-file virtual filename',
     '`json()`, `image-size()`, and `embedurl()`',
     '`warn()`, `p()`, and `trace()`',
-    '`STYLUS-011`',
+    '`STYLUS-012`',
     '`.styl` remains rejected by the public CLI',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))

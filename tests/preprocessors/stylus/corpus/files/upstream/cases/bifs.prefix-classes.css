@@ -1,0 +1,42 @@
+.foo {
+  width: 10px;
+}
+.prefix-test {
+  width: 1px;
+}
+.prefix-test2 {
+  width: 1px;
+}
+.prefix-test {
+  width: 1px;
+}
+.prefix-test .prefix-test2 {
+  width: 1px;
+}
+.prefix-test .prefix-test3 {
+  color: #00f;
+}
+.prefix-test2 .prefix-test4 .prefix-test6 {
+  color: #008000;
+}
+.bar {
+  width: 10px;
+}
+.bar .prefix2-test {
+  width: 1px;
+}
+.bar .prefix2-test2 {
+  width: 1px;
+}
+.lol-bar {
+  height: 10px;
+}
+.lol-a {
+  color: #f00;
+}
+.lol-b {
+  color: #008000;
+}
+.lol-c {
+  color: #00f;
+}

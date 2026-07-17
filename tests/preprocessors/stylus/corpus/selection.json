@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/stylus/stylus",
+    "tag": "0.64.0",
+    "revision": "1086c6c1fbd7a7fd0ce9ad94f6cf4a62fc79a6e9",
+    "tree": "295654c66ed48ff47a4aeca95b1935edf7a612ba",
+    "archiveSha256": "140a722893f0f05b501a01ce1ff27042b6d7c0769ad746f4b5d04429ec8d429e",
+    "packageSha256": "9eb16d271c690abd29fc62c3e96896b1f7a3b54e77cc36f04e8c0d04a73c06c6",
+    "testRunSha256": "8ca21b113ede44c0f74353e292d3a3f88b8026b15696b595a1fd2d5daae82ae4",
+    "packageVersion": "0.64.0",
+    "license": "MIT",
+    "licenseSha256": "a5889179818e8e7252246f50df3f9754691affe1a5e3848d032e0bc1da5c7020"
+  },
+  "exclusions": [
+    {
+      "name": "bifs.use",
+      "category": "executable-extension",
+      "reason": "Executes a project JavaScript plugin through use(), which belongs only to the separate trusted-project-code mode."
+    },
+    {
+      "name": "import.include.resolver.absolute",
+      "category": "executable-extension",
+      "reason": "The official harness injects the JavaScript stylus.resolver() callback for this case."
+    },
+    {
+      "name": "import.include.resolver.css-file",
+      "category": "executable-extension",
+      "reason": "The official harness injects the JavaScript stylus.resolver() callback for this case."
+    },
+    {
+      "name": "import.include.resolver.images",
+      "category": "executable-extension",
+      "reason": "The official harness injects the JavaScript stylus.resolver() callback for this case."
+    },
+    {
+      "name": "import.include.resolver.nested",
+      "category": "executable-extension",
+      "reason": "The official harness injects the JavaScript stylus.resolver() callback for this case."
+    },
+    {
+      "name": "prefix.css.selector.interpolation",
+      "category": "unsupported-option",
+      "reason": "Requires the undocumented renderer prefix option, which is not in the closed host option surface."
+    },
+    {
+      "name": "prefix.extend",
+      "category": "unsupported-option",
+      "reason": "Requires the undocumented renderer prefix option, which is not in the closed host option surface."
+    },
+    {
+      "name": "prefix.extend.complex",
+      "category": "unsupported-option",
+      "reason": "Requires the undocumented renderer prefix option, which is not in the closed host option surface."
+    },
+    {
+      "name": "prefix.extend.with.placeholders",
+      "category": "unsupported-option",
+      "reason": "Requires the undocumented renderer prefix option, which is not in the closed host option surface."
+    },
+    {
+      "name": "prefix.grid",
+      "category": "unsupported-option",
+      "reason": "Requires the undocumented renderer prefix option, which is not in the closed host option surface."
+    },
+    {
+      "name": "atrules",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output places @namespace after ordinary rules and fails the independent strict CSS parser."
+    },
+    {
+      "name": "bifs.remove",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains a legacy value form rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "control.blueprint.ie",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains legacy browser-hack syntax rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "control.boilerplate",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains legacy browser-hack syntax rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "escape",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains intentionally escaped legacy syntax rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "hack.star",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains a legacy star-property hack rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "if.postfix",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output places @import after ordinary rules and fails the independent strict CSS parser."
+    },
+    {
+      "name": "import.basic",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output intentionally retains a late @import rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "import.namespace",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains a legacy namespace selector rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "moz-document",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains a legacy @-moz-document form rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "moz-document-import",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains a legacy @-moz-document form rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "object",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output intentionally emits an object-like value rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "page",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains legacy paged-media at-rules unsupported by the independent strict CSS parser."
+    },
+    {
+      "name": "regression.1623",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains a legacy browser-hack declaration rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "regression.566",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains an intentionally dangling selector combinator rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "selector.interpolation",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains a legacy interpolated attribute selector rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "selector.reference",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains an intentionally dangling selector combinator rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "selectors",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains legacy attribute-selector syntax rejected by the independent strict CSS parser."
+    },
+    {
+      "name": "selectors.pseudo",
+      "category": "generated-css-invalid",
+      "reason": "Canonical output contains a legacy pseudo-element selector sequence rejected by the independent strict CSS parser."
+    }
+  ],
+  "negativeCases": [
+    {
+      "id": "unclosed-expression",
+      "feature": "negative-parser",
+      "source": ".a\n  color (\n",
+      "expected": { "message": "expected \")\", got \"outdent\"", "line": 3, "column": 1 }
+    },
+    {
+      "id": "unexpected-brace",
+      "feature": "negative-parser",
+      "source": ".a\n  color }\n",
+      "expected": { "message": "unexpected \"}\"", "line": 3, "column": 1 }
+    },
+    {
+      "id": "unclosed-media",
+      "feature": "negative-at-rule",
+      "source": "@media (\n  .a\n    color red\n",
+      "expected": { "message": "expected \"ident\", got \".\"", "line": 2, "column": 2 }
+    },
+    {
+      "id": "unclosed-function",
+      "feature": "negative-function",
+      "source": "foo(\n",
+      "expected": { "message": "failed to find closing paren \")\"", "line": 2, "column": 1 }
+    },
+    {
+      "id": "dangling-selector",
+      "feature": "negative-selector",
+      "source": ".a,\n  color red\n",
+      "expected": { "message": "expected \"indent\", got \"eos\"", "line": 3, "column": 1 }
+    },
+    {
+      "id": "incomplete-assignment",
+      "feature": "negative-evaluator",
+      "source": "$x = 1 +\n",
+      "expected": { "message": "Cannot read properties of undefined (reading 'lineno')", "line": 1, "column": 8 }
+    },
+    {
+      "id": "empty-import",
+      "feature": "negative-import",
+      "source": "@import\n",
+      "expected": { "message": "@import string expected", "line": 1, "column": 1 }
+    },
+    {
+      "id": "require-url",
+      "feature": "negative-import",
+      "source": "@require url(\"https://example.invalid/a.css\")\n",
+      "expected": { "message": "You cannot @require a url", "line": 1, "column": 45 }
+    },
+    {
+      "id": "bad-rgba-arity",
+      "feature": "negative-function",
+      "source": ".a\n  color rgba(1, 2)\n",
+      "expected": { "message": "TypeError: expected rgba or hsla, but got unit:1", "line": 2, "column": 9 }
+    },
+    {
+      "id": "explicit-error",
+      "feature": "negative-evaluator",
+      "source": "error(\"integration failure\")\n",
+      "expected": { "message": "integration failure", "line": 1, "column": 1 }
+    },
+    {
+      "id": "root-return",
+      "feature": "negative-control",
+      "source": "return 1\n",
+      "expected": { "message": "undefined", "line": 1, "column": 8 }
+    },
+    {
+      "id": "root-break",
+      "feature": "negative-control",
+      "source": "break\n",
+      "expected": { "message": "expected \"indent\", got \"eos\"", "line": 2, "column": 1 }
+    },
+    {
+      "id": "bad-charset",
+      "feature": "negative-at-rule",
+      "source": "@charset 12\n",
+      "expected": { "message": "expected \"string\", got \"unit 12\"", "line": 1, "column": 12 }
+    },
+    {
+      "id": "unclosed-object",
+      "feature": "negative-object",
+      "source": "value = { foo: 1\n",
+      "expected": { "message": "expected \"ident\" or \"string\", got \"eos\"", "line": 2, "column": 1 }
+    },
+    {
+      "id": "undefined-property",
+      "feature": "negative-object",
+      "source": ".a\n  color missing.property\n",
+      "expected": { "message": "missing has no property .property", "line": 2, "column": 17 }
+    },
+    {
+      "id": "unterminated-string",
+      "feature": "negative-parser",
+      "source": ".a\n  content \"hello\n",
+      "expected": { "message": "expected \"indent\", got \"outdent\"", "line": 3, "column": 1 }
+    },
+    {
+      "id": "bad-call-comma",
+      "feature": "negative-function",
+      "source": ".a\n  color rgb(1,,2)\n",
+      "expected": { "message": "TypeError: expected \"green\" to be a unit, but got null:null", "line": 2, "column": 9 }
+    },
+    {
+      "id": "bad-ternary",
+      "feature": "negative-control",
+      "source": ".a\n  color true ? red\n",
+      "expected": { "message": "expected \":\", got \"outdent\"", "line": 3, "column": 1 }
+    },
+    {
+      "id": "bad-atblock",
+      "feature": "negative-at-rule",
+      "source": "$block = @block {\n",
+      "expected": { "message": "unexpected \"eos\"", "line": 2, "column": 1 }
+    },
+    {
+      "id": "bad-property",
+      "feature": "negative-property",
+      "source": ".a\n  : red\n",
+      "expected": { "message": "expected \"indent\", got \"outdent\"", "line": 3, "column": 1 }
+    }
+  ]
+}
