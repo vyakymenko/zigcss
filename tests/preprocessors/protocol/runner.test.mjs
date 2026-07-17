@@ -159,6 +159,29 @@ test('process supervisor kills timeout and stdout overflow and rejects stderr, m
   }
 })
 
+test('process supervisor cancellation kills the owned provider process', async () => {
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(), 10)
+  await assert.rejects(
+    runPreprocessorHost(makeRequest(), {
+      hostPath: fixtureHost,
+      hostArguments: ['hang'],
+      timeoutMs: 1000,
+      signal: controller.signal,
+    }),
+    rejectsWithCode('HOST_PROCESS_ABORTED'),
+  )
+  await assert.rejects(
+    runPreprocessorHost(makeRequest(), {
+      hostPath: fixtureHost,
+      hostArguments: ['hang'],
+      timeoutMs: 1000,
+      signal: controller.signal,
+    }),
+    rejectsWithCode('HOST_PROCESS_ABORTED'),
+  )
+})
+
 test('host environment is deterministic and strips Node injection surfaces', async () => {
   assert.deepEqual(
     sanitizedHostEnvironment({

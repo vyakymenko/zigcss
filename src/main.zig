@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const core_protocol = @import("core_protocol.zig");
 const zigcss = @import("zigcss");
 const lsp = @import("lsp.zig");
 const lsp_transport = @import("lsp_transport.zig");
@@ -1038,6 +1039,12 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) exitWithCliError("no input files specified; use --help for usage", .{});
+
+    if (std.mem.eql(u8, args[1], "--internal-core-v1")) {
+        if (args.len != 2) std.process.exit(exit_usage);
+        core_protocol.runStdio(allocator) catch std.process.exit(exit_compile_failure);
+        return;
+    }
 
     if (std.mem.eql(u8, args[1], "-h") or std.mem.eql(u8, args[1], "--help")) {
         if (args.len != 2) exitWithCliError("--help does not accept additional arguments", .{});

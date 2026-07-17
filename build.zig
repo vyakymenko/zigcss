@@ -47,6 +47,15 @@ pub fn build(b: *std.Build) void {
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
+    const core_protocol_test_module = b.createModule(.{
+        .root_source_file = b.path("src/core_protocol.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    core_protocol_test_module.addImport("zigcss", library_module);
+    const core_protocol_tests = b.addTest(.{ .root_module = core_protocol_test_module });
+    const run_core_protocol_tests = b.addRunArtifact(core_protocol_tests);
+
     const lsp_test_module = b.createModule(.{
         .root_source_file = b.path("src/lsp.zig"),
         .target = target,
@@ -180,6 +189,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_core_protocol_tests.step);
     test_step.dependOn(&run_lsp_tests.step);
     test_step.dependOn(&run_lsp_transport_tests.step);
     test_step.dependOn(&run_lsp_position_tests.step);

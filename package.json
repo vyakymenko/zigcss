@@ -64,6 +64,7 @@
     "test:preprocessor-sass": "node --test tests/preprocessors/sass/*.test.mjs",
     "test:preprocessor-less": "node --test tests/preprocessors/less/*.test.mjs",
     "test:preprocessor-stylus": "node --test tests/preprocessors/stylus/*.test.mjs",
+    "test:preprocessor-product": "node --test tests/preprocessors/product/*.test.mjs",
     "test:formats": "node --test tests/formats/validate.test.mjs && node tests/formats/validate.mjs",
     "test:compat": "node tests/compatibility/validate.mjs",
     "test:transforms": "node tests/transforms/validate.mjs"

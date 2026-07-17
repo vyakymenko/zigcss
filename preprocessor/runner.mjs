@@ -59,6 +59,15 @@ function validateHost(hostPath, hostArguments) {
   }
 }
 
+function validateSignal(signal) {
+  if (signal !== undefined && !(signal instanceof AbortSignal)) {
+    throw processError('HOST_SIGNAL_INVALID', 'signal must be an AbortSignal')
+  }
+  if (signal?.aborted) {
+    throw processError('HOST_PROCESS_ABORTED', 'preprocessor compilation was cancelled')
+  }
+}
+
 export async function runPreprocessorHost(
   requestValue,
   {
@@ -67,10 +76,12 @@ export async function runPreprocessorHost(
     timeoutMs = DEFAULT_PROCESS_TIMEOUT_MS,
     maxStdoutBytes = MAX_RESPONSE_FRAME_BYTES + 4,
     maxStderrBytes = MAX_STDERR_BYTES,
+    signal,
   } = {},
 ) {
   const request = validateRequest(requestValue)
   validateHost(hostPath, hostArguments)
+  validateSignal(signal)
   validatePositiveInteger(timeoutMs, MAX_PROCESS_TIMEOUT_MS, 'HOST_LIMIT_INVALID', 'timeout')
   validatePositiveInteger(
     maxStdoutBytes,
@@ -108,9 +119,19 @@ export async function runPreprocessorHost(
       child.kill('SIGKILL')
     }
 
+    const onAbort = () => {
+      terminate(processError('HOST_PROCESS_ABORTED', 'preprocessor compilation was cancelled'))
+    }
+    if (signal !== undefined) signal.addEventListener('abort', onAbort, { once: true })
+
     const timer = setTimeout(() => {
       terminate(processError('HOST_PROCESS_TIMEOUT', 'preprocessor host exceeded its time limit'))
     }, timeoutMs)
+
+    const cleanup = () => {
+      clearTimeout(timer)
+      if (signal !== undefined) signal.removeEventListener('abort', onAbort)
+    }
 
     child.on('error', () => {
       terminate(processError('HOST_PROCESS_START', 'preprocessor host could not start'))
@@ -132,7 +153,7 @@ export async function runPreprocessorHost(
       // Early close is resolved by the owned exit/signal/response checks below.
     })
     child.once('close', (code, signal) => {
-      clearTimeout(timer)
+      cleanup()
       if (failure !== null) {
         reject(failure)
         return
