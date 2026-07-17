@@ -376,6 +376,101 @@ test "native Sass rejects incompatible and non-CSS compound units" {
     );
 }
 
+test "native Sass serializes repeating arithmetic with canonical precision" {
+    const input =
+        \\$one: 1;
+        \\$two: 2;
+        \\$large: 123456789;
+        \\.a {
+        \\  third: $one / 3;
+        \\  two-thirds: $two / 3;
+        \\  seventh: $one / 7;
+        \\  tiny: $one / 30000000000;
+        \\  large: $large / 7;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "precision.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{third:.3333333333;two-thirds:.6666666667;seventh:.1428571429;tiny:0;large:17636684.14285714}",
+        result.css(),
+    );
+}
+
+test "native Sass reduces and safely preserves CSS calculations" {
+    const input =
+        \\$one: 1px;
+        \\$gap: 20px;
+        \\$dynamic: var(--size);
+        \\.a {
+        \\  calc-reduced: calc(1px + 2px);
+        \\  calc-variable: calc($one + 2px);
+        \\  calc-preserved: calc(100% - $gap);
+        \\  calc-relative: calc(1em + 2px);
+        \\  calc-dynamic: calc($dynamic);
+        \\  minimum: min(3px, 2px);
+        \\  maximum: max(3px, 2px);
+        \\  clamped: clamp(1px, 2px, 3px);
+        \\  converted-max: max(1in, 95px);
+        \\  converted-clamp: clamp(1in, 97px, 3cm);
+        \\  relative-min: min(1em, 2px);
+        \\  dynamic: max(var(--size), $gap);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "calculations.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{calc-reduced:3px;calc-variable:3px;calc-preserved:calc(100% - 20px);calc-relative:calc(1em + 2px);calc-dynamic:calc(var(--size));minimum:2px;maximum:3px;clamped:2px;converted-max:1in;converted-clamp:97px;relative-min:min(1em,2px);dynamic:max(var(--size),20px)}",
+        result.css(),
+    );
+}
+
+test "native Sass calculations reject invalid arity types syntax and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "empty-calc.scss", .input = ".a { value: calc(); }" },
+        .{ .name = "empty-min.scss", .input = ".a { value: min(); }" },
+        .{ .name = "short-clamp.scss", .input = ".a { value: clamp(1px, 2px); }" },
+        .{ .name = "long-clamp.scss", .input = ".a { value: clamp(1px, 2px, 3px, 4px); }" },
+        .{ .name = "typed-min.scss", .input = ".a { value: min(red, 2px); }" },
+        .{ .name = "typed-calc.scss", .input = ".a { value: calc(red); }" },
+        .{ .name = "quoted-calc.scss", .input = ".a { value: calc(\"var(--size)\"); }" },
+        .{
+            .name = "comment-spoofed-calc.scss",
+            .input = ".a { value: calc(/* var(--size) */ red); }",
+        },
+        .{ .name = "invalid-calc.scss", .input = ".a { value: calc(1px +); }" },
+        .{ .name = "zero-calc.scss", .input = ".a { value: calc(1px / 0); }" },
+        .{ .name = "mixed-calc.scss", .input = ".a { value: calc(1 + 2px); }" },
+        .{ .name = "mixed-clamp.scss", .input = ".a { value: clamp(1, 2px, 3px); }" },
+        .{
+            .name = "deferred-mixed-clamp.scss",
+            .input = ".a { value: clamp(1, var(--size), 3px); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "calculation-limit.scss",
+            ".a { value: min(1px, 2px); }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass preserves declaration order around nested rules" {
     const input =
         \\.a {
@@ -524,6 +619,8 @@ fn exerciseAllocationFailures(
         \\  enabled: $enabled and true;
         \\  converted: $inch + 96px;
         \\  cancelled: ($inch / 2.54cm);
+        \\  reduced-calc: calc($size + 2px);
+        \\  deferred-calc: calc(100% - $size);
         \\  &:hover { margin: $size + 1px; }
         \\}
     ;
@@ -544,7 +641,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px)}.card:hover{margin:3px}",
         result.css(),
     );
 }

@@ -16,6 +16,7 @@ const hard_selectors = 1_000_000;
 const hard_selector_bytes = 20 * 1024 * 1024;
 const hard_temporary_bytes = 20 * 1024 * 1024;
 const hard_expression_tokens = 1_000_000;
+const hard_function_arguments = 65_536;
 const hard_evaluation_depth: u16 = 256;
 
 pub const Limits = struct {
@@ -25,6 +26,7 @@ pub const Limits = struct {
     max_selector_bytes: usize = 10 * 1024 * 1024,
     max_temporary_bytes: usize = 10 * 1024 * 1024,
     max_expression_tokens: usize = 200_000,
+    max_function_arguments: usize = 4_096,
     max_evaluation_depth: u16 = 128,
 };
 
@@ -35,6 +37,7 @@ pub const Error = native_evaluator.Error ||
     native_source.Error ||
     native_value.Error || error{
     EvaluationDepthExceeded,
+    FunctionArgumentLimitExceeded,
     InvalidExpression,
     InvalidLimits,
     InvalidSassSyntax,
@@ -90,6 +93,27 @@ const Builtin = enum {
     map_get,
     nth,
     length,
+    calculation,
+    minimum,
+    maximum,
+    clamp,
+};
+
+const ArithmeticProbe = union(enum) {
+    none,
+    numeric: Numeric,
+    incompatible,
+    invalid,
+};
+
+const ArithmeticContext = enum {
+    sass,
+    calculation,
+};
+
+const CalculationArgument = union(enum) {
+    number: native_value.Number,
+    deferred,
 };
 
 const LogicalOperator = enum {
@@ -527,8 +551,25 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!?Numeric {
-        if (raw.len == 0) return null;
-        if (try self.hasTopLevelListStructure(raw)) return null;
+        return switch (try self.probeArithmetic(raw, scope, span, .sass)) {
+            .none => null,
+            .numeric => |numeric| numeric,
+            .incompatible, .invalid => {
+                try self.report(.invalid_operation, span, "invalid native Sass arithmetic expression");
+                return error.InvalidExpression;
+            },
+        };
+    }
+
+    fn probeArithmetic(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+        context: ArithmeticContext,
+    ) Error!ArithmeticProbe {
+        if (raw.len == 0) return .none;
+        if (try self.hasTopLevelListStructure(raw)) return .none;
         var options = native_lexer.Options{};
         options.max_input_bytes = @max(raw.len, 1);
         options.max_tokens = self.limits.max_expression_tokens;
@@ -537,7 +578,7 @@ const Engine = struct {
 
         var first: usize = 0;
         while (first < tokens.len and isExpressionTrivia(tokens[first].kind)) first += 1;
-        if (first >= tokens.len or !arithmeticStart(tokens[first], raw)) return null;
+        if (first >= tokens.len or !arithmeticStart(tokens[first], raw)) return .none;
         var parser = ArithmeticParser{
             .engine = self,
             .raw = raw,
@@ -546,25 +587,41 @@ const Engine = struct {
             .scope = scope,
             .span = span,
             .allows_slash_division = slashDivisionEnabled(raw),
+            .strict_additive_units = context == .calculation,
         };
         const numeric = parser.parseExpression() catch |err| {
-            if (!parser.saw_operator) return null;
+            if (!parser.saw_operator) {
+                return switch (err) {
+                    error.UndefinedVariable => err,
+                    error.InvalidExpression,
+                    error.DivisionByZero,
+                    error.IncompatibleUnits,
+                    error.InvalidNumber,
+                    error.UnitLimitExceeded,
+                    => .none,
+                    else => err,
+                };
+            }
             switch (err) {
                 error.UndefinedVariable => return err,
-                error.OutOfMemory => return err,
-                else => {
-                    try self.report(.invalid_operation, span, "invalid native Sass arithmetic expression");
-                    return error.InvalidExpression;
-                },
+                error.IncompatibleUnits => return if (parser.invalid_additive_units)
+                    .invalid
+                else
+                    .incompatible,
+                error.InvalidExpression,
+                error.DivisionByZero,
+                error.InvalidNumber,
+                error.UnitLimitExceeded,
+                => return .invalid,
+                else => return err,
             }
         };
         parser.skipTrivia();
         if (parser.current().kind != .eof) {
-            if (!parser.saw_operator) return null;
-            try self.report(.invalid_operation, span, "invalid native Sass arithmetic expression");
-            return error.InvalidExpression;
+            if (!parser.saw_operator) return .none;
+            return .invalid;
         }
-        return numeric;
+        return .{ .numeric = numeric };
     }
 
     fn renderTemplate(
@@ -908,6 +965,14 @@ const Engine = struct {
             .nth
         else if (sassNameEql(name, "length"))
             .length
+        else if (sassNameEql(name, "calc"))
+            .calculation
+        else if (sassNameEql(name, "min"))
+            .minimum
+        else if (sassNameEql(name, "max"))
+            .maximum
+        else if (sassNameEql(name, "clamp"))
+            .clamp
         else
             return null;
 
@@ -916,11 +981,27 @@ const Engine = struct {
         defer ranges.deinit(self.allocator);
         _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
         if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        if (ranges.items.len > self.limits.max_function_arguments) {
+            try self.report(.resource_limit, span, "native Sass function argument limit exceeded");
+            return error.FunctionArgumentLimitExceeded;
+        }
         for (ranges.items) |range| {
             if (trimWhitespace(body[range.start..range.end]).len == 0) {
                 try self.report(.syntax, span, "empty native Sass function argument");
                 return error.InvalidExpression;
             }
+        }
+
+        switch (builtin) {
+            .calculation, .minimum, .maximum, .clamp => return try self.callCalculation(
+                builtin,
+                raw,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
+            else => {},
         }
 
         var arguments: std.ArrayList(*const native_value.Value) = .empty;
@@ -936,7 +1017,193 @@ const Engine = struct {
             .map_get => try self.callMapGet(arguments.items, span),
             .nth => try self.callNth(arguments.items, span),
             .length => try self.callLength(arguments.items, span),
+            .calculation, .minimum, .maximum, .clamp => unreachable,
         };
+    }
+
+    fn callCalculation(
+        self: *Engine,
+        builtin: Builtin,
+        raw: []const u8,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const valid_arity = switch (builtin) {
+            .calculation => ranges.len == 1,
+            .minimum, .maximum => ranges.len >= 1,
+            .clamp => ranges.len == 3,
+            else => unreachable,
+        };
+        if (!valid_arity) {
+            try self.report(.invalid_operation, span, switch (builtin) {
+                .calculation => "calc() requires exactly one argument",
+                .minimum => "min() requires at least one argument",
+                .maximum => "max() requires at least one argument",
+                .clamp => "clamp() requires exactly three arguments",
+                else => unreachable,
+            });
+            return error.InvalidExpression;
+        }
+
+        var arguments: std.ArrayList(native_value.Number) = .empty;
+        defer arguments.deinit(self.allocator);
+        var deferred = false;
+        for (ranges) |range| {
+            const argument_raw = trimWhitespace(body[range.start..range.end]);
+            switch (try self.evaluateCalculationArgument(argument_raw, builtin, scope, span)) {
+                .number => |number| try arguments.append(self.allocator, number),
+                .deferred => deferred = true,
+            }
+        }
+        if (builtin == .clamp) {
+            var dimensionless: ?bool = null;
+            for (arguments.items) |number| {
+                const current = (try native_numeric.Numeric.fromNumber(number)).isDimensionless();
+                if (dimensionless) |expected| {
+                    if (current != expected) {
+                        try self.report(
+                            .invalid_operation,
+                            span,
+                            "clamp() requires compatible dimensionality",
+                        );
+                        return error.InvalidExpression;
+                    }
+                } else {
+                    dimensionless = current;
+                }
+            }
+        }
+        if (deferred) return self.preserveCalculation(raw, scope, span);
+
+        if (builtin == .calculation) {
+            return self.values.own(.{ .number = arguments.items[0] });
+        }
+
+        var selected: usize = if (builtin == .clamp) 1 else 0;
+        if (builtin == .clamp) {
+            selected = try self.selectCalculationNumber(
+                arguments.items,
+                selected,
+                2,
+                .minimum,
+                span,
+            ) orelse return self.preserveCalculation(raw, scope, span);
+            selected = try self.selectCalculationNumber(
+                arguments.items,
+                0,
+                selected,
+                .maximum,
+                span,
+            ) orelse return self.preserveCalculation(raw, scope, span);
+        } else {
+            for (arguments.items[1..], 1..) |_, index| {
+                selected = try self.selectCalculationNumber(
+                    arguments.items,
+                    selected,
+                    index,
+                    builtin,
+                    span,
+                ) orelse return self.preserveCalculation(raw, scope, span);
+            }
+        }
+        return self.values.own(.{ .number = arguments.items[selected] });
+    }
+
+    fn evaluateCalculationArgument(
+        self: *Engine,
+        raw: []const u8,
+        builtin: Builtin,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!CalculationArgument {
+        const context: ArithmeticContext = if (builtin == .calculation or builtin == .clamp)
+            .calculation
+        else
+            .sass;
+        switch (try self.probeArithmetic(raw, scope, span, context)) {
+            .numeric => |numeric| {
+                if (!numeric.isCssNumber()) {
+                    if (builtin == .calculation) return .deferred;
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "native Sass calculation produced a non-CSS compound number",
+                    );
+                    return error.InvalidExpression;
+                }
+                var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                const owned = try self.values.own(.{
+                    .number = try numeric.toNumber(&numerator, &denominator),
+                });
+                return .{ .number = owned.number };
+            },
+            .incompatible => return .deferred,
+            .invalid => {
+                const rendered = try self.renderBytes(raw, scope, span, true);
+                defer self.allocator.free(rendered);
+                if (containsDeferredCssCalculation(rendered)) return .deferred;
+                try self.report(.invalid_operation, span, "invalid native Sass calculation expression");
+                return error.InvalidExpression;
+            },
+            .none => {},
+        }
+
+        const item = try self.evaluateExpressionBytes(raw, scope, span);
+        return switch (item.*) {
+            .number => |number| .{ .number = number },
+            .string, .selector => |string| if (!string.quoted and
+                containsDeferredCssCalculation(string.bytes))
+                .deferred
+            else blk: {
+                try self.report(.type_mismatch, span, "native Sass calculation requires numbers");
+                break :blk error.InvalidExpression;
+            },
+            else => blk: {
+                try self.report(.type_mismatch, span, "native Sass calculation requires numbers");
+                break :blk error.InvalidExpression;
+            },
+        };
+    }
+
+    fn selectCalculationNumber(
+        self: *Engine,
+        arguments: []const native_value.Number,
+        left: usize,
+        right: usize,
+        builtin: Builtin,
+        span: native_source.Span,
+    ) Error!?usize {
+        const ordering = native_numeric.compare(
+            try native_numeric.Numeric.fromNumber(arguments[left]),
+            try native_numeric.Numeric.fromNumber(arguments[right]),
+        ) catch |err| switch (err) {
+            error.IncompatibleUnits => return null,
+            else => {
+                try self.report(.invalid_operation, span, "invalid native Sass calculation comparison");
+                return error.InvalidExpression;
+            },
+        };
+        return switch (builtin) {
+            .minimum => if (ordering == .greater) right else left,
+            .maximum => if (ordering == .less) right else left,
+            else => unreachable,
+        };
+    }
+
+    fn preserveCalculation(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const rendered = try self.renderBytes(raw, scope, span, true);
+        defer self.allocator.free(rendered);
+        return self.values.own(.{
+            .string = .{ .bytes = minifyCalculationArgumentCommas(rendered) },
+        });
     }
 
     fn callMapGet(
@@ -1450,9 +1717,8 @@ const Engine = struct {
         output: *std.ArrayList(u8),
         number: native_value.Number,
     ) Error!void {
-        var buffer: [128]u8 = undefined;
-        const formatted = std.fmt.bufPrint(&buffer, "{d}", .{number.value}) catch
-            return error.InvalidExpression;
+        var buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        const formatted = try native_numeric.serialize(number.value, &buffer, true);
         try self.appendTemporary(output, formatted);
         for (number.numerator_units, 0..) |unit, index| {
             if (index > 0) try self.appendTemporary(output, "*");
@@ -1494,6 +1760,8 @@ const ArithmeticParser = struct {
     span: native_source.Span,
     saw_operator: bool = false,
     allows_slash_division: bool,
+    strict_additive_units: bool,
+    invalid_additive_units: bool = false,
 
     fn parseExpression(self: *ArithmeticParser) Error!Numeric {
         var left = try self.parseTerm();
@@ -1506,6 +1774,12 @@ const ArithmeticParser = struct {
             self.saw_operator = true;
             self.cursor += 1;
             const right = try self.parseTerm();
+            if (self.strict_additive_units and
+                left.isDimensionless() != right.isDimensionless())
+            {
+                self.invalid_additive_units = true;
+                return error.IncompatibleUnits;
+            }
             left = try native_numeric.add(left, right, operation[0]);
         }
     }
@@ -1619,6 +1893,8 @@ fn validateLimits(limits: Limits) Error!void {
         limits.max_temporary_bytes == 0 or limits.max_temporary_bytes > hard_temporary_bytes or
         limits.max_expression_tokens == 0 or
         limits.max_expression_tokens > hard_expression_tokens or
+        limits.max_function_arguments == 0 or
+        limits.max_function_arguments > hard_function_arguments or
         limits.max_evaluation_depth == 0 or limits.max_evaluation_depth > hard_evaluation_depth)
     {
         return error.InvalidLimits;
@@ -1844,6 +2120,129 @@ fn sassNameEql(left: []const u8, right: []const u8) bool {
         if (normalized != right_byte) return false;
     }
     return true;
+}
+
+fn containsDeferredCssCalculation(input: []const u8) bool {
+    const functions = [_][]const u8{
+        "var",
+        "env",
+        "attr",
+        "calc",
+        "min",
+        "max",
+        "clamp",
+        "round",
+        "mod",
+        "rem",
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "atan2",
+        "pow",
+        "sqrt",
+        "hypot",
+        "log",
+        "exp",
+        "abs",
+        "sign",
+    };
+    var index: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 2;
+            } else {
+                if (byte == active) quote = null;
+                index += 1;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 2;
+            continue;
+        }
+        if (commentEnd(input, index)) |end| {
+            index = end;
+            continue;
+        }
+        if (index > 0 and isVariableNameContinue(input[index - 1])) {
+            index += 1;
+            continue;
+        }
+        for (functions) |name| {
+            if (index + name.len >= input.len or input[index + name.len] != '(') continue;
+            if (std.ascii.eqlIgnoreCase(input[index .. index + name.len], name)) return true;
+        }
+        index += 1;
+    }
+    return false;
+}
+
+fn minifyCalculationArgumentCommas(input: []u8) []const u8 {
+    var read: usize = 0;
+    var write: usize = 0;
+    var paren_depth: usize = 0;
+    var quote: ?u8 = null;
+    while (read < input.len) {
+        const byte = input[read];
+        if (quote) |active| {
+            input[write] = byte;
+            write += 1;
+            read += 1;
+            if (byte == '\\' and read < input.len) {
+                input[write] = input[read];
+                write += 1;
+                read += 1;
+            } else if (byte == active) {
+                quote = null;
+            }
+            continue;
+        }
+        if (byte == '\\' and read + 1 < input.len) {
+            input[write] = byte;
+            input[write + 1] = input[read + 1];
+            write += 2;
+            read += 2;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            input[write] = byte;
+            write += 1;
+            read += 1;
+            continue;
+        }
+        if (commentEnd(input, read)) |end| {
+            std.mem.copyForwards(u8, input[write .. write + end - read], input[read..end]);
+            write += end - read;
+            read = end;
+            continue;
+        }
+        if (byte == '(') paren_depth += 1;
+        if (byte == ')' and paren_depth > 0) paren_depth -= 1;
+        if (byte != ',' or paren_depth != 1) {
+            input[write] = byte;
+            write += 1;
+            read += 1;
+            continue;
+        }
+        while (write > 0 and isExpressionWhitespace(input[write - 1])) write -= 1;
+        input[write] = ',';
+        write += 1;
+        read += 1;
+        while (read < input.len and isExpressionWhitespace(input[read])) read += 1;
+    }
+    return input[0..write];
 }
 
 fn whitespaceIsOperatorPadding(input: []const u8, start: usize, end: usize) bool {

@@ -7,11 +7,13 @@ const native_value = @import("value.zig");
 
 pub const max_unit_terms = 16;
 pub const max_unit_instances = 64;
+pub const max_serialized_bytes = 512;
 
 pub const Error = error{
     DivisionByZero,
     IncompatibleUnits,
     InvalidNumber,
+    SerializationLimitExceeded,
     UnitLimitExceeded,
 };
 
@@ -221,6 +223,44 @@ pub fn compare(left: Numeric, right: Numeric) Error!Ordering {
     const right_value = values[1];
     if (approximatelyEqual(left_value, right_value)) return .equal;
     return if (left_value < right_value) .less else .greater;
+}
+
+/// Matches Dart Sass's non-inspect number precision: shortest decimal values
+/// longer than eleven bytes are rounded to at most ten fractional digits.
+pub fn serialize(
+    value: f64,
+    buffer: *[max_serialized_bytes]u8,
+    minified: bool,
+) Error![]const u8 {
+    if (!std.math.isFinite(value)) return error.InvalidNumber;
+    const normalized = canonicalZero(value);
+    const raw = std.fmt.bufPrint(buffer, "{d}", .{normalized}) catch
+        return error.SerializationLimitExceeded;
+    if (raw.len < 12) return finishSerialization(buffer, raw, minified);
+    const decimal = std.mem.indexOfScalar(u8, raw, '.') orelse
+        return finishSerialization(buffer, raw, minified);
+    if (raw.len - decimal - 1 <= 10) return finishSerialization(buffer, raw, minified);
+
+    const scaled = normalized * 1e10;
+    if (!std.math.isFinite(scaled)) return finishSerialization(buffer, raw, minified);
+    const rounded = @round(scaled) / 1e10;
+    const formatted = std.fmt.bufPrint(buffer, "{d}", .{canonicalZero(rounded)}) catch
+        return error.SerializationLimitExceeded;
+    return finishSerialization(buffer, formatted, minified);
+}
+
+fn finishSerialization(
+    buffer: *[max_serialized_bytes]u8,
+    formatted: []const u8,
+    minified: bool,
+) []const u8 {
+    if (!minified) return formatted;
+    if (std.mem.startsWith(u8, formatted, "0.")) return formatted[1..];
+    if (std.mem.startsWith(u8, formatted, "-0.")) {
+        std.mem.copyForwards(u8, buffer[1 .. formatted.len - 1], buffer[2..formatted.len]);
+        return buffer[0 .. formatted.len - 1];
+    }
+    return formatted;
 }
 
 fn simplifyUnits(number: *Numeric) Error!void {

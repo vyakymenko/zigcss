@@ -104,3 +104,28 @@ test "native Sass numeric algebra rejects incompatible unsafe and oversized unit
         numeric.Numeric.fromNumber(.{ .value = 1, .numerator_units = &units }),
     );
 }
+
+test "native Sass number serialization matches the ten-place contract" {
+    const cases = [_]struct {
+        value: f64,
+        expected: []const u8,
+    }{
+        .{ .value = 1.0 / 3.0, .expected = ".3333333333" },
+        .{ .value = -1.0 / 3.0, .expected = "-.3333333333" },
+        .{ .value = 2.0 / 3.0, .expected = ".6666666667" },
+        .{ .value = 1.0 / 7.0, .expected = ".1428571429" },
+        .{ .value = 1.0 / 30_000_000_000.0, .expected = "0" },
+        .{ .value = 123_456_789.0 / 7.0, .expected = "17636684.14285714" },
+        .{ .value = 1.23456789012345, .expected = "1.2345678901" },
+        .{ .value = -0.0, .expected = "0" },
+    };
+    for (cases) |case| {
+        var buffer: [numeric.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(case.expected, try numeric.serialize(case.value, &buffer, true));
+    }
+    var expanded_buffer: [numeric.max_serialized_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "0.3333333333",
+        try numeric.serialize(1.0 / 3.0, &expanded_buffer, false),
+    );
+}
