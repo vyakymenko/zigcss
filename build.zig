@@ -151,6 +151,16 @@ pub fn build(b: *std.Build) void {
     });
     const run_native_sass_parser_tests = b.addRunArtifact(native_sass_parser_tests);
     run_native_sass_parser_tests.setCwd(b.path("."));
+    const native_sass_numeric_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/native-preprocessor/sass_numeric.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    native_sass_numeric_test_module.addImport("native_preprocessor", native_preprocessor_module);
+    const native_sass_numeric_tests = b.addTest(.{
+        .root_module = native_sass_numeric_test_module,
+    });
+    const run_native_sass_numeric_tests = b.addRunArtifact(native_sass_numeric_tests);
     const native_sass_evaluator_test_module = b.createModule(.{
         .root_source_file = b.path("tests/native-preprocessor/sass_evaluator.zig"),
         .target = target,
@@ -171,6 +181,7 @@ pub fn build(b: *std.Build) void {
     native_preprocessor_test_step.dependOn(&run_native_resolver_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_evaluator_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_parser_tests.step);
+    native_preprocessor_test_step.dependOn(&run_native_sass_numeric_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_evaluator_tests.step);
 
     const public_api_test_module = b.createModule(.{
@@ -278,6 +289,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_native_resolver_tests.step);
     test_step.dependOn(&run_native_evaluator_tests.step);
     test_step.dependOn(&run_native_sass_parser_tests.step);
+    test_step.dependOn(&run_native_sass_numeric_tests.step);
     test_step.dependOn(&run_native_sass_evaluator_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
     test_step.dependOn(documentation_examples_step);

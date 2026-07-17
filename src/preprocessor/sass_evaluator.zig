@@ -7,6 +7,7 @@ const native_diagnostics = @import("diagnostics.zig");
 const native_environment = @import("environment.zig");
 const native_evaluator = @import("evaluator.zig");
 const native_lexer = @import("lexer.zig");
+const native_numeric = @import("sass_numeric.zig");
 const native_source = @import("source.zig");
 const native_syntax = @import("syntax.zig");
 const native_value = @import("value.zig");
@@ -30,10 +31,10 @@ pub const Limits = struct {
 pub const Error = native_evaluator.Error ||
     native_environment.Error ||
     native_lexer.Error ||
+    native_numeric.Error ||
     native_source.Error ||
     native_value.Error || error{
     EvaluationDepthExceeded,
-    IncompatibleUnits,
     InvalidExpression,
     InvalidLimits,
     InvalidSassSyntax,
@@ -66,10 +67,7 @@ const SelectorList = struct {
     }
 };
 
-const Numeric = struct {
-    value: f64,
-    unit: ?[]const u8 = null,
-};
+const Numeric = native_numeric.Numeric;
 
 const VariableAssignment = struct {
     value: []const u8,
@@ -708,15 +706,9 @@ const Engine = struct {
         if (try self.tryBuiltinCall(trimmed, scope, diagnostic_span)) |item| return item;
         if (try self.tryLogicalExpression(trimmed, scope, diagnostic_span)) |item| return item;
         if (try self.tryArithmetic(trimmed, scope, diagnostic_span)) |numeric| {
-            var units: [1][]const u8 = undefined;
-            const numerator_units: []const []const u8 = if (numeric.unit) |unit| blk: {
-                units[0] = unit;
-                break :blk units[0..1];
-            } else &.{};
-            return self.values.own(.{ .number = .{
-                .value = numeric.value,
-                .numerator_units = numerator_units,
-            } });
+            var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+            var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+            return self.values.own(.{ .number = try numeric.toNumber(&numerator, &denominator) });
         }
         if (try self.tryCollection(trimmed, scope, diagnostic_span)) |item| return item;
         const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
@@ -884,15 +876,18 @@ const Engine = struct {
                 return error.InvalidExpression;
             },
         };
-        if (!sassNumbersComparable(left_number, right_number)) {
+        const ordering = native_numeric.compare(
+            try native_numeric.Numeric.fromNumber(left_number),
+            try native_numeric.Numeric.fromNumber(right_number),
+        ) catch |err| {
             try self.report(.invalid_operation, span, "native Sass ordering uses incompatible units");
-            return error.IncompatibleUnits;
-        }
+            return err;
+        };
         return switch (operation) {
-            .less => left_number.value < right_number.value,
-            .less_equal => left_number.value <= right_number.value,
-            .greater => left_number.value > right_number.value,
-            .greater_equal => left_number.value >= right_number.value,
+            .less => ordering == .less,
+            .less_equal => ordering != .greater,
+            .greater => ordering == .greater,
+            .greater_equal => ordering != .less,
             else => unreachable,
         };
     }
@@ -1511,7 +1506,7 @@ const ArithmeticParser = struct {
             self.saw_operator = true;
             self.cursor += 1;
             const right = try self.parseTerm();
-            left = try addNumeric(left, right, operation[0]);
+            left = try native_numeric.add(left, right, operation[0]);
         }
     }
 
@@ -1526,15 +1521,13 @@ const ArithmeticParser = struct {
                 !std.mem.eql(u8, operation, "/") and
                 !std.mem.eql(u8, operation, "%")) return left;
             if (std.mem.eql(u8, operation, "/") and !self.allows_slash_division) return left;
-            if (std.mem.eql(u8, operation, "%") and token.span.start > 0 and
-                self.cursor > 0 and self.tokens[self.cursor - 1].span.end == token.span.start)
-            {
-                return left;
-            }
             self.saw_operator = true;
             self.cursor += 1;
             const right = try self.parseUnary();
-            left = try multiplyNumeric(left, right, operation[0]);
+            left = if (operation[0] == '%')
+                try native_numeric.modulo(left, right)
+            else
+                try native_numeric.multiply(left, right, operation[0]);
         }
     }
 
@@ -1576,24 +1569,13 @@ const ArithmeticParser = struct {
                         self.cursor += 1;
                     }
                 }
-                return .{ .value = number, .unit = unit };
+                return native_numeric.Numeric.init(number, unit);
             },
             .variable => {
                 self.cursor += 1;
                 const item = try self.engine.lookupVariable(token.raw(self.raw), self.scope, self.span);
                 return switch (item.*) {
-                    .number => |number| blk: {
-                        if (number.denominator_units.len != 0 or number.numerator_units.len > 1) {
-                            return error.InvalidExpression;
-                        }
-                        break :blk .{
-                            .value = number.value,
-                            .unit = if (number.numerator_units.len == 1)
-                                number.numerator_units[0]
-                            else
-                                null,
-                        };
-                    },
+                    .number => |number| native_numeric.Numeric.fromNumber(number),
                     else => error.InvalidExpression,
                 };
             },
@@ -1619,43 +1601,6 @@ const ArithmeticParser = struct {
         return self.tokens[@min(self.cursor, self.tokens.len - 1)];
     }
 };
-
-fn addNumeric(left: Numeric, right: Numeric, operation: u8) Error!Numeric {
-    const unit = try compatibleUnit(left, right);
-    return .{
-        .value = if (operation == '+') left.value + right.value else left.value - right.value,
-        .unit = unit,
-    };
-}
-
-fn multiplyNumeric(left: Numeric, right: Numeric, operation: u8) Error!Numeric {
-    return switch (operation) {
-        '*' => blk: {
-            if (left.unit != null and right.unit != null) return error.IncompatibleUnits;
-            break :blk .{
-                .value = left.value * right.value,
-                .unit = left.unit orelse right.unit,
-            };
-        },
-        '/' => blk: {
-            if (right.value == 0 or right.unit != null) return error.IncompatibleUnits;
-            break :blk .{ .value = left.value / right.value, .unit = left.unit };
-        },
-        '%' => blk: {
-            if (right.value == 0) return error.InvalidExpression;
-            const unit = try compatibleUnit(left, right);
-            break :blk .{ .value = @mod(left.value, right.value), .unit = unit };
-        },
-        else => error.InvalidExpression,
-    };
-}
-
-fn compatibleUnit(left: Numeric, right: Numeric) Error!?[]const u8 {
-    if (left.unit == null) return right.unit;
-    if (right.unit == null) return left.unit;
-    if (!std.mem.eql(u8, left.unit.?, right.unit.?)) return error.IncompatibleUnits;
-    return left.unit;
-}
 
 fn validateLimits(limits: Limits) Error!void {
     const value_limits = limits.values;
@@ -1958,9 +1903,10 @@ fn sassValuesEqualDepth(left: native_value.Value, right: native_value.Value, dep
     return switch (left) {
         .null_value => true,
         .boolean => |value| value == right.boolean,
-        .number => |number| number.value == right.number.value and
-            unitSlicesEqual(number.numerator_units, right.number.numerator_units) and
-            unitSlicesEqual(number.denominator_units, right.number.denominator_units),
+        .number => |number| native_numeric.equal(
+            native_numeric.Numeric.fromNumber(number) catch return false,
+            native_numeric.Numeric.fromNumber(right.number) catch return false,
+        ),
         .color => |color| std.meta.eql(color, right.color),
         .string => |string| std.mem.eql(u8, string.bytes, right.string.bytes),
         .selector => |selector| std.mem.eql(u8, selector.bytes, right.selector.bytes),
@@ -1997,28 +1943,14 @@ fn sassValuesEqualDepth(left: native_value.Value, right: native_value.Value, dep
     };
 }
 
-fn sassNumbersComparable(left: native_value.Number, right: native_value.Number) bool {
-    if (left.denominator_units.len != 0 or right.denominator_units.len != 0 or
-        left.numerator_units.len > 1 or right.numerator_units.len > 1)
-    {
-        return false;
-    }
-    if (left.numerator_units.len == 0 or right.numerator_units.len == 0) return true;
-    return std.mem.eql(u8, left.numerator_units[0], right.numerator_units[0]);
-}
-
-fn unitSlicesEqual(left: []const []const u8, right: []const []const u8) bool {
-    if (left.len != right.len) return false;
-    for (left, right) |unit, other| {
-        if (!std.mem.eql(u8, unit, other)) return false;
-    }
-    return true;
-}
-
 fn cssValueIsValid(item: native_value.Value, depth: u16) bool {
     if (depth > 64) return false;
     return switch (item) {
-        .null_value, .boolean, .number, .string, .selector => true,
+        .null_value, .boolean, .string, .selector => true,
+        .number => |number| blk: {
+            const numeric = native_numeric.Numeric.fromNumber(number) catch break :blk false;
+            break :blk numeric.isCssNumber();
+        },
         .list => |list| blk: {
             var emitted: usize = 0;
             for (list.items) |child| {

@@ -324,6 +324,58 @@ test "native Sass evaluates logical comparison and list precedence" {
     );
 }
 
+test "native Sass converts and cancels compatible units" {
+    const input =
+        \\$inch: 1in;
+        \\$px: 96px;
+        \\$duration: 1s;
+        \\.a {
+        \\  length-left: $inch + $px;
+        \\  length-right: $px + $inch;
+        \\  time: $duration + 500ms;
+        \\  angle: 1turn + 180deg;
+        \\  resolution: 1dppx == 96dpi;
+        \\  converted-eq: 1in == 96px;
+        \\  converted-order: 1in >= 95px;
+        \\  cancelled: ($inch / 2.54cm);
+        \\  compound: $px * 1s / 1000ms;
+        \\  unitless-left: 1 + 2px;
+        \\  unitless-right: 2px - 1;
+        \\  remainder: 5px % 2px;
+        \\  converted-remainder: 5px % 0.2in;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "units.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{length-left:2in;length-right:192px;time:1.5s;angle:1.5turn;resolution:true;converted-eq:true;converted-order:true;cancelled:1;compound:96px;unitless-left:3px;unitless-right:1px;remainder:1px;converted-remainder:5px}",
+        result.css(),
+    );
+}
+
+test "native Sass rejects incompatible and non-CSS compound units" {
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "incompatible-units.scss",
+            ".a { value: 1px + 1em; }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "compound-units.scss",
+            "$value: 1px * 1s; .safe { color: red; } .broken { value: $value; }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass preserves declaration order around nested rules" {
     const input =
         \\.a {
@@ -464,11 +516,14 @@ fn exerciseAllocationFailures(
         \\$spaces: 1px 2px 3px;
         \\$theme: (tone: blue, spaces: $spaces);
         \\$enabled: not false;
+        \\$inch: 1in;
         \\.#{$name} {
         \\  width: $size * 3;
         \\  color: map-get($theme, tone);
         \\  gap: nth(map-get($theme, spaces), 2);
         \\  enabled: $enabled and true;
+        \\  converted: $inch + 96px;
+        \\  cancelled: ($inch / 2.54cm);
         \\  &:hover { margin: $size + 1px; }
         \\}
     ;
@@ -489,7 +544,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1}.card:hover{margin:3px}",
         result.css(),
     );
 }

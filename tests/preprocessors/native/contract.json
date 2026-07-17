@@ -110,6 +110,8 @@
         "variables",
         "variable-modifiers",
         "numeric-arithmetic",
+        "unit-conversion",
+        "compound-unit-algebra",
         "typed-collections",
         "collection-accessors",
         "logical-comparison",
@@ -119,8 +121,14 @@
         "nested-properties",
         "transactional-css-staging"
       ],
-      "nativeSources": ["src/preprocessor/sass_evaluator.zig"],
-      "testSources": ["tests/native-preprocessor/sass_evaluator.zig"],
+      "nativeSources": [
+        "src/preprocessor/sass_evaluator.zig",
+        "src/preprocessor/sass_numeric.zig"
+      ],
+      "testSources": [
+        "tests/native-preprocessor/sass_evaluator.zig",
+        "tests/native-preprocessor/sass_numeric.zig"
+      ],
       "testStep": "test-native-preprocessor",
       "publicAvailable": false,
       "productionReachable": false
