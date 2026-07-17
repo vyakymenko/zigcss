@@ -78,6 +78,14 @@
       "nativeSources": ["src/preprocessor/resolver.zig"],
       "testSources": ["tests/native-preprocessor/resolver.zig"],
       "testStep": "test-native-preprocessor"
+    },
+    {
+      "id": "transactional-core-validator",
+      "current": "native-foundation",
+      "ownerPackage": "NATIVE-005",
+      "nativeSources": ["src/preprocessor/evaluator.zig"],
+      "testSources": ["tests/native-preprocessor/evaluator.zig"],
+      "testStep": "test-native-preprocessor"
     }
   ],
   "adapters": [

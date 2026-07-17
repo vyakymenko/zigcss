@@ -17,7 +17,7 @@ function clone(value) {
   return structuredClone(value)
 }
 
-test('accepts the closed NATIVE-004 native-foundation contract', () => {
+test('accepts the closed NATIVE-005 native-foundation contract', () => {
   const contract = validateContract(loadContract())
   assert.equal(contract.schemaVersion, 2)
   assert.equal(contract.state, 'native-foundation')
@@ -27,6 +27,7 @@ test('accepts the closed NATIVE-004 native-foundation contract', () => {
     'shared-lossless-lexer',
     'shared-semantic-primitives',
     'confined-local-resolver',
+    'transactional-core-validator',
   ])
   assert.deepEqual(contract.adapters.map(adapter => adapter.id), [
     'css',

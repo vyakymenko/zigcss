@@ -98,6 +98,14 @@ const expectedFoundations = Object.freeze([
     testSources: Object.freeze(['tests/native-preprocessor/resolver.zig']),
     testStep: 'test-native-preprocessor',
   }),
+  Object.freeze({
+    id: 'transactional-core-validator',
+    current: 'native-foundation',
+    ownerPackage: 'NATIVE-005',
+    nativeSources: Object.freeze(['src/preprocessor/evaluator.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/evaluator.zig']),
+    testStep: 'test-native-preprocessor',
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
