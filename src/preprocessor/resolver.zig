@@ -994,7 +994,10 @@ fn volumeIdentity(file: std.fs.File) Error!u64 {
     }
     if (builtin.os.tag == .wasi) return 0;
     const stat = std.posix.fstat(file.handle) catch return error.Unreadable;
-    return @intCast(stat.dev);
+    const Device = @TypeOf(stat.dev);
+    const UnsignedDevice = std.meta.Int(.unsigned, @bitSizeOf(Device));
+    const identity: UnsignedDevice = @bitCast(stat.dev);
+    return @intCast(identity);
 }
 
 test {
