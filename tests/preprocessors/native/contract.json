@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "state": "reference-only",
+  "nativeReleaseReady": false,
+  "nativeReleaseVersion": null,
+  "referenceCandidate": "0.5.0-rc.1",
+  "targetRelease": "0.6.0",
+  "decision": "ADR-013",
+  "productionBoundary": {
+    "compilerImplementation": "single-zig-binary-and-library",
+    "packageDependencies": 0,
+    "packageOptionalDependencies": 0,
+    "externalLanguageEngines": 0,
+    "compileChildProcesses": 0,
+    "compileNetworkAccess": false,
+    "runtimeDownloads": false,
+    "nonSystemDynamicLanguageLibraries": 0,
+    "allowedSystemBoundary": "zig-standard-library-and-host-operating-system-abi"
+  },
+  "referenceOracles": [
+    {
+      "id": "dart-sass",
+      "package": "sass",
+      "version": "1.101.0",
+      "license": "MIT",
+      "adapters": ["scss", "sass"],
+      "currentReferencePackage": true,
+      "productionInNativeTarget": false
+    },
+    {
+      "id": "less",
+      "package": "less",
+      "version": "4.6.7",
+      "license": "Apache-2.0",
+      "adapters": ["less"],
+      "currentReferencePackage": true,
+      "productionInNativeTarget": false
+    },
+    {
+      "id": "stylus",
+      "package": "stylus",
+      "version": "0.64.0",
+      "license": "MIT",
+      "adapters": ["stylus"],
+      "currentReferencePackage": true,
+      "productionInNativeTarget": false
+    }
+  ],
+  "adapters": [
+    {
+      "id": "css",
+      "current": "native-graduated",
+      "target": "native-graduated",
+      "ownerPackages": ["PAR-001", "PAR-002", "PAR-003", "PAR-004", "EMIT-001"],
+      "nativeSources": ["src/tokenizer.zig", "src/css.zig"]
+    },
+    {
+      "id": "scss",
+      "current": "reference-only",
+      "target": "native-graduated",
+      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "nativeSources": []
+    },
+    {
+      "id": "sass",
+      "current": "reference-only",
+      "target": "native-graduated",
+      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSASS-010", "NSASS-011", "NSASS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "nativeSources": []
+    },
+    {
+      "id": "less",
+      "current": "reference-only",
+      "target": "native-graduated",
+      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NLESS-010", "NLESS-011", "NLESS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "nativeSources": []
+    },
+    {
+      "id": "stylus",
+      "current": "reference-only",
+      "target": "native-graduated",
+      "ownerPackages": ["NATIVE-002", "NATIVE-003", "NATIVE-004", "NATIVE-005", "NSTYLUS-010", "NSTYLUS-011", "NSTYLUS-012", "NATIVE-006", "NATIVE-007", "NATIVE-008"],
+      "nativeSources": []
+    }
+  ]
+}

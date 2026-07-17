@@ -1,16 +1,17 @@
 # ZigCSS Development Plan
 
 Status: Approved and in execution
-Plan version: 1.1
+Plan version: 1.2
 Prepared: 2026-07-11  
-Amended: 2026-07-16 (owner-approved canonical preprocessor expansion)
+Amended: 2026-07-17 (owner-approved self-contained native frontend expansion)
 Primary target: a trustworthy, standards-oriented CSS compiler, minifier, Zig library, and CLI  
 Core target release: `0.4.0`
 Preprocessor expansion target: `0.5.0`
+Self-contained native target: `0.6.0`
 
 ## 1. Purpose
 
-This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.1 preserves the completed `0.4.x` CSS recovery program and adds the owner-approved `0.5.x` canonical preprocessor program defined by ADR-012.
+This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.2 preserves the completed `0.4.x` CSS recovery and verified unpublished `0.5.x` canonical-preprocessor reference implementation, then adds the owner-approved self-contained native frontend program defined by ADR-013.
 
 The current repository is an ambitious prototype. It has useful scaffolding for parsing, optimization, preprocessors, a CLI, an LSP, documentation, packaging, and benchmarks, but the core parser and optimizer are not yet safe enough for production CSS. Development must therefore prioritize correctness and security before new features or performance work.
 
@@ -19,13 +20,14 @@ The current repository is an ambitious prototype. It has useful scaffolding for 
 The following decisions are defaults for the autonomous program. Changing one requires an Architecture Decision Record (ADR) and project-owner approval.
 
 1. The stable product scope for `0.4.x` is standards-oriented CSS compilation, formatting, minification, a Zig library, and a CLI.
-2. SCSS, indented Sass, Less, and Stylus are funded `0.5.x` canonical-integration targets under ADR-012. They remain unavailable until their individual conformance, isolation, packaging, and documentation gates pass. CSS-in-JS, PostCSS-like transforms, CSS Modules, and Tailwind-like `@apply` behavior retain their separately documented experimental or unavailable boundaries.
+2. The `0.5.x` ADR-012 integration has verified SCSS, indented Sass, Less, and Stylus against exact canonical providers, but its prepared `0.5.0-rc.1` candidate will not be published. ADR-013 funds native Zig replacements targeting a self-contained `0.6.x` product. Existing providers remain development-only reference oracles until each native row passes its own conformance, security, package, and documentation gates. CSS-in-JS, PostCSS-like transforms, CSS Modules, and Tailwind-like `@apply` behavior retain their separately documented experimental or unavailable boundaries.
 3. Correctness takes priority over speed. A transformation is disabled unless semantic equivalence is demonstrated.
 4. Parsing, transformation, and emission are separate stages. Code generation must not mutate or optimize the AST.
 5. Unsupported syntax and unavailable functionality fail explicitly. The compiler must not silently delete, reinterpret, or ignore input.
 6. Source spans are foundational. Source maps, diagnostics, error recovery, and LSP work do not proceed on the current span-less AST.
 7. Public performance claims remain withdrawn until benchmarks validate equivalent output using reproducible methodology.
 8. The public compile service remains disabled or strictly isolated until its security gates pass.
+9. A self-contained release may use Zig's standard library and the host operating-system ABI, but stylesheet compilation may not require a language runtime, production package dependency, non-system language library, external executable, child process, runtime download, or network service.
 
 ## 3. Autonomous execution contract
 
@@ -662,6 +664,71 @@ Each adapter remains publicly unavailable until all criteria below pass for its 
 
 One adapter may graduate without the others. The umbrella “full SCSS, Sass, Less, and Stylus support” claim requires all four matrix rows to meet these gates on the same release commit.
 
+## Milestone 10: Self-contained native stylesheet frontends
+
+Estimated effort: 40-80 engineer days
+Target: staged `0.6.0` alpha, beta, release-candidate, and final releases
+Decision authority: ADR-013
+
+Milestone 10 replaces the production language-engine boundary from Milestone 9 without invalidating its reference evidence. The exact Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 adapters remain development-only black-box oracles until their native replacements graduate. The prepared `0.5.0-rc.1` candidate is deliberately unpublished and tag-triggered release remains fail-closed throughout migration.
+
+### Shared native foundation packages
+
+| ID | Work package | Depends on |
+|---|---|---|
+| `NATIVE-001` | Accept ADR-013; define the machine-readable zero-runtime-dependency boundary, migration states, release interlock, exact reference oracles, work graph, claims policy, and durable evidence | Verified Milestone 9 reference implementation and owner approval |
+| `NATIVE-002` | Implement a lossless bounded native stylesheet lexer with exact spans, newline/indentation, interpolation, string, comment, delimiter, operator, malformed-input, and allocation-failure coverage | `NATIVE-001`, `TOK-001` |
+| `NATIVE-003` | Implement immutable shared native syntax nodes, typed values, lexical environments, calls/control-flow limits, diagnostics, and source-map primitives without admitting a public preprocessor syntax | `NATIVE-002`, `AST-001`, `DIAG-001`, `MAP-001` |
+| `NATIVE-004` | Port the confined resolver and dependency graph into Zig with no child process, preserving root, canonical-path, symlink, special-file, unstable-read, scheme, cycle, depth/count/byte, ordering, and cancellation gates | `NATIVE-002`, `PRE-003`, `WATCH-001` |
+| `NATIVE-005` | Implement the bounded deterministic evaluator/emitter interface that produces complete CSS for recovery-disabled validation by the existing core and owns no-partial-result behavior | `NATIVE-003`, `NATIVE-004`, `API-002` |
+
+### Native Sass-family packages
+
+| ID | Work package | Depends on |
+|---|---|---|
+| `NSASS-010` | Implement native SCSS and indented-Sass parsing, strings/comments, interpolation, variables, nesting, selector syntax, and declarations behind an unavailable experimental gate | `NATIVE-005` |
+| `NSASS-011` | Implement Sass evaluation, mixins/functions, control flow, lists/maps, calculations/colors, `@use`/`@forward`/legacy imports, built-in modules, diagnostics, dependencies, and maps | `NSASS-010` |
+| `NSASS-012` | Pass the pinned Sass reference corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates | `NSASS-011` |
+
+### Native Less packages
+
+| ID | Work package | Depends on |
+|---|---|---|
+| `NLESS-010` | Implement native Less parsing for variables, nesting, mixins, guards, detached rulesets, extends, interpolation, operations, and CSS-preserving syntax behind an unavailable experimental gate | `NATIVE-005` |
+| `NLESS-011` | Implement Less lazy evaluation, imports/options, functions/colors/units, URL behavior, diagnostics, dependencies, and maps while permanently rejecting JavaScript and plugins | `NLESS-010` |
+| `NLESS-012` | Pass the pinned Less 4.6.7 corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates | `NLESS-011` |
+
+### Native Stylus packages
+
+| ID | Work package | Depends on |
+|---|---|---|
+| `NSTYLUS-010` | Implement native Stylus lexical indentation and optional punctuation, variables, properties, selectors, expressions, and CSS-preserving syntax behind an unavailable experimental gate | `NATIVE-005` |
+| `NSTYLUS-011` | Implement Stylus mixins/functions, control flow, operators, imports/globs, built-ins, diagnostics, dependencies, and maps while permanently rejecting project plugins and evaluator hooks | `NSTYLUS-010` |
+| `NSTYLUS-012` | Pass the pinned Stylus 0.64.0 corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates | `NSTYLUS-011` |
+
+### Native product and release packages
+
+| ID | Work package | Depends on |
+|---|---|---|
+| `NATIVE-006` | Route individually graduated native syntaxes through the Zig API, binary CLI, JavaScript wrapper, files/stdin, batch, watch, parallel, diagnostics, dependencies, and source maps without a provider process | `NSASS-012`, `NLESS-012`, `NSTYLUS-012` |
+| `NATIVE-007` | Remove production providers/host/runtime closure; prove zero `dependencies` and `optionalDependencies`, closed archive/package inventories, no compile child process/network/runtime data, offline installation, five native targets, SBOM, provenance, and consumer behavior | `NATIVE-006`, `REL-005` |
+| `NATIVE-008` | Graduate native rows in machine metadata and update help, README, website lab, guides, examples, changelog, compatibility claims, and migration notes without claiming executable plugin parity | `NATIVE-007` |
+| `NATIVE-009` | Select one immutable native release candidate, pass every local/hosted/release/consumer gate, enable the release interlock, and prepare publication; publication remains separately authorized | `NATIVE-008` |
+
+### Zero-runtime-dependency graduation criteria
+
+A native adapter remains unavailable until its parser/evaluator, official corpus, differential, negative, resource, allocation, fuzz, import, diagnostic, source-map, deterministic serial/parallel/batch/watch, and generated-CSS validation gates pass. Full native graduation additionally requires:
+
+- one implementation path in the direct Zig library and native binary for all five input languages;
+- zero production `dependencies` and `optionalDependencies`, with reference providers confined to development-only oracle use;
+- no Node/Deno/Bun/JavaScript engine, shell, package manager, external executable, provider child, runtime download, network service, or non-system language library during compilation;
+- exact package/archive inventories that exclude the bounded Node host, provider sources, provider packages, native add-ons, corpora, and development tools;
+- runtime process/network tracing and five-platform direct-archive plus offline-installed-package smokes for CSS, SCSS, Sass, Less, Stylus, and the public API;
+- bounded owned diagnostics, dependencies, source maps, output, memory, recursion, calls, loops, import graph, cancellation, and no-partial-CSS behavior; and
+- generated machine metadata, help, README, website, documentation, changelog, SBOM, provenance, and release notes that name the exact native compatibility boundary.
+
+Development and CI may retain Node-based test harnesses, independent parsers, and exact reference providers. Those tools may judge the native compiler but must not enter a production archive, installed production graph, or compile-time execution path.
+
 ## 7. Dependency graph
 
 ```mermaid
@@ -679,6 +746,10 @@ flowchart TD
     M2 --> M9["M9 Canonical Preprocessors"]
     M4 --> M9
     M7 --> M9
+    M9 --> M10["M10 Native Frontends"]
+    M2 --> M10
+    M4 --> M10
+    M7 --> M10
 ```
 
 Parallel work is allowed only where the graph permits it. In particular:
@@ -689,6 +760,7 @@ Parallel work is allowed only where the graph permits it. In particular:
 - Optimizer work waits for a correct AST and emitter.
 - Benchmark claims wait for correctness and release integrity.
 - Canonical preprocessor work waits for the CSS parser, owned API/CLI results, and release integrity, but may run in parallel with controlled benchmark collection.
+- Native frontend work waits for the verified canonical reference implementation and ADR-013 foundation gate. Language packages may share completed native foundations, but no native row is public before its own conformance gate and no provider runtime is removed before all replacement consumers pass.
 
 ## 8. Test and validation architecture
 
@@ -717,6 +789,10 @@ tests/preprocessors/scss/
 tests/preprocessors/sass/
 tests/preprocessors/less/
 tests/preprocessors/stylus/
+tests/preprocessors/native/foundation/
+tests/preprocessors/native/sass/
+tests/preprocessors/native/less/
+tests/preprocessors/native/stylus/
 ```
 
 ### Pull request gates
@@ -730,6 +806,7 @@ tests/preprocessors/stylus/
 - JavaScript/TypeScript lint and type checking.
 - Production dependency audit.
 - Bounded preprocessor-host protocol, import confinement, provider smoke, generated-CSS validation, diagnostic, dependency, and source-map tests once Milestone 9 starts.
+- Native migration contract and release interlock, followed by focused native lexer/resolver/evaluator/language tests as their Milestone 10 packages begin.
 - No dirty generated artifacts.
 
 ### Nightly gates
@@ -740,6 +817,7 @@ tests/preprocessors/stylus/
 - Cross-compile all supported targets and inspect architectures.
 - Run differential corpus validation.
 - Run pinned canonical preprocessor corpora and wrapper differentials under serial, parallel, limit, cancellation, and watch scenarios.
+- Run native frontend fuzz, allocation-failure, deep-scope/call/loop/import limits, reference differentials, and runtime child-process/network tracing once the owning package exists.
 - Build and security-test containers.
 
 ### Release gates
@@ -751,6 +829,7 @@ tests/preprocessors/stylus/
 - Checksums, SBOM, signatures/provenance.
 - npm, Docker, and Homebrew installation smoke tests.
 - Exact preprocessor provider graph, license/SBOM/provenance, clean install, offline-after-install, and every claimed syntax/platform smoke when a `0.5.x` release claims those formats.
+- For a native release, zero production dependencies/optional dependencies, no provider or host files, no compilation child process/network access, and direct-archive plus offline package smokes for all five inputs on every target.
 - Documentation capability matrix generated from the release commit.
 - No unresolved P0 or P1 correctness/security issue.
 
@@ -890,17 +969,41 @@ The following decisions are captured or queued under `docs/adr/` during implemen
 - Pinned corpus and independent differential evidence for every candidate language.
 - Individual adapters may be documented as beta only when their own matrix row passes.
 
-### `0.5.0-rc.1`
+### `0.5.0-rc.1` (unpublished reference)
 
 - Exact production dependency graph, license/SBOM/provenance, clean install, offline-after-install, platform archive, and npm consumer gates.
 - README, website input/output lab, guides, CLI help, examples, and release notes generated from admitted machine metadata.
 - Executable provider extensions remain separately labeled and default-off.
+- Publication was cancelled before tag creation on 2026-07-17 when ADR-013 established the self-contained native target. These bytes remain a differential and migration reference only.
 
 ### `0.5.0`
 
 - All four canonical language rows pass the full-language graduation criteria for the exact published provider versions.
 - No fallback, partial-output, import-confinement, diagnostic, source-map, packaging, determinism, correctness, or P0/P1 security gap remains in the claimed preprocessor surface.
-- Publication occurs only through the separately authorized, fail-closed release workflow.
+- The canonical-provider implementation is verified but will not be published as the self-contained product.
+
+### `0.6.0-alpha.1`
+
+- `NATIVE-001` through `NATIVE-005` foundations are executable and no public native preprocessor row is claimed prematurely.
+- At least one native preprocessor parser/evaluator slice passes its closed differential subset while unsupported syntax fails without CSS.
+- Tag-triggered release remains fail-closed.
+
+### `0.6.0-beta.1`
+
+- Native Sass/SCSS, Less, and Stylus each pass their complete pinned corpus and strict resource/negative gates.
+- Direct Zig API and binary paths compile all five languages without a provider process; package migration remains private until `NATIVE-007`.
+
+### `0.6.0-rc.1`
+
+- Production dependencies and optional dependencies are empty; archives and the installed package exclude provider/host/runtime bytes.
+- Five platform jobs pass direct archive and offline package compilation for CSS, SCSS, Sass, Less, Stylus, and the public API with runtime process/network tracing.
+- Documentation, website, metadata, SBOM, provenance, and consumer gates describe the exact native boundary.
+
+### `0.6.0`
+
+- Every Milestone 10 package is verified on one immutable release commit.
+- No fallback, partial output, dependency leak, child-process/network compile path, semantic P0/P1, or unverified native claim remains.
+- Publication occurs only through the separately authorized fail-closed release workflow after the native machine interlock is enabled.
 
 ### `1.0.0`
 
@@ -928,7 +1031,8 @@ The autonomous recovery program is complete when:
 - The repository passes formatting, Debug, ReleaseSafe, differential, fuzz, leak, docs, packaging, and release gates.
 - No P0 or P1 issue remains open for the stable scope.
 - The completed `0.4.x` CSS recovery remains valid independently, but Milestone 9 and the expanded autonomous program are complete only when SCSS, Sass, Less, and Stylus each pass the canonical graduation gate for the exact published provider version.
-- The bounded host, import confinement, diagnostics, dependencies, two-stage source maps, canonical corpora, generated-CSS validation, deterministic CLI/batch/watch/parallel behavior, clean/offline package installation, audits, SBOM/provenance, and public compatibility metadata all pass on one `0.5.0` release commit.
+- The bounded host, import confinement, diagnostics, dependencies, two-stage source maps, canonical corpora, generated-CSS validation, deterministic CLI/batch/watch/parallel behavior, clean/offline package installation, audits, SBOM/provenance, and public compatibility metadata all pass on one immutable unpublished `0.5.0-rc.1` reference commit.
+- The owner-expanded native program is complete only when Milestone 10 passes on one self-contained release commit: all five languages use native Zig paths, production package dependencies are zero, compile runtime child/network/provider boundaries are absent, and cross-platform direct/archive/package/API evidence is green.
 
 ## 15. First autonomous sequence
 
@@ -964,3 +1068,22 @@ Milestones 0-7 are already verified. After the 2026-07-16 owner approval and ADR
 11. Implement optional `PRE-007` trusted-project-code extensions only after the canonical language surface is green; its absence does not weaken or delay the exact canonical language claim.
 
 Every package uses the common work loop: reproduce or measure, add/strengthen tests, implement the smallest correct change, run proportionate and milestone gates, inspect security/ownership/determinism, update `DEVELOPMENT_STATUS.md`, commit a coherent green checkpoint, and perform only externally authorized push/integration actions. Public website input/output panels must continue showing unavailable states until the corresponding matrix row actually graduates.
+
+## 17. First self-contained-native autonomous sequence
+
+Milestone 9 is verified as an unpublished reference. After the 2026-07-17 owner decision and ADR-013 acceptance, autonomous Milestone 10 follows this exact dependency-ordered sequence while `BENCH-007` may remain externally blocked:
+
+1. Complete `NATIVE-001`: add ADR-013, plan v1.2, a closed machine-readable native migration contract, a tag-release interlock, exact reference-oracle identities, current/target row states, documentation, and durable status. Do not remove a green provider or claim a native row.
+2. Complete `NATIVE-002`: first add red span/newline/indentation/interpolation/string/comment/delimiter/operator/malformed-input/allocation tests, then implement the smallest lossless shared lexer in Zig.
+3. Complete `NATIVE-003`: add immutable syntax/value/environment/evaluation-limit/diagnostic/map primitives behind internal tests only.
+4. Complete `NATIVE-004`: port the confined resolver into Zig and reproduce every `PRE-003` security and deterministic dependency boundary before any native import is admitted.
+5. Complete `NATIVE-005`: connect bounded evaluation to complete generated CSS and recovery-disabled core validation with no partial result.
+6. Implement and conformance-gate native SCSS plus indented Sass through `NSASS-010`, `NSASS-011`, and `NSASS-012`.
+7. Implement and conformance-gate native Less through `NLESS-010`, `NLESS-011`, and `NLESS-012`.
+8. Implement and conformance-gate native Stylus through `NSTYLUS-010`, `NSTYLUS-011`, and `NSTYLUS-012`.
+9. Complete `NATIVE-006`: route all graduated languages through the Zig library/binary and thin JavaScript wrapper while retaining provider oracles only in development tests.
+10. Complete `NATIVE-007`: remove production providers and host bytes, reduce the production package graph to zero dependencies, and pass runtime/process/network/archive/install/platform/SBOM/provenance gates.
+11. Complete `NATIVE-008`: graduate machine rows and update every public claim, example, guide, website input/output panel, and changelog from executable evidence.
+12. Complete `NATIVE-009`: choose an unused native candidate identity, run the complete local/hosted/release matrix, enable the native release interlock only after all gates pass, and prepare publication without publishing unless separately authorized.
+
+Every native package uses the existing common work loop and an additional compatibility rule: the canonical provider path may judge a native result but may not enter production bytes or runtime execution. A partial native implementation remains internal and unavailable rather than replacing a verified reference path.

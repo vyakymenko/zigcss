@@ -29,6 +29,9 @@ jobs:
       - name: Verify synchronized release version for publication
         run: npm run check:version -- --tag "$GITHUB_REF_NAME"
 
+      - name: Verify native release graduation
+        run: npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"
+
       - name: Verify npm publication authority
         shell: bash
         env:

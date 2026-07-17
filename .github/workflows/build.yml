@@ -175,6 +175,9 @@ jobs:
       - name: Verify release artifact metadata policy
         run: npm run test:release-metadata && npm run check:release-metadata && npm run test:npm-publication
 
+      - name: Verify native zero-dependency migration contract
+        run: npm run test:native-contract && npm run check:native-contract
+
       - name: Test release consumer paths
         run: npm run test:release-smoke && npm run test:release-consumers && npm run test:release-container && npm run test:release-homebrew
 

@@ -4,6 +4,8 @@ The ZigCSS 0.5 development snapshot admits five stylesheet syntaxes through one 
 
 This page describes the green source snapshot. The public npm release candidate `0.4.0-rc.3` is still CSS-only; the five-language package has not been published.
 
+Publication of the provider-backed `0.5.0-rc.1` snapshot was cancelled before tag creation. ADR-013 now governs a staged self-contained native replacement targeting zero production package dependencies. Until each new native row passes its own corpus, security, package, and platform gates, the canonical adapters below remain reference behavior rather than a native-binary claim.
+
 The machine-readable authority is `tests/formats/matrix.json`. `npm run test:formats` verifies the closed adapter inventory, accepted ADR strategy, provider binding, containment evidence, and real CLI probes. Provider-focused suites additionally own official corpora, diagnostics, imports, limits, concurrency, source maps, package contents, and platform smoke tests.
 
 ## What the status terms mean
@@ -84,3 +86,4 @@ CSS-in-JS, PostCSS plugin execution, and Tailwind-like compilation remain unavai
 - [Native CSS Modules subset](/guide/css-modules)
 - [Recovery CLI](/guide/recovery-cli)
 - [ADR-012: canonical preprocessor host](https://github.com/vyakymenko/zigcss/blob/main/docs/adr/ADR-012-canonical-preprocessor-host.md)
+- [ADR-013: self-contained native frontends](https://github.com/vyakymenko/zigcss/blob/main/docs/adr/ADR-013-self-contained-native-frontends.md)

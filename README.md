@@ -17,6 +17,8 @@ ZigCSS is an experimental native CSS compiler with canonical SCSS, indented Sass
 
 > **Experimental release candidate notice:** the green `main` branch is the unpublished ZigCSS 0.5.0-rc.1 source candidate described below. The currently published npm package, ZigCSS 0.4.0-rc.3, exposes the earlier CSS-only surface. Five-language npm publication and release artifacts remain pending the explicit release step. Evaluate both before production.
 
+> **Native dependency-free migration:** publication of the prepared provider-backed candidate was cancelled before tag creation. Its canonical engines remain development reference oracles while ADR-013 replaces them with native Zig frontends. The target release is one self-contained compiler with zero production package dependencies; native SCSS/Sass/Less/Stylus claims remain unavailable until their new conformance gates pass.
+
 ## Why ZigCSS feels different
 
 - **Canonical language behavior.** SCSS and Sass use Dart Sass 1.101.0, Less uses Less 4.6.7, and Stylus uses Stylus 0.64.0. ZigCSS does not pretend a hand-written approximation is the language.
@@ -93,6 +95,8 @@ Run `node index.js --help` for the combined contract. Successful commands exit `
 “Canonical support” means behavior owned by those exact provider versions plus the documented ZigCSS integration options. It does **not** mean parity with every third-party plugin, custom function, custom importer, JavaScript hook, future provider version, or framework toolchain. CSS-in-JS, PostCSS plugin hosts, and Tailwind-like adapters remain outside the public contract.
 
 See the [format compatibility matrix](docs/src/content/docs/guide/format-compatibility.md), [CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md), and [complete capability status](docs/src/content/docs/guide/status.md).
+
+The dependency-free migration contract is defined by [ADR-013](docs/adr/ADR-013-self-contained-native-frontends.md) and enforced by `npm run check:native-contract`.
 
 ## JavaScript API
 

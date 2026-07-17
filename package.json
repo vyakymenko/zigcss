@@ -93,6 +93,8 @@
     "test:preprocessor-less": "node --test tests/preprocessors/less/*.test.mjs",
     "test:preprocessor-stylus": "node --test tests/preprocessors/stylus/*.test.mjs",
     "test:preprocessor-product": "node --test tests/preprocessors/product/*.test.mjs",
+    "check:native-contract": "node scripts/validate-native-contract.mjs --check",
+    "test:native-contract": "node --test scripts/validate-native-contract.test.mjs",
     "generate:preprocessor-package": "node scripts/validate-preprocessor-package.mjs --write",
     "check:preprocessor-package": "node scripts/validate-preprocessor-package.mjs --check",
     "test:preprocessor-package": "node --test scripts/validate-preprocessor-package.test.mjs",

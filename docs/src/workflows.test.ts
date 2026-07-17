@@ -160,6 +160,29 @@ describe('native artifact workflows', () => {
     expect(compatibility).toBeGreaterThan(consumerTests)
   })
 
+  test('keeps native migration and tag publication fail closed', () => {
+    const releaseMetadata = buildWorkflow.indexOf('npm run test:release-metadata')
+    const nativeContract = buildWorkflow.indexOf(
+      'npm run test:native-contract && npm run check:native-contract',
+      releaseMetadata,
+    )
+    const releaseConsumers = buildWorkflow.indexOf(
+      'npm run test:release-smoke',
+      nativeContract,
+    )
+    const tagInterlock = releaseWorkflow.indexOf(
+      'npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"',
+    )
+    const npmAuthority = releaseWorkflow.indexOf('npm whoami')
+    const npmPublish = releaseWorkflow.indexOf('npm publish --tag next --provenance')
+
+    expect(nativeContract).toBeGreaterThan(releaseMetadata)
+    expect(releaseConsumers).toBeGreaterThan(nativeContract)
+    expect(tagInterlock).toBeGreaterThan(-1)
+    expect(npmAuthority).toBeGreaterThan(tagInterlock)
+    expect(npmPublish).toBeGreaterThan(npmAuthority)
+  })
+
   test('compiles the complete build integration example in both safe modes', () => {
     const exampleDirectory = 'working-directory: examples/build-integration'
     const firstDirectory = buildWorkflow.indexOf(exampleDirectory)
