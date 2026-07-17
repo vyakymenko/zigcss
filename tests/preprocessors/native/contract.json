@@ -54,6 +54,22 @@
       "nativeSources": ["src/preprocessor.zig", "src/preprocessor/lexer.zig"],
       "testSources": ["tests/native-preprocessor/lexer.zig"],
       "testStep": "test-native-preprocessor"
+    },
+    {
+      "id": "shared-semantic-primitives",
+      "current": "native-foundation",
+      "ownerPackage": "NATIVE-003",
+      "nativeSources": [
+        "src/preprocessor/source.zig",
+        "src/preprocessor/syntax.zig",
+        "src/preprocessor/value.zig",
+        "src/preprocessor/environment.zig",
+        "src/preprocessor/budget.zig",
+        "src/preprocessor/diagnostics.zig",
+        "src/preprocessor/sourcemap.zig"
+      ],
+      "testSources": ["tests/native-preprocessor/foundation.zig"],
+      "testStep": "test-native-preprocessor"
     }
   ],
   "adapters": [

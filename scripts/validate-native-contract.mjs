@@ -74,6 +74,22 @@ const expectedFoundations = Object.freeze([
     testSources: Object.freeze(['tests/native-preprocessor/lexer.zig']),
     testStep: 'test-native-preprocessor',
   }),
+  Object.freeze({
+    id: 'shared-semantic-primitives',
+    current: 'native-foundation',
+    ownerPackage: 'NATIVE-003',
+    nativeSources: Object.freeze([
+      'src/preprocessor/source.zig',
+      'src/preprocessor/syntax.zig',
+      'src/preprocessor/value.zig',
+      'src/preprocessor/environment.zig',
+      'src/preprocessor/budget.zig',
+      'src/preprocessor/diagnostics.zig',
+      'src/preprocessor/sourcemap.zig',
+    ]),
+    testSources: Object.freeze(['tests/native-preprocessor/foundation.zig']),
+    testStep: 'test-native-preprocessor',
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -223,7 +239,7 @@ export function validateContract(
   if (!same(contract.productionBoundary, expectedBoundary)) fail('production boundary drifted')
   if (!same(contract.referenceOracles, expectedReferenceOracles)) fail('reference oracle inventory drifted')
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
-    fail(`foundation inventory must contain ${expectedFoundations.length} row`)
+    fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
   }
   if (!Array.isArray(contract.adapters) || contract.adapters.length !== expectedAdapterIds.length) {
     fail(`adapter inventory must contain ${expectedAdapterIds.length} rows`)
