@@ -27,8 +27,9 @@ function containsPath(root, candidate) {
   )
 }
 
-function identity(value) {
-  return process.platform === 'win32' ? value.toLowerCase() : value
+export function stylusPathIdentity(value, platform = process.platform) {
+  if (typeof value !== 'string') return null
+  return platform === 'win32' ? value.toLowerCase() : value
 }
 
 function uniquePaths(values) {
@@ -37,7 +38,7 @@ function uniquePaths(values) {
   for (const value of values) {
     if (value === null) continue
     const normalized = path.resolve(value)
-    const key = identity(normalized)
+    const key = stylusPathIdentity(normalized)
     if (seen.has(key)) continue
     seen.add(key)
     output.push(normalized)
@@ -192,7 +193,7 @@ export function createStylusImportAuthority({
     sourceUrl: sourceUrl ?? virtualSourceUrl,
     virtualFilename: entryFilename,
   })
-  byVirtualFilename.set(identity(entryFilename), entryRecord)
+  byVirtualFilename.set(stylusPathIdentity(entryFilename), entryRecord)
   mapSources.set(entryMapSource, entryRecord)
 
   if (sourceUrl !== null) {
@@ -234,7 +235,7 @@ export function createStylusImportAuthority({
   }
 
   function contextFor(virtualFilename) {
-    const current = byVirtualFilename.get(identity(virtualFilename))
+    const current = byVirtualFilename.get(stylusPathIdentity(virtualFilename))
     if (current === undefined) {
       abort('STYLUS_IMPORT_IDENTITY', 'Stylus returned an unknown dependency identity')
     }
@@ -263,7 +264,7 @@ export function createStylusImportAuthority({
       sourceUrl,
       virtualFilename,
     })
-    const key = identity(virtualFilename)
+    const key = stylusPathIdentity(virtualFilename)
     const collision = byVirtualFilename.get(key)
     if (collision !== undefined && collision.actualUrl !== loaded.url) {
       abort('STYLUS_IMPORT_IDENTITY', 'Stylus dependency identity collided')
@@ -514,7 +515,7 @@ export function createStylusImportAuthority({
   }
 
   function sourceUrlForVirtual(filename) {
-    return byVirtualFilename.get(identity(filename))?.diagnosticUrl
+    return byVirtualFilename.get(stylusPathIdentity(filename))?.diagnosticUrl
   }
 
   function sourceMapRecord(sourceName) {

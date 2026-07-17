@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import stylus from 'stylus'
 import { ProviderFailure } from '../../../preprocessor/metadata.mjs'
 import { createStylusProvider } from '../../../preprocessor/providers/stylus.mjs'
+import { stylusPathIdentity } from '../../../preprocessor/providers/stylus-importer.mjs'
 import { runPreprocessorHost } from '../../../preprocessor/runner.mjs'
 import {
   composeSourceMaps,
@@ -21,6 +22,13 @@ function canonicalUrl(filename) {
 function rejectsWithCode(code) {
   return error => error instanceof ProviderFailure && error.code === code
 }
+
+test('Windows path identity tolerates Stylus AST nodes without filenames', () => {
+  assert.equal(stylusPathIdentity(null, 'win32'), null)
+  assert.equal(stylusPathIdentity(undefined, 'win32'), null)
+  assert.equal(stylusPathIdentity('C:\\Project\\Entry.styl', 'win32'), 'c:\\project\\entry.styl')
+  assert.equal(stylusPathIdentity('/Project/Entry.styl', 'linux'), '/Project/Entry.styl')
+})
 
 async function withFixture(run) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zigcss-stylus-imports-'))
