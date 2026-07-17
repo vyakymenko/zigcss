@@ -17,7 +17,7 @@ function clone(value) {
   return structuredClone(value)
 }
 
-test('accepts the closed NATIVE-003 native-foundation contract', () => {
+test('accepts the closed NATIVE-004 native-foundation contract', () => {
   const contract = validateContract(loadContract())
   assert.equal(contract.schemaVersion, 2)
   assert.equal(contract.state, 'native-foundation')
@@ -26,6 +26,7 @@ test('accepts the closed NATIVE-003 native-foundation contract', () => {
   assert.deepEqual(contract.foundations.map(foundation => foundation.id), [
     'shared-lossless-lexer',
     'shared-semantic-primitives',
+    'confined-local-resolver',
   ])
   assert.deepEqual(contract.adapters.map(adapter => adapter.id), [
     'css',
@@ -109,7 +110,7 @@ test('requires the native interlock before npm publication preflight', () => {
   )
 })
 
-test('requires the focused native lexer gate in build CI', () => {
+test('requires the focused native frontend foundation gate in build CI', () => {
   const buildWorkflow = fs.readFileSync(
     path.join(repositoryRoot, '.github/workflows/build.yml'),
     'utf8',

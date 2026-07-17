@@ -70,6 +70,14 @@
       ],
       "testSources": ["tests/native-preprocessor/foundation.zig"],
       "testStep": "test-native-preprocessor"
+    },
+    {
+      "id": "confined-local-resolver",
+      "current": "native-foundation",
+      "ownerPackage": "NATIVE-004",
+      "nativeSources": ["src/preprocessor/resolver.zig"],
+      "testSources": ["tests/native-preprocessor/resolver.zig"],
+      "testStep": "test-native-preprocessor"
     }
   ],
   "adapters": [

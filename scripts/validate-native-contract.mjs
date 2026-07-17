@@ -90,6 +90,14 @@ const expectedFoundations = Object.freeze([
     testSources: Object.freeze(['tests/native-preprocessor/foundation.zig']),
     testStep: 'test-native-preprocessor',
   }),
+  Object.freeze({
+    id: 'confined-local-resolver',
+    current: 'native-foundation',
+    ownerPackage: 'NATIVE-004',
+    nativeSources: Object.freeze(['src/preprocessor/resolver.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/resolver.zig']),
+    testStep: 'test-native-preprocessor',
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -230,7 +238,7 @@ export function validateContract(
     'root',
   )
   if (contract.schemaVersion !== 2) fail('schemaVersion must be 2')
-  if (contract.state !== 'native-foundation') fail('state must be native-foundation in NATIVE-002')
+  if (contract.state !== 'native-foundation') fail('state must remain native-foundation during Milestone 10')
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
   if (contract.referenceCandidate !== '0.5.0-rc.1') fail('reference candidate drifted')

@@ -11,6 +11,7 @@ pub const environment = @import("preprocessor/environment.zig");
 pub const budget = @import("preprocessor/budget.zig");
 pub const diagnostics = @import("preprocessor/diagnostics.zig");
 pub const sourcemap = @import("preprocessor/sourcemap.zig");
+pub const resolver = @import("preprocessor/resolver.zig");
 
 test {
     _ = lexer;
@@ -21,4 +22,5 @@ test {
     _ = budget;
     _ = diagnostics;
     _ = sourcemap;
+    _ = resolver;
 }
