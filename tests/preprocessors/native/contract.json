@@ -1,6 +1,6 @@
 {
-  "schemaVersion": 1,
-  "state": "reference-only",
+  "schemaVersion": 2,
+  "state": "native-foundation",
   "nativeReleaseReady": false,
   "nativeReleaseVersion": null,
   "referenceCandidate": "0.5.0-rc.1",
@@ -44,6 +44,16 @@
       "adapters": ["stylus"],
       "currentReferencePackage": true,
       "productionInNativeTarget": false
+    }
+  ],
+  "foundations": [
+    {
+      "id": "shared-lossless-lexer",
+      "current": "native-foundation",
+      "ownerPackage": "NATIVE-002",
+      "nativeSources": ["src/preprocessor.zig", "src/preprocessor/lexer.zig"],
+      "testSources": ["tests/native-preprocessor/lexer.zig"],
+      "testStep": "test-native-preprocessor"
     }
   ],
   "adapters": [

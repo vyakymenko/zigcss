@@ -207,6 +207,9 @@ jobs:
       - name: Test and verify generated capability status
         run: npm run test:capability-status && npm run check:capability-status
 
+      - name: Verify shared native stylesheet lexer
+        run: zig build test-native-preprocessor --summary all
+
       - name: Run Tests
         run: zig build test --summary all
 

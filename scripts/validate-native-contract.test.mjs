@@ -17,11 +17,15 @@ function clone(value) {
   return structuredClone(value)
 }
 
-test('accepts the closed NATIVE-001 migration contract', () => {
+test('accepts the closed NATIVE-002 native-foundation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.state, 'reference-only')
+  assert.equal(contract.schemaVersion, 2)
+  assert.equal(contract.state, 'native-foundation')
   assert.equal(contract.nativeReleaseReady, false)
   assert.equal(contract.productionBoundary.packageDependencies, 0)
+  assert.deepEqual(contract.foundations.map(foundation => foundation.id), [
+    'shared-lossless-lexer',
+  ])
   assert.deepEqual(contract.adapters.map(adapter => adapter.id), [
     'css',
     'scss',
@@ -56,6 +60,20 @@ test('rejects premature native adapter and release claims', () => {
   const releaseClaim = clone(loadContract())
   releaseClaim.nativeReleaseReady = true
   assert.throws(() => validateContract(releaseClaim), /native release must remain fail-closed/)
+
+  const sourceClaim = clone(loadContract())
+  sourceClaim.adapters[1].nativeSources = ['src/preprocessor/lexer.zig']
+  assert.throws(() => validateContract(sourceClaim), /cannot claim native sources/)
+})
+
+test('binds the implemented native foundation source and focused test inventory', () => {
+  const changed = clone(loadContract())
+  changed.foundations[0].nativeSources.reverse()
+  assert.throws(() => validateContract(changed), /foundation.*inventory drifted/)
+
+  const ownerChanged = clone(loadContract())
+  ownerChanged.foundations[0].ownerPackage = 'NATIVE-003'
+  assert.throws(() => validateContract(ownerChanged), /foundation.*inventory drifted/)
 })
 
 test('binds the current provider package only as migration reference evidence', () => {
@@ -87,5 +105,19 @@ test('requires the native interlock before npm publication preflight', () => {
       'npm run check:version',
     ) }),
     /release workflow is missing/,
+  )
+})
+
+test('requires the focused native lexer gate in build CI', () => {
+  const buildWorkflow = fs.readFileSync(
+    path.join(repositoryRoot, '.github/workflows/build.yml'),
+    'utf8',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { buildWorkflow: buildWorkflow.replace(
+      'zig build test-native-preprocessor --summary all',
+      'zig build test --summary all',
+    ) }),
+    /build workflow is missing.*test-native-preprocessor/,
   )
 })

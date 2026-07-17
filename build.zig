@@ -95,6 +95,27 @@ pub fn build(b: *std.Build) void {
     });
     const run_core_tests = b.addRunArtifact(core_tests);
 
+    const native_preprocessor_module = b.createModule(.{
+        .root_source_file = b.path("src/preprocessor.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const native_preprocessor_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/native-preprocessor/lexer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    native_preprocessor_test_module.addImport("native_preprocessor", native_preprocessor_module);
+    const native_preprocessor_tests = b.addTest(.{
+        .root_module = native_preprocessor_test_module,
+    });
+    const run_native_preprocessor_tests = b.addRunArtifact(native_preprocessor_tests);
+    const native_preprocessor_test_step = b.step(
+        "test-native-preprocessor",
+        "Test the internal self-contained stylesheet frontend foundation",
+    );
+    native_preprocessor_test_step.dependOn(&run_native_preprocessor_tests.step);
+
     const public_api_test_module = b.createModule(.{
         .root_source_file = b.path("tests/public-api/consumer.zig"),
         .target = target,
@@ -195,6 +216,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lsp_position_tests.step);
     test_step.dependOn(&run_lsp_index_tests.step);
     test_step.dependOn(&run_core_tests.step);
+    test_step.dependOn(&run_native_preprocessor_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
     test_step.dependOn(documentation_examples_step);
     test_step.dependOn(&run_audit_tests.step);

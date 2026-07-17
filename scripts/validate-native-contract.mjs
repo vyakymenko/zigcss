@@ -62,6 +62,19 @@ const expectedCurrentDependencies = Object.freeze({
 })
 
 const expectedAdapterIds = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])
+const expectedFoundations = Object.freeze([
+  Object.freeze({
+    id: 'shared-lossless-lexer',
+    current: 'native-foundation',
+    ownerPackage: 'NATIVE-002',
+    nativeSources: Object.freeze([
+      'src/preprocessor.zig',
+      'src/preprocessor/lexer.zig',
+    ]),
+    testSources: Object.freeze(['tests/native-preprocessor/lexer.zig']),
+    testStep: 'test-native-preprocessor',
+  }),
+])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
   'NSASS-',
@@ -149,9 +162,24 @@ function validateAdapter(adapter, index, plan) {
       fail(`${adapter.id} must remain reference-only until its native graduation package`)
     }
     if (adapter.nativeSources.length !== 0) {
-      fail(`${adapter.id} cannot claim native sources during NATIVE-001`)
+      fail(`${adapter.id} cannot claim native sources before native graduation`)
     }
   }
+}
+
+function validateFoundation(foundation, index, plan) {
+  const label = `foundations[${index}]`
+  exactKeys(
+    foundation,
+    ['id', 'current', 'ownerPackage', 'nativeSources', 'testSources', 'testStep'],
+    label,
+  )
+  if (!same(foundation, expectedFoundations[index])) {
+    fail(`${label} inventory drifted`)
+  }
+  requireText(plan, `\`${foundation.ownerPackage}\``, 'DEVELOPMENT_PLAN.md')
+  for (const source of foundation.nativeSources) repositoryFile(source)
+  for (const source of foundation.testSources) repositoryFile(source)
 }
 
 export function validateContract(
@@ -180,12 +208,13 @@ export function validateContract(
       'decision',
       'productionBoundary',
       'referenceOracles',
+      'foundations',
       'adapters',
     ],
     'root',
   )
-  if (contract.schemaVersion !== 1) fail('schemaVersion must be 1')
-  if (contract.state !== 'reference-only') fail('state must remain reference-only in NATIVE-001')
+  if (contract.schemaVersion !== 2) fail('schemaVersion must be 2')
+  if (contract.state !== 'native-foundation') fail('state must be native-foundation in NATIVE-002')
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
   if (contract.referenceCandidate !== '0.5.0-rc.1') fail('reference candidate drifted')
@@ -193,6 +222,9 @@ export function validateContract(
   if (contract.decision !== 'ADR-013') fail('decision must be ADR-013')
   if (!same(contract.productionBoundary, expectedBoundary)) fail('production boundary drifted')
   if (!same(contract.referenceOracles, expectedReferenceOracles)) fail('reference oracle inventory drifted')
+  if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
+    fail(`foundation inventory must contain ${expectedFoundations.length} row`)
+  }
   if (!Array.isArray(contract.adapters) || contract.adapters.length !== expectedAdapterIds.length) {
     fail(`adapter inventory must contain ${expectedAdapterIds.length} rows`)
   }
@@ -211,6 +243,9 @@ export function validateContract(
     fail('package script test:native-contract is missing or changed')
   }
 
+  for (const [index, foundation] of contract.foundations.entries()) {
+    validateFoundation(foundation, index, plan)
+  }
   for (const [index, adapter] of contract.adapters.entries()) validateAdapter(adapter, index, plan)
 
   requireText(plan, 'Plan version: 1.2', 'DEVELOPMENT_PLAN.md')
@@ -223,6 +258,11 @@ export function validateContract(
 
   const buildGate = 'npm run test:native-contract && npm run check:native-contract'
   requireText(buildWorkflow, buildGate, 'build workflow')
+  requireText(
+    buildWorkflow,
+    'zig build test-native-preprocessor --summary all',
+    'build workflow',
+  )
   const releaseGate = 'npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"'
   requireText(releaseWorkflow, releaseGate, 'release workflow')
   if (releaseWorkflow.indexOf(releaseGate) > releaseWorkflow.indexOf('npm whoami')) {
