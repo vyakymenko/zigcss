@@ -1,0 +1,52 @@
+[
+  {
+    "id": "css",
+    "label": "CSS",
+    "extension": ".css",
+    "provider": "Native ZigCSS",
+    "input": ":root {\n  --accent: #b7f34a;\n}\n\n.button {\n  color: #101914;\n  background: var(--accent);\n}",
+    "output": ":root{--accent:#b7f34a}.button{color:#101914;background:var(--accent)}",
+    "pipeline": "CSS → ZigCSS → compact CSS",
+    "note": "The native CSS path parses, emits, and independently validates the authored stylesheet."
+  },
+  {
+    "id": "scss",
+    "label": "SCSS",
+    "extension": ".scss",
+    "provider": "Dart Sass 1.101.0",
+    "input": "$accent: #b7f34a;\n\n.button {\n  background: $accent;\n\n  &:hover {\n    filter: brightness(1.08);\n  }\n}",
+    "output": ".button{background:#b7f34a}.button:hover{filter:brightness(1.08)}",
+    "pipeline": "SCSS → Dart Sass 1.101.0 → ZigCSS → compact CSS",
+    "note": "Canonical SCSS behavior comes from exact Dart Sass 1.101.0, followed by strict ZigCSS validation and emission."
+  },
+  {
+    "id": "sass",
+    "label": "Sass",
+    "extension": ".sass",
+    "provider": "Dart Sass 1.101.0",
+    "input": "$accent: #b7f34a\n\n.button\n  background: $accent\n  &:hover\n    filter: brightness(1.08)",
+    "output": ".button{background:#b7f34a}.button:hover{filter:brightness(1.08)}",
+    "pipeline": "Indented Sass → Dart Sass 1.101.0 → ZigCSS → compact CSS",
+    "note": "Indented Sass uses the canonical Dart Sass grammar without translating or guessing its source bytes."
+  },
+  {
+    "id": "less",
+    "label": "Less",
+    "extension": ".less",
+    "provider": "Less 4.6.7",
+    "input": "@accent: #b7f34a;\n\n.button {\n  background: @accent;\n\n  &:hover {\n    filter: brightness(1.08);\n  }\n}",
+    "output": ".button{background:#b7f34a}.button:hover{filter:brightness(1.08)}",
+    "pipeline": "Less → Less 4.6.7 → ZigCSS → compact CSS",
+    "note": "Exact Less 4.6.7 evaluates the language; ZigCSS then rejects invalid generated CSS before output."
+  },
+  {
+    "id": "stylus",
+    "label": "Stylus",
+    "extension": ".styl",
+    "provider": "Stylus 0.64.0",
+    "input": "accent = #b7f34a\n\n.button\n  background accent\n  &:hover\n    filter brightness(1.08)",
+    "output": ".button{background:#b7f34a}.button:hover{filter:brightness(1.08)}",
+    "pipeline": "Stylus → Stylus 0.64.0 → ZigCSS → compact CSS",
+    "note": "Exact Stylus 0.64.0 runs behind the confined host; executable project plugins remain outside the default contract."
+  }
+]

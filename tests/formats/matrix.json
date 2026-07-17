@@ -1,15 +1,18 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "implementationDefinitions": {
+    "CanonicalProvider": "An exact canonical provider version runs through the bounded ZigCSS host and feeds strict generated CSS into the native compiler.",
     "LegacyCharacterized": "Heuristic adapter source remains only behind the test-only legacy boundary.",
     "LimitedNative": "A closed ZigCSS-native subset uses the rebuilt parser and public result ownership boundary.",
     "Removed": "No adapter parser source or legacy Format tag remains; filename handling exists only to reject the unavailable input."
   },
   "availabilityDefinitions": {
+    "CanonicalCliApi": "Available through the npm CLI and API with extension detection or an explicit syntax value.",
     "Unavailable": "Rejected by the recovery CLI before output and absent from the public compile syntax enum.",
     "ExperimentalLibrary": "Available only through an explicit Zig library syntax tag; the recovery CLI and LSP still reject the extension."
   },
   "compatibilityDefinitions": {
+    "CanonicalVersion": "Language behavior is owned by the exact published canonical provider version; ecosystem extension parity is separate.",
     "Unverified": "Legacy characterization is not a compatibility contract or supported subset.",
     "NativeSubset": "Only the exact published ZigCSS-native grammar and result contract are supported; this is not full ecosystem compatibility."
   },
@@ -44,80 +47,89 @@
       "displayName": "SCSS",
       "cliDisplayName": "SCSS",
       "formatTag": null,
+      "npmSyntax": "scss",
       "extensions": [".scss"],
-      "availability": "Unavailable",
-      "compatibility": "Unverified",
-      "implementation": "Removed",
+      "availability": "CanonicalCliApi",
+      "compatibility": "CanonicalVersion",
+      "implementation": "CanonicalProvider",
       "strategy": "canonical-integration",
       "providerId": "dart-sass",
-      "ownerPackages": ["SCSS-001", "SCSS-002", "SASS-010", "SASS-011", "SASS-012"],
-      "removedBy": "SCSS-001",
-      "removedSourceFiles": ["src/formats/scss.zig"],
-      "sourceFiles": [],
-      "currentBoundary": "No SCSS parser implementation remains; .scss is classified only for explicit CLI rejection and a null legacy detector result.",
+      "ownerPackages": ["SCSS-001", "SCSS-002", "SASS-010", "SASS-011", "SASS-012", "PRE-005", "PRE-006", "PRE-008"],
+      "sourceFiles": ["preprocessor/providers/dart-sass.mjs", "preprocessor/providers/sass-importer.mjs"],
+      "currentBoundary": "The npm CLI/API route SCSS through exact Dart Sass 1.101.0, confined imports, strict generated-CSS validation, deterministic output, and owned diagnostics, dependencies, and maps.",
       "knownRisks": [
-        "Reintroducing byte preprocessing without a canonical lexer, evaluator, dependency model, and strict errors would recreate the removed corruption boundary."
+        "Canonical language behavior does not enable arbitrary Sass plugins, custom functions, custom importers, or future Dart Sass versions; executable project code requires a separate trusted mode."
       ],
       "probe": "$color: red;\n.card { color: $color; }\n",
+      "probeOutput": ".card{color:red}",
+      "sourceEvidence": [
+        { "file": "preprocessor/providers/dart-sass.mjs", "contains": "sass.compileStringAsync(request.source, options)" },
+        { "file": "preprocessor/providers/sass-importer.mjs", "contains": "export function createSassImportAuthority" }
+      ],
       "containmentEvidence": [
-        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".scss\")" },
-        { "file": "src/main.zig", "contains": "return \"SCSS\";" },
-        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".scss\") or" },
-        { "file": "src/lsp.zig", "contains": "Unsupported or removed stylesheet format" }
+        { "file": "preprocessor/product-api.mjs", "contains": "export const SUPPORTED_SYNTAXES = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])" },
+        { "file": "preprocessor/provider-registry.mjs", "contains": "version: '1.101.0'" },
+        { "file": "preprocessor/network-policy.mjs", "contains": "Network access is disabled in the ZigCSS canonical preprocessor host" }
       ]
     },
     {
       "id": "sass",
-      "displayName": "SASS",
-      "cliDisplayName": "SASS",
+      "displayName": "Sass",
+      "cliDisplayName": "Sass",
       "formatTag": null,
+      "npmSyntax": "sass",
       "extensions": [".sass"],
-      "availability": "Unavailable",
-      "compatibility": "Unverified",
-      "implementation": "Removed",
+      "availability": "CanonicalCliApi",
+      "compatibility": "CanonicalVersion",
+      "implementation": "CanonicalProvider",
       "strategy": "canonical-integration",
       "providerId": "dart-sass",
-      "ownerPackages": ["SCSS-001", "SCSS-002", "SASS-010", "SASS-011", "SASS-012"],
-      "removedBy": "SCSS-001",
-      "removedSourceFiles": ["src/formats/sass.zig"],
-      "sourceFiles": [],
-      "currentBoundary": "No indented Sass parser implementation remains; .sass is classified only for explicit CLI rejection and a null legacy detector result.",
+      "ownerPackages": ["SCSS-001", "SCSS-002", "SASS-010", "SASS-011", "SASS-012", "PRE-005", "PRE-006", "PRE-008"],
+      "sourceFiles": ["preprocessor/providers/dart-sass.mjs", "preprocessor/providers/sass-importer.mjs"],
+      "currentBoundary": "The npm CLI/API route indented Sass through exact Dart Sass 1.101.0 without source rewriting, with confined imports and strict ZigCSS validation of generated CSS.",
       "knownRisks": [
-        "Reintroducing line/indent conversion without canonical Sass lexical, scope, module, interpolation, and expression behavior would recreate the removed guessing boundary."
+        "Canonical language behavior does not enable arbitrary Sass plugins, custom functions, custom importers, or future Dart Sass versions; executable project code requires a separate trusted mode."
       ],
       "probe": "$color: red\n.card\n  color: $color\n",
+      "probeOutput": ".card{color:red}",
+      "sourceEvidence": [
+        { "file": "preprocessor/providers/dart-sass.mjs", "contains": "syntax: request.syntax === 'sass' ? 'indented' : 'scss'" },
+        { "file": "preprocessor/providers/sass-importer.mjs", "contains": "export function createSassImportAuthority" }
+      ],
       "containmentEvidence": [
-        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".sass\")" },
-        { "file": "src/main.zig", "contains": "return \"SASS\";" },
-        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".sass\")" },
-        { "file": "src/lsp.zig", "contains": "Unsupported or removed stylesheet format" }
+        { "file": "preprocessor/product-api.mjs", "contains": "export const SUPPORTED_SYNTAXES = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])" },
+        { "file": "preprocessor/provider-registry.mjs", "contains": "adapters: Object.freeze(['scss', 'sass'])" },
+        { "file": "preprocessor/network-policy.mjs", "contains": "Network access is disabled in the ZigCSS canonical preprocessor host" }
       ]
     },
     {
       "id": "less",
-      "displayName": "LESS",
-      "cliDisplayName": "LESS",
+      "displayName": "Less",
+      "cliDisplayName": "Less",
       "formatTag": null,
+      "npmSyntax": "less",
       "extensions": [".less"],
-      "availability": "Unavailable",
-      "compatibility": "Unverified",
-      "implementation": "Removed",
+      "availability": "CanonicalCliApi",
+      "compatibility": "CanonicalVersion",
+      "implementation": "CanonicalProvider",
       "strategy": "canonical-integration",
       "providerId": "less",
-      "ownerPackages": ["LESS-001", "LESS-010", "LESS-011", "LESS-012"],
-      "removedBy": "LESS-001",
-      "removedSourceFiles": ["src/formats/less.zig"],
-      "sourceFiles": [],
-      "currentBoundary": "No Less parser implementation remains; .less is classified only for explicit CLI rejection and a null legacy detector result.",
+      "ownerPackages": ["LESS-001", "LESS-010", "LESS-011", "LESS-012", "PRE-005", "PRE-006", "PRE-008"],
+      "sourceFiles": ["preprocessor/providers/less.mjs", "preprocessor/providers/less-importer.mjs"],
+      "currentBoundary": "The npm CLI/API route Less through exact Less 4.6.7 with confined imports/assets, executable JavaScript and plugins disabled, and strict ZigCSS validation of generated CSS.",
       "knownRisks": [
-        "Reintroducing textual at-variable substitution without lexical scope, lazy evaluation, imports, strings/comments, arithmetic, dependencies, and strict errors would recreate the removed corruption boundary."
+        "Canonical language behavior does not enable Less plugins, JavaScript evaluation, custom file managers, or future Less versions; executable project code requires a separate trusted mode."
       ],
       "probe": "@color: red;\n.card { color: @color; }\n",
+      "probeOutput": ".card{color:red}",
+      "sourceEvidence": [
+        { "file": "preprocessor/providers/less.mjs", "contains": "() => less.render(request.source, options)" },
+        { "file": "preprocessor/providers/less-importer.mjs", "contains": "export function createLessImportAuthority" }
+      ],
       "containmentEvidence": [
-        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".less\")" },
-        { "file": "src/main.zig", "contains": "return \"LESS\";" },
-        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".less\")" },
-        { "file": "src/lsp.zig", "contains": "Unsupported or removed stylesheet format" }
+        { "file": "preprocessor/product-api.mjs", "contains": "export const SUPPORTED_SYNTAXES = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])" },
+        { "file": "preprocessor/provider-registry.mjs", "contains": "version: '4.6.7'" },
+        { "file": "preprocessor/providers/less.mjs", "contains": "javascriptEnabled: false" }
       ]
     },
     {
@@ -125,26 +137,29 @@
       "displayName": "Stylus",
       "cliDisplayName": "Stylus",
       "formatTag": null,
+      "npmSyntax": "stylus",
       "extensions": [".styl"],
-      "availability": "Unavailable",
-      "compatibility": "Unverified",
-      "implementation": "Removed",
+      "availability": "CanonicalCliApi",
+      "compatibility": "CanonicalVersion",
+      "implementation": "CanonicalProvider",
       "strategy": "canonical-integration",
       "providerId": "stylus",
-      "ownerPackages": ["STYLUS-001", "STYLUS-010", "STYLUS-011", "STYLUS-012"],
-      "removedBy": "STYLUS-001",
-      "removedSourceFiles": ["src/formats/stylus.zig"],
-      "sourceFiles": [],
-      "currentBoundary": "No Stylus parser implementation remains; .styl is classified only for explicit CLI rejection and a null legacy detector result.",
+      "ownerPackages": ["STYLUS-001", "STYLUS-010", "STYLUS-011", "STYLUS-012", "PRE-005", "PRE-006", "PRE-008"],
+      "sourceFiles": ["preprocessor/providers/stylus.mjs", "preprocessor/providers/stylus-importer.mjs"],
+      "currentBoundary": "The npm CLI/API route Stylus through exact Stylus 0.64.0 with resolver-owned imports/assets, project plugins denied, and strict ZigCSS validation of generated CSS.",
       "knownRisks": [
-        "Reintroducing indentation conversion without a real grammar for optional punctuation, expressions, scope, dependencies, and strict errors would recreate the removed guessing boundary."
+        "Canonical language behavior does not enable Stylus use() plugins, custom functions, custom evaluators, or future Stylus versions; executable project code requires a separate trusted mode."
       ],
       "probe": "$color = red\n.card\n  color: $color\n",
+      "probeOutput": ".card{color:#f00}",
+      "sourceEvidence": [
+        { "file": "preprocessor/providers/stylus.mjs", "contains": "renderer.render((error, css) =>" },
+        { "file": "preprocessor/providers/stylus-importer.mjs", "contains": "export function createStylusImportAuthority" }
+      ],
       "containmentEvidence": [
-        { "file": "src/main.zig", "contains": "std.mem.endsWith(u8, filename, \".styl\")" },
-        { "file": "src/main.zig", "contains": "return \"Stylus\";" },
-        { "file": "src/formats.zig", "contains": "std.mem.endsWith(u8, filename, \".styl\")" },
-        { "file": "src/lsp.zig", "contains": "Unsupported or removed stylesheet format" }
+        { "file": "preprocessor/product-api.mjs", "contains": "export const SUPPORTED_SYNTAXES = Object.freeze(['css', 'scss', 'sass', 'less', 'stylus'])" },
+        { "file": "preprocessor/provider-registry.mjs", "contains": "version: '0.64.0'" },
+        { "file": "preprocessor/providers/stylus.mjs", "contains": "'STYLUS_PLUGIN_DISABLED'," }
       ]
     },
     {

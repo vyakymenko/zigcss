@@ -16,17 +16,17 @@ export function Home() {
           <div>
             <div className="mb-7 inline-flex items-center gap-2 border border-[#b7f34a]/40 bg-[#b7f34a]/10 px-3 py-1.5 font-mono text-xs uppercase tracking-[0.18em] text-[#ccff73]">
               <span className="size-1.5 rounded-full bg-[#b7f34a]" />
-              0.4.0-rc.3 · experimental
+              0.5 development snapshot · experimental
             </div>
 
             <h1 className="display-type max-w-3xl text-5xl leading-[0.95] tracking-[-0.055em] sm:text-6xl md:text-7xl">
-              Compile CSS. Keep the meaning.
+              Five languages in. One deterministic compiler out.
             </h1>
             <p className="mt-7 max-w-2xl text-lg leading-8 text-[#cbd4cc] md:text-xl">
-              Native Zig. Deterministic output. Release gates that fail closed. ZigCSS turns stylesheet compilation into a contract you can inspect.
+              CSS, SCSS, Sass, Less, and Stylus enter through exact, confined language engines. Native ZigCSS validates and emits one deterministic CSS result.
             </p>
             <p className="mt-4 max-w-2xl text-sm leading-6 text-[#97a59b]">
-              This is a release candidate with matrix-tested CSS coverage. Evaluate before production; it does not claim complete browser or language compatibility.
+              This site tracks the green 0.5 source snapshot. It is experimental: evaluate before production. The currently published npm release candidate, 0.4.0-rc.3, still exposes the earlier CSS-only package surface.
             </p>
 
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">
@@ -41,7 +41,7 @@ export function Home() {
                 to="/features"
                 className="inline-flex items-center justify-center gap-2 border border-[#526158] px-6 py-3.5 font-semibold text-[#f7f3e8] transition hover:border-[#b7f34a] hover:text-[#b7f34a]"
               >
-                Explore CSS support
+                Explore language support
               </Link>
             </div>
           </div>
@@ -52,25 +52,26 @@ export function Home() {
               <span>npm · native binary</span>
             </div>
             <div className="p-5 sm:p-7">
-              <p className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-[#b7f34a]">Install the prerelease</p>
+              <p className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-[#b7f34a]">Published CSS-only prerelease</p>
               <code className="block overflow-x-auto whitespace-nowrap bg-[#0b120e] px-4 py-4 font-mono text-sm text-[#f7f3e8] sm:text-base">
                 <span className="text-[#708078]">$ </span>npm install --save-dev zigcss@next
               </code>
 
               <div className="mt-6 grid gap-px bg-[#344139] sm:grid-cols-2">
                 <div className="bg-[#101914] p-4">
-                  <p className="font-mono text-xs text-[#708078]">input.css</p>
-                  <pre className="mt-3 overflow-x-auto text-sm leading-6 text-[#d9e0da]"><code data-language="css">{`.notice {
-  color: red;
+                  <p className="font-mono text-xs text-[#708078]">input.scss · 0.5 source snapshot</p>
+                  <pre className="mt-3 overflow-x-auto text-sm leading-6 text-[#d9e0da]"><code data-language="text">{`$accent: #b7f34a;
+.notice {
+  color: $accent;
 }`}</code></pre>
                 </div>
                 <div className="bg-[#101914] p-4">
                   <p className="font-mono text-xs text-[#708078]">output.css</p>
-                  <pre className="mt-3 overflow-x-auto text-sm leading-6 text-[#ccff73]"><code data-language="css">{`.notice{color:red}`}</code></pre>
+                  <pre className="mt-3 overflow-x-auto text-sm leading-6 text-[#ccff73]"><code data-language="css">{`.notice{color:#b7f34a}`}</code></pre>
                 </div>
               </div>
               <p className="mt-5 font-mono text-xs text-[#92a096]">
-                npx zigcss input.css -o output.css --minify
+                node index.js input.scss -o output.css --minify
               </p>
             </div>
           </div>

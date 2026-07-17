@@ -405,7 +405,7 @@ test('uses one native canonical-path primitive for roots and candidates', () => 
   }
 })
 
-test('documents confinement without claiming language-specific resolution or public support', () => {
+test('documents confinement without claiming language-specific resolution or executable extensions', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [
     'does **not** implement Sass partial/extension search',
@@ -414,7 +414,7 @@ test('documents confinement without claiming language-specific resolution or pub
     'every symlink entry',
     '40 MiB across reads',
     'deduplicated by canonical URL',
-    'does not make any preprocessor syntax available',
+    'graduated 0.5 npm CLI/API',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

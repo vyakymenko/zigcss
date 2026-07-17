@@ -14,7 +14,7 @@ describe('consumer package website', () => {
 
     expect(manifest.homepage).toBe('https://vyakymenko.github.io/zigcss/')
     expect(manifest.description).toMatch(/experimental.*CSS compiler/i)
-    expect(html).toContain('<title>ZigCSS — native CSS compiler in Zig</title>')
+    expect(html).toContain('<title>ZigCSS — Five languages. One compiler contract.</title>')
     expect(html).toContain('https://vyakymenko.github.io/zigcss/')
     expect(html).toContain('og:image')
 
@@ -45,22 +45,27 @@ describe('consumer package website', () => {
     expect(readme.indexOf('[Website]')).toBeLessThan(installHeading)
   })
 
-  test('states the CSS-only input boundary on package surfaces', () => {
+  test('states the exact five-language boundary on package surfaces', () => {
     for (const relativePath of [
       'README.md',
       'docs/src/app/components/GettingStarted.tsx',
     ]) {
       const content = read(relativePath)
+      expect(content).toMatch(/CSS/i)
       expect(content).toMatch(/SCSS/i)
       expect(content).toMatch(/Sass/i)
       expect(content).toMatch(/Less/i)
-      expect(content).not.toMatch(/\b(?:supports?|accepts?)\s+(?:full\s+)?(?:SCSS|Sass|Less)\b/i)
+      expect(content).toMatch(/Stylus/i)
+      expect(content).toMatch(/1\.101\.0/)
+      expect(content).toMatch(/4\.6\.7/)
+      expect(content).toMatch(/0\.64\.0/)
+      expect(content).toMatch(/plugin|project code/i)
     }
 
     expect(read('docs/src/app/components/Home.tsx')).toMatch(/<FormatShowcase\s*\/>/)
     const showcase = read('docs/src/app/components/FormatShowcase.tsx')
     for (const format of ['SCSS', 'Sass', 'Less', 'Stylus']) expect(showcase).toMatch(new RegExp(format, 'i'))
-    expect(showcase).toMatch(/No CSS emitted/i)
-    expect(showcase).not.toMatch(/\b(?:supports?|accepts?)\s+(?:full\s+)?(?:SCSS|Sass|Less|Stylus)\b/i)
+    expect(showcase).toMatch(/CSS emitted/i)
+    expect(showcase).toMatch(/format-examples\.json/)
   })
 })

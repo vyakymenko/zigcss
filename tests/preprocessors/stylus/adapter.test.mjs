@@ -84,7 +84,7 @@ function stylusClosure(lock) {
   return [...seen].sort()
 }
 
-test('binds the packaged adapter and lockfile to exact Stylus 0.64.0 before public graduation', () => {
+test('binds the graduated package row and lockfile to exact Stylus 0.64.0', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -134,8 +134,9 @@ test('binds the packaged adapter and lockfile to exact Stylus 0.64.0 before publ
   assert.match(importerSource, /globIterateSync\(/)
   assert.doesNotMatch(importerSource, /node:child_process|\b(?:exec|spawn)(?:File|Sync)?\s*\(/)
   const adapter = matrix.adapters.find(candidate => candidate.id === 'stylus')
-  assert.equal(adapter.availability, 'Unavailable')
-  assert.equal(adapter.compatibility, 'Unverified')
+  assert.equal(adapter.availability, 'CanonicalCliApi')
+  assert.equal(adapter.compatibility, 'CanonicalVersion')
+  assert.equal(adapter.implementation, 'CanonicalProvider')
 })
 
 test('renders canonical Stylus semantics in exact expanded and compressed styles', async () => {
@@ -461,7 +462,7 @@ test('keeps repeated, parallel, and real framed-host rendering deterministic', a
   })
 })
 
-test('documents the virtual Stylus boundary and preserves unavailable public admission', () => {
+test('documents the virtual Stylus boundary and canonical product admission', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [
     'callback-based `renderer.render` API through an owned Promise boundary',
@@ -469,7 +470,7 @@ test('documents the virtual Stylus boundary and preserves unavailable public adm
     '`json()`, `image-size()`, and `embedurl()`',
     '`warn()`, `p()`, and `trace()`',
     '`STYLUS-012`',
-    '`.styl` remains rejected by the public CLI',
+    'graduate `.styl` through the 0.5 npm CLI/API',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

@@ -1,7 +1,7 @@
 {
   "name": "zigcss",
   "version": "0.4.0-rc.3",
-  "description": "Experimental native CSS compiler and Zig library focused on deterministic, semantics-preserving output",
+  "description": "Experimental deterministic CSS compiler for CSS, SCSS, Sass, Less, and Stylus",
   "main": "index.js",
   "bin": {
     "zigcss": "index.js"
@@ -108,7 +108,13 @@
     "experimental",
     "zig",
     "css",
-    "compiler"
+    "scss",
+    "sass",
+    "less",
+    "stylus",
+    "compiler",
+    "minifier",
+    "preprocessor"
   ],
   "author": "Valentyn Yakymenko",
   "license": "MIT",

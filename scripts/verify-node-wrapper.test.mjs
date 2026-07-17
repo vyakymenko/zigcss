@@ -63,6 +63,23 @@ test('npm wrapper forwards stdin/stdout and exact native exit statuses', () => {
   })
 })
 
+test('npm wrapper help publishes the combined five-language contract', () => {
+  withWrapperFixture(wrapper => {
+    const result = spawnSync(process.execPath, [wrapper, '--help'], { encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stderr, '')
+    for (const expected of [
+      '--syntax <css|scss|sass|less|stylus>',
+      'Dart Sass 1.101.0',
+      'Less 4.6.7',
+      'Stylus 0.64.0',
+      'project plugins, custom functions, custom importers, or JavaScript',
+    ]) {
+      assert.match(result.stdout, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    }
+  })
+})
+
 test('npm wrapper never converts a native signal into success', { skip: process.platform === 'win32' }, () => {
   withWrapperFixture(wrapper => {
     const result = spawnSync(process.execPath, [wrapper, 'signal'], { encoding: 'utf8' })

@@ -8,7 +8,7 @@ The short operator request is only an invocation. This file, `DEVELOPMENT_PLAN.m
 
 The repository-owned Bash supervisor provides the durable outer loop. It launches exactly one ephemeral non-interactive Codex pass at a time, pins `gpt-5.6-sol` with `ultra` reasoning, limits each pass to one dependency-eligible package, requires a clean committed checkpoint for progress, automatically pushes and reads back that exact checkpoint on the current `vale/*` branch, and only then starts the next pass. No subagent, child-task, alternate-model, or concurrent-lane path exists.
 
-The active canonical-frontend sequence is part of that same loop: finish SCSS and indented Sass through `SASS-012`, then Less through `LESS-012`, Stylus through `STYLUS-012`, and the shared `PRE-005`, `PRE-006`, `PRE-008`, and `PRE-009` product/release gates. The external `BENCH-007` scheduled-runner evidence proceeds independently and must not block dependency-eligible preprocessor correctness work.
+The active canonical-frontend sequence is part of that same loop: select the earliest dependency-eligible package not marked `VERIFIED` in the durable ledger; finish SCSS and indented Sass through `SASS-012`, then Less through `LESS-012`, Stylus through `STYLUS-012`, and the shared `PRE-005`, `PRE-006`, `PRE-008`, and `PRE-009` product/release gates. Once `PRE-008` is verified, `PRE-009` is next. The external `BENCH-007` scheduled-runner evidence proceeds independently and must not block dependency-eligible preprocessor correctness work.
 
 Run the preflight and start the background supervisor from anywhere inside the worktree:
 

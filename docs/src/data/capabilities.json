@@ -108,6 +108,59 @@
         }
       ]
     },
+    "preprocessor-sass": {
+      "command": "npm run test:preprocessor-sass",
+      "anchors": [
+        {
+          "path": "tests/preprocessors/sass/corpus.test.mjs",
+          "contains": ["matches exact Dart Sass across all 80 success and negative corpus cases", "independent CSS parser"]
+        }
+      ]
+    },
+    "preprocessor-less": {
+      "command": "npm run test:preprocessor-less",
+      "anchors": [
+        {
+          "path": "tests/preprocessors/less/corpus.test.mjs",
+          "contains": ["matches exact Less across all 88 official success and negative cases", "independent CSS parser"]
+        }
+      ]
+    },
+    "preprocessor-stylus": {
+      "command": "npm run test:preprocessor-stylus",
+      "anchors": [
+        {
+          "path": "tests/preprocessors/stylus/corpus.test.mjs",
+          "contains": ["matches exact Stylus across all 326 official successes and 20 integration errors", "independent CSS parser"]
+        }
+      ]
+    },
+    "preprocessor-product": {
+      "command": "npm run test:preprocessor-product",
+      "anchors": [
+        {
+          "path": "tests/preprocessors/product/api.test.mjs",
+          "contains": ["npm API validates all four canonical preprocessor syntaxes through ZigCSS", "npm file API detects each syntax and confines entry-relative imports"]
+        },
+        {
+          "path": "tests/preprocessors/product/site-examples.test.mjs",
+          "contains": ["website input/output lab is exact executable evidence for all five syntaxes"]
+        }
+      ]
+    },
+    "preprocessor-package": {
+      "command": "npm run check:preprocessor-package",
+      "anchors": [
+        {
+          "path": "scripts/validate-preprocessor-package.mjs",
+          "contains": ["PREPROCESSOR-SBOM.spdx.json", "validatePackageDescription", "validatePreprocessorPackage"]
+        },
+        {
+          "path": "scripts/smoke-release-artifact.mjs",
+          "contains": ["checkCanonicalPreprocessors", "checkCanonicalApi"]
+        }
+      ]
+    },
     "lsp": {
       "command": "zig build test --summary all",
       "anchors": [
@@ -327,10 +380,10 @@
     {
       "id": "source-maps",
       "surface": "Source maps",
-      "status": "Experimental, library-only",
+      "status": "Experimental, preprocessor CLI/API verified",
       "statusKind": "experimental",
-      "behavior": "The library pipeline produces deterministic separately owned mappings; the CLI output policy remains unavailable.",
-      "evidence": ["public-api", "compatibility"]
+      "behavior": "Canonical preprocessors compose deterministic provider and ZigCSS maps for the npm CLI/API; the Zig library owns separate native CSS mappings, while native CSS CLI map output remains unavailable.",
+      "evidence": ["public-api", "compatibility", "preprocessor-product"]
     },
     {
       "id": "browser-targets",
@@ -349,11 +402,43 @@
       "evidence": ["format-matrix", "public-api", "documentation"]
     },
     {
-      "id": "alternate-formats",
-      "surface": "Alternate format adapters",
+      "id": "scss",
+      "surface": "SCSS input",
+      "status": "Canonical provider verified",
+      "statusKind": "verified",
+      "behavior": "The npm CLI and API compile SCSS through exact Dart Sass 1.101.0, confined local imports, strict generated-CSS validation, source-map composition, deterministic batch/watch handling, and packaged platform smoke tests. Arbitrary plugins, custom functions, custom importers, and project code are not enabled.",
+      "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix"]
+    },
+    {
+      "id": "sass",
+      "surface": "Indented Sass input",
+      "status": "Canonical provider verified",
+      "statusKind": "verified",
+      "behavior": "The npm CLI and API preserve indented Sass source bytes through exact Dart Sass 1.101.0, confined local imports, strict generated-CSS validation, source-map composition, deterministic batch/watch handling, and packaged platform smoke tests. Arbitrary plugins, custom functions, custom importers, and project code are not enabled.",
+      "evidence": ["preprocessor-sass", "preprocessor-product", "preprocessor-package", "format-matrix"]
+    },
+    {
+      "id": "less",
+      "surface": "Less input",
+      "status": "Canonical provider verified",
+      "statusKind": "verified",
+      "behavior": "The npm CLI and API compile Less through exact Less 4.6.7, confined local imports and data helpers, strict generated-CSS validation, source-map composition, deterministic batch/watch handling, and packaged platform smoke tests. JavaScript, arbitrary plugins, custom functions, and project code are not enabled.",
+      "evidence": ["preprocessor-less", "preprocessor-product", "preprocessor-package", "format-matrix"]
+    },
+    {
+      "id": "stylus",
+      "surface": "Stylus input",
+      "status": "Canonical provider verified",
+      "statusKind": "verified",
+      "behavior": "The npm CLI and API compile Stylus through exact Stylus 0.64.0, confined local imports and bounded helpers, strict generated-CSS validation, source-map composition, deterministic batch/watch handling, and packaged platform smoke tests. Arbitrary plugins, custom functions, hooks, and project code are not enabled.",
+      "evidence": ["preprocessor-stylus", "preprocessor-product", "preprocessor-package", "format-matrix"]
+    },
+    {
+      "id": "alternate-ecosystem-formats",
+      "surface": "Other ecosystem adapters",
       "status": "Unavailable",
       "statusKind": "unavailable",
-      "behavior": "SCSS, Sass, Less, Stylus, CSS-in-JS, PostCSS-like, and Tailwind-like compiler adapters are removed; their extensions are rejected before output.",
+      "behavior": "CSS-in-JS, PostCSS-like, Tailwind-like, arbitrary provider plugins, and trusted-project-code adapters remain outside the public compiler contract.",
       "evidence": ["format-matrix", "cli-safety"]
     },
     {

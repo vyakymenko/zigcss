@@ -71,6 +71,8 @@ describe('autonomous development operations', () => {
     expect(prompt).toContain('SCSS/Sass through SASS-012')
     expect(prompt).toContain('Less through LESS-012')
     expect(prompt).toContain('Stylus through STYLUS-012')
+    expect(prompt).toContain('earliest dependency-eligible package not marked VERIFIED')
+    expect(prompt).toContain('After PRE-008 is verified, PRE-009 is next')
     expect(prompt).toContain('pending external BENCH-007 runner must not block')
     expect(prompt).toContain('Do not push from this model pass')
     expect(prompt).toContain('ZIGCSS-AUTODEVELOP-STATUS: PROGRESS <short summary>')

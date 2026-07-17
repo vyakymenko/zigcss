@@ -15,6 +15,45 @@ const valueOptions = new Set([
   '--critical-elements',
 ]);
 
+const combinedHelp = `ZigCSS 0.5 development snapshot — EXPERIMENTAL, evaluate before production
+
+Five languages in. One deterministic compiler out.
+
+Usage: zigcss <input> [-o <output.css|->] [options]
+       zigcss <input1> <input2> ... -o <output-dir> --output-dir [options]
+       zigcss --lsp          Start the experimental CSS Language Server
+
+Canonical input languages:
+  --syntax <css|scss|sass|less|stylus>
+  CSS                       Native ZigCSS parser and emitter
+  SCSS / indented Sass      Dart Sass 1.101.0
+  Less                      Less 4.6.7
+  Stylus                    Stylus 0.64.0
+
+Common options:
+  -o, --output <path|->     Output file/stdout, or directory with --output-dir
+  --output-dir              Require batch output under the -o directory
+  --minify                  Emit compact whitespace
+  --optimize                Run the closed verified optimizer preset
+  --watch                   Watch one input and its confined local dependencies
+  -V, --version             Show the package version
+  -h, --help                Show this help
+
+Preprocessor options:
+  --load-path <directory>   Add one explicit confined import root (repeatable)
+  --source-map              Embed a deterministic composed source map
+
+Native CSS-only options:
+  --profile                 Report API stages and requested memory bytes
+  --lsp                     Start the experimental CSS Language Server
+
+Security boundary:
+  Canonical providers run at exact package versions behind a confined host. ZigCSS
+  does not enable arbitrary project plugins, custom functions, custom importers, or JavaScript.
+
+Exit status: 0 success/info, 1 compilation or I/O failure, 2 usage error.
+`;
+
 function shouldUseProductCli(args) {
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -62,6 +101,11 @@ function runNative(binaryPath, args) {
 }
 
 async function main(args = process.argv.slice(2)) {
+  if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
+    process.stdout.write(combinedHelp);
+    return;
+  }
+
   const binaryPath = path.join(__dirname, 'bin', process.platform === 'win32' ? 'zigcss.exe' : 'zigcss');
   if (!fs.existsSync(binaryPath)) {
     console.error('zigcss binary not found. Please run: npm install');
@@ -84,4 +128,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { shouldUseProductCli };
+module.exports = { combinedHelp, shouldUseProductCli };

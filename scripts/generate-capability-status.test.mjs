@@ -19,10 +19,10 @@ import {
 test('capability metadata is closed, unique, and anchored to executable evidence', () => {
   const metadata = validateMetadata(loadMetadata())
 
-  assert.equal(metadata.capabilities.length, 21)
-  assert.equal(Object.keys(metadata.gates).length, 19)
+  assert.equal(metadata.capabilities.length, 25)
+  assert.equal(Object.keys(metadata.gates).length, 24)
   assert.deepEqual(metadata.statusKinds, ['experimental', 'verified', 'unavailable', 'disabled'])
-  assert.equal(new Set(metadata.capabilities.map(capability => capability.id)).size, 21)
+  assert.equal(new Set(metadata.capabilities.map(capability => capability.id)).size, 25)
   assert.ok(metadata.capabilities.every(capability => capability.evidence.length > 0))
 })
 
@@ -105,7 +105,7 @@ test('generator check is deterministic and the site consumes metadata directly',
     encoding: 'utf8',
   })
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /21 rows, 19 executable evidence gates, 1 Markdown table/)
+  assert.match(result.stdout, /25 rows, 24 executable evidence gates, 1 Markdown table/)
 
   const features = fs.readFileSync(path.join(repositoryRoot, 'docs/src/app/components/Features.tsx'), 'utf8')
   assert.match(features, /data\/capabilities\.json/)
@@ -135,4 +135,16 @@ test('public disabled and final LSP/editor boundaries cannot regress to stale cl
   assert.equal(byId.get('benchmark-report').statusKind, 'unavailable')
   assert.match(byId.get('benchmark-report').behavior, /no archive is selected/i)
   assert.match(byId.get('benchmark-report').behavior, /no timing, ranking, or ratio claim/i)
+  for (const [id, version] of [
+    ['scss', 'Dart Sass 1.101.0'],
+    ['sass', 'Dart Sass 1.101.0'],
+    ['less', 'Less 4.6.7'],
+    ['stylus', 'Stylus 0.64.0'],
+  ]) {
+    assert.equal(byId.get(id).statusKind, 'verified')
+    assert.match(byId.get(id).status, /canonical provider verified/i)
+    assert.match(byId.get(id).behavior, new RegExp(version.replaceAll('.', '\\.')))
+    assert.match(byId.get(id).behavior, /plugin|custom function|project code/i)
+  }
+  assert.equal(byId.get('alternate-ecosystem-formats').statusKind, 'unavailable')
 })

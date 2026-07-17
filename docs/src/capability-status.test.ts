@@ -28,9 +28,9 @@ describe('evidence-linked capability status metadata', () => {
       'unavailable',
       'disabled',
     ])
-    expect(capabilityMetadata.capabilities).toHaveLength(21)
-    expect(new Set(capabilityMetadata.capabilities.map(item => item.id)).size).toBe(21)
-    expect(new Set(capabilityMetadata.capabilities.map(item => item.surface)).size).toBe(21)
+    expect(capabilityMetadata.capabilities).toHaveLength(25)
+    expect(new Set(capabilityMetadata.capabilities.map(item => item.id)).size).toBe(25)
+    expect(new Set(capabilityMetadata.capabilities.map(item => item.surface)).size).toBe(25)
   })
 
   test('anchors every row to a declared executable gate and real source text', () => {
@@ -74,5 +74,14 @@ describe('evidence-linked capability status metadata', () => {
     expect(byId.get('benchmark-report')?.behavior).toContain('no archive is selected')
     expect(byId.get('public-compile')?.statusKind).toBe('disabled')
     expect(byId.get('public-compile')?.behavior).toContain('HTTP 503')
+    expect(byId.get('scss')?.behavior).toContain('Dart Sass 1.101.0')
+    expect(byId.get('sass')?.behavior).toContain('Dart Sass 1.101.0')
+    expect(byId.get('less')?.behavior).toContain('Less 4.6.7')
+    expect(byId.get('stylus')?.behavior).toContain('Stylus 0.64.0')
+    for (const id of ['scss', 'sass', 'less', 'stylus']) {
+      expect(byId.get(id)?.statusKind).toBe('verified')
+      expect(byId.get(id)?.status).toMatch(/canonical provider verified/i)
+    }
+    expect(byId.get('alternate-ecosystem-formats')?.statusKind).toBe('unavailable')
   })
 })

@@ -15,7 +15,7 @@ export function Root() {
     path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#f3f0e7] text-[#172019]">
+    <div className="flex min-h-screen flex-col overflow-x-clip bg-[#f3f0e7] text-[#172019]">
       <header className="sticky top-0 z-50 border-b border-[#344139] bg-[#101914]/95 text-[#f7f3e8] backdrop-blur">
         <nav className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4 sm:px-8 lg:px-10" aria-label="Primary navigation">
           <Link to="/" className="group flex flex-shrink-0 items-center gap-3" aria-label="ZigCSS home">

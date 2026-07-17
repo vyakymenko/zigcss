@@ -37,7 +37,7 @@ async function compile(overrides = {}, signal = new AbortController().signal) {
   return await createDartSassProvider().compile(request(overrides), { signal })
 }
 
-test('binds the packaged adapter and lockfile to exact Dart Sass 1.101.0 before public graduation', () => {
+test('binds the graduated package rows and lockfile to exact Dart Sass 1.101.0', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -68,8 +68,9 @@ test('binds the packaged adapter and lockfile to exact Dart Sass 1.101.0 before 
   assert.doesNotMatch(adapterSource, /sass\.(?:render|renderSync)\(/)
   for (const adapterId of ['scss', 'sass']) {
     const adapter = matrix.adapters.find(candidate => candidate.id === adapterId)
-    assert.equal(adapter.availability, 'Unavailable')
-    assert.equal(adapter.compatibility, 'Unverified')
+    assert.equal(adapter.availability, 'CanonicalCliApi')
+    assert.equal(adapter.compatibility, 'CanonicalVersion')
+    assert.equal(adapter.implementation, 'CanonicalProvider')
   }
 })
 
@@ -441,13 +442,13 @@ test('keeps mixed SCSS and indented Sass compilation deterministic in parallel',
   }
 })
 
-test('documents the virtual import boundary and preserves unavailable public rows', () => {
+test('documents the virtual import boundary and canonical product rows', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [
     'modern asynchronous `compileStringAsync` API',
     'stable non-file virtual URL',
     'Built-in `sass:` modules remain available',
-    'This work does not make any preprocessor syntax available publicly',
+    'graduate `.scss` and `.sass` through the 0.5 npm CLI/API',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

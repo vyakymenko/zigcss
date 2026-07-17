@@ -11,11 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Target release: `0.4.0-rc.3` (not published).
 
+Next product line: `0.5.0` development snapshot. `PRE-009` will synchronize release metadata to one immutable candidate before any separately authorized publication.
+
+### Added
+
+- Add canonical SCSS and indented Sass compilation through exact Dart Sass 1.101.0, with official-version corpus evidence, confined imports, owned diagnostics/dependencies, deterministic maps, and strict ZigCSS validation of generated CSS.
+- Add canonical Less compilation through exact Less 4.6.7 with JavaScript/plugins disabled, resolver-owned imports and bounded asset helpers, official-version corpus evidence, and the same generated-CSS boundary.
+- Add canonical Stylus compilation through exact Stylus 0.64.0 with project plugins/hooks disabled, resolver-owned imports and bounded helpers/globs, official-version corpus evidence, and the same generated-CSS boundary.
+- Add one five-syntax npm CLI and JavaScript API for CSS, SCSS, Sass, Less, and Stylus, including syntax detection, confined load paths, mixed deterministic batches, watch invalidation, atomic writes, and two-stage source-map composition.
+- Add a five-tab website input/output lab whose exact examples are recompiled in the product test suite.
+
 ### Changed
 
 - Replace the prototype's stable CSS path with the tested tokenizer, typed parser/emitter, bounded CLI/API, verified transform plan, LSP/editor integrations, and release-integrity gates described by the generated capability matrix.
-- Keep alternate format adapters, native plugins, extraction passes, editor packages, and the public compile service explicitly experimental, unpublished, or disabled according to their tested boundaries.
+- Keep arbitrary preprocessor plugins, custom functions/importers, executable project code, CSS-in-JS/PostCSS/Tailwind-like adapters, native plugins, extraction passes, editor packages, and the public compile service explicitly experimental, unpublished, or disabled according to their tested boundaries.
 - Execute every release archive on an architecture-matched runner and prove the same bytes through an offline npm pack, postinstall, and wrapper smoke before attestation or publication can proceed.
+- Prepare the exact provider/runtime closure for five platform targets while keeping `0.5.0` npm and GitHub publication behind separate explicit authorization.
 
 ## [0.3.0] - 2026-03-20
 

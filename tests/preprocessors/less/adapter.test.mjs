@@ -60,7 +60,7 @@ async function withFixture(run) {
   }
 }
 
-test('binds the packaged adapter and lockfile to exact Less 4.6.7 before public graduation', () => {
+test('binds the graduated package row and lockfile to exact Less 4.6.7', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
   const installed = JSON.parse(
@@ -99,8 +99,9 @@ test('binds the packaged adapter and lockfile to exact Less 4.6.7 before public 
   assert.match(adapterSource, /less\.render\(/)
   assert.doesNotMatch(adapterSource, /less\.renderSync\(/)
   const adapter = matrix.adapters.find(candidate => candidate.id === 'less')
-  assert.equal(adapter.availability, 'Unavailable')
-  assert.equal(adapter.compatibility, 'Unverified')
+  assert.equal(adapter.availability, 'CanonicalCliApi')
+  assert.equal(adapter.compatibility, 'CanonicalVersion')
+  assert.equal(adapter.implementation, 'CanonicalProvider')
 })
 
 test('renders canonical Less semantics in exact expanded and compressed styles', async () => {
@@ -447,7 +448,7 @@ test('keeps repeated, parallel, and real framed-host rendering deterministic', a
   })
 })
 
-test('documents the virtual Less boundary and preserves unavailable public admission', () => {
+test('documents the virtual Less boundary and canonical product admission', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [
     'asynchronous programmatic `less.render` API',
@@ -458,7 +459,7 @@ test('documents the virtual Less boundary and preserves unavailable public admis
     'first-success dependency order',
     '`LESS-012`',
     'official Less tag `v4.6.7`',
-    '`.less` remains rejected by the public CLI',
+    'graduate `.less` through the 0.5 npm CLI/API',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

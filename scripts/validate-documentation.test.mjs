@@ -79,23 +79,17 @@ test('every tracked internal link and code fence has an owned validation path', 
   assert.ok(summary.fences >= 50)
   assert.ok(summary.internalLinks >= 25)
   assert.ok(summary.literalRoutes >= 10)
-  assert.equal(summary.siteFences, 10)
+  assert.equal(summary.siteFences, 9)
   const siteFences = extractSiteCodeFences(repositoryRoot)
   assert.deepEqual(
     siteFences.map(fence => fence.language),
-    ['css', 'text', 'css', 'bash', 'bash', 'bash', 'css', 'bash', 'css', 'css'],
+    ['text', 'text', 'bash', 'bash', 'bash', 'css', 'bash', 'text', 'css'],
   )
-  assert.equal(siteFences[0].content, `:root {
-  --accent: #b7f34a;
-}
-
-.button {
-  color: #101914;
-  background: var(--accent);
-}`)
-  assert.equal(
-    siteFences[2].content,
-    ':root{--accent:#b7f34a}.button{color:#101914;background:var(--accent)}',
+  assert.equal(siteFences[0].content, '{selected.input}')
+  assert.equal(siteFences[1].content, '{selected.output}')
+  assert.match(
+    fs.readFileSync(path.join(repositoryRoot, 'tests/preprocessors/product/site-examples.test.mjs'), 'utf8'),
+    /exact executable evidence for all five syntaxes/,
   )
 })
 

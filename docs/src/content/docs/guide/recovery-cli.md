@@ -1,71 +1,84 @@
-# Recovery CLI
+# npm CLI contract
 
-The current command-line interface is experimental. Run `zigcss --help` for its authoritative option list.
+The ZigCSS 0.5 development launcher owns one combined command for CSS, SCSS, indented Sass, Less, and Stylus. Run `zigcss --help` for the authoritative installed-package option list.
 
-All supported CSS modes delegate to one public `zigcss.compile` call site. The CLI owns arguments, path safety, file I/O, diagnostic rendering, and writes, while parsing, verified optimization, and emission remain inside the same owned library contract used by Zig consumers.
+The launcher routes CSS directly to the native Zig executable. Canonical preprocessor inputs enter a bounded Node host, then their generated CSS passes through the same native compile boundary before output. The public npm release candidate `0.4.0-rc.3` predates this five-language surface; this page describes the green source snapshot.
 
-## Available options
+## Inputs and providers
+
+| Syntax | Detection | Engine |
+|---|---|---|
+| CSS | `.css` or `--syntax css` | Native ZigCSS |
+| SCSS | `.scss` or `--syntax scss` | Dart Sass 1.101.0 |
+| Indented Sass | `.sass` or `--syntax sass` | Dart Sass 1.101.0 |
+| Less | `.less` or `--syntax less` | Less 4.6.7 |
+| Stylus | `.styl` or `--syntax stylus` | Stylus 0.64.0 |
+
+CSS Modules, CSS-in-JS, PostCSS-like inputs, and Tailwind-like inputs do not fall back to CSS. They remain explicit unavailable-format errors.
+
+## Options
 
 | Option | Behavior |
 |---|---|
-| input `-` | Read one bounded CSS input from stdin and report its source as `<stdin>`. It cannot participate in batch or watch mode. |
+| input `-` | Read one bounded UTF-8 input from stdin. Preprocessor stdin needs an explicit `--syntax`. |
 | `-o`, `--output <path or ->` | Write one output file, select stdout with `-`, or name the destination directory with `--output-dir`. |
 | `--output-dir` | Enable explicit multi-input output planning. It requires multiple inputs and `-o`. |
-| `--syntax css` | Select the only supported stable syntax explicitly; CSS is also the default. Other values fail as usage errors. |
-| `--minify` | Emit compact whitespace; this is independent of `--optimize`. |
-| `--optimize` | Run the closed verified cleanup/semantic preset to a bounded byte-stable fixed point. |
-| `--watch` | Recompile one input when its content or a direct local relative CSS import changes. |
-| `--profile` | Print one measured public compile total, actual internal stages, and allocator-requested memory metrics. |
-| `--lsp` | Start the experimental language server. |
-| `-V`, `--version` | Print the package-synchronized version to stdout. |
-| `-h`, `--help` | Print the current contract. |
+| `--syntax <css or scss or sass or less or stylus>` | Select the input grammar explicitly. A file extension and explicit syntax must agree. |
+| `--load-path <directory>` | Add a confined preprocessor import root. It is repeatable, ordered, and unavailable for native CSS. |
+| `--minify` | Emit compact whitespace; this remains independent of `--optimize`. |
+| `--optimize` | Run the closed verified ZigCSS optimizer after canonical preprocessing. |
+| `--source-map` | For preprocessors, compose the provider and ZigCSS maps into one deterministic inline map. It cannot be combined with `--optimize`. Native CSS map output remains unavailable. |
+| `--watch` | Recompile one input when the entry or an owned confined dependency changes. |
+| `--profile` | Native CSS only: report public compile stages and requested-memory metrics. |
+| `--lsp` | Native CSS only: start the experimental language server. |
+| `-V`, `--version` | Print the package-synchronized version. |
+| `-h`, `--help` | Print the combined five-language contract. |
 
-Every boolean or valued option may appear at most once. Help and version must be used alone. Stdin may appear once and only as the sole input; `--watch` requires a file, `--profile` requires one input, and batch output cannot be stdout. No option is silently ignored.
+Every boolean or valued option may appear at most once. Help and version must be used alone. Stdin may appear only as the sole input; watch requires one file; multiple files require `--output-dir`; batch output cannot be stdout. Unknown or incompatible options fail rather than becoming no-ops.
 
 ## Streams and exit status
 
-With no `-o`, one file or stdin emits CSS to stdout. `-o -` requests stdout explicitly; `-o <path>` writes a file. Help/version and successful compilation exit `0`. Parser/transform diagnostics and operational read/write failures exit `1`. Missing input or values, unknown/duplicate/unavailable flags, unsupported syntax, and incoherent stream/batch/watch combinations exit `2`. Informational text and CSS use stdout; warnings, diagnostics, and usage errors use stderr. The npm launcher inherits all three streams, propagates exact native exit codes, and re-raises POSIX termination signals.
+With no `-o`, one file or stdin emits CSS to stdout. `-o -` selects stdout explicitly. Informational text and CSS use stdout; warnings, diagnostics, watch status, and usage errors use stderr.
 
-## Profiling
+| Status | Meaning |
+|---|---|
+| `0` | Successful compilation or informational command |
+| `1` | Compilation, provider, generated-CSS, read, write, or operational failure |
+| `2` | Invalid syntax selection, unknown option, missing value, or incoherent stream/batch/watch configuration |
 
-`--profile` sets the public API's opt-in profile field; the executable has no parallel timer or guessed stage model. One monotonic session ends after result promotion and compiler-temporary cleanup. It reports total nanoseconds and the actual parse, validation/plugin-plan, dependency, verified-optimizer, plugin/prefix transform, emit, result-promotion, and cleanup intervals. Stages that did not execute report zero; an interval shorter than the timer's observable resolution may also round to zero. The total may exceed the stage sum because small orchestration gaps remain real end-to-end work.
+The npm launcher preserves exact native exit codes and re-raises POSIX termination signals. Provider cancellation terminates bounded work and cannot return partial CSS.
 
-The same call installs a forwarding allocator that counts successful allocation, deallocation, and resize operations. Byte fields are requested bytes: cumulative allocated/freed, peak live, and the owned result bytes remaining after compiler cleanup. They are not RSS, heap capacity, or an operating-system memory claim. The returned CSS, maps, diagnostics, and dependencies are still freed through the caller's original allocator. Profiling-disabled calls do not install this wrapper. If the platform cannot provide the monotonic timer, compilation returns `ProfilingUnavailable` rather than zero metrics. CLI profiling remains single-input; watch mode emits one report per real compile attempt, while batch profiling is rejected rather than silently aggregated.
+## Import and execution boundary
 
-## Explicitly unavailable
+File compilation automatically confines the entry directory. Each `--load-path` adds another explicit root. The resolver rejects lexical or canonical escapes, symbolic links, special files, unstable reads, invalid UTF-8, cycles, excess ancestry, and resource exhaustion. Network schemes and ambient package discovery are disabled.
 
-`--source-map`, `--autoprefix`, `--browsers`, and `--critical-*` fail with an explanation. They are not accepted no-ops.
-
-`--optimize` does not call the inherited optimizer. It admits exactly seven verified order-preserving passes, grants only cleanup and semantic-rewrite authority, and repeats parse-transform-emit under a 32-round bound until two consecutive outputs are byte-identical. Experimental passes, compatibility rewriting, extraction, custom-property resolution, logical-to-physical conversion, and reorder authority are absent. A validation, allocation, reparse, or convergence failure writes no CSS.
-
-The library has a verified target-prefix pass for a pinned eight-feature subset, but the recovery CLI does not yet carry its strict target query or authorization contract. The rejected flags cannot reach the inherited autoprefixer or the rebuilt pass.
-
-The library also has two experimental conservative extraction passes over complete class/ID inventories. They require explicit experimental and extraction policy grants, and are not wired to `--optimize` or `--critical-*`; rejected CLI requests cannot reach the inherited or rebuilt implementations.
-
-The recovery CLI also rejects legacy preprocessor and alternate-format extensions. The [format compatibility matrix](/guide/format-compatibility) records every recognized extension, its characterized internal boundary, and the accepted removal or limited-subset strategy. None is silently parsed as CSS.
-
-## Watch behavior
-
-The watcher reads and hashes the root file once per poll and passes those exact bytes into the public compile facade; it does not reopen the source during the same attempt. After a successful parse, owned dependency evidence supplies an ordered set of direct `@import` specifiers. Unique local relative paths are resolved from the root stylesheet directory and content-hashed. Query and fragment suffixes are excluded from the filesystem path. Scheme-bearing, remote, protocol-relative, origin-absolute, and filesystem-absolute URLs are not opened by watch mode. Imports are reported facts rather than inlined compilation inputs, so dependency changes trigger a root recompilation without changing CSS semantics.
-
-The root fingerprint is recorded before every compile attempt. An unchanged read error, parser/transform diagnostic, or output failure is therefore reported once and waits for a real root/dependency transition instead of looping twice per second. A failed parse cannot produce new dependency evidence, so the watcher conservatively retains the last successfully parsed dependency set. Duplicate imports resolving to the same platform path are polled once; missing or temporarily unreadable dependencies remain tracked and their creation or recovery counts as a change.
+The default contract does not enable project plugins, custom functions, custom importers, Less JavaScript, Stylus evaluator hooks, or arbitrary executable project code. Canonical language semantics do not grant those extension points implicitly.
 
 ## Batch execution
 
-Multi-input compilation uses a mutex-protected dynamic work index rather than static input chunks. Worker count is the smaller of the input count, detected CPU count, and an explicit process-local cap of eight. Each task owns a separate allocator that remains alive through result cleanup; workers do not concurrently allocate result data through the CLI's planning allocator.
+Mixed CSS/preprocessor batches are accepted in argument order. Worker count is bounded by the input count, available CPUs, and a process cap of eight. Each task owns its result and provider session. The first failure closes the queue; already-running tasks finish safely, unclaimed tasks never open, and no output commit begins unless every compilation succeeded.
 
-The first observed read, compile, or diagnostic failure closes the queue. Work already running completes because the public compile call has no unsafe asynchronous interruption point, while unclaimed tasks are marked cancelled and never opened. Every started worker is joined even if a later thread cannot be created. Only an all-successful joined batch reaches the commit loop, which visits tasks in original argument order for atomic writes and status messages. Failure diagnostics are likewise rendered by input order, independent of scheduling. This preserves the no-output-on-compile-failure contract while keeping CLI-012's documented per-destination limitation for operational failures during the later commit loop.
+Unique input stems become `<stem>.css`. Colliding stems receive a deterministic 16-digit digest of the normalized working-directory-relative path. Final basenames have a 128-byte ceiling. Results and diagnostics are committed or rendered in original argument order, independent of scheduling.
+
+## Watch behavior
+
+Watch mode hashes one owned entry snapshot and uses result dependency facts to track canonical local imports. It supports all five syntaxes. New, changed, missing, and recovered dependencies trigger one recompilation. A failed attempt keeps the last successful dependency set and retains the last successful output.
+
+Dependency polling uses the same confined roots as compilation. Remote URLs, protocol-relative URLs, absolute unowned paths, query/fragment aliases, links, and excessive dependency sets are not opened. Cancellation stops polling and provider work without one extra compile.
 
 ## Output safety
 
-Before reading and compiling inputs, the CLI plans file destinations and rejects paths that resolve to an input, including relative aliases, symlinks, and hard links. It also rejects duplicate final destinations. The `-` stream sentinel is never treated as a filesystem path.
+Before reading inputs, the CLI rejects destinations that resolve to an input and duplicate final destinations, including relative aliases, symlinks, and hard links. Each file is written to a unique temporary neighbor, synced, and atomically renamed only after a complete valid result exists. Compilation failures therefore create no partial CSS or output directory.
 
-Every file destination is written through a temporary file in its parent directory and atomically replaced only after the complete CSS result is ready. Missing parents are created at that commit point; a failed parse or transform therefore creates no output directory. Existing destination symlinks and hard links are replaced rather than followed, and a failed write or rename removes its temporary file while preserving the old destination. Existing regular-file permissions are retained.
+An operational failure while committing a later batch file can leave earlier files committed; output files are individually atomic, not one multi-file filesystem transaction.
 
-Batch naming is deterministic and independent of argument order. A unique input stem becomes `<stem>.css`; colliding stems receive a 16-digit lowercase hash of the normalized working-directory-relative input path. Final basenames are limited to 128 bytes, with `zigcss-<hash>.css` used when a stem would exceed the bound. The final canonical/inode collision check remains authoritative, including the unlikely case of a hash collision. Each destination is atomic, but the batch is not a multi-file transaction: an operational failure while committing a later file can leave earlier files committed.
+## Native optimizer and profiling boundaries
 
-Valid inputs are parsed completely before emission. Structured parser diagnostics include the input name, line, column, and code; failed single or batch compilation writes no partial CSS. Optimized fixed-point rounds are reparsed without recovery before any final write.
+`--optimize` admits exactly the verified order-preserving pass preset and repeats parse-transform-emit to a bounded byte-stable fixed point. Experimental extraction, compatibility rewriting, custom-property resolution, logical-to-physical conversion, and reorder authority are absent.
 
+Native CSS `--profile` reports one monotonic public compile total, actual stage intervals, and allocator-requested byte metrics. It does not claim RSS or operating-system memory. Profiling is not yet composed across the JavaScript provider host, so preprocessor requests reject that flag rather than report an incomplete number.
+
+- [Format compatibility](/guide/format-compatibility)
 - [Current status](/guide/status)
 - [CSS compatibility](/guide/css-compatibility)
 - [Build from source](/guide/build-from-source)

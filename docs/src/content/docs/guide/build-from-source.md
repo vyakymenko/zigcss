@@ -1,10 +1,11 @@
 # Build from source
 
-Source builds are the verified installation path during recovery. Local Zig package dependencies are consumer-tested below; no remote package URL or prebuilt-release installation is advertised until later artifact and installer gates pass.
+Source builds are the verified way to evaluate the green five-language 0.5 snapshot before its package is published. Local Zig package dependencies and the npm product pipeline are consumer-tested below.
 
 ## Requirements
 
 - Zig 0.15.2
+- Node.js 20.19 or newer
 - Git
 
 ## Build and test
@@ -12,13 +13,14 @@ Source builds are the verified installation path during recovery. Local Zig pack
 ```bash
 git clone https://github.com/vyakymenko/zigcss.git
 cd zigcss
+npm ci
 zig build
 zig build test --summary all
 zig build test-public-api --summary all
 zig build test-documentation-examples --summary all
 ```
 
-The executable is written to `zig-out/bin/zigcss`.
+The CSS-only native executable is written to `zig-out/bin/zigcss`. The root `index.js` launcher combines it with the canonical SCSS, Sass, Less, and Stylus host.
 
 `test-public-api` compiles a separate Zig consumer against the module name `zigcss`. It verifies the owned high-level compile facade, result cleanup, the explicit native CSS Modules subset, and an experimental borrowed native-plugin callback without claiming a stable plugin ABI or full ecosystem compatibility.
 
@@ -54,7 +56,7 @@ pub fn main() !void {
 
 Set `.profile = true` to populate `result.metrics` with `CompileMetrics`; the public root also exports `CompileStageTimings` and `CompileMemoryMetrics`. The total uses one monotonic session around the real compile, while stage fields cover parse, validation, dependencies, optimization, plugin/prefix transforms, emission, result promotion, and temporary cleanup. Memory fields count allocator-requested bytes and operations through a forwarding wrapper; they are not process RSS. Result buffers remain compatible with normal `result.deinit()` because the wrapper forwards exact pointers from the caller's allocator.
 
-Set `.syntax = .css_modules` only for the [experimental native CSS Modules subset](/guide/css-modules). A successful result owns class/local-value exports, nested composition references, and bounded module dependency facts; it never loads dependencies. The recovery executable and build helper remain CSS-only.
+Set `.syntax = .css_modules` only for the [experimental native CSS Modules subset](/guide/css-modules). A successful result owns class/local-value exports, nested composition references, and bounded module dependency facts; it never loads dependencies. The direct native executable, Zig API, and build helper remain CSS-oriented; the root npm launcher/API own the canonical preprocessor frontends.
 
 ## Local Zig package dependency
 
@@ -73,7 +75,7 @@ The package is also verified through a fresh `zig fetch .` cache so the allowlis
 
 A dependency build script imports `const zigcss_build = @import("zigcss")`, obtains the executable with `b.dependency("zigcss", ...).artifact("zigcss")`, and calls `zigcss_build.helpers.addCssCompile`. The exact working form is the committed `tests/package-consumer/build.zig`; its test runs in CI rather than relying on an uncompiled documentation fragment.
 
-Each call declares one CSS input as `std.Build.LazyPath` and one generated output through a portable `.css` basename of at most 128 bytes. The returned `getOutput()` path can feed `b.addCheckFile`, `b.addInstallFile`, or another step. Optional `optimize` and `minify` fields map only to the accepted CLI features. Source maps, browser targeting, prefixing, arbitrary extra arguments, batch output directories, and alternate syntaxes are absent while their CLI contracts remain unavailable.
+Each call declares one CSS input as `std.Build.LazyPath` and one generated output through a portable `.css` basename of at most 128 bytes. The returned `getOutput()` path can feed `b.addCheckFile`, `b.addInstallFile`, or another step. Optional `optimize` and `minify` fields map only to the native compiler features. Source maps, browser targeting, prefixing, arbitrary extra arguments, batch output directories, and preprocessor syntaxes are deliberately absent from this Zig build-helper contract even though the npm product surface admits canonical preprocessors.
 
 The executable passed to the helper must run on the build host. A cross-target project must obtain a separate host-target ZigCSS artifact for this run step instead of attempting to execute its application-target binary. The helper's file/output arguments make unchanged builds cacheable; the package fixture proves a second run is cached and a source-byte change reruns compilation while preserving exact output.
 

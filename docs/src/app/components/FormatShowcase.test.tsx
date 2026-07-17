@@ -19,22 +19,22 @@ describe('FormatShowcase', () => {
     expect(screen.queryByText('No CSS emitted')).not.toBeInTheDocument()
   })
 
-  it('shows explicit no-output boundaries for every unsupported preprocessor', () => {
+  it('shows exact provider pipelines and real CSS output for every canonical preprocessor', () => {
     renderShowcase()
 
-    const unsupported = [
-      ['SCSS', '.scss', 'SCSS → Sass compiler → CSS → ZigCSS'],
-      ['Sass', '.sass', 'Indented Sass → Sass compiler → CSS → ZigCSS'],
-      ['Less', '.less', 'Less → Less compiler → CSS → ZigCSS'],
-      ['Stylus', '.styl', 'Stylus → Stylus compiler → CSS → ZigCSS'],
+    const canonical = [
+      ['SCSS', '.scss', 'SCSS → Dart Sass 1.101.0 → ZigCSS → compact CSS'],
+      ['Sass', '.sass', 'Indented Sass → Dart Sass 1.101.0 → ZigCSS → compact CSS'],
+      ['Less', '.less', 'Less → Less 4.6.7 → ZigCSS → compact CSS'],
+      ['Stylus', '.styl', 'Stylus → Stylus 0.64.0 → ZigCSS → compact CSS'],
     ] as const
 
-    for (const [label, extension, pipeline] of unsupported) {
+    for (const [label, extension, pipeline] of canonical) {
       fireEvent.click(screen.getByRole('tab', { name: label }))
       expect(screen.getByRole('tab', { name: label })).toHaveAttribute('aria-selected', 'true')
       expect(screen.getByText(new RegExp(`input \\${extension}$`, 'i'))).toBeInTheDocument()
-      expect(screen.getByText('Not supported')).toBeInTheDocument()
-      expect(screen.getByText('No CSS emitted')).toBeInTheDocument()
+      expect(screen.getByText('CSS emitted')).toBeInTheDocument()
+      expect(screen.getByText('.button{background:#b7f34a}.button:hover{filter:brightness(1.08)}')).toBeInTheDocument()
       expect(screen.getByText(pipeline)).toBeInTheDocument()
     }
   })
@@ -42,6 +42,17 @@ describe('FormatShowcase', () => {
   it('links the interactive examples to the authoritative format policy', () => {
     renderShowcase()
     expect(screen.getByRole('link', { name: /format policy/i })).toHaveAttribute('href', '/docs/guide/format-compatibility')
-    expect(screen.getByText(/not a bundled preprocessor stack/i)).toBeInTheDocument()
+    expect(screen.getByText(/canonical language support is version-pinned/i)).toBeInTheDocument()
+  })
+
+  it('keeps long source and output lines contained at the mobile breakpoint', () => {
+    renderShowcase()
+
+    const panel = screen.getByRole('tabpanel')
+    expect(panel).toHaveClass('min-w-0', 'grid-cols-1')
+    expect(Array.from(panel.children)).toHaveLength(2)
+    for (const column of Array.from(panel.children)) {
+      expect(column).toHaveClass('min-w-0')
+    }
   })
 })

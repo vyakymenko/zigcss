@@ -25,7 +25,7 @@ const sidebar = fs.readFileSync(
   'utf8',
 )
 
-describe('published experimental format matrix', () => {
+describe('published version-pinned format matrix', () => {
   test('publishes every machine-readable adapter boundary and owner', () => {
     expect(matrix.adapters).toHaveLength(8)
     for (const adapter of matrix.adapters) {
@@ -51,7 +51,7 @@ describe('published experimental format matrix', () => {
     }
   })
 
-  test('records funded canonical providers without prematurely exposing formats', () => {
+  test('graduates every canonical provider row without claiming extension parity', () => {
     expect(matrix.canonicalProviders).toEqual({
       'dart-sass': {
         package: 'sass',
@@ -76,10 +76,13 @@ describe('published experimental format matrix', () => {
     for (const id of ['scss', 'sass', 'less', 'stylus']) {
       const adapter = matrix.adapters.find(candidate => candidate.id === id)
       expect(adapter.strategy).toBe('canonical-integration')
-      expect(adapter.availability).toBe('Unavailable')
-      expect(adapter.compatibility).toBe('Unverified')
-      expect(adapter.implementation).toBe('Removed')
+      expect(adapter.availability).toBe('CanonicalCliApi')
+      expect(adapter.compatibility).toBe('CanonicalVersion')
+      expect(adapter.implementation).toBe('CanonicalProvider')
       expect(adapter.providerId).toBeTypeOf('string')
+      expect(adapter.npmSyntax).toBe(id)
+      expect(adapter.probeOutput).toMatch(/^\.[a-z]+\{color:/)
+      expect(adapter.knownRisks.join(' ')).toMatch(/plugin|custom function|project code/i)
     }
   })
 

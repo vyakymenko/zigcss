@@ -71,7 +71,7 @@ test('host core has no outbound network, shell, eval, or ambient module-loading 
   assert.doesNotMatch(runner, /exec(?:File|Sync)?\s*\(|spawnSync\s*\(/)
 })
 
-test('protocol documentation publishes the wire, limit, lifecycle, and current availability boundaries', () => {
+test('protocol documentation publishes the wire, limit, lifecycle, and graduated availability boundaries', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [
     'one-request-per-process protocol',
@@ -81,7 +81,7 @@ test('protocol documentation publishes the wire, limit, lifecycle, and current a
     '20 MiB UTF-8',
     '`shell: false`',
     'strips `PATH`, `HOME`, `NODE_OPTIONS`, and `NODE_PATH`',
-    'still publicly unavailable',
+    '`PRE-008` graduates all four canonical rows',
     'never command arguments or shell text',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))

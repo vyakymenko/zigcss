@@ -448,7 +448,7 @@ test('enforces canonical import cycles and the provider-safe ancestry limit', as
   })
 })
 
-test('documents confined Sass resolution and preserves pre-admission status', () => {
+test('documents confined Sass resolution and the graduated product boundary', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [
     'Dart Sass never receives native entry-file or native load-path authority',
@@ -457,7 +457,7 @@ test('documents confined Sass resolution and preserves pre-admission status', ()
     'recorded as `reference`',
     'lowers its ancestry ceiling to 32',
     '`quietDeps` follows Dart Sass ownership',
-    'remain rejected by the public CLI',
+    'graduate `.scss` and `.sass` through the 0.5 npm CLI/API',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

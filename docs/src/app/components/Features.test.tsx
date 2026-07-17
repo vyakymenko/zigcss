@@ -22,7 +22,11 @@ describe('Features', () => {
     expect(screen.getByText('Zig package metadata')).toBeInTheDocument()
     expect(screen.getByText('Zig build helper')).toBeInTheDocument()
     expect(screen.getByText('Native plugins')).toBeInTheDocument()
-    expect(screen.getByText('Alternate format adapters')).toBeInTheDocument()
+    expect(screen.getByText('SCSS input')).toBeInTheDocument()
+    expect(screen.getByText('Indented Sass input')).toBeInTheDocument()
+    expect(screen.getByText('Less input')).toBeInTheDocument()
+    expect(screen.getByText('Stylus input')).toBeInTheDocument()
+    expect(screen.getByText('Other ecosystem adapters')).toBeInTheDocument()
     expect(screen.getAllByText(/experimental/i).length).toBeGreaterThan(1)
   })
 

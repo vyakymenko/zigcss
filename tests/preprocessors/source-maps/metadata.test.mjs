@@ -135,14 +135,14 @@ test('ProviderFailure owns only a bounded public code, message, and normalized d
   )
 })
 
-test('documents closed result ownership without claiming public preprocessor support', () => {
+test('documents closed result ownership and the graduated product boundary', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [
     'ordered normalized diagnostics',
     'greatest-lower-bound lookup',
     'UTF-16 columns',
     'reject the entire composition',
-    'still publicly unavailable',
+    'graduated 0.5 npm CLI/API',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }

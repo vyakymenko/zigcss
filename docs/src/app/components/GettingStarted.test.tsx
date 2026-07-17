@@ -10,7 +10,7 @@ function renderGettingStarted() {
 describe('GettingStarted', () => {
   it('starts with the npm prerelease installation path', () => {
     renderGettingStarted()
-    expect(screen.getByRole('heading', { name: /start compiling css/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /start with any of five stylesheet languages/i })).toBeInTheDocument()
     expect(screen.getByText('npm install --save-dev zigcss@next')).toBeInTheDocument()
     expect(screen.getAllByText(/release candidate/i)).toHaveLength(2)
   })
@@ -21,10 +21,11 @@ describe('GettingStarted', () => {
     expect(screen.getByText(/zig-out\/bin\/zigcss input\.css -o output\.css/)).toBeInTheDocument()
   })
 
-  it('does not present Sass, SCSS, or Less as accepted inputs', () => {
+  it('presents the exact canonical language and provider boundary', () => {
     renderGettingStarted()
-    expect(screen.getByText(/input must be css/i)).toBeInTheDocument()
-    expect(screen.getByText(/scss, sass, and less are rejected/i)).toBeInTheDocument()
+    expect(screen.getByText(/css, scss, indented sass, less, and stylus/i)).toBeInTheDocument()
+    expect(screen.getByText(/dart sass 1\.101\.0.*less 4\.6\.7.*stylus 0\.64\.0/i)).toBeInTheDocument()
+    expect(screen.getByText(/does not enable arbitrary plugins/i)).toBeInTheDocument()
   })
 
   it('links to the current status', () => {
