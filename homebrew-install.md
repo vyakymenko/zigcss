@@ -1,6 +1,6 @@
 # Homebrew Installation
 
-The checked-in formula is an experimental source build for the verified `0.4.0-rc.3` recovery checkpoint. It pins both an immutable source archive with its SHA-256 digest and Homebrew's `zig@0.15` build dependency.
+The checked-in formula is an experimental source build for the `0.5.0-rc.1` five-language candidate. It pins both an immutable source archive with its SHA-256 digest and Homebrew's `zig@0.15` build dependency.
 
 No Homebrew tap has been published. From a trusted ZigCSS checkout, install the reviewed formula directly:
 

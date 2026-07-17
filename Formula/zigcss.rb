@@ -1,9 +1,9 @@
 class Zigcss < Formula
-  desc "Experimental CSS compiler prototype built with Zig"
+  desc "Experimental five-language CSS compiler built with Zig"
   homepage "https://github.com/vyakymenko/zigcss"
-  # Pin the verified recovery checkpoint until an authorized release publishes a tag.
+  # Pin the immutable PRE-009 source checkpoint; publication requires separate authorization.
   url "https://github.com/vyakymenko/zigcss/archive/18deb7c34e5a2d13d57e07459138d925aed5a6e3.tar.gz"
-  version "0.4.0-rc.3"
+  version "0.5.0-rc.1"
   sha256 "f7dcb180bbe466f4f4269d699c56110889313c228723aedd1aed22b0c00a19b6"
   license "MIT"
 

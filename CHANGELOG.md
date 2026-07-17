@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Target release: `0.4.0-rc.3` (not published).
+Target release: `0.5.0-rc.1` (not published).
 
-Next product line: `0.5.0` development snapshot. `PRE-009` will synchronize release metadata to one immutable candidate before any separately authorized publication.
+This candidate graduates the canonical five-language package surface. `PRE-009` binds it to one immutable source archive and completes every release gate before any separately authorized publication.
 
 ### Added
 

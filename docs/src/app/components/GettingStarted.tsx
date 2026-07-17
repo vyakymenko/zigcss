@@ -18,7 +18,7 @@ export function GettingStarted() {
         <div className="mb-10 flex gap-4 border border-[#d0a43f] bg-[#fff2bf] p-5 text-[#4d3a0e]">
           <AlertTriangle className="mt-0.5 size-5 flex-shrink-0" />
           <p className="leading-7">
-            The public npm release candidate is still 0.4.0-rc.3 and CSS-only. The five-language 0.5 source snapshot is green on the main branch but remains experimental and unpublished; evaluate before production.
+            The public npm release candidate is still 0.4.0-rc.3 and CSS-only. The five-language 0.5.0-rc.1 source candidate is green on the main branch but remains experimental and unpublished; evaluate before production.
           </p>
         </div>
 

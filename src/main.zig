@@ -5,7 +5,7 @@ const zigcss = @import("zigcss");
 const lsp = @import("lsp.zig");
 const lsp_transport = @import("lsp_transport.zig");
 
-const version = "0.4.0-rc.3";
+const version = "0.5.0-rc.1";
 const experimental_notice = std.fmt.comptimePrint(
     "Warning: ZigCSS {s} is an experimental release candidate; do not use it for production CSS.\n",
     .{version},

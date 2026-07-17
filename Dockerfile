@@ -1,6 +1,6 @@
 FROM node:22-bookworm-slim
 
-ARG ZIGCSS_VERSION=0.4.0-rc.3
+ARG ZIGCSS_VERSION=0.5.0-rc.1
 LABEL org.opencontainers.image.title="ZigCSS" \
       org.opencontainers.image.version="${ZIGCSS_VERSION}" \
       org.opencontainers.image.source="https://github.com/vyakymenko/zigcss"

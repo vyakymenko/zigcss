@@ -598,6 +598,7 @@ Target: after correctness release gates are green
 
 Estimated effort: 25-45 engineer days
 Target: staged `0.5.0` alpha, beta, release-candidate, and final releases
+Candidate: `0.5.0-rc.1`
 Decision authority: ADR-012
 
 Milestone 9 depends on the verified CSS parser/emitter, public result ownership, CLI orchestration, and release-integrity boundaries from Milestones 2, 4, and 7. It may proceed in parallel with Milestone 8's external scheduled-hardware evidence; missing benchmark hardware does not block preprocessor correctness work.

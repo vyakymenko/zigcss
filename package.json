@@ -1,6 +1,6 @@
 {
   "name": "zigcss",
-  "version": "0.4.0-rc.3",
+  "version": "0.5.0-rc.1",
   "description": "Experimental deterministic CSS compiler for CSS, SCSS, Sass, Less, and Stylus",
   "main": "index.js",
   "bin": {

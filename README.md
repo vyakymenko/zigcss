@@ -15,7 +15,7 @@ ZigCSS is an experimental native CSS compiler with canonical SCSS, indented Sass
 
 [Website](https://vyakymenko.github.io/zigcss/) · [Interactive input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
-> **Experimental release candidate notice:** the green `main` branch is the 0.5 development snapshot described below. The currently published npm package, ZigCSS 0.4.0-rc.3, exposes the earlier CSS-only surface. Five-language npm publication and release artifacts remain pending the explicit release step. Evaluate both before production.
+> **Experimental release candidate notice:** the green `main` branch is the unpublished ZigCSS 0.5.0-rc.1 source candidate described below. The currently published npm package, ZigCSS 0.4.0-rc.3, exposes the earlier CSS-only surface. Five-language npm publication and release artifacts remain pending the explicit release step. Evaluate both before production.
 
 ## Why ZigCSS feels different
 
@@ -33,7 +33,7 @@ The public prerelease channel currently installs the CSS-only ZigCSS 0.4.0-rc.3 
 npm install --save-dev zigcss@next
 ```
 
-To evaluate the five-language 0.5 source snapshot today:
+To evaluate the five-language 0.5.0-rc.1 source candidate today:
 
 ```bash
 git clone https://github.com/vyakymenko/zigcss.git
@@ -166,7 +166,7 @@ The CSS-only native executable is written to `zig-out/bin/zigcss`; the root npm 
 
 The experimental CSS LSP covers bounded JSON-RPC framing, full document sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features. Its stress tests pass large-document, Unicode, malformed-request, leak, and editor-integration gates.
 
-- The VS Code preview uses Marketplace version 0.4.0 for the current core mapping and requires a separately installed ZigCSS binary.
+- The VS Code preview uses Marketplace version 0.5.0 for the current core mapping and requires a separately installed ZigCSS binary.
 - The [Neovim configuration](neovim-config/README.md) uses the built-in LSP client and an explicit trusted executable path.
 
 Neither integration bundles a compiler binary.

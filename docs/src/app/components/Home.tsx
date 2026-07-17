@@ -26,7 +26,7 @@ export function Home() {
               CSS, SCSS, Sass, Less, and Stylus enter through exact, confined language engines. Native ZigCSS validates and emits one deterministic CSS result.
             </p>
             <p className="mt-4 max-w-2xl text-sm leading-6 text-[#97a59b]">
-              This site tracks the green 0.5 source snapshot. It is experimental: evaluate before production. The currently published npm release candidate, 0.4.0-rc.3, still exposes the earlier CSS-only package surface.
+              This site tracks the green 0.5.0-rc.1 source candidate. It is experimental: evaluate before production. The currently published npm release candidate, 0.4.0-rc.3, still exposes the earlier CSS-only package surface.
             </p>
 
             <div className="mt-9 flex flex-col gap-3 sm:flex-row">

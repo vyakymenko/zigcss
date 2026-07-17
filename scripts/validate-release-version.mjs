@@ -117,10 +117,10 @@ export function validateReleaseSources(sources) {
 
   const planTarget = singleCapture(
     sources.get('DEVELOPMENT_PLAN.md'),
-    /## Milestone 7:[\s\S]*?\nTarget: `([^`]+)`/g,
-    'Milestone 7 release target',
+    /## Milestone 9:[\s\S]*?\nCandidate: `([^`]+)`/g,
+    'Milestone 9 release candidate',
   )
-  parseReleaseVersion(planTarget, 'Milestone 7 target')
+  parseReleaseVersion(planTarget, 'Milestone 9 candidate')
   expectEqual(version, planTarget, 'VERSION')
 
   const rootManifest = parseJson(sources, 'package.json')
