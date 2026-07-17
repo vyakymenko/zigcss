@@ -277,6 +277,25 @@ test('owns deterministic provider Source Map v3 bytes and rewrites only the virt
   assert.deepEqual(result.dependencies, [])
 })
 
+test('accepts Dart Sass RFC-unreserved spelling for only the synthetic entry identity', async () => {
+  const source = '$color: red;\n.card { color: $color; }\n'
+  const sourceUrl = 'file:///C:/Users/RUNNER%7E1/AppData/Local/Temp/zigcss/.zigcss-input.scss'
+  const result = await compile({
+    source,
+    sourceUrl,
+    options: {
+      style: 'expanded',
+      sourceMap: true,
+      loadPaths: [],
+      providerOptions: { charset: true, quietDeps: false, verbose: false },
+    },
+  })
+
+  assert.equal(result.css, '.card {\n  color: red;\n}')
+  assert.deepEqual(parseSourceMap(result.sourceMap).sources, [sourceUrl])
+  assert.deepEqual(result.dependencies, [])
+})
+
 test('allows built-ins, requires explicit roots, and admits only confined filesystem imports', async () => {
   const builtIn = await compile({
     source: '@use "sass:math";\n.card { width: math.div(2, 2) * 1px; }',

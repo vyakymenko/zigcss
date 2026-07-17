@@ -19,6 +19,43 @@ const entryFilenames = Object.freeze({
   sass: 'input.sass',
 })
 
+function normalizedUnreservedPath(pathname) {
+  return pathname.replace(/%([0-9A-Fa-f]{2})/g, (escape, hexadecimal) => {
+    const byte = Number.parseInt(hexadecimal, 16)
+    const unreserved = (
+      (byte >= 0x30 && byte <= 0x39) ||
+      (byte >= 0x41 && byte <= 0x5a) ||
+      (byte >= 0x61 && byte <= 0x7a) ||
+      byte === 0x2d ||
+      byte === 0x2e ||
+      byte === 0x5f ||
+      byte === 0x7e
+    )
+    return unreserved ? String.fromCharCode(byte) : `%${hexadecimal.toUpperCase()}`
+  })
+}
+
+function isSyntheticEntryUrl(value, entryUrl) {
+  if (typeof value !== 'string' && !(value instanceof URL)) return false
+  let candidate
+  try {
+    candidate = value instanceof URL ? value : new URL(value)
+  } catch {
+    return false
+  }
+  return (
+    candidate.protocol === 'zigcss-entry:' &&
+    candidate.protocol === entryUrl.protocol &&
+    candidate.username === entryUrl.username &&
+    candidate.password === entryUrl.password &&
+    candidate.hostname === entryUrl.hostname &&
+    candidate.port === entryUrl.port &&
+    candidate.search === entryUrl.search &&
+    candidate.hash === entryUrl.hash &&
+    normalizedUnreservedPath(candidate.pathname) === normalizedUnreservedPath(entryUrl.pathname)
+  )
+}
+
 function entryUrlForRequest(request) {
   const pathname = request.sourceUrl === null
     ? `/${entryFilenames[request.syntax]}`
@@ -165,7 +202,7 @@ function ownDiagnostics(raw, request) {
 }
 
 function providerSourceUrl(source, entryUrl, requestSourceUrl, authority) {
-  if (source === entryUrl.href) return requestSourceUrl ?? source
+  if (isSyntheticEntryUrl(source, entryUrl)) return requestSourceUrl ?? entryUrl.href
   return authority?.actualUrlForProviderUrl(source) ?? null
 }
 
@@ -173,7 +210,7 @@ function diagnosticSourceUrl(span, entryUrl, requestSourceUrl, authority) {
   const value = span?.url
   if (value === undefined || value === null) return requestSourceUrl
   const source = String(value)
-  if (source === entryUrl.href) return requestSourceUrl
+  if (isSyntheticEntryUrl(source, entryUrl)) return requestSourceUrl
   return authority?.actualUrlForProviderUrl(source) ?? requestSourceUrl
 }
 
@@ -220,7 +257,8 @@ function validateResult(result, entryUrl, authority) {
     throw failure('SASS_RESULT_INVALID', 'Dart Sass returned an invalid result')
   }
   if (result.loadedUrls.some(url => (
-    String(url) !== entryUrl.href && (authority?.actualUrlForProviderUrl(url) ?? null) === null
+    !isSyntheticEntryUrl(url, entryUrl) &&
+    (authority?.actualUrlForProviderUrl(url) ?? null) === null
   ))) {
     throw failure('SASS_IMPORT_BOUNDARY', 'Dart Sass crossed the filesystem import boundary')
   }
