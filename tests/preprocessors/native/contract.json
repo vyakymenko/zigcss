@@ -100,6 +100,26 @@
       "testStep": "test-native-preprocessor",
       "publicAvailable": false,
       "productionReachable": false
+    },
+    {
+      "id": "native-sass-semantic-core",
+      "current": "native-internal",
+      "ownerPackage": "NSASS-011",
+      "adapters": ["scss", "sass"],
+      "capabilities": [
+        "variables",
+        "numeric-arithmetic",
+        "interpolation",
+        "lexical-scope",
+        "selector-nesting",
+        "nested-properties",
+        "transactional-css-staging"
+      ],
+      "nativeSources": ["src/preprocessor/sass_evaluator.zig"],
+      "testSources": ["tests/native-preprocessor/sass_evaluator.zig"],
+      "testStep": "test-native-preprocessor",
+      "publicAvailable": false,
+      "productionReachable": false
     }
   ],
   "adapters": [

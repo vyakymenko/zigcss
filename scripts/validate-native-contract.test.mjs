@@ -17,7 +17,7 @@ function clone(value) {
   return structuredClone(value)
 }
 
-test('accepts the closed NSASS-010 native implementation contract', () => {
+test('accepts the closed native Sass implementation contract', () => {
   const contract = validateContract(loadContract())
   assert.equal(contract.schemaVersion, 3)
   assert.equal(contract.state, 'native-foundation')
@@ -38,6 +38,7 @@ test('accepts the closed NSASS-010 native implementation contract', () => {
   ])
   assert.deepEqual(contract.implementations.map(implementation => implementation.id), [
     'native-sass-parser',
+    'native-sass-semantic-core',
   ])
   assert.equal(fs.realpathSync(contractPath).startsWith(`${repositoryRoot}${path.sep}`), true)
 })
@@ -82,16 +83,22 @@ test('binds implemented native foundation sources and focused test inventories',
   assert.throws(() => validateContract(ownerChanged), /foundation.*inventory drifted/)
 })
 
-test('binds the unavailable native Sass parser without admitting product reachability', () => {
-  for (const field of ['publicAvailable', 'productionReachable']) {
-    const changed = clone(loadContract())
-    changed.implementations[0][field] = true
-    assert.throws(() => validateContract(changed), /implementation.*inventory drifted/)
+test('binds unavailable native Sass internals without admitting product reachability', () => {
+  for (const index of [0, 1]) {
+    for (const field of ['publicAvailable', 'productionReachable']) {
+      const changed = clone(loadContract())
+      changed.implementations[index][field] = true
+      assert.throws(() => validateContract(changed), /implementation.*inventory drifted/)
+    }
   }
 
   const sourceChanged = clone(loadContract())
   sourceChanged.implementations[0].nativeSources = ['src/preprocessor/lexer.zig']
   assert.throws(() => validateContract(sourceChanged), /implementation.*inventory drifted/)
+
+  const evaluatorSourceChanged = clone(loadContract())
+  evaluatorSourceChanged.implementations[1].nativeSources = ['src/preprocessor/evaluator.zig']
+  assert.throws(() => validateContract(evaluatorSourceChanged), /implementation.*inventory drifted/)
 
   assert.throws(
     () => validateContract(loadContract(), {

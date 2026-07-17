@@ -120,6 +120,26 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-sass-semantic-core',
+    current: 'native-internal',
+    ownerPackage: 'NSASS-011',
+    adapters: Object.freeze(['scss', 'sass']),
+    capabilities: Object.freeze([
+      'variables',
+      'numeric-arithmetic',
+      'interpolation',
+      'lexical-scope',
+      'selector-nesting',
+      'nested-properties',
+      'transactional-css-staging',
+    ]),
+    nativeSources: Object.freeze(['src/preprocessor/sass_evaluator.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/sass_evaluator.zig']),
+    testStep: 'test-native-preprocessor',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
