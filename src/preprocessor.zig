@@ -13,6 +13,7 @@ pub const diagnostics = @import("preprocessor/diagnostics.zig");
 pub const sourcemap = @import("preprocessor/sourcemap.zig");
 pub const resolver = @import("preprocessor/resolver.zig");
 pub const evaluator = @import("preprocessor/evaluator.zig");
+pub const sass = @import("preprocessor/sass.zig");
 
 test {
     _ = lexer;
@@ -25,4 +26,5 @@ test {
     _ = sourcemap;
     _ = resolver;
     _ = evaluator;
+    _ = sass;
 }

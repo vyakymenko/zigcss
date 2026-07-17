@@ -107,6 +107,20 @@ const expectedFoundations = Object.freeze([
     testStep: 'test-native-preprocessor',
   }),
 ])
+const expectedImplementations = Object.freeze([
+  Object.freeze({
+    id: 'native-sass-parser',
+    current: 'native-internal',
+    ownerPackage: 'NSASS-010',
+    adapters: Object.freeze(['scss', 'sass']),
+    capabilities: Object.freeze(['parsing']),
+    nativeSources: Object.freeze(['src/preprocessor/sass.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/sass_parser.zig']),
+    testStep: 'test-native-preprocessor',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
+])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
   'NSASS-',
@@ -150,6 +164,24 @@ function repositoryFile(relativePath) {
 
 function loadJson(relativePath) {
   return JSON.parse(fs.readFileSync(repositoryFile(relativePath), 'utf8'))
+}
+
+function loadProductionSources(relativeDirectory = 'src') {
+  const files = []
+  const visit = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name)
+      if (entry.isSymbolicLink()) fail(`production source inventory contains a symlink: ${absolute}`)
+      if (entry.isDirectory()) {
+        visit(absolute)
+      } else if (entry.isFile() && entry.name.endsWith('.zig')) {
+        const relative = path.relative(repositoryRoot, absolute).split(path.sep).join('/')
+        files.push([relative, fs.readFileSync(absolute, 'utf8')])
+      }
+    }
+  }
+  visit(path.join(repositoryRoot, relativeDirectory))
+  return files.sort(([left], [right]) => left.localeCompare(right))
 }
 
 export function loadContract() {
@@ -214,6 +246,67 @@ function validateFoundation(foundation, index, plan) {
   for (const source of foundation.testSources) repositoryFile(source)
 }
 
+function validateImplementation(implementation, index, contract, plan) {
+  const label = `implementations[${index}]`
+  exactKeys(
+    implementation,
+    [
+      'id',
+      'current',
+      'ownerPackage',
+      'adapters',
+      'capabilities',
+      'nativeSources',
+      'testSources',
+      'testStep',
+      'publicAvailable',
+      'productionReachable',
+    ],
+    label,
+  )
+  if (!same(implementation, expectedImplementations[index])) {
+    fail(`${label} inventory drifted`)
+  }
+  requireText(plan, `\`${implementation.ownerPackage}\``, 'DEVELOPMENT_PLAN.md')
+  for (const adapterId of implementation.adapters) {
+    const adapter = contract.adapters.find(candidate => candidate.id === adapterId)
+    if (adapter === undefined) fail(`${label} references unknown adapter ${adapterId}`)
+    if (adapter.current !== 'reference-only') {
+      fail(`${label} cannot coexist with a prematurely graduated ${adapterId} adapter`)
+    }
+  }
+  for (const source of implementation.nativeSources) repositoryFile(source)
+  for (const source of implementation.testSources) repositoryFile(source)
+}
+
+function validateInternalReachability(implementations, buildFile, productionSources) {
+  requireText(buildFile, 'root_source_file = b.path("src/preprocessor.zig")', 'build.zig')
+  for (const implementation of implementations) {
+    for (const testSource of implementation.testSources) {
+      requireText(
+        buildFile,
+        `root_source_file = b.path("${testSource}")`,
+        `${implementation.id} test wiring`,
+      )
+    }
+  }
+  const forbiddenImports = [
+    '@import("preprocessor.zig")',
+    '@import("preprocessor/',
+    '@import("native_preprocessor")',
+  ]
+  for (const [relativePath, source] of productionSources) {
+    if (relativePath === 'src/preprocessor.zig' || relativePath.startsWith('src/preprocessor/')) {
+      continue
+    }
+    for (const forbidden of forbiddenImports) {
+      if (source.includes(forbidden)) {
+        fail(`${relativePath} makes the unavailable native frontend production-reachable`)
+      }
+    }
+  }
+}
+
 export function validateContract(
   contract,
   {
@@ -226,6 +319,8 @@ export function validateContract(
     readme = fs.readFileSync(repositoryFile('README.md'), 'utf8'),
     buildWorkflow = fs.readFileSync(repositoryFile('.github/workflows/build.yml'), 'utf8'),
     releaseWorkflow = fs.readFileSync(repositoryFile('.github/workflows/release.yml'), 'utf8'),
+    buildFile = fs.readFileSync(repositoryFile('build.zig'), 'utf8'),
+    productionSources = loadProductionSources(),
   } = {},
 ) {
   exactKeys(
@@ -241,11 +336,12 @@ export function validateContract(
       'productionBoundary',
       'referenceOracles',
       'foundations',
+      'implementations',
       'adapters',
     ],
     'root',
   )
-  if (contract.schemaVersion !== 2) fail('schemaVersion must be 2')
+  if (contract.schemaVersion !== 3) fail('schemaVersion must be 3')
   if (contract.state !== 'native-foundation') fail('state must remain native-foundation during Milestone 10')
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
@@ -256,6 +352,10 @@ export function validateContract(
   if (!same(contract.referenceOracles, expectedReferenceOracles)) fail('reference oracle inventory drifted')
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
+  }
+  if (!Array.isArray(contract.implementations) ||
+      contract.implementations.length !== expectedImplementations.length) {
+    fail(`implementation inventory must contain ${expectedImplementations.length} rows`)
   }
   if (!Array.isArray(contract.adapters) || contract.adapters.length !== expectedAdapterIds.length) {
     fail(`adapter inventory must contain ${expectedAdapterIds.length} rows`)
@@ -279,6 +379,10 @@ export function validateContract(
     validateFoundation(foundation, index, plan)
   }
   for (const [index, adapter] of contract.adapters.entries()) validateAdapter(adapter, index, plan)
+  for (const [index, implementation] of contract.implementations.entries()) {
+    validateImplementation(implementation, index, contract, plan)
+  }
+  validateInternalReachability(contract.implementations, buildFile, productionSources)
 
   requireText(plan, 'Plan version: 1.2', 'DEVELOPMENT_PLAN.md')
   requireText(plan, '## Milestone 10: Self-contained native stylesheet frontends', 'DEVELOPMENT_PLAN.md')

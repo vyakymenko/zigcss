@@ -17,9 +17,9 @@ function clone(value) {
   return structuredClone(value)
 }
 
-test('accepts the closed NATIVE-005 native-foundation contract', () => {
+test('accepts the closed NSASS-010 native implementation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.schemaVersion, 2)
+  assert.equal(contract.schemaVersion, 3)
   assert.equal(contract.state, 'native-foundation')
   assert.equal(contract.nativeReleaseReady, false)
   assert.equal(contract.productionBoundary.packageDependencies, 0)
@@ -35,6 +35,9 @@ test('accepts the closed NATIVE-005 native-foundation contract', () => {
     'sass',
     'less',
     'stylus',
+  ])
+  assert.deepEqual(contract.implementations.map(implementation => implementation.id), [
+    'native-sass-parser',
   ])
   assert.equal(fs.realpathSync(contractPath).startsWith(`${repositoryRoot}${path.sep}`), true)
 })
@@ -77,6 +80,28 @@ test('binds implemented native foundation sources and focused test inventories',
   const ownerChanged = clone(loadContract())
   ownerChanged.foundations[0].ownerPackage = 'NATIVE-003'
   assert.throws(() => validateContract(ownerChanged), /foundation.*inventory drifted/)
+})
+
+test('binds the unavailable native Sass parser without admitting product reachability', () => {
+  for (const field of ['publicAvailable', 'productionReachable']) {
+    const changed = clone(loadContract())
+    changed.implementations[0][field] = true
+    assert.throws(() => validateContract(changed), /implementation.*inventory drifted/)
+  }
+
+  const sourceChanged = clone(loadContract())
+  sourceChanged.implementations[0].nativeSources = ['src/preprocessor/lexer.zig']
+  assert.throws(() => validateContract(sourceChanged), /implementation.*inventory drifted/)
+
+  assert.throws(
+    () => validateContract(loadContract(), {
+      productionSources: [[
+        'src/lib.zig',
+        'const sass = @import("preprocessor/sass.zig");',
+      ]],
+    }),
+    /makes the unavailable native frontend production-reachable/,
+  )
 })
 
 test('binds the current provider package only as migration reference evidence', () => {

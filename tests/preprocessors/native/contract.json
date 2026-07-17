@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "state": "native-foundation",
   "nativeReleaseReady": false,
   "nativeReleaseVersion": null,
@@ -86,6 +86,20 @@
       "nativeSources": ["src/preprocessor/evaluator.zig"],
       "testSources": ["tests/native-preprocessor/evaluator.zig"],
       "testStep": "test-native-preprocessor"
+    }
+  ],
+  "implementations": [
+    {
+      "id": "native-sass-parser",
+      "current": "native-internal",
+      "ownerPackage": "NSASS-010",
+      "adapters": ["scss", "sass"],
+      "capabilities": ["parsing"],
+      "nativeSources": ["src/preprocessor/sass.zig"],
+      "testSources": ["tests/native-preprocessor/sass_parser.zig"],
+      "testStep": "test-native-preprocessor",
+      "publicAvailable": false,
+      "productionReachable": false
     }
   ],
   "adapters": [
