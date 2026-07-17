@@ -334,6 +334,7 @@ async function compileStylus(request, { signal } = {}) {
   const functions = createLanguageFunctions(state)
   const renderer = stylus(request.source, {
     Evaluator: createConfinedEvaluator(state, functions),
+    cache: false,
     compress: request.options.style === 'compressed',
     filename: VIRTUAL_FILENAME,
     functions: {},

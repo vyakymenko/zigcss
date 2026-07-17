@@ -120,6 +120,7 @@ test('binds the private adapter and lockfile to exact Stylus 0.64.0 with no publ
   assert.equal(typeof provider.compile, 'function')
   assert.match(adapterSource, /stylus\(request\.source/)
   assert.match(adapterSource, /renderer\.render\(/)
+  assert.match(adapterSource, /cache: false/)
   const adapter = matrix.adapters.find(candidate => candidate.id === 'stylus')
   assert.equal(adapter.availability, 'Unavailable')
   assert.equal(adapter.compatibility, 'Unverified')
