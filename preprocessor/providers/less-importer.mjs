@@ -100,7 +100,7 @@ export function createLessImportAuthority({
 }) {
   const state = { failure: null }
   const inputRoots = loadPaths.map(root => path.resolve(root))
-  const orderedRoots = inputRoots.map(root => fs.realpathSync(root))
+  const orderedRoots = inputRoots.map(root => fs.realpathSync.native(root))
   const bytesByActualUrl = new Map()
   const byActualUrl = new Map()
   const byContext = new Map()

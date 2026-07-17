@@ -127,7 +127,7 @@ function inspectDirectory(rootRecords, candidate) {
   }
   let canonical
   try {
-    canonical = fs.realpathSync(normalized)
+    canonical = fs.realpathSync.native(normalized)
   } catch {
     return { failure: ['STYLUS_IMPORT_IO', 'A confined Stylus dependency could not be read safely'] }
   }
@@ -175,7 +175,7 @@ export function createStylusImportAuthority({
   const session = resolver?.createSession() ?? null
   const rootRecords = inputRoots.map(input => ({
     input,
-    canonical: fs.realpathSync(input),
+    canonical: fs.realpathSync.native(input),
   }))
   const canonicalRoots = rootRecords.map(root => root.canonical)
   const byVirtualFilename = new Map()

@@ -391,6 +391,20 @@ test('rejects relative, duplicate, non-directory, and symlink roots', {
   })
 })
 
+test('uses one native canonical-path primitive for roots and candidates', () => {
+  const expectations = [
+    ['preprocessor/resolver.mjs', 2, 1],
+    ['preprocessor/providers/less-importer.mjs', 1, 0],
+    ['preprocessor/providers/stylus-importer.mjs', 2, 0],
+  ]
+  for (const [relative, synchronous, asynchronous] of expectations) {
+    const source = fs.readFileSync(path.join(repositoryRoot, relative), 'utf8')
+    assert.doesNotMatch(source, /\bfs\.realpathSync\(/)
+    assert.equal(source.match(/\bfs\.realpathSync\.native\(/g)?.length ?? 0, synchronous)
+    assert.equal(source.match(/\bfs\.realpath\.native\(/g)?.length ?? 0, asynchronous)
+  }
+})
+
 test('documents confinement without claiming language-specific resolution or public support', () => {
   const documentation = fs.readFileSync(path.join(repositoryRoot, 'preprocessor/README.md'), 'utf8')
   for (const statement of [

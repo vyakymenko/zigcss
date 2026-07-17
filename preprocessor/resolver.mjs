@@ -45,6 +45,15 @@ function containsPath(root, candidate) {
   )
 }
 
+function nativeRealpath(filename) {
+  return new Promise((resolve, reject) => {
+    fs.realpath.native(filename, (error, canonical) => {
+      if (error !== null) reject(error)
+      else resolve(canonical)
+    })
+  })
+}
+
 function filesystemCode(error, fallback) {
   if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return 'RESOLVER_MISSING'
   if (error?.code === 'EACCES' || error?.code === 'EPERM') return 'RESOLVER_UNREADABLE'
@@ -91,7 +100,10 @@ function normalizeRoots(roots) {
     let canonical
     try {
       stat = fs.lstatSync(input)
-      canonical = fs.realpathSync(input)
+      // Keep roots and candidates on one OS-native spelling. On Windows the
+      // generic implementation can retain an 8.3 root while the asynchronous
+      // native implementation expands its child, making one tree look escaped.
+      canonical = fs.realpathSync.native(input)
     } catch {
       fail('RESOLVER_ROOT_INVALID', 'resolver root is unavailable')
     }
@@ -193,7 +205,7 @@ async function canonicalCandidate(roots, candidateUrl) {
   await inspectPathComponents(lexical.base, candidate)
   let canonical
   try {
-    canonical = await fs.promises.realpath(candidate)
+    canonical = await nativeRealpath(candidate)
   } catch (error) {
     fail(filesystemCode(error, 'RESOLVER_UNREADABLE'), 'dependency path cannot be resolved')
   }
@@ -212,7 +224,7 @@ function canonicalCandidateSync(roots, candidateUrl) {
   inspectPathComponentsSync(lexical.base, candidate)
   let canonical
   try {
-    canonical = fs.realpathSync(candidate)
+    canonical = fs.realpathSync.native(candidate)
   } catch (error) {
     fail(filesystemCode(error, 'RESOLVER_UNREADABLE'), 'dependency path cannot be resolved')
   }

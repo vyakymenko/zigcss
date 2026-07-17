@@ -36,6 +36,28 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
+function trackedCorpusFiles() {
+  const prefix = 'tests/preprocessors/stylus/corpus/files/'
+  const result = spawnSync('git', [
+    'ls-files',
+    '-z',
+    '--',
+    'tests/preprocessors/stylus/corpus/files',
+  ], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+    maxBuffer: 4 * 1024 * 1024,
+    windowsHide: true,
+  })
+  assert.equal(result.error, undefined, 'tracked corpus inventory: git launch')
+  assert.equal(result.signal, null, 'tracked corpus inventory: git signal')
+  assert.equal(result.status, 0, `tracked corpus inventory: ${result.stderr}`)
+  return sorted(result.stdout.split('\0').filter(Boolean).map(filename => {
+    assert.equal(filename.startsWith(prefix), true, filename)
+    return filename.slice(prefix.length)
+  }))
+}
+
 function sorted(values) {
   return [...values].sort((left, right) => Buffer.from(left).compare(Buffer.from(right)))
 }
@@ -281,6 +303,7 @@ test('pins, license-reviews, and checksum-verifies the Stylus 0.64.0 corpus', ()
     expectedInventory.push(file.path)
   }
   assert.deepEqual(listFiles(filesRoot), sorted(expectedInventory))
+  assert.deepEqual(trackedCorpusFiles(), sorted(expectedInventory))
 
   const caseIds = new Set()
   const upstreamNames = new Set()
