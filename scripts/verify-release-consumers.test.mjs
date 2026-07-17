@@ -417,17 +417,17 @@ test('npm installer rejects a symlinked binary directory before downloading', as
 test('Homebrew formula pins immutable verified source and the supported Zig toolchain', () => {
   const formula = fs.readFileSync(path.join(repositoryRoot, 'Formula/zigcss.rb'), 'utf8')
   assert.deepEqual(parseHomebrewFormula(formula), {
-    digest: 'f7dcb180bbe466f4f4269d699c56110889313c228723aedd1aed22b0c00a19b6',
-    sourceCommit: '18deb7c34e5a2d13d57e07459138d925aed5a6e3',
-    url: 'https://github.com/vyakymenko/zigcss/archive/18deb7c34e5a2d13d57e07459138d925aed5a6e3.tar.gz',
+    digest: 'dbab9f777b795742716841354e0bfe30555cc1d54b21f2a446fdc7dc523e26b1',
+    sourceCommit: '526002807edc856eb2dc391551ac3d5c1b77da00',
+    url: 'https://github.com/vyakymenko/zigcss/archive/526002807edc856eb2dc391551ac3d5c1b77da00.tar.gz',
     version: '0.5.0-rc.1',
   })
   assert.match(
     formula,
-    /^  url "https:\/\/github\.com\/vyakymenko\/zigcss\/archive\/18deb7c34e5a2d13d57e07459138d925aed5a6e3\.tar\.gz"$/m,
+    /^  url "https:\/\/github\.com\/vyakymenko\/zigcss\/archive\/526002807edc856eb2dc391551ac3d5c1b77da00\.tar\.gz"$/m,
   )
   assert.match(formula, /^  version "0\.5\.0-rc\.1"$/m)
-  assert.match(formula, /^  sha256 "f7dcb180bbe466f4f4269d699c56110889313c228723aedd1aed22b0c00a19b6"$/m)
+  assert.match(formula, /^  sha256 "dbab9f777b795742716841354e0bfe30555cc1d54b21f2a446fdc7dc523e26b1"$/m)
   assert.match(formula, /^  depends_on "zig@0\.15" => :build$/m)
   assert.match(
     formula,
@@ -443,11 +443,11 @@ test('Homebrew formula policy rejects mutable sources, missing trust data, and s
   const formula = fs.readFileSync(path.join(repositoryRoot, 'Formula/zigcss.rb'), 'utf8')
   const invalid = [
     [
-      formula.replace('archive/18deb7c34e5a2d13d57e07459138d925aed5a6e3.tar.gz', 'archive/v0.5.0-rc.1.tar.gz'),
+      formula.replace('archive/526002807edc856eb2dc391551ac3d5c1b77da00.tar.gz', 'archive/v0.5.0-rc.1.tar.gz'),
       /full lowercase commit identity/,
     ],
     [
-      formula.replace('sha256 "f7dcb180bbe466f4f4269d699c56110889313c228723aedd1aed22b0c00a19b6"', 'sha256 ""'),
+      formula.replace('sha256 "dbab9f777b795742716841354e0bfe30555cc1d54b21f2a446fdc7dc523e26b1"', 'sha256 ""'),
       /source SHA-256 must occur exactly once/,
     ],
     [formula.replace('  license "MIT"', '  license "MIT"\n  head "https://github.com/vyakymenko/zigcss.git"'), /unverified head build/],

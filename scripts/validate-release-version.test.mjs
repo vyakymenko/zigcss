@@ -78,11 +78,11 @@ test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {
   assert.throws(() => validateReleaseSources(formula), /Homebrew formula version/)
 
   const formulaCommit = cloneSources()
-  replace(formulaCommit, 'Formula/zigcss.rb', '18deb7c34e5a2d13d57e07459138d925aed5a6e3', '0'.repeat(40))
+  replace(formulaCommit, 'Formula/zigcss.rb', '526002807edc856eb2dc391551ac3d5c1b77da00', '0'.repeat(40))
   assert.throws(() => validateReleaseSources(formulaCommit), /Homebrew source commit/)
 
   const formulaHash = cloneSources()
-  replace(formulaHash, 'Formula/zigcss.rb', 'f7dcb180bbe466f4f4269d699c56110889313c228723aedd1aed22b0c00a19b6', '0'.repeat(64))
+  replace(formulaHash, 'Formula/zigcss.rb', 'dbab9f777b795742716841354e0bfe30555cc1d54b21f2a446fdc7dc523e26b1', '0'.repeat(64))
   assert.throws(() => validateReleaseSources(formulaHash), /Homebrew source SHA-256/)
 
   const formulaToolchain = cloneSources()

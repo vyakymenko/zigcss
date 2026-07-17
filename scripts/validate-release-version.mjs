@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url'
 const scriptPath = fileURLToPath(import.meta.url)
 export const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
 
-const homebrewSourceCommit = '18deb7c34e5a2d13d57e07459138d925aed5a6e3'
-const homebrewSourceSha256 = 'f7dcb180bbe466f4f4269d699c56110889313c228723aedd1aed22b0c00a19b6'
+const homebrewSourceCommit = '526002807edc856eb2dc391551ac3d5c1b77da00'
+const homebrewSourceSha256 = 'dbab9f777b795742716841354e0bfe30555cc1d54b21f2a446fdc7dc523e26b1'
 
 export const releaseSourcePaths = Object.freeze([
   '.github/workflows/build.yml',
