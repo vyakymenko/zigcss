@@ -1,6 +1,6 @@
 # ZigCSS canonical preprocessor host
 
-Status: internal `PRE-002` through `PRE-004`, `SASS-010` through `SASS-012`, and `LESS-010` through `LESS-012`. SCSS, indented Sass, and Less have passed their internal exact-provider, confined-import, pinned-corpus, negative, limit, determinism, and generated-CSS gates. Stylus is not connected. All four syntaxes are still publicly unavailable until their remaining product, packaging, platform, and per-row graduation gates pass.
+Status: internal `PRE-002` through `PRE-004`, `SASS-010` through `SASS-012`, `LESS-010` through `LESS-012`, and `STYLUS-010`. SCSS, indented Sass, and Less have passed their internal exact-provider, confined-import, pinned-corpus, negative, limit, determinism, and generated-CSS gates. The exact Stylus renderer is connected only for default-deny pre-admission work; its confined imports and independent corpus remain incomplete. All four syntaxes are still publicly unavailable until their remaining product, packaging, platform, and per-row graduation gates pass.
 
 ## Wire contract
 
@@ -14,7 +14,7 @@ The compile request contains the protocol name, a bounded opaque request ID, the
 |---|---|---|---|
 | `dart-sass` | `scss`, `sass` | `sass` `1.101.0` | `SASS-012`; canonical conformance internal only |
 | `less` | `less` | `less` `4.6.7` | `LESS-012`; canonical conformance internal only |
-| `stylus` | `stylus` | `stylus` `0.64.0` | Not connected |
+| `stylus` | `stylus` | `stylus` `0.64.0` | `STYLUS-010`; exact renderer internal only |
 
 A success contains complete CSS, a nullable source map, ordered diagnostics, and ordered dependencies. A failure contains only a bounded code, sanitized message, and ordered normalized diagnostics—never CSS, a partial result, a stack, or an internal filesystem error. Generic host failures use an empty diagnostic list. Request IDs must match across the exchange.
 
@@ -36,7 +36,7 @@ The outer supervisor validates and frames the request before spawn, executes the
 
 ## Trust boundary
 
-The host core imports no networking or child-process modules and performs no dynamic imports. The production provider registry is closed and version-bound; Dart Sass and Less are static exact dependencies and no provider is discovered from user input or ambient paths. Provider source bytes are framed stdin data and are never command arguments or shell text.
+The host core imports no networking or child-process modules and performs no dynamic imports. The production provider registry is closed and version-bound; Dart Sass, Less, and Stylus are static exact dependencies and no provider is discovered from user input or ambient paths. Provider source bytes are framed stdin data and are never command arguments or shell text.
 
 `PRE-003` adds canonical local-path confinement before providers may load dependencies. `PRE-004` adds normalized diagnostics, canonical dependency facts, and two-stage source-map ownership. Executable plugins, custom functions, and custom importers remain outside this protocol's default trust boundary and require the separately gated `trusted-project-code mode` from ADR-012.
 
@@ -79,6 +79,18 @@ The adapter always sets `javascriptEnabled: false` and `disablePluginRule: true`
 `LESS-012` pins official Less tag `v4.6.7`, commit `8ae2cc3bfa79f0718ad6fe5f263a1d6819fe9d5c`, and tree `77299b2e4390d6e2b8592d6ca2dbb495189149b1` as an Apache-2.0, checksum-owned 88-case/217-file corpus. Sixty-eight official successes match canonical CSS, normalized diagnostics, and complete explicit dependencies; twenty official parser/evaluator failures match the canonical formatted error and CSS-free adapter failure. All outcomes repeat identically with eight bounded workers. Every success parses with independent recovery disabled, round-trips twice through ZigCSS, and reparses independently. Focused suites separately prove Source Maps, options, cancellation, filesystem confinement, alias/link/encoding/cycle boundaries, default and `(multiple)` imports, asset helpers, and depth/count/byte/read/diagnostic limits.
 
 Executable plugin/JavaScript/package/remote fixtures and official cases that intentionally emit invalid or environment-specific CSS are excluded by named policy rather than counted as passes. This closes internal Less canonical-language conformance, not public admission or ecosystem-plugin parity. `.less` remains rejected by the public CLI until `STYLUS-012`, `PRE-005`, `PRE-006`, and per-row `PRE-008` product, package, platform, batch/watch, consumer, and documentation gates pass.
+
+## Internal Stylus adapter
+
+`STYLUS-010` pins `stylus` `0.64.0`/MIT and calls the callback-based `renderer.render` API through an owned Promise boundary behind the same one-request framed host. It owns exact expanded and compressed output, parse/evaluation failures, deterministic Source Map v3 entry identity, pre/post-render cancellation, bounded diagnostics, repeated and parallel results, and a real framed-process success. The complete lockfile closure is integrity- and license-reviewed. Stylus remains a development-only dependency excluded from the public npm fileset.
+
+Each request uses a stable non-file virtual filename. Stylus implicitly imports its own `functions/index.styl`; the adapter admits exactly that one immutable package-owned standard-library file and rejects every source-authored `@import` or `@require`, including relative, absolute, CSS, URL, and network forms. Nonempty load paths fail until `STYLUS-011` connects canonical include/import lookup through `PRE-003`. No request source URL becomes native filesystem authority.
+
+The default language functions `json()`, `image-size()`, and `embedurl()` can read project paths, while `use()` can load executable JavaScript plugins. They fail with explicit CSS-free provider errors at this stage. Request options cannot inject functions, globals, evaluators, plugins, imports, paths, or renderer hooks. The console-oriented `warn()`, `p()`, and `trace()` helpers are converted into ordered normalized diagnostics so they cannot corrupt the framed stdout protocol or leak internal stack and path state. Evaluator duplicate-definition warnings are disabled until they have an owned diagnostic route.
+
+Provider maps are emitted without annotations or inline provider file reads, require the one virtual `input.styl` source, and gain owned source content and the request's canonical identity before crossing the host. Failures strip Stylus's formatted source excerpt, virtual filename, JavaScript stack, and internal standard-library paths while retaining the useful one-based entry location and terminal message. More than 1,000 captured diagnostics cause a CSS-free failure.
+
+This is the default-deny exact-renderer package, not full Stylus graduation. `STYLUS-011` must add confined imports/includes, dependency/watch facts, imported diagnostics, and maps without reopening native provider reads. `STYLUS-012` must then pin and pass an authoritative positive/negative corpus with direct canonical differentials and generated-CSS validation. `.styl` remains rejected by the public CLI until those packages plus `PRE-005`, `PRE-006`, and per-row `PRE-008` pass.
 
 ## Confined local loader
 

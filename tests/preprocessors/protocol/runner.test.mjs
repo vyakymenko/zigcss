@@ -37,7 +37,7 @@ test('process supervisor uses framed stdin without shell interpretation', async 
   }
 })
 
-test('production host reaches only the admitted internal Dart Sass and Less adapters', async () => {
+test('production host reaches only the admitted internal Dart Sass, Less, and Stylus adapters', async () => {
   const response = await runPreprocessorHost(makeRequest({
     options: {
       style: 'compressed',
@@ -103,7 +103,7 @@ test('production host reaches only the admitted internal Dart Sass and Less adap
   assert.deepEqual(less.result.diagnostics, [])
   assert.deepEqual(less.result.dependencies, [])
 
-  const unavailable = await runPreprocessorHost(makeRequest({
+  const stylus = await runPreprocessorHost(makeRequest({
     provider: 'stylus',
     syntax: 'stylus',
     source: 'color = red\n.card\n  color color\n',
@@ -115,9 +115,11 @@ test('production host reaches only the admitted internal Dart Sass and Less adap
       providerOptions: {},
     },
   }), { timeoutMs: 5000 })
-  assert.equal(unavailable.ok, false)
-  assert.equal(unavailable.error.code, 'HOST_PROVIDER_UNAVAILABLE')
-  assert.equal('result' in unavailable, false)
+  assert.equal(stylus.ok, true)
+  assert.equal(stylus.result.css, '.card {\n  color: #f00;\n}\n')
+  assert.equal(parseSourceMap(stylus.result.sourceMap).sources[0], 'file:///workspace/input.styl')
+  assert.deepEqual(stylus.result.diagnostics, [])
+  assert.deepEqual(stylus.result.dependencies, [])
 })
 
 test('process supervisor kills timeout and stdout overflow and rejects stderr, malformed, extra, and nonzero exits', async () => {
