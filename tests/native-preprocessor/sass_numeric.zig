@@ -74,6 +74,14 @@ test "native Sass numeric equality and ordering use canonical dimensions" {
         numeric.Ordering.less,
         try numeric.compare(try numeric.Numeric.init(1, null), try unitNumber(2, "px")),
     );
+    try std.testing.expect(numeric.equal(
+        try numeric.Numeric.init(1, null),
+        try numeric.Numeric.init(1 + 4e-12, null),
+    ));
+    try std.testing.expect(!numeric.equal(
+        try numeric.Numeric.init(1, null),
+        try numeric.Numeric.init(1 + 2e-11, null),
+    ));
 }
 
 test "native Sass numeric algebra rejects incompatible unsafe and oversized units" {

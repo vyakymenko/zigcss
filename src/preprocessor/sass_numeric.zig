@@ -323,12 +323,14 @@ fn integerPower(base: f64, power: i8) f64 {
 }
 
 fn approximatelyEqual(left: f64, right: f64) bool {
-    return left == right or std.math.approxEqRel(f64, left, right, 1e-12);
+    if (left == right) return true;
+    if (@abs(left - right) > 1e-11) return false;
+    return @round(left * 1e11) == @round(right * 1e11);
 }
 
 fn canonicalZero(value: f64) f64 {
     if (value == 0) return 0;
     const integer = @round(value);
-    if (@abs(value - integer) <= 1e-12) return integer;
+    if (approximatelyEqual(value, integer)) return integer;
     return value;
 }
