@@ -1,0 +1,2160 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/less/less.js",
+    "tag": "v4.6.7",
+    "tagObject": "1c14e30ca4a857ebf220c9223a5e71fc2fc1764e",
+    "revision": "8ae2cc3bfa79f0718ad6fe5f263a1d6819fe9d5c",
+    "tree": "77299b2e4390d6e2b8592d6ca2dbb495189149b1",
+    "archiveSha256": "9c53e2e65ce1b73fb192e735d3b267c590139212bc76b88151ec546793260577",
+    "rootPackageSha256": "48a2f0e35ec14107beed6d0279e996fd99754e9ca8b258a5adc0b61841eb17fb",
+    "providerPackageSha256": "cc8336c3a08e2be27701c819c066eec04b6c8813d398459049c979c6bc967a46",
+    "packageVersion": "4.6.7",
+    "license": "Apache-2.0",
+    "licenseSha256": "39445b459f86621683f9731fb6a7d070819dc379840e8ef52f62bb1c68942291"
+  },
+  "licenseFile": {
+    "path": "LESS_LICENSE",
+    "sha256": "39445b459f86621683f9731fb6a7d070819dc379840e8ef52f62bb1c68942291"
+  },
+  "options": {
+    "success": {
+      "math": "parens-division",
+      "quietDeprecations": false,
+      "rewriteUrls": "all",
+      "strictUnits": false
+    },
+    "error": {
+      "math": "parens",
+      "quietDeprecations": false,
+      "rewriteUrls": "all",
+      "strictUnits": true
+    }
+  },
+  "caseCount": 88,
+  "successCount": 68,
+  "errorCount": 20,
+  "files": [
+    {
+      "path": "tests-error/eval/add-mixed-units.less",
+      "source": "packages/test-data/tests-error/eval/add-mixed-units.less",
+      "bytes": 28,
+      "sha256": "dc0b304ce3ab8b05110ac027a18b9ae7121ce12934f81ffb7b20e61855d1c49f"
+    },
+    {
+      "path": "tests-error/eval/add-mixed-units.txt",
+      "source": "packages/test-data/tests-error/eval/add-mixed-units.txt",
+      "bytes": 188,
+      "sha256": "dbf99172a88a2ba85678b20c809efb018a0328735a80ffd974624c87f67e4a7b"
+    },
+    {
+      "path": "tests-error/eval/at-rules-undefined-var.less",
+      "source": "packages/test-data/tests-error/eval/at-rules-undefined-var.less",
+      "bytes": 45,
+      "sha256": "dc6b174d73f8db13cf4f23a7a738064b589b3ef09219c0c3c446f5d1a15307ca"
+    },
+    {
+      "path": "tests-error/eval/at-rules-undefined-var.txt",
+      "source": "packages/test-data/tests-error/eval/at-rules-undefined-var.txt",
+      "bytes": 147,
+      "sha256": "c5d1d8d61822b6bea3d887c7fe24625fab1346730edfc360b91f1dea427d99d0"
+    },
+    {
+      "path": "tests-error/eval/color-func-invalid-color.less",
+      "source": "packages/test-data/tests-error/eval/color-func-invalid-color.less",
+      "bytes": 45,
+      "sha256": "c08c6cfdd23aea6503858837e0e07cc83971fd54ed9690beedee32bf6f9df691"
+    },
+    {
+      "path": "tests-error/eval/color-func-invalid-color.txt",
+      "source": "packages/test-data/tests-error/eval/color-func-invalid-color.txt",
+      "bytes": 227,
+      "sha256": "7db7742cce1ba6e14bc94d9a4acd575895d1f13a5d893658b3be0537d7762ed1"
+    },
+    {
+      "path": "tests-error/eval/detached-ruleset-1.less",
+      "source": "packages/test-data/tests-error/eval/detached-ruleset-1.less",
+      "bytes": 32,
+      "sha256": "a6a59add018291984f58ce9d2f101fb7367f584aec3515539e19250dbfda645f"
+    },
+    {
+      "path": "tests-error/eval/detached-ruleset-1.txt",
+      "source": "packages/test-data/tests-error/eval/detached-ruleset-1.txt",
+      "bytes": 133,
+      "sha256": "c614d129424428f44be751950ec38313bd0033d186d10f701b2c025acf3dcb5d"
+    },
+    {
+      "path": "tests-error/eval/extend-no-selector.less",
+      "source": "packages/test-data/tests-error/eval/extend-no-selector.less",
+      "bytes": 36,
+      "sha256": "cf3d8131b161c9bf61a23401b07b08a72a10c09b8a712df505bc738a90e3d30b"
+    },
+    {
+      "path": "tests-error/eval/extend-no-selector.txt",
+      "source": "packages/test-data/tests-error/eval/extend-no-selector.txt",
+      "bytes": 178,
+      "sha256": "c317f2bd4f1f856cfc071fa94a5b48d420e73a932ab30659ccd11e22f0178d73"
+    },
+    {
+      "path": "tests-error/eval/mixin-not-defined.less",
+      "source": "packages/test-data/tests-error/eval/mixin-not-defined.less",
+      "bytes": 123,
+      "sha256": "ba3a34bd36c57791ac22c2943e56f9191f32c99266021ddb78002739ae1690d6"
+    },
+    {
+      "path": "tests-error/eval/mixin-not-defined.txt",
+      "source": "packages/test-data/tests-error/eval/mixin-not-defined.txt",
+      "bytes": 126,
+      "sha256": "e7ea091befbbcbd3932f9ef757c8489b958134f6b5ce4eace48b7f15e4c4c4f8"
+    },
+    {
+      "path": "tests-error/eval/mixin-not-matched.less",
+      "source": "packages/test-data/tests-error/eval/mixin-not-matched.less",
+      "bytes": 58,
+      "sha256": "30ebe577ab1f445ca2fcaa9d23226f8cb5ead93881c91bd3c6eeb733d28504c8"
+    },
+    {
+      "path": "tests-error/eval/mixin-not-matched.txt",
+      "source": "packages/test-data/tests-error/eval/mixin-not-matched.txt",
+      "bytes": 146,
+      "sha256": "e0743667987605dae97ddbcf4ff3967a5196b154de034adc091bbdf198f3d9df"
+    },
+    {
+      "path": "tests-error/eval/namespace-property-not-found.less",
+      "source": "packages/test-data/tests-error/eval/namespace-property-not-found.less",
+      "bytes": 90,
+      "sha256": "6b038e0ef3fddfb7a5e1e143befed943cc88710ae5202694de7fbbfe14777ac5"
+    },
+    {
+      "path": "tests-error/eval/namespace-property-not-found.txt",
+      "source": "packages/test-data/tests-error/eval/namespace-property-not-found.txt",
+      "bytes": 50,
+      "sha256": "82a28d14779f16c97f0e2df41bf67d6a8792ce7983a321b1aa658a44cb43a124"
+    },
+    {
+      "path": "tests-error/eval/percentage-non-number-argument.less",
+      "source": "packages/test-data/tests-error/eval/percentage-non-number-argument.less",
+      "bytes": 41,
+      "sha256": "74e9b61314697ea2625057e0240ae97c27e53bdabc671b48420caed3ef877bdd"
+    },
+    {
+      "path": "tests-error/eval/percentage-non-number-argument.txt",
+      "source": "packages/test-data/tests-error/eval/percentage-non-number-argument.txt",
+      "bytes": 195,
+      "sha256": "b71309ee88c7d8e27b6e37adf89404bd009607229b56c9e87989248531a34e36"
+    },
+    {
+      "path": "tests-error/eval/recursive-variable.less",
+      "source": "packages/test-data/tests-error/eval/recursive-variable.less",
+      "bytes": 36,
+      "sha256": "ff07f5f61e08bca7b0cb951f2c06f5dd644a4a0b4f04ebf5419b314ad42bfb17"
+    },
+    {
+      "path": "tests-error/eval/recursive-variable.txt",
+      "source": "packages/test-data/tests-error/eval/recursive-variable.txt",
+      "bytes": 186,
+      "sha256": "77f184f157af2a268f1434598453f3996a12331d0628b62aa41d99fc4cde3985"
+    },
+    {
+      "path": "tests-error/parse/at-rules-unmatching-block.less",
+      "source": "packages/test-data/tests-error/parse/at-rules-unmatching-block.less",
+      "bytes": 42,
+      "sha256": "d67147e9a6aba745a4be6d8e67a9a94d4424a65a04a8b5e2c77db7d5b8dcb6d7"
+    },
+    {
+      "path": "tests-error/parse/at-rules-unmatching-block.txt",
+      "source": "packages/test-data/tests-error/parse/at-rules-unmatching-block.txt",
+      "bytes": 101,
+      "sha256": "06f44b78bca4ac1aaafa3343de504b20b9661104bf02447966118836a692d8df"
+    },
+    {
+      "path": "tests-error/parse/bad-variable-declaration1.less",
+      "source": "packages/test-data/tests-error/parse/bad-variable-declaration1.less",
+      "bytes": 13,
+      "sha256": "b859b2a11d47b2e15ac2dfa266a7078ba9805f817b863f86d9045bcfdcc0bb78"
+    },
+    {
+      "path": "tests-error/parse/bad-variable-declaration1.txt",
+      "source": "packages/test-data/tests-error/parse/bad-variable-declaration1.txt",
+      "bytes": 108,
+      "sha256": "5651238ee13093f9c96a591518d2dbcdb3ed1fc2e3e9820021739fb4d5a3a5b3"
+    },
+    {
+      "path": "tests-error/parse/custom-property-unmatched-block-1.less",
+      "source": "packages/test-data/tests-error/parse/custom-property-unmatched-block-1.less",
+      "bytes": 61,
+      "sha256": "1cea05e14c8d2fecc5f370000d7bb4ed48a4493cbeeed12b79cf14f3de578339"
+    },
+    {
+      "path": "tests-error/parse/custom-property-unmatched-block-1.txt",
+      "source": "packages/test-data/tests-error/parse/custom-property-unmatched-block-1.txt",
+      "bytes": 127,
+      "sha256": "0dda8973b0a2a9fd5075cb6c239f8269a3e23eb5939429b473ebdaf9e3d61095"
+    },
+    {
+      "path": "tests-error/parse/detached-ruleset-6.less",
+      "source": "packages/test-data/tests-error/parse/detached-ruleset-6.less",
+      "bytes": 34,
+      "sha256": "48bada6716ec22b5091b2e63c8183671bdfbe4f69ad6a93becdd3801bb050777"
+    },
+    {
+      "path": "tests-error/parse/detached-ruleset-6.txt",
+      "source": "packages/test-data/tests-error/parse/detached-ruleset-6.txt",
+      "bytes": 119,
+      "sha256": "f647ce9ba381b164452ec51671a953bfa96297d5186e5988a6daeb3d0d603c83"
+    },
+    {
+      "path": "tests-error/parse/extend-not-at-end.less",
+      "source": "packages/test-data/tests-error/parse/extend-not-at-end.less",
+      "bytes": 40,
+      "sha256": "57361e38f1bb8ba33c587557827049a05b09b13d1c3a83b15c1b0c6433735cee"
+    },
+    {
+      "path": "tests-error/parse/extend-not-at-end.txt",
+      "source": "packages/test-data/tests-error/parse/extend-not-at-end.txt",
+      "bytes": 157,
+      "sha256": "4ede849c7647735bef6b4d4076bacbeb908e8e19b6319c5bc997a2c8561e5e4b"
+    },
+    {
+      "path": "tests-error/parse/import-malformed.less",
+      "source": "packages/test-data/tests-error/parse/import-malformed.less",
+      "bytes": 52,
+      "sha256": "5ae3a92cf5bff627b30063d46dc601e2a1ba320c15069dc94e7f6e3e02e159f0"
+    },
+    {
+      "path": "tests-error/parse/import-malformed.txt",
+      "source": "packages/test-data/tests-error/parse/import-malformed.txt",
+      "bytes": 149,
+      "sha256": "099463547fc891fdc92098ee65fecfefc6cae8ac57e9bd68bd1770555398deea"
+    },
+    {
+      "path": "tests-error/parse/mixed-mixin-definition-args-1.less",
+      "source": "packages/test-data/tests-error/parse/mixed-mixin-definition-args-1.less",
+      "bytes": 98,
+      "sha256": "4ec5b9cbc9ad1a5d735e6cc7d4f012f17e147f6aae4bf84e0dfe4bb3aecada4c"
+    },
+    {
+      "path": "tests-error/parse/mixed-mixin-definition-args-1.txt",
+      "source": "packages/test-data/tests-error/parse/mixed-mixin-definition-args-1.txt",
+      "bytes": 172,
+      "sha256": "51e2987cf207902b8bbba334f9aa9d6d63d74c8868d8a9e901c20d3a268fbe05"
+    },
+    {
+      "path": "tests-error/parse/parens-error-1.less",
+      "source": "packages/test-data/tests-error/parse/parens-error-1.less",
+      "bytes": 42,
+      "sha256": "dcc4ec31ae0025c728dd09f0d6091c280e4fbacc7a57afffd967b792d47b506e"
+    },
+    {
+      "path": "tests-error/parse/parens-error-1.txt",
+      "source": "packages/test-data/tests-error/parse/parens-error-1.txt",
+      "bytes": 125,
+      "sha256": "1303fc2df491bcf9883003c026397cd32a90124cc1525eb460e9055ea9746705"
+    },
+    {
+      "path": "tests-error/parse/parse-error-curly-bracket.less",
+      "source": "packages/test-data/tests-error/parse/parse-error-curly-bracket.less",
+      "bytes": 41,
+      "sha256": "5ec3c6ec91e116d50f4c7b91e6b6d4550c6e7cd114c8e81d29e82fca69e163d2"
+    },
+    {
+      "path": "tests-error/parse/parse-error-curly-bracket.txt",
+      "source": "packages/test-data/tests-error/parse/parse-error-curly-bracket.txt",
+      "bytes": 135,
+      "sha256": "c3eaf985b46cf2580ac06d02b84daa61078d9c65cccb609aeda690856ac142ac"
+    },
+    {
+      "path": "tests-error/parse/parse-error-missing-parens.less",
+      "source": "packages/test-data/tests-error/parse/parse-error-missing-parens.less",
+      "bytes": 70,
+      "sha256": "97bee9415d6315d1067548ce331ea22f36cc6c090336b8042708870308924fff"
+    },
+    {
+      "path": "tests-error/parse/parse-error-missing-parens.txt",
+      "source": "packages/test-data/tests-error/parse/parse-error-missing-parens.txt",
+      "bytes": 135,
+      "sha256": "5dbf04523af1e18c17823862ee6b12da4146c4849313f06930feef4346ab691c"
+    },
+    {
+      "path": "tests-unit/at-rules-declarations/at-rules-declarations.css",
+      "source": "packages/test-data/tests-unit/at-rules-declarations/at-rules-declarations.css",
+      "bytes": 255,
+      "sha256": "88801b59616666c78f222d52e0e1dcaa6f130ebc836e9233d9418ff3c022c816"
+    },
+    {
+      "path": "tests-unit/at-rules-declarations/at-rules-declarations.less",
+      "source": "packages/test-data/tests-unit/at-rules-declarations/at-rules-declarations.less",
+      "bytes": 504,
+      "sha256": "691d151ef0b26c7719cddcff8d7a2d9a6581214d28f7b9d209eea9c0e04ecd70"
+    },
+    {
+      "path": "tests-unit/at-rules-empty-block/at-rules-empty-block.css",
+      "source": "packages/test-data/tests-unit/at-rules-empty-block/at-rules-empty-block.css",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests-unit/at-rules-empty-block/at-rules-empty-block.less",
+      "source": "packages/test-data/tests-unit/at-rules-empty-block/at-rules-empty-block.less",
+      "bytes": 330,
+      "sha256": "e6d5022569638931baf0da7e5d0d8add25ac3cc78027250a117dbff7e6938035"
+    },
+    {
+      "path": "tests-unit/at-rules-empty/at-rules-empty.css",
+      "source": "packages/test-data/tests-unit/at-rules-empty/at-rules-empty.css",
+      "bytes": 131,
+      "sha256": "9c3f5d729946255e09387c3bb360485f55bd9ec4bae9a3d47cb1ae532524ff69"
+    },
+    {
+      "path": "tests-unit/at-rules-empty/at-rules-empty.less",
+      "source": "packages/test-data/tests-unit/at-rules-empty/at-rules-empty.less",
+      "bytes": 366,
+      "sha256": "3924f3d36f6ac3c8af410486a3b18f11fd6f705b969eb5807c24b32202616c88"
+    },
+    {
+      "path": "tests-unit/at-rules-keyword-comments/at-rules-keyword-comments.css",
+      "source": "packages/test-data/tests-unit/at-rules-keyword-comments/at-rules-keyword-comments.css",
+      "bytes": 149,
+      "sha256": "67f8a2a8d2dbb92c95fbeba2d0e21bdb279505ce078bc317f1de4c83b47c446a"
+    },
+    {
+      "path": "tests-unit/at-rules-keyword-comments/at-rules-keyword-comments.less",
+      "source": "packages/test-data/tests-unit/at-rules-keyword-comments/at-rules-keyword-comments.less",
+      "bytes": 359,
+      "sha256": "316375f867a13da290a578c6bdde1f81ec84ccb4a23aa6fd4380698ba3ef3ec5"
+    },
+    {
+      "path": "tests-unit/at-rules-targeted/at-rules-targeted.css",
+      "source": "packages/test-data/tests-unit/at-rules-targeted/at-rules-targeted.css",
+      "bytes": 624,
+      "sha256": "4e444bc80b28cb1f9490e51b48237475779f9b3651f7045d953a7c8a72475c62"
+    },
+    {
+      "path": "tests-unit/at-rules-targeted/at-rules-targeted.less",
+      "source": "packages/test-data/tests-unit/at-rules-targeted/at-rules-targeted.less",
+      "bytes": 1434,
+      "sha256": "1e5473b44ee5dbd7bead0428380b6ee2749cf6d019b3392dceb2516fba54f498"
+    },
+    {
+      "path": "tests-unit/calc/calc.css",
+      "source": "packages/test-data/tests-unit/calc/calc.css",
+      "bytes": 651,
+      "sha256": "75c7ba1f5e1cdebd4fde4b44764a5b13d6b253523aa540065053947ba80df21c"
+    },
+    {
+      "path": "tests-unit/calc/calc.less",
+      "source": "packages/test-data/tests-unit/calc/calc.less",
+      "bytes": 827,
+      "sha256": "e394c7a2fff1e062f06b49b7a62d86daff530d5bd45ff0eff6757fb672e92f7f"
+    },
+    {
+      "path": "tests-unit/charsets/charsets.css",
+      "source": "packages/test-data/tests-unit/charsets/charsets.css",
+      "bytes": 18,
+      "sha256": "1a84b60821d754016e3cfbab647c054004aadea2b0bfe99cbec98d12382d83c7"
+    },
+    {
+      "path": "tests-unit/charsets/charsets.less",
+      "source": "packages/test-data/tests-unit/charsets/charsets.less",
+      "bytes": 84,
+      "sha256": "e20b44b26652b2ab91d5b8a0c25956fdef87de9c2c130a337815dcdeca5ca8d0"
+    },
+    {
+      "path": "tests-unit/charsets/import/import-charset-test.less",
+      "source": "packages/test-data/tests-unit/charsets/import/import-charset-test.less",
+      "bytes": 23,
+      "sha256": "01585f5a7ea4ba9d62537d25d2a1115ea7f5fc8e778a62ad7cdc945e6b6ac361"
+    },
+    {
+      "path": "tests-unit/color-functions/alpha.css",
+      "source": "packages/test-data/tests-unit/color-functions/alpha.css",
+      "bytes": 248,
+      "sha256": "f2595d7893c3085aaa41f04323e3c6bc129cfd65408f2f309f1667386ae17791"
+    },
+    {
+      "path": "tests-unit/color-functions/alpha.less",
+      "source": "packages/test-data/tests-unit/color-functions/alpha.less",
+      "bytes": 529,
+      "sha256": "b8f8d45f2c0fa1367672a5b7aead1f7f3b8505b8ea421fd9c4f783282bae96d7"
+    },
+    {
+      "path": "tests-unit/color-functions/basic.css",
+      "source": "packages/test-data/tests-unit/color-functions/basic.css",
+      "bytes": 279,
+      "sha256": "b092aecd51e679e2edad94e3a0729229d8921b309fece6cd3dad4be858ada06c"
+    },
+    {
+      "path": "tests-unit/color-functions/basic.less",
+      "source": "packages/test-data/tests-unit/color-functions/basic.less",
+      "bytes": 399,
+      "sha256": "d18095d975817cdf414a443d03c90d6e568c5ce1e4183bc39f6889ba70c786d1"
+    },
+    {
+      "path": "tests-unit/color-functions/comprehensive.css",
+      "source": "packages/test-data/tests-unit/color-functions/comprehensive.css",
+      "bytes": 579,
+      "sha256": "7023e73312cd9bbd54c1c947e351b1f9d4b72b3b886905e51558978ababee2e2"
+    },
+    {
+      "path": "tests-unit/color-functions/comprehensive.less",
+      "source": "packages/test-data/tests-unit/color-functions/comprehensive.less",
+      "bytes": 932,
+      "sha256": "aba03461825f8b6eff85f4ec03c0acd5ad29c39ea759619bac165c8039081285"
+    },
+    {
+      "path": "tests-unit/color-functions/formats.css",
+      "source": "packages/test-data/tests-unit/color-functions/formats.css",
+      "bytes": 495,
+      "sha256": "dd7a21f6c045c95f1f93b05fca80e2500a1d5ba3e6777c6e2dc6458ae7083680"
+    },
+    {
+      "path": "tests-unit/color-functions/formats.less",
+      "source": "packages/test-data/tests-unit/color-functions/formats.less",
+      "bytes": 644,
+      "sha256": "68da691c040457a79c82798564234351e47179eb319a859a6be61bf2274e0f04"
+    },
+    {
+      "path": "tests-unit/color-functions/modern-syntax.css",
+      "source": "packages/test-data/tests-unit/color-functions/modern-syntax.css",
+      "bytes": 123,
+      "sha256": "7dbc9ecc0b869507c53f67fbde707506d07a8bc004e90706aac330ce8410eb19"
+    },
+    {
+      "path": "tests-unit/color-functions/modern-syntax.less",
+      "source": "packages/test-data/tests-unit/color-functions/modern-syntax.less",
+      "bytes": 207,
+      "sha256": "1911a0d8352718592043915089aa1ce643941b5bccac0d1b49df75a8839c907c"
+    },
+    {
+      "path": "tests-unit/color-functions/modern.css",
+      "source": "packages/test-data/tests-unit/color-functions/modern.css",
+      "bytes": 1002,
+      "sha256": "d041e24ce12e883129dce763e8c4aaa08bc643fc5125dcc0cfabbbdfd975d794"
+    },
+    {
+      "path": "tests-unit/color-functions/modern.less",
+      "source": "packages/test-data/tests-unit/color-functions/modern.less",
+      "bytes": 1052,
+      "sha256": "0451002d4e4fa3920cfff2d7ff6c4f6068bf76f7e213874e2ce014de6f6666b8"
+    },
+    {
+      "path": "tests-unit/color-functions/operations.css",
+      "source": "packages/test-data/tests-unit/color-functions/operations.css",
+      "bytes": 190,
+      "sha256": "decd84b2e8864854162979f22d5afc379ecad14d6968a40cd3ea570d588d2862"
+    },
+    {
+      "path": "tests-unit/color-functions/operations.less",
+      "source": "packages/test-data/tests-unit/color-functions/operations.less",
+      "bytes": 298,
+      "sha256": "d77a6777aeca99af6bf4a23742e37d67a119f946fce0d898188a5d93e8ee4172"
+    },
+    {
+      "path": "tests-unit/color-functions/rgba.css",
+      "source": "packages/test-data/tests-unit/color-functions/rgba.css",
+      "bytes": 553,
+      "sha256": "0121281af13ee75f7ececcff076416367304605c4665803682672ff8a76f7c36"
+    },
+    {
+      "path": "tests-unit/color-functions/rgba.less",
+      "source": "packages/test-data/tests-unit/color-functions/rgba.less",
+      "bytes": 563,
+      "sha256": "098750eba9906e8a0893dd4a0d6d91717d3baa3629c31ac01cfbbcaab4281de5"
+    },
+    {
+      "path": "tests-unit/comments/comments.css",
+      "source": "packages/test-data/tests-unit/comments/comments.css",
+      "bytes": 1229,
+      "sha256": "85d7841cf9c5f2783b36e23fa400a552bfd13f228d6ec4836be95fc8f18b6436"
+    },
+    {
+      "path": "tests-unit/comments/comments.less",
+      "source": "packages/test-data/tests-unit/comments/comments.less",
+      "bytes": 1835,
+      "sha256": "3565bcfbf3bd69e5c2930ce718cb66f8eddd65f0cbfa7268aba274805f4c1f17"
+    },
+    {
+      "path": "tests-unit/comments/comments2.css",
+      "source": "packages/test-data/tests-unit/comments/comments2.css",
+      "bytes": 321,
+      "sha256": "c2d92863e1ad248cb9aa62a4a7e2ff27596192d92dead8d80c822f2dc265874c"
+    },
+    {
+      "path": "tests-unit/comments/comments2.less",
+      "source": "packages/test-data/tests-unit/comments/comments2.less",
+      "bytes": 1409,
+      "sha256": "07f2d917beb3de747245ee0694f80edcd427a19fabe64b05a6475ff14a50a939"
+    },
+    {
+      "path": "tests-unit/css-escapes/css-escapes.css",
+      "source": "packages/test-data/tests-unit/css-escapes/css-escapes.css",
+      "bytes": 604,
+      "sha256": "e57e60af090a8e8a1cd91ae17db3d0e26a05115f26994b1556b0552e59a3b00c"
+    },
+    {
+      "path": "tests-unit/css-escapes/css-escapes.less",
+      "source": "packages/test-data/tests-unit/css-escapes/css-escapes.less",
+      "bytes": 709,
+      "sha256": "a2b20ea37bcd3b6424bd24eaca7b22cf3166cb0cf902263617d8059666801a2e"
+    },
+    {
+      "path": "tests-unit/css-grid/css-grid.css",
+      "source": "packages/test-data/tests-unit/css-grid/css-grid.css",
+      "bytes": 1321,
+      "sha256": "d1a148b1db01907f1c17ff1901150767fb99e10080a997c0d6fbf365721fc348"
+    },
+    {
+      "path": "tests-unit/css-grid/css-grid.less",
+      "source": "packages/test-data/tests-unit/css-grid/css-grid.less",
+      "bytes": 1338,
+      "sha256": "4f25615989cc7bcb2f23d0649300bbc9e9dcbcb60b7dcbf5c7af539f7ecac00b"
+    },
+    {
+      "path": "tests-unit/css-guards/css-guards.css",
+      "source": "packages/test-data/tests-unit/css-guards/css-guards.css",
+      "bytes": 446,
+      "sha256": "65b000a4ea14334bb12480268ae4bf0f1e79878944e3a2f732d75913bc5be247"
+    },
+    {
+      "path": "tests-unit/css-guards/css-guards.less",
+      "source": "packages/test-data/tests-unit/css-guards/css-guards.less",
+      "bytes": 1465,
+      "sha256": "a07d75f51b134b21c442ccc748ced4ae822523de6a46ab83611626d0c8416ce1"
+    },
+    {
+      "path": "tests-unit/detached-rulesets/detached-rulesets.css",
+      "source": "packages/test-data/tests-unit/detached-rulesets/detached-rulesets.css",
+      "bytes": 1280,
+      "sha256": "e8820a60a5009833274bd2e7755d6ff33ab2220c1470598cf2e12fef65b14efc"
+    },
+    {
+      "path": "tests-unit/detached-rulesets/detached-rulesets.less",
+      "source": "packages/test-data/tests-unit/detached-rulesets/detached-rulesets.less",
+      "bytes": 1853,
+      "sha256": "ce9a242cd121d88e84bc2911a788e641e7a9296607cd0e848dca292f7c73e802"
+    },
+    {
+      "path": "tests-unit/empty/empty.css",
+      "source": "packages/test-data/tests-unit/empty/empty.css",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests-unit/empty/empty.less",
+      "source": "packages/test-data/tests-unit/empty/empty.less",
+      "bytes": 3,
+      "sha256": "6a3cf5192354f71615ac51034b3e97c20eda99643fcaf5bbe6d41ad59bd12167"
+    },
+    {
+      "path": "tests-unit/extend-chaining/extend-chaining.css",
+      "source": "packages/test-data/tests-unit/extend-chaining/extend-chaining.css",
+      "bytes": 581,
+      "sha256": "f1b96f9cf2a5bb6a77aa6155c2f31a6d06a0a83dc285254c7eae32e7ca209ff5"
+    },
+    {
+      "path": "tests-unit/extend-chaining/extend-chaining.less",
+      "source": "packages/test-data/tests-unit/extend-chaining/extend-chaining.less",
+      "bytes": 1328,
+      "sha256": "3b093fa08a017a9b98755644197412ef91fa1df7deb78152c71fb3502d71a240"
+    },
+    {
+      "path": "tests-unit/extend-exact/extend-exact.css",
+      "source": "packages/test-data/tests-unit/extend-exact/extend-exact.css",
+      "bytes": 468,
+      "sha256": "bd70c158acdb724b1ede5ddcafce9742ff446fba766eda102170e239a7b6eb93"
+    },
+    {
+      "path": "tests-unit/extend-exact/extend-exact.less",
+      "source": "packages/test-data/tests-unit/extend-exact/extend-exact.less",
+      "bytes": 528,
+      "sha256": "65caa039a4bb92e3c694b4bdaecabb78a00b3075e93421d777af49c9c056c93e"
+    },
+    {
+      "path": "tests-unit/extend-media/extend-media.css",
+      "source": "packages/test-data/tests-unit/extend-media/extend-media.css",
+      "bytes": 318,
+      "sha256": "9fed1dcb6947963a3cb27ca73ca930f5dcdea89ca90429434d9c7ba0ef376e72"
+    },
+    {
+      "path": "tests-unit/extend-media/extend-media.less",
+      "source": "packages/test-data/tests-unit/extend-media/extend-media.less",
+      "bytes": 315,
+      "sha256": "f06d6048c2e399f496ba038fb683ded35cce54f444207391295bb23fabda938f"
+    },
+    {
+      "path": "tests-unit/extend-nest/extend-nest.css",
+      "source": "packages/test-data/tests-unit/extend-nest/extend-nest.css",
+      "bytes": 2798,
+      "sha256": "2775bebd705be6bf143be915acc56f2afce2ac651e9f304b3be9919aa7f3cc21"
+    },
+    {
+      "path": "tests-unit/extend-nest/extend-nest.less",
+      "source": "packages/test-data/tests-unit/extend-nest/extend-nest.less",
+      "bytes": 856,
+      "sha256": "f561a14acc9c74f38e1e4673d692d6b7f942e0bce4725a6f47fc530a7087d5c7"
+    },
+    {
+      "path": "tests-unit/extend-selector/extend-selector.css",
+      "source": "packages/test-data/tests-unit/extend-selector/extend-selector.css",
+      "bytes": 1363,
+      "sha256": "3f18be30946554fd6460dc648421a0cb79f777d97ac82ceb12e1ddb1190d431a"
+    },
+    {
+      "path": "tests-unit/extend-selector/extend-selector.less",
+      "source": "packages/test-data/tests-unit/extend-selector/extend-selector.less",
+      "bytes": 1561,
+      "sha256": "5278e3deb41b018047b3e83e8e62388b19426bfdbcb8e846a470ac3535f94f1b"
+    },
+    {
+      "path": "tests-unit/extend/extend.css",
+      "source": "packages/test-data/tests-unit/extend/extend.css",
+      "bytes": 868,
+      "sha256": "201f0257ef096fb86b333bd0bb63cc05fdd50b01dd215d8f4ad5c1977f742345"
+    },
+    {
+      "path": "tests-unit/extend/extend.less",
+      "source": "packages/test-data/tests-unit/extend/extend.less",
+      "bytes": 1044,
+      "sha256": "6230ec9920a2a381b4a643cfac535cdb990531274072dd09cbd3dd2963e01e71"
+    },
+    {
+      "path": "tests-unit/extract-and-length/extract-and-length.css",
+      "source": "packages/test-data/tests-unit/extract-and-length/extract-and-length.css",
+      "bytes": 2365,
+      "sha256": "e7fe7eb5a893bc1f1e95d9e76a2f7c9c4423b55f4798f88f575a7c4fe6e81ed1"
+    },
+    {
+      "path": "tests-unit/extract-and-length/extract-and-length.less",
+      "source": "packages/test-data/tests-unit/extract-and-length/extract-and-length.less",
+      "bytes": 3236,
+      "sha256": "a4183a752d25c236e43f3022a30a15ac25ea9080ff20718125eaa062d605dd77"
+    },
+    {
+      "path": "tests-unit/functions-each/functions-each.css",
+      "source": "packages/test-data/tests-unit/functions-each/functions-each.css",
+      "bytes": 985,
+      "sha256": "085c3ed23a9cd7b2e1fccee2650973cd752e0f464adb0a440da9726f5b1bd434"
+    },
+    {
+      "path": "tests-unit/functions-each/functions-each.less",
+      "source": "packages/test-data/tests-unit/functions-each/functions-each.less",
+      "bytes": 2192,
+      "sha256": "01fee9c972f51c1d7f0ed00b0c478003df8ca7b3d7fe541b250cd0a4a958e6fc"
+    },
+    {
+      "path": "tests-unit/ie-filters/ie-filters.css",
+      "source": "packages/test-data/tests-unit/ie-filters/ie-filters.css",
+      "bytes": 392,
+      "sha256": "76c74a0cbcd6ac428e7368774cbdc2ad91965ae7582d9458881cadeaed936659"
+    },
+    {
+      "path": "tests-unit/ie-filters/ie-filters.less",
+      "source": "packages/test-data/tests-unit/ie-filters/ie-filters.less",
+      "bytes": 429,
+      "sha256": "f832338dabd750f2b21e44d294c0bcf5fc650d2830d456239d19b8f21107b4a5"
+    },
+    {
+      "path": "tests-unit/impor/impor.css",
+      "source": "packages/test-data/tests-unit/impor/impor.css",
+      "bytes": 48,
+      "sha256": "69653393b488062a4aafb108a491350125ca7a9eea8d9b35a9232d890a143211"
+    },
+    {
+      "path": "tests-unit/impor/impor.less",
+      "source": "packages/test-data/tests-unit/impor/impor.less",
+      "bytes": 257,
+      "sha256": "f337e9a44f194a09a7359aa9a5ff16d4bc20cde14cef6d15b6bf6bbcf7ae0712"
+    },
+    {
+      "path": "tests-unit/import/import-interpolation.css",
+      "source": "packages/test-data/tests-unit/import/import-interpolation.css",
+      "bytes": 162,
+      "sha256": "b1f817e666cd4507fc714bd4f1780dba89eb735923a65bfd28ae21c7c0d2952a"
+    },
+    {
+      "path": "tests-unit/import/import-interpolation.less",
+      "source": "packages/test-data/tests-unit/import/import-interpolation.less",
+      "bytes": 159,
+      "sha256": "2b9eb38fdcd6e363c1fc16787b3be3ba8e7af99498e9c32b612a1c9e5243121c"
+    },
+    {
+      "path": "tests-unit/import/import-once.css",
+      "source": "packages/test-data/tests-unit/import/import-once.css",
+      "bytes": 140,
+      "sha256": "8e26cb00af7ba191d4af9f460dfb12e3e27944fca3406b380a2ca6e4ca1d3761"
+    },
+    {
+      "path": "tests-unit/import/import-once.less",
+      "source": "packages/test-data/tests-unit/import/import-once.less",
+      "bytes": 255,
+      "sha256": "daab9434d3db6c6f5ee9046442908df44d14aac4372f377d23b9adce3e967a44"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues.css",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues.css",
+      "bytes": 392,
+      "sha256": "c29690f6845be732e5bb4422e11e9086f3d302285f84bcf451a2d280cac1572d"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues.less",
+      "bytes": 2303,
+      "sha256": "7a7f2df12df0aa8402c606edafefc5bc8d7df0b340d1c84d956495155202acd8"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/appender-reference-1968.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/appender-reference-1968.less",
+      "bytes": 134,
+      "sha256": "c1fd1bc0f11fbf4f44ede02010453c0ea88671c1de222bb072707783f68c54c8"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/comments-2991.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/comments-2991.less",
+      "bytes": 766,
+      "sha256": "3c160587aa3a9aae80382c1e923ebc46bc83f8bc6f86431cf4548da1f57ae74a"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/global-scope-import.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/global-scope-import.less",
+      "bytes": 239,
+      "sha256": "2a9dfc4c4f8405c528e29d7a0a1d77c44ddf4914d06570e68b96e72ee85a1b05"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/global-scope-nested.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/global-scope-nested.less",
+      "bytes": 31,
+      "sha256": "f97ef6b3528fc17909d5fa3e950645f715aa431767b7b305fae14c59a4a4c94c"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/mixin-1968.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/mixin-1968.less",
+      "bytes": 168,
+      "sha256": "af96741b45113a181e6ffffaa9ca4b3febce7ffb91cf9a82fc03c955522a53a3"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/multiple-import-nested.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/multiple-import-nested.less",
+      "bytes": 178,
+      "sha256": "1b410c5e150a0a3777e335f5139fc9da7424b100850ca54f72c1e5743eac898e"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/multiple-import.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/multiple-import.less",
+      "bytes": 126,
+      "sha256": "c5116182b696ac142c858cdaf7228b87d129d16a207a5c1fcf8f2e2dc86a97cf"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/simple-mixin.css",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/simple-mixin.css",
+      "bytes": 28,
+      "sha256": "fad68b5398a79cc7e78ead04c501148e1f8c2df4e35a1f24cd8ea3a928da812a"
+    },
+    {
+      "path": "tests-unit/import/import-reference-issues/simple-ruleset-2162.less",
+      "source": "packages/test-data/tests-unit/import/import-reference-issues/simple-ruleset-2162.less",
+      "bytes": 40,
+      "sha256": "a8132e62a17c2073de44ad0392d6b6562da93be8b228175c2316c83e3e828bfe"
+    },
+    {
+      "path": "tests-unit/import/import/css-import.less",
+      "source": "packages/test-data/tests-unit/import/import/css-import.less",
+      "bytes": 25,
+      "sha256": "4537980c5aa1e068378e0c06695965e2706f1088bf594d2c03b32327b07579c1"
+    },
+    {
+      "path": "tests-unit/import/import/deeper/deeper-2/url-import-2.less",
+      "source": "packages/test-data/tests-unit/import/import/deeper/deeper-2/url-import-2.less",
+      "bytes": 34,
+      "sha256": "e2b5696e08b369d69bda9daffb9392a9cebcca5cca7562e7d385a438012af0e0"
+    },
+    {
+      "path": "tests-unit/import/import/deeper/deeper-2/url-import.less",
+      "source": "packages/test-data/tests-unit/import/import/deeper/deeper-2/url-import.less",
+      "bytes": 33,
+      "sha256": "fca7dfbd63c96ed21f191a5328d7e4e296fa886251807128f71082a4ba3f6cab"
+    },
+    {
+      "path": "tests-unit/import/import/deeper/import-once-test-a.less",
+      "source": "packages/test-data/tests-unit/import/import/deeper/import-once-test-a.less",
+      "bytes": 32,
+      "sha256": "f30366157c8872c88f394d391e14460bafcc6b4817dabcb8bdbdb87451156bca"
+    },
+    {
+      "path": "tests-unit/import/import/deeper/url-import.less",
+      "source": "packages/test-data/tests-unit/import/import/deeper/url-import.less",
+      "bytes": 40,
+      "sha256": "8e681cc8cce4906cd24c634a3bba08ad4b7135e893f699be1046a992d7dfb482"
+    },
+    {
+      "path": "tests-unit/import/import/import-and-relative-paths-test.less",
+      "source": "packages/test-data/tests-unit/import/import/import-and-relative-paths-test.less",
+      "bytes": 383,
+      "sha256": "d930c2f8e3effc1845f24f13706385ab49d8a392bd6b75e987675297b5888c59"
+    },
+    {
+      "path": "tests-unit/import/import/import-charset-test.less",
+      "source": "packages/test-data/tests-unit/import/import/import-charset-test.less",
+      "bytes": 22,
+      "sha256": "6002fbe68fd678ab597f85e16b06bab0d897e6dab8fc216c56d47a1f32117f52"
+    },
+    {
+      "path": "tests-unit/import/import/import-inline-invalid-css.less",
+      "source": "packages/test-data/tests-unit/import/import/import-inline-invalid-css.less",
+      "bytes": 36,
+      "sha256": "9b5509302b9816ad874a0039dcecfa25a8bc3062d7e90273d7e742a5b522f9d4"
+    },
+    {
+      "path": "tests-unit/import/import/import-interpolation.less",
+      "source": "packages/test-data/tests-unit/import/import/import-interpolation.less",
+      "bytes": 81,
+      "sha256": "b825c3472f7e3897b84b1c927a8bb74db317224bf4abffde15b2752233f8304a"
+    },
+    {
+      "path": "tests-unit/import/import/import-interpolation2.less",
+      "source": "packages/test-data/tests-unit/import/import/import-interpolation2.less",
+      "bytes": 51,
+      "sha256": "b9dd106b0e7292d74008d463409fe0e77c61bf56140f4fd3a84912ca6e3b004c"
+    },
+    {
+      "path": "tests-unit/import/import/import-once-test-c.less",
+      "source": "packages/test-data/tests-unit/import/import/import-once-test-c.less",
+      "bytes": 36,
+      "sha256": "d64bb30ad970604cc761ec4706655d47a57b87984069b230a7509ce989ef64c9"
+    },
+    {
+      "path": "tests-unit/import/import/import-reference.less",
+      "source": "packages/test-data/tests-unit/import/import/import-reference.less",
+      "bytes": 1471,
+      "sha256": "e4197681aba24b38f54d0973c68ae03e1a7531690cb9ce562b1c9d3cffde5078"
+    },
+    {
+      "path": "tests-unit/import/import/import-test-a.less",
+      "source": "packages/test-data/tests-unit/import/import/import-test-a.less",
+      "bytes": 131,
+      "sha256": "7eafc3031dd288ebf4eb8686079dd837d420c95456b36e2666c8cd9bafc39749"
+    },
+    {
+      "path": "tests-unit/import/import/import-test-b.less",
+      "source": "packages/test-data/tests-unit/import/import/import-test-b.less",
+      "bytes": 77,
+      "sha256": "0e4d58345296ac9f3a2a9f4d3add7c52f411a0b743bbb4b9b937d36080f7b61a"
+    },
+    {
+      "path": "tests-unit/import/import/import-test-c.less",
+      "source": "packages/test-data/tests-unit/import/import/import-test-c.less",
+      "bytes": 36,
+      "sha256": "d64bb30ad970604cc761ec4706655d47a57b87984069b230a7509ce989ef64c9"
+    },
+    {
+      "path": "tests-unit/import/import/import-test-d.css",
+      "source": "packages/test-data/tests-unit/import/import/import-test-d.css",
+      "bytes": 24,
+      "sha256": "1b6e68ec132d373cf122ce4c6053c7e16de6005544f7fc09dfd1dc67ffbba1db"
+    },
+    {
+      "path": "tests-unit/import/import/import-test-e.less",
+      "source": "packages/test-data/tests-unit/import/import/import-test-e.less",
+      "bytes": 22,
+      "sha256": "d6c04a747c05b561e707d30f56bdd9a2b643f37a52b33f16c17a3ada1ca6b273"
+    },
+    {
+      "path": "tests-unit/import/import/import-test-f.less",
+      "source": "packages/test-data/tests-unit/import/import/import-test-f.less",
+      "bytes": 59,
+      "sha256": "0d7d583f4e96840f20b797a74c543f0764f2cd1964e38fe22b6dc33b366de847"
+    },
+    {
+      "path": "tests-unit/import/import/imports/font.less",
+      "source": "packages/test-data/tests-unit/import/import/imports/font.less",
+      "bytes": 128,
+      "sha256": "3a4ddd4c5fb976c824c45f1f092689e4e4f0e98740cef09732f561a734b7cff7"
+    },
+    {
+      "path": "tests-unit/import/import/imports/logo.less",
+      "source": "packages/test-data/tests-unit/import/import/imports/logo.less",
+      "bytes": 117,
+      "sha256": "14c1619c0b1de2b25ae0d8a0adad20e3cc26f1f602c3494dd1b34acb22c37386"
+    },
+    {
+      "path": "tests-unit/import/import/interpolation-vars.less",
+      "source": "packages/test-data/tests-unit/import/import/interpolation-vars.less",
+      "bytes": 176,
+      "sha256": "fe5af9273a663ddb644ee43a03224d2fe85f76c810a3e6622e7ba6e7ff31d1af"
+    },
+    {
+      "path": "tests-unit/import/import/invalid-css.less",
+      "source": "packages/test-data/tests-unit/import/import/invalid-css.less",
+      "bytes": 26,
+      "sha256": "4712f10b9b8af40fc6e3c2e51db62349c61bf22e5dc82113bbc57ff22612ecf0"
+    },
+    {
+      "path": "tests-unit/import/import/json/index.json",
+      "source": "packages/test-data/tests-unit/import/import/json/index.json",
+      "bytes": 367,
+      "sha256": "11c4f713eebc365380e00eb851c657ced23b464f7f8ccd6ba4db0f3c17f20c5c"
+    },
+    {
+      "path": "tests-unit/import/import/json/index.less",
+      "source": "packages/test-data/tests-unit/import/import/json/index.less",
+      "bytes": 27,
+      "sha256": "acafda38ae0e53000c8cca3aacec9b3fe4c63f1b8dc788adee610aa550d95a51"
+    },
+    {
+      "path": "tests-unit/import/import/layer-import-2.css",
+      "source": "packages/test-data/tests-unit/import/import/layer-import-2.css",
+      "bytes": 51,
+      "sha256": "2553b2e328ad0d8be3c9399dbb95892f93e5237380e59bd711ffa6cf430761bc"
+    },
+    {
+      "path": "tests-unit/import/import/layer-import-3.css",
+      "source": "packages/test-data/tests-unit/import/import/layer-import-3.css",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests-unit/import/import/layer-import-4.css",
+      "source": "packages/test-data/tests-unit/import/import/layer-import-4.css",
+      "bytes": 51,
+      "sha256": "2553b2e328ad0d8be3c9399dbb95892f93e5237380e59bd711ffa6cf430761bc"
+    },
+    {
+      "path": "tests-unit/import/import/layer-import-5.css",
+      "source": "packages/test-data/tests-unit/import/import/layer-import-5.css",
+      "bytes": 51,
+      "sha256": "2553b2e328ad0d8be3c9399dbb95892f93e5237380e59bd711ffa6cf430761bc"
+    },
+    {
+      "path": "tests-unit/import/import/layer-import.less",
+      "source": "packages/test-data/tests-unit/import/import/layer-import.less",
+      "bytes": 51,
+      "sha256": "2553b2e328ad0d8be3c9399dbb95892f93e5237380e59bd711ffa6cf430761bc"
+    },
+    {
+      "path": "tests-unit/import/import/urls.less",
+      "source": "packages/test-data/tests-unit/import/import/urls.less",
+      "bytes": 65,
+      "sha256": "2d615e1f0bfc07c19de3f6ca884206375a9f7e8d08f30612f5661689b21d43d5"
+    },
+    {
+      "path": "tests-unit/layer/import/layer-import.less",
+      "source": "packages/test-data/tests-unit/layer/import/layer-import.less",
+      "bytes": 51,
+      "sha256": "2553b2e328ad0d8be3c9399dbb95892f93e5237380e59bd711ffa6cf430761bc"
+    },
+    {
+      "path": "tests-unit/layer/layer.css",
+      "source": "packages/test-data/tests-unit/layer/layer.css",
+      "bytes": 2091,
+      "sha256": "894a36e151252aa0678e805b3f6849cd4ba198371f6bee9d38ba6d591175e6ae"
+    },
+    {
+      "path": "tests-unit/layer/layer.less",
+      "source": "packages/test-data/tests-unit/layer/layer.less",
+      "bytes": 2424,
+      "sha256": "76dd035403069ae2a0038194af47f0d71fadc1c79fc5acdb89ae70e28e55bab6"
+    },
+    {
+      "path": "tests-unit/lazy-eval/lazy-eval.css",
+      "source": "packages/test-data/tests-unit/lazy-eval/lazy-eval.css",
+      "bytes": 30,
+      "sha256": "c5987fd66f5fe4315f55c9452e85c0c87536d5989efcc2c3228fbb034a19c203"
+    },
+    {
+      "path": "tests-unit/lazy-eval/lazy-eval.less",
+      "source": "packages/test-data/tests-unit/lazy-eval/lazy-eval.less",
+      "bytes": 76,
+      "sha256": "f7b83938879e3196c9c3547b6cea2b699619c6910a3be6fe7d00bc42ba9038b0"
+    },
+    {
+      "path": "tests-unit/merge/merge.css",
+      "source": "packages/test-data/tests-unit/merge/merge.css",
+      "bytes": 773,
+      "sha256": "119afe2952cf5cfe8eb10a4ddcf07be65393f11e8059bc470d24012d1b84e2a4"
+    },
+    {
+      "path": "tests-unit/merge/merge.less",
+      "source": "packages/test-data/tests-unit/merge/merge.less",
+      "bytes": 1607,
+      "sha256": "f9dc7c625c01344dcdcbb881374152a063198c8056a655d05d6aa7907616ca52"
+    },
+    {
+      "path": "tests-unit/mixin-noparens/mixin-noparens.css",
+      "source": "packages/test-data/tests-unit/mixin-noparens/mixin-noparens.css",
+      "bytes": 103,
+      "sha256": "3ec6e87a761706171685ce3c8625ab42726d8112a59a103c38b12c737c05c4f7"
+    },
+    {
+      "path": "tests-unit/mixin-noparens/mixin-noparens.less",
+      "source": "packages/test-data/tests-unit/mixin-noparens/mixin-noparens.less",
+      "bytes": 106,
+      "sha256": "46b9f53295d94b0d436bb81acecad20ed04465a7728b51a3fbfafbc6ca9f2289"
+    },
+    {
+      "path": "tests-unit/mixins-closure/mixins-closure.css",
+      "source": "packages/test-data/tests-unit/mixins-closure/mixins-closure.css",
+      "bytes": 89,
+      "sha256": "e311084666037ea71552e4f703db5e13ddbcfb5c61510a7a6a38cb83b55f1835"
+    },
+    {
+      "path": "tests-unit/mixins-closure/mixins-closure.less",
+      "source": "packages/test-data/tests-unit/mixins-closure/mixins-closure.less",
+      "bytes": 286,
+      "sha256": "2db9743c9018fffb6474fc21801f70e7b560452fc46407924c5d69f193cacb3d"
+    },
+    {
+      "path": "tests-unit/mixins-guards-default-func/mixins-guards-default-func.css",
+      "source": "packages/test-data/tests-unit/mixins-guards-default-func/mixins-guards-default-func.css",
+      "bytes": 1952,
+      "sha256": "28a643ecb40cea0af6ae510c945a10fc9c9bd23fcc2834a2980d26b12dc7d02d"
+    },
+    {
+      "path": "tests-unit/mixins-guards-default-func/mixins-guards-default-func.less",
+      "source": "packages/test-data/tests-unit/mixins-guards-default-func/mixins-guards-default-func.less",
+      "bytes": 4420,
+      "sha256": "7795624d1ed218e2d052ccb5724b7efca8da60dd3a4ec89c192f6e29f896ef5d"
+    },
+    {
+      "path": "tests-unit/mixins-guards/mixins-guards.css",
+      "source": "packages/test-data/tests-unit/mixins-guards/mixins-guards.css",
+      "bytes": 5096,
+      "sha256": "3f9465a8153118b6d2f08deed4134eb97c240f8cc4e3f2d0b4aa8046b1bc358b"
+    },
+    {
+      "path": "tests-unit/mixins-guards/mixins-guards.less",
+      "source": "packages/test-data/tests-unit/mixins-guards/mixins-guards.less",
+      "bytes": 9758,
+      "sha256": "85af3cc0f8f733774e0f6f23b33e87fce6c352e6023d393f0c693ed7e70466fd"
+    },
+    {
+      "path": "tests-unit/mixins-important/mixins-important.css",
+      "source": "packages/test-data/tests-unit/mixins-important/mixins-important.css",
+      "bytes": 888,
+      "sha256": "ca7c2931f0dbd0f8669aa6129ac941c07210119908b274046aa405918c34b393"
+    },
+    {
+      "path": "tests-unit/mixins-important/mixins-important.less",
+      "source": "packages/test-data/tests-unit/mixins-important/mixins-important.less",
+      "bytes": 807,
+      "sha256": "2ab61ac8b6f8b56e0e6689c6b70a59534d4541387f54c202f53e8f5c5bb581ef"
+    },
+    {
+      "path": "tests-unit/mixins-interpolated/mixins-interpolated.css",
+      "source": "packages/test-data/tests-unit/mixins-interpolated/mixins-interpolated.css",
+      "bytes": 365,
+      "sha256": "2d0245d54db452b360a74b96ef16f7617d81a1183991e9a89d6db7c33a29cf3f"
+    },
+    {
+      "path": "tests-unit/mixins-interpolated/mixins-interpolated.less",
+      "source": "packages/test-data/tests-unit/mixins-interpolated/mixins-interpolated.less",
+      "bytes": 788,
+      "sha256": "1a005996c06bc8af22231a7f090a6b2cabde0e11b7cd7f2c3afac3dbe17c5b93"
+    },
+    {
+      "path": "tests-unit/mixins-named-args/mixins-named-args.css",
+      "source": "packages/test-data/tests-unit/mixins-named-args/mixins-named-args.css",
+      "bytes": 356,
+      "sha256": "4c307c9004bc09f1824f69bbc1e7f9c33b55a1c1c933cff1b0bd4df81a8ae833"
+    },
+    {
+      "path": "tests-unit/mixins-named-args/mixins-named-args.less",
+      "source": "packages/test-data/tests-unit/mixins-named-args/mixins-named-args.less",
+      "bytes": 506,
+      "sha256": "ade04884d84a65e85e003a6c16577ed7fc8feeb5f0ec1ad1455dd1f5ceb648b4"
+    },
+    {
+      "path": "tests-unit/mixins-nested/mixins-nested.css",
+      "source": "packages/test-data/tests-unit/mixins-nested/mixins-nested.css",
+      "bytes": 187,
+      "sha256": "17dde1f2450b1317588e6f4b1488184efa285fbd7140aa3df364d6d93b83cf99"
+    },
+    {
+      "path": "tests-unit/mixins-nested/mixins-nested.less",
+      "source": "packages/test-data/tests-unit/mixins-nested/mixins-nested.less",
+      "bytes": 216,
+      "sha256": "8d7d35c5fcada5618c2d427079e897cb025ecbb9b487d6e2c4769d8937a5e9cf"
+    },
+    {
+      "path": "tests-unit/mixins-pattern/mixins-pattern.css",
+      "source": "packages/test-data/tests-unit/mixins-pattern/mixins-pattern.css",
+      "bytes": 583,
+      "sha256": "ee138210b1f5697c7b8eef6d3c68dc7cd2bdb0ee138fe5c17348607d74f91470"
+    },
+    {
+      "path": "tests-unit/mixins-pattern/mixins-pattern.less",
+      "source": "packages/test-data/tests-unit/mixins-pattern/mixins-pattern.less",
+      "bytes": 1104,
+      "sha256": "975aaac50bf6ac8213575707b36246464d32d7e16e18e6ee9e00db8ee651876c"
+    },
+    {
+      "path": "tests-unit/mixins/maps.css",
+      "source": "packages/test-data/tests-unit/mixins/maps.css",
+      "bytes": 57,
+      "sha256": "0f5c64ef331bd28b4705de19f68382250a3edb26f300a1471ce035b5c2e7145f"
+    },
+    {
+      "path": "tests-unit/mixins/maps.less",
+      "source": "packages/test-data/tests-unit/mixins/maps.less",
+      "bytes": 176,
+      "sha256": "11c74a80b72df733437e5c4333d4761489b5a6343ed704333fecc3626e0c3bd1"
+    },
+    {
+      "path": "tests-unit/mixins/mixins-advanced.css",
+      "source": "packages/test-data/tests-unit/mixins/mixins-advanced.css",
+      "bytes": 480,
+      "sha256": "3050e62adce7f9011a36d6dee40057045f4fdcc991ab787dbf599015cf39bd14"
+    },
+    {
+      "path": "tests-unit/mixins/mixins-advanced.less",
+      "source": "packages/test-data/tests-unit/mixins/mixins-advanced.less",
+      "bytes": 1743,
+      "sha256": "ba075c71efc2b84605aae44d33fe0146deb590d48815433739e628cdafd96402"
+    },
+    {
+      "path": "tests-unit/mixins/mixins.css",
+      "source": "packages/test-data/tests-unit/mixins/mixins.css",
+      "bytes": 1921,
+      "sha256": "06f190ed171ef9c8585de1d70ec6b95425f1eb6243a36b37417c0d2c6e4e600d"
+    },
+    {
+      "path": "tests-unit/mixins/mixins.less",
+      "source": "packages/test-data/tests-unit/mixins/mixins.less",
+      "bytes": 2147,
+      "sha256": "99da1f4ce016155a8fafabb892ad4735465bba80b34a86253afe7ad0c3c6cd9c"
+    },
+    {
+      "path": "tests-unit/namespace-targeted/namespace-targeted.css",
+      "source": "packages/test-data/tests-unit/namespace-targeted/namespace-targeted.css",
+      "bytes": 130,
+      "sha256": "e490a0c90259782fad83afe42d88e49360350e1dcbc6fb3883897a537b02a8f9"
+    },
+    {
+      "path": "tests-unit/namespace-targeted/namespace-targeted.less",
+      "source": "packages/test-data/tests-unit/namespace-targeted/namespace-targeted.less",
+      "bytes": 965,
+      "sha256": "25d95b71b668ab023c0c64285140698d6578e280f64df2aa1605e3454c8ff3f6"
+    },
+    {
+      "path": "tests-unit/nesting/nesting.css",
+      "source": "packages/test-data/tests-unit/nesting/nesting.css",
+      "bytes": 401,
+      "sha256": "259b28fdeb567c3afef83e6b9386e26cf001af040662dea1d21e874de6fd94f3"
+    },
+    {
+      "path": "tests-unit/nesting/nesting.less",
+      "source": "packages/test-data/tests-unit/nesting/nesting.less",
+      "bytes": 447,
+      "sha256": "827831607411f836023914280381877c79a12afdc74e7d1dd7350633c5b21e8e"
+    },
+    {
+      "path": "tests-unit/no-output/no-output.css",
+      "source": "packages/test-data/tests-unit/no-output/no-output.css",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests-unit/no-output/no-output.less",
+      "source": "packages/test-data/tests-unit/no-output/no-output.less",
+      "bytes": 13,
+      "sha256": "a6467d50cf1a5dc6acc25a23c533ca9c508b94d57b119c41fb52557b8f87dcf9"
+    },
+    {
+      "path": "tests-unit/operations/operations-advanced.css",
+      "source": "packages/test-data/tests-unit/operations/operations-advanced.css",
+      "bytes": 408,
+      "sha256": "fa57ab321b9c249aaaa98709a243a63b4151b32d4b747aa9e90670dcb40d3c82"
+    },
+    {
+      "path": "tests-unit/operations/operations-advanced.less",
+      "source": "packages/test-data/tests-unit/operations/operations-advanced.less",
+      "bytes": 1395,
+      "sha256": "b071809804759b1e73a2534377e20fdfcd6b915b2c13fcffc076a84f90a726f2"
+    },
+    {
+      "path": "tests-unit/operations/operations.css",
+      "source": "packages/test-data/tests-unit/operations/operations.css",
+      "bytes": 715,
+      "sha256": "a13e312072ec3ddc5fd0a9dcfc319b6f17a814e018611e12ee3cd7ecfd8d5666"
+    },
+    {
+      "path": "tests-unit/operations/operations.less",
+      "source": "packages/test-data/tests-unit/operations/operations.less",
+      "bytes": 1316,
+      "sha256": "741236495636006ef80eccb5d2d4eb816209299760cd526b1ecfdb6fa4eecb06"
+    },
+    {
+      "path": "tests-unit/parse-interpolation/parse-interpolation.css",
+      "source": "packages/test-data/tests-unit/parse-interpolation/parse-interpolation.css",
+      "bytes": 486,
+      "sha256": "0d579ec4f69172518b75d4654b5e752fed54bf6b952030cef676908d019aa3df"
+    },
+    {
+      "path": "tests-unit/parse-interpolation/parse-interpolation.less",
+      "source": "packages/test-data/tests-unit/parse-interpolation/parse-interpolation.less",
+      "bytes": 686,
+      "sha256": "886bb36eefb4ed15d8e089a07eae084c26453d4e7c2ebea6be392afe617ac65e"
+    },
+    {
+      "path": "tests-unit/property-accessors/property-accessors.css",
+      "source": "packages/test-data/tests-unit/property-accessors/property-accessors.css",
+      "bytes": 663,
+      "sha256": "281cb09083d7e3c59100595f033c0827e0fae4da7821d9858f90cff03d93d739"
+    },
+    {
+      "path": "tests-unit/property-accessors/property-accessors.less",
+      "source": "packages/test-data/tests-unit/property-accessors/property-accessors.less",
+      "bytes": 928,
+      "sha256": "3d145008827503b43723057a856d939ae5c2aeb0f1e3775cd8dbd79d3d5c4507"
+    },
+    {
+      "path": "tests-unit/property-targeted/property-targeted.css",
+      "source": "packages/test-data/tests-unit/property-targeted/property-targeted.css",
+      "bytes": 74,
+      "sha256": "f71417fb093487ccd8f8cabf4f6b0608b9b1e08f26f2c274c5d9a724b31861ae"
+    },
+    {
+      "path": "tests-unit/property-targeted/property-targeted.less",
+      "source": "packages/test-data/tests-unit/property-targeted/property-targeted.less",
+      "bytes": 635,
+      "sha256": "3d317b44d85c821c207ddc51ab2a2c9609346fd917f933b2837c771e0b5cec1a"
+    },
+    {
+      "path": "tests-unit/rulesets/rulesets.css",
+      "source": "packages/test-data/tests-unit/rulesets/rulesets.css",
+      "bytes": 1043,
+      "sha256": "4909980ee0ed2e76d0b8247076c7ae5d93eda01afacd43d5ea15a56c673d4358"
+    },
+    {
+      "path": "tests-unit/rulesets/rulesets.less",
+      "source": "packages/test-data/tests-unit/rulesets/rulesets.less",
+      "bytes": 575,
+      "sha256": "c408a0a8bf4c123458c623eb35b120b6e1ed1e438c4690d8c2cbba6eed7f98e8"
+    },
+    {
+      "path": "tests-unit/scope/scope.css",
+      "source": "packages/test-data/tests-unit/scope/scope.css",
+      "bytes": 523,
+      "sha256": "2218b6c6de002ae30544dbf14842869136cd52819d6fd15326738d9f6e3e102e"
+    },
+    {
+      "path": "tests-unit/scope/scope.less",
+      "source": "packages/test-data/tests-unit/scope/scope.less",
+      "bytes": 1740,
+      "sha256": "e1c00e310df1a3e2acfcad269f56c7ba1165a01e4cc5667d027b705cd4901e2e"
+    },
+    {
+      "path": "tests-unit/selectors/selectors.css",
+      "source": "packages/test-data/tests-unit/selectors/selectors.css",
+      "bytes": 3557,
+      "sha256": "2cbd54d983645676eef8c0f7d973638bb2433fee895d1d85a0c25f1289ebf3de"
+    },
+    {
+      "path": "tests-unit/selectors/selectors.less",
+      "source": "packages/test-data/tests-unit/selectors/selectors.less",
+      "bytes": 3791,
+      "sha256": "d31aeab6fb26e9821214781af4466912de7c17d09944d75a84d43a9984723cec"
+    },
+    {
+      "path": "tests-unit/starting-style/starting-style.css",
+      "source": "packages/test-data/tests-unit/starting-style/starting-style.css",
+      "bytes": 902,
+      "sha256": "47ab5a8701432c18c73c55cbfb8c05440e3b503998cabbea5981aad83a4965b2"
+    },
+    {
+      "path": "tests-unit/starting-style/starting-style.less",
+      "source": "packages/test-data/tests-unit/starting-style/starting-style.less",
+      "bytes": 1078,
+      "sha256": "999a9285e0d25014f0178f06b22299b7470afea862ffbf9240ae52653cfff456"
+    },
+    {
+      "path": "tests-unit/strings/strings.css",
+      "source": "packages/test-data/tests-unit/strings/strings.css",
+      "bytes": 1045,
+      "sha256": "0b7986e0074bbe4be477f2bae576bf3cd924934dcb2d370c2509a662fe9ad9c4"
+    },
+    {
+      "path": "tests-unit/strings/strings.less",
+      "source": "packages/test-data/tests-unit/strings/strings.less",
+      "bytes": 1447,
+      "sha256": "12a3354ba53910d78a2bcc269d1e7beef47196af007053485da18c928d9bca2e"
+    },
+    {
+      "path": "tests-unit/tailwind/tailwind.css",
+      "source": "packages/test-data/tests-unit/tailwind/tailwind.css",
+      "bytes": 29,
+      "sha256": "d1855a75915c989472fb1e653bbe98987b735be91be05f89aea44f26d63c96ed"
+    },
+    {
+      "path": "tests-unit/tailwind/tailwind.less",
+      "source": "packages/test-data/tests-unit/tailwind/tailwind.less",
+      "bytes": 29,
+      "sha256": "d1855a75915c989472fb1e653bbe98987b735be91be05f89aea44f26d63c96ed"
+    },
+    {
+      "path": "tests-unit/variables-in-at-rules/variables-in-at-rules.css",
+      "source": "packages/test-data/tests-unit/variables-in-at-rules/variables-in-at-rules.css",
+      "bytes": 243,
+      "sha256": "f111ba192bb24345e2f674a6cfad80d6468074a169df46ca078feced2573a08b"
+    },
+    {
+      "path": "tests-unit/variables-in-at-rules/variables-in-at-rules.less",
+      "source": "packages/test-data/tests-unit/variables-in-at-rules/variables-in-at-rules.less",
+      "bytes": 309,
+      "sha256": "be1868b9025c256378b46476952881f641d6e5b1cc2755d5608a612caf8532d0"
+    },
+    {
+      "path": "tests-unit/variables/variable-advanced.css",
+      "source": "packages/test-data/tests-unit/variables/variable-advanced.css",
+      "bytes": 1088,
+      "sha256": "397825a9a6dc8bc74486f484c1896ea418276817be6f3bfa5de906b7b36ab633"
+    },
+    {
+      "path": "tests-unit/variables/variable-advanced.less",
+      "source": "packages/test-data/tests-unit/variables/variable-advanced.less",
+      "bytes": 1613,
+      "sha256": "d4456210f2327c60cb4cb709eb26284a293e9fc9cb5c793a4533e16e0a50abd1"
+    },
+    {
+      "path": "tests-unit/variables/variables.css",
+      "source": "packages/test-data/tests-unit/variables/variables.css",
+      "bytes": 891,
+      "sha256": "c3cfb4438b9f43085eb5228764a58f11d7c757ef5420ab409aad1a34959810e8"
+    },
+    {
+      "path": "tests-unit/variables/variables.less",
+      "source": "packages/test-data/tests-unit/variables/variables.less",
+      "bytes": 1573,
+      "sha256": "9653d09d6d8b6f12f87327ef7c0dae05c3388de5d37050022a24e2ef664b9915"
+    },
+    {
+      "path": "tests-unit/whitespace/whitespace.css",
+      "source": "packages/test-data/tests-unit/whitespace/whitespace.css",
+      "bytes": 540,
+      "sha256": "d2ab599600c2e97d8927929c7191e903884e6a3040c03d4ed08afb4d6ded3f64"
+    },
+    {
+      "path": "tests-unit/whitespace/whitespace.less",
+      "source": "packages/test-data/tests-unit/whitespace/whitespace.less",
+      "bytes": 565,
+      "sha256": "1e97dda42d423043346c8267ed6bece2279c4fdf34b745258a9616695d51a4f1"
+    }
+  ],
+  "cases": [
+    {
+      "id": "less-at-rules-declarations-at-rules-declarations",
+      "feature": "at-rules-declarations",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/at-rules-declarations/at-rules-declarations.less",
+      "expected": "tests-unit/at-rules-declarations/at-rules-declarations.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-at-rules-empty-block-at-rules-empty-block",
+      "feature": "at-rules-empty-block",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/at-rules-empty-block/at-rules-empty-block.less",
+      "expected": "tests-unit/at-rules-empty-block/at-rules-empty-block.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-at-rules-empty-at-rules-empty",
+      "feature": "at-rules-empty",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/at-rules-empty/at-rules-empty.less",
+      "expected": "tests-unit/at-rules-empty/at-rules-empty.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-at-rules-keyword-comments-at-rules-keyword-comments",
+      "feature": "at-rules-keyword-comments",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/at-rules-keyword-comments/at-rules-keyword-comments.less",
+      "expected": "tests-unit/at-rules-keyword-comments/at-rules-keyword-comments.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-at-rules-targeted-at-rules-targeted",
+      "feature": "at-rules-targeted",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/at-rules-targeted/at-rules-targeted.less",
+      "expected": "tests-unit/at-rules-targeted/at-rules-targeted.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-calc-calc",
+      "feature": "calc",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/calc/calc.less",
+      "expected": "tests-unit/calc/calc.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-charsets-charsets",
+      "feature": "charsets",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/charsets/charsets.less",
+      "expected": "tests-unit/charsets/charsets.css",
+      "dependencies": [
+        "charsets/import/import-charset-test.less"
+      ]
+    },
+    {
+      "id": "less-color-functions-alpha",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/color-functions/alpha.less",
+      "expected": "tests-unit/color-functions/alpha.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-color-functions-basic",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/color-functions/basic.less",
+      "expected": "tests-unit/color-functions/basic.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-color-functions-comprehensive",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/color-functions/comprehensive.less",
+      "expected": "tests-unit/color-functions/comprehensive.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-color-functions-formats",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/color-functions/formats.less",
+      "expected": "tests-unit/color-functions/formats.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-color-functions-modern-syntax",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/color-functions/modern-syntax.less",
+      "expected": "tests-unit/color-functions/modern-syntax.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-color-functions-modern",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/color-functions/modern.less",
+      "expected": "tests-unit/color-functions/modern.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-color-functions-operations",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/color-functions/operations.less",
+      "expected": "tests-unit/color-functions/operations.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-color-functions-rgba",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/color-functions/rgba.less",
+      "expected": "tests-unit/color-functions/rgba.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-comments-comments",
+      "feature": "comments",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/comments/comments.less",
+      "expected": "tests-unit/comments/comments.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-comments-comments2",
+      "feature": "comments",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/comments/comments2.less",
+      "expected": "tests-unit/comments/comments2.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-css-escapes-css-escapes",
+      "feature": "css-escapes",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/css-escapes/css-escapes.less",
+      "expected": "tests-unit/css-escapes/css-escapes.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-css-grid-css-grid",
+      "feature": "css-grid",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/css-grid/css-grid.less",
+      "expected": "tests-unit/css-grid/css-grid.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-css-guards-css-guards",
+      "feature": "css-guards",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/css-guards/css-guards.less",
+      "expected": "tests-unit/css-guards/css-guards.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-detached-rulesets-detached-rulesets",
+      "feature": "detached-rulesets",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/detached-rulesets/detached-rulesets.less",
+      "expected": "tests-unit/detached-rulesets/detached-rulesets.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-empty-empty",
+      "feature": "empty",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/empty/empty.less",
+      "expected": "tests-unit/empty/empty.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-extend-chaining-extend-chaining",
+      "feature": "extend-chaining",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/extend-chaining/extend-chaining.less",
+      "expected": "tests-unit/extend-chaining/extend-chaining.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-extend-exact-extend-exact",
+      "feature": "extend-exact",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/extend-exact/extend-exact.less",
+      "expected": "tests-unit/extend-exact/extend-exact.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-extend-media-extend-media",
+      "feature": "extend-media",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/extend-media/extend-media.less",
+      "expected": "tests-unit/extend-media/extend-media.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-extend-nest-extend-nest",
+      "feature": "extend-nest",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/extend-nest/extend-nest.less",
+      "expected": "tests-unit/extend-nest/extend-nest.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-extend-selector-extend-selector",
+      "feature": "extend-selector",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/extend-selector/extend-selector.less",
+      "expected": "tests-unit/extend-selector/extend-selector.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-extend-extend",
+      "feature": "extend",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/extend/extend.less",
+      "expected": "tests-unit/extend/extend.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-extract-and-length-extract-and-length",
+      "feature": "extract-and-length",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/extract-and-length/extract-and-length.less",
+      "expected": "tests-unit/extract-and-length/extract-and-length.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-functions-each-functions-each",
+      "feature": "functions-each",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/functions-each/functions-each.less",
+      "expected": "tests-unit/functions-each/functions-each.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-ie-filters-ie-filters",
+      "feature": "ie-filters",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/ie-filters/ie-filters.less",
+      "expected": "tests-unit/ie-filters/ie-filters.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-impor-impor",
+      "feature": "impor",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/impor/impor.less",
+      "expected": "tests-unit/impor/impor.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-import-import-interpolation",
+      "feature": "import",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/import/import-interpolation.less",
+      "expected": "tests-unit/import/import-interpolation.css",
+      "dependencies": [
+        "import/import/interpolation-vars.less",
+        "import/import/import-test-e.less",
+        "import/import/import-interpolation.less",
+        "import/import/imports/logo.less",
+        "import/import/import-interpolation2.less"
+      ]
+    },
+    {
+      "id": "less-import-import-once",
+      "feature": "import",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/import/import-once.less",
+      "expected": "tests-unit/import/import-once.css",
+      "dependencies": [
+        "import/import/import-once-test-c.less",
+        "import/import/deeper/import-once-test-a.less",
+        "import/import/import-test-f.less",
+        "import/import/import-test-e.less"
+      ]
+    },
+    {
+      "id": "less-import-import-reference-issues",
+      "feature": "import",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/import/import-reference-issues.less",
+      "expected": "tests-unit/import/import-reference-issues.css",
+      "dependencies": [
+        "import/import-reference-issues/global-scope-import.less",
+        "import/import-reference-issues/multiple-import.less",
+        "import/import-reference-issues/simple-mixin.css",
+        "import/import-reference-issues/mixin-1968.less",
+        "import/import-reference-issues/appender-reference-1968.less",
+        "import/import-reference-issues/simple-ruleset-2162.less",
+        "import/import-reference-issues/comments-2991.less",
+        "import/import-reference-issues/global-scope-nested.less",
+        "import/import-reference-issues/multiple-import-nested.less"
+      ]
+    },
+    {
+      "id": "less-layer-layer",
+      "feature": "layer",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/layer/layer.less",
+      "expected": "tests-unit/layer/layer.css",
+      "dependencies": [
+        "layer/import/layer-import.less"
+      ]
+    },
+    {
+      "id": "less-lazy-eval-lazy-eval",
+      "feature": "lazy-eval",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/lazy-eval/lazy-eval.less",
+      "expected": "tests-unit/lazy-eval/lazy-eval.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-merge-merge",
+      "feature": "merge",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/merge/merge.less",
+      "expected": "tests-unit/merge/merge.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixin-noparens-mixin-noparens",
+      "feature": "mixin-noparens",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixin-noparens/mixin-noparens.less",
+      "expected": "tests-unit/mixin-noparens/mixin-noparens.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-closure-mixins-closure",
+      "feature": "mixins-closure",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins-closure/mixins-closure.less",
+      "expected": "tests-unit/mixins-closure/mixins-closure.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-guards-default-func-mixins-guards-default-func",
+      "feature": "mixins-guards-default-func",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins-guards-default-func/mixins-guards-default-func.less",
+      "expected": "tests-unit/mixins-guards-default-func/mixins-guards-default-func.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-guards-mixins-guards",
+      "feature": "mixins-guards",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins-guards/mixins-guards.less",
+      "expected": "tests-unit/mixins-guards/mixins-guards.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-important-mixins-important",
+      "feature": "mixins-important",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins-important/mixins-important.less",
+      "expected": "tests-unit/mixins-important/mixins-important.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-interpolated-mixins-interpolated",
+      "feature": "mixins-interpolated",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins-interpolated/mixins-interpolated.less",
+      "expected": "tests-unit/mixins-interpolated/mixins-interpolated.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-named-args-mixins-named-args",
+      "feature": "mixins-named-args",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins-named-args/mixins-named-args.less",
+      "expected": "tests-unit/mixins-named-args/mixins-named-args.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-nested-mixins-nested",
+      "feature": "mixins-nested",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins-nested/mixins-nested.less",
+      "expected": "tests-unit/mixins-nested/mixins-nested.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-pattern-mixins-pattern",
+      "feature": "mixins-pattern",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins-pattern/mixins-pattern.less",
+      "expected": "tests-unit/mixins-pattern/mixins-pattern.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-maps",
+      "feature": "mixins",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins/maps.less",
+      "expected": "tests-unit/mixins/maps.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-mixins-advanced",
+      "feature": "mixins",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins/mixins-advanced.less",
+      "expected": "tests-unit/mixins/mixins-advanced.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-mixins-mixins",
+      "feature": "mixins",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/mixins/mixins.less",
+      "expected": "tests-unit/mixins/mixins.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-namespace-targeted-namespace-targeted",
+      "feature": "namespace-targeted",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/namespace-targeted/namespace-targeted.less",
+      "expected": "tests-unit/namespace-targeted/namespace-targeted.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-nesting-nesting",
+      "feature": "nesting",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/nesting/nesting.less",
+      "expected": "tests-unit/nesting/nesting.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-no-output-no-output",
+      "feature": "no-output",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/no-output/no-output.less",
+      "expected": "tests-unit/no-output/no-output.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-operations-operations-advanced",
+      "feature": "operations",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/operations/operations-advanced.less",
+      "expected": "tests-unit/operations/operations-advanced.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-operations-operations",
+      "feature": "operations",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/operations/operations.less",
+      "expected": "tests-unit/operations/operations.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-parse-interpolation-parse-interpolation",
+      "feature": "parse-interpolation",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/parse-interpolation/parse-interpolation.less",
+      "expected": "tests-unit/parse-interpolation/parse-interpolation.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-property-accessors-property-accessors",
+      "feature": "property-accessors",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/property-accessors/property-accessors.less",
+      "expected": "tests-unit/property-accessors/property-accessors.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-property-targeted-property-targeted",
+      "feature": "property-targeted",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/property-targeted/property-targeted.less",
+      "expected": "tests-unit/property-targeted/property-targeted.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-rulesets-rulesets",
+      "feature": "rulesets",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/rulesets/rulesets.less",
+      "expected": "tests-unit/rulesets/rulesets.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-scope-scope",
+      "feature": "scope",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/scope/scope.less",
+      "expected": "tests-unit/scope/scope.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-selectors-selectors",
+      "feature": "selectors",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/selectors/selectors.less",
+      "expected": "tests-unit/selectors/selectors.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-starting-style-starting-style",
+      "feature": "starting-style",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/starting-style/starting-style.less",
+      "expected": "tests-unit/starting-style/starting-style.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-strings-strings",
+      "feature": "strings",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/strings/strings.less",
+      "expected": "tests-unit/strings/strings.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-tailwind-tailwind",
+      "feature": "tailwind",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/tailwind/tailwind.less",
+      "expected": "tests-unit/tailwind/tailwind.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-variables-in-at-rules-variables-in-at-rules",
+      "feature": "variables-in-at-rules",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/variables-in-at-rules/variables-in-at-rules.less",
+      "expected": "tests-unit/variables-in-at-rules/variables-in-at-rules.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-variables-variable-advanced",
+      "feature": "variables",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/variables/variable-advanced.less",
+      "expected": "tests-unit/variables/variable-advanced.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-variables-variables",
+      "feature": "variables",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/variables/variables.less",
+      "expected": "tests-unit/variables/variables.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-whitespace-whitespace",
+      "feature": "whitespace",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tests-unit/whitespace/whitespace.less",
+      "expected": "tests-unit/whitespace/whitespace.css",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-add-mixed-units",
+      "feature": "negative-units",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/add-mixed-units.less",
+      "expected": "tests-error/eval/add-mixed-units.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-at-rules-undefined-var",
+      "feature": "negative-variables",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/at-rules-undefined-var.less",
+      "expected": "tests-error/eval/at-rules-undefined-var.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-color-func-invalid-color",
+      "feature": "negative-colors",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/color-func-invalid-color.less",
+      "expected": "tests-error/eval/color-func-invalid-color.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-detached-ruleset-1",
+      "feature": "negative-rulesets",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/detached-ruleset-1.less",
+      "expected": "tests-error/eval/detached-ruleset-1.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-extend-no-selector",
+      "feature": "negative-extend",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/extend-no-selector.less",
+      "expected": "tests-error/eval/extend-no-selector.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-percentage-non-number-argument",
+      "feature": "negative-functions",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/percentage-non-number-argument.less",
+      "expected": "tests-error/eval/percentage-non-number-argument.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-mixin-not-defined",
+      "feature": "negative-mixins",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/mixin-not-defined.less",
+      "expected": "tests-error/eval/mixin-not-defined.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-mixin-not-matched",
+      "feature": "negative-mixins",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/mixin-not-matched.less",
+      "expected": "tests-error/eval/mixin-not-matched.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-namespace-property-not-found",
+      "feature": "negative-namespaces",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/namespace-property-not-found.less",
+      "expected": "tests-error/eval/namespace-property-not-found.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-eval-recursive-variable",
+      "feature": "negative-recursion",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "tests-error/eval/recursive-variable.less",
+      "expected": "tests-error/eval/recursive-variable.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-at-rules-unmatching-block",
+      "feature": "negative-at-rules",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/at-rules-unmatching-block.less",
+      "expected": "tests-error/parse/at-rules-unmatching-block.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-bad-variable-declaration1",
+      "feature": "negative-parser",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/bad-variable-declaration1.less",
+      "expected": "tests-error/parse/bad-variable-declaration1.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-custom-property-unmatched-block-1",
+      "feature": "negative-custom-properties",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/custom-property-unmatched-block-1.less",
+      "expected": "tests-error/parse/custom-property-unmatched-block-1.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-detached-ruleset-6",
+      "feature": "negative-rulesets",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/detached-ruleset-6.less",
+      "expected": "tests-error/parse/detached-ruleset-6.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-extend-not-at-end",
+      "feature": "negative-extend",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/extend-not-at-end.less",
+      "expected": "tests-error/parse/extend-not-at-end.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-import-malformed",
+      "feature": "negative-imports",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/import-malformed.less",
+      "expected": "tests-error/parse/import-malformed.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-mixed-mixin-definition-args-1",
+      "feature": "negative-mixins",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/mixed-mixin-definition-args-1.less",
+      "expected": "tests-error/parse/mixed-mixin-definition-args-1.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-parens-error-1",
+      "feature": "negative-parser",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/parens-error-1.less",
+      "expected": "tests-error/parse/parens-error-1.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-parse-error-curly-bracket",
+      "feature": "negative-parser",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/parse-error-curly-bracket.less",
+      "expected": "tests-error/parse/parse-error-curly-bracket.txt",
+      "dependencies": []
+    },
+    {
+      "id": "less-error-parse-parse-error-missing-parens",
+      "feature": "negative-parser",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "tests-error/parse/parse-error-missing-parens.less",
+      "expected": "tests-error/parse/parse-error-missing-parens.txt",
+      "dependencies": []
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # ZigCSS canonical preprocessor host
 
-Status: internal `PRE-002` through `PRE-004`, `SASS-010` through `SASS-012`, and `LESS-010` through `LESS-011`. SCSS and indented Sass have passed the internal exact-provider, confined-import, pinned-corpus, negative, limit, determinism, and generated-CSS gates. The exact Less renderer and its confined dependency surface are connected only for pre-admission work; its independent corpus and product gates remain incomplete. SCSS, indented Sass, Less, and Stylus are still publicly unavailable. No provider becomes a public format until its remaining product, packaging, and graduation gates pass.
+Status: internal `PRE-002` through `PRE-004`, `SASS-010` through `SASS-012`, and `LESS-010` through `LESS-012`. SCSS, indented Sass, and Less have passed their internal exact-provider, confined-import, pinned-corpus, negative, limit, determinism, and generated-CSS gates. Stylus is not connected. All four syntaxes are still publicly unavailable until their remaining product, packaging, platform, and per-row graduation gates pass.
 
 ## Wire contract
 
@@ -13,7 +13,7 @@ The compile request contains the protocol name, a bounded opaque request ID, the
 | Provider ID | Syntaxes | Accepted package baseline | Internal stage |
 |---|---|---|---|
 | `dart-sass` | `scss`, `sass` | `sass` `1.101.0` | `SASS-012`; canonical conformance internal only |
-| `less` | `less` | `less` `4.6.7` | `LESS-011`; confined canonical renderer internal only |
+| `less` | `less` | `less` `4.6.7` | `LESS-012`; canonical conformance internal only |
 | `stylus` | `stylus` | `stylus` `0.64.0` | Not connected |
 
 A success contains complete CSS, a nullable source map, ordered diagnostics, and ordered dependencies. A failure contains only a bounded code, sanitized message, and ordered normalized diagnostics—never CSS, a partial result, a stack, or an internal filesystem error. Generic host failures use an empty diagnostic list. Request IDs must match across the exchange.
@@ -68,7 +68,7 @@ This closes the internal canonical-language conformance package, not public admi
 
 Less never receives the request's real entry filename. Rendering uses a stable virtual filename plus a per-request highest-priority file manager. With no explicit root, every asynchronous and synchronous read fails even when Less would suppress an optional miss. With roots, entry-relative lookup is admitted only when the declared source URL is inside one of them; otherwise the caller's ordered load paths own lookup. Extension inference, nested imports, absolute paths inside a root, and the `reference`, `inline`, `optional`, `multiple`, forced-Less, and plain-CSS import modes retain canonical behavior. Plain CSS URL imports remain emitted CSS and do not cause provider I/O.
 
-Every loaded byte passes through one `PRE-003` session. Query or fragment aliases, encoded separators, network and package schemes, lexical or canonical escapes, links, special or unreadable files, unstable reads, invalid stylesheet UTF-8, cycles, excessive depth, and byte/count/read exhaustion fail without CSS. Virtual dependency identities include their canonical ancestry, so repeated and `(multiple)` imports cannot lose cycle ownership. Results expose canonical local URLs in deterministic first-success dependency order and deduplicate repeated reads.
+Every loaded byte passes through one `PRE-003` session. Query or fragment aliases, encoded separators, network and package schemes, lexical or canonical escapes, links, special or unreadable files, unstable reads, invalid stylesheet UTF-8, cycles, excessive depth, and byte/count/read exhaustion fail without CSS. Canonical virtual filenames preserve Less's default once-only import deduplication, while per-invocation virtual directories retain exact ancestry for convergent `(multiple)` branches and cycle ownership. Results expose canonical local URLs in deterministic first-success dependency order and deduplicate repeated reads.
 
 The standard `data-uri()` and the three image metadata functions use synchronous reads only after asynchronous import work is complete. Those reads pass through the same confined session and operate on owned buffers; image dimensions are computed from the pinned buffer API rather than reopening a project path. They become `reference` dependency facts and cannot cross roots. Per-request asynchronous context isolates these static image-function and warning routes across parallel renders; it does not enable user plugins or custom functions.
 
@@ -76,7 +76,9 @@ Less warnings are captured in provider order. Deprecations and ordinary warnings
 
 The adapter always sets `javascriptEnabled: false` and `disablePluginRule: true`. Inline JavaScript and `@plugin` fail with explicit CSS-free provider errors, while request options cannot inject plugins, functions, preprocessors, postprocessors, file managers, or other executable objects. Repeated, parallel, and real framed-host rendering remain byte-deterministic.
 
-This checkpoint closes `LESS-011`, not full Less graduation. The pinned official/integration corpus, wider direct differential and generated-CSS evidence, packaging, platforms, batch/watch behavior, and public product admission remain `LESS-012`, `PRE-005`, `PRE-006`, and `PRE-008`. The public `.less` row remains unavailable and unverified.
+`LESS-012` pins official Less tag `v4.6.7`, commit `8ae2cc3bfa79f0718ad6fe5f263a1d6819fe9d5c`, and tree `77299b2e4390d6e2b8592d6ca2dbb495189149b1` as an Apache-2.0, checksum-owned 88-case/217-file corpus. Sixty-eight official successes match canonical CSS, normalized diagnostics, and complete explicit dependencies; twenty official parser/evaluator failures match the canonical formatted error and CSS-free adapter failure. All outcomes repeat identically with eight bounded workers. Every success parses with independent recovery disabled, round-trips twice through ZigCSS, and reparses independently. Focused suites separately prove Source Maps, options, cancellation, filesystem confinement, alias/link/encoding/cycle boundaries, default and `(multiple)` imports, asset helpers, and depth/count/byte/read/diagnostic limits.
+
+Executable plugin/JavaScript/package/remote fixtures and official cases that intentionally emit invalid or environment-specific CSS are excluded by named policy rather than counted as passes. This closes internal Less canonical-language conformance, not public admission or ecosystem-plugin parity. `.less` remains rejected by the public CLI until `STYLUS-012`, `PRE-005`, `PRE-006`, and per-row `PRE-008` product, package, platform, batch/watch, consumer, and documentation gates pass.
 
 ## Confined local loader
 

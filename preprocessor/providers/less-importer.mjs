@@ -66,9 +66,9 @@ function providerError(message) {
   return { type: 'File', message }
 }
 
-function canonicalKey(actualUrl, ancestry) {
-  return `f-${createHash('sha256')
-    .update(JSON.stringify([actualUrl, ...ancestry]))
+function hashedKey(prefix, values) {
+  return `${prefix}-${createHash('sha256')
+    .update(JSON.stringify(values))
     .digest('hex')}`
 }
 
@@ -102,9 +102,11 @@ export function createLessImportAuthority({
   const inputRoots = loadPaths.map(root => path.resolve(root))
   const orderedRoots = inputRoots.map(root => fs.realpathSync(root))
   const bytesByActualUrl = new Map()
+  const byActualUrl = new Map()
   const byContext = new Map()
   const byVirtualFilename = new Map()
   const byVirtualDirectory = new Map()
+  const pendingContexts = new Map()
   const entryDirectoryName = `${path.posix.dirname(entryFilename)}/`
   let entryDirectory = null
 
@@ -218,28 +220,52 @@ export function createLessImportAuthority({
       bytesByActualUrl.set(loaded.url, Buffer.from(loaded.contents))
     }
 
+    let canonical = byActualUrl.get(loaded.url)
+    if (canonical === undefined) {
+      const filename = fileURLToPath(loaded.url)
+      const key = hashedKey('f', [loaded.url])
+      const virtualDirectory = `/__zigcss_less_imports__/${key}/`
+      const virtualFilename = `${virtualDirectory}${path.basename(filename)}`
+      if (byVirtualFilename.has(virtualFilename)) {
+        abort('LESS_IMPORT_IDENTITY', 'Less dependency identity could not be made unique')
+      }
+      canonical = Object.freeze({
+        actualUrl: loaded.url,
+        bytes: Buffer.from(loaded.contents),
+        virtualFilename,
+      })
+      byActualUrl.set(loaded.url, canonical)
+      byVirtualFilename.set(virtualFilename, canonical)
+    }
+
     const contextIdentity = JSON.stringify([loaded.url, ...ancestry])
     const existing = byContext.get(contextIdentity)
     if (existing !== undefined) return existing
 
-    const key = canonicalKey(loaded.url, ancestry)
-    const filename = fileURLToPath(loaded.url)
-    const virtualDirectory = `/__zigcss_less_imports__/${key}/`
-    const virtualFilename = `${virtualDirectory}${path.basename(filename)}`
-    if (byVirtualFilename.has(virtualFilename) || byVirtualDirectory.has(virtualDirectory)) {
-      abort('LESS_IMPORT_IDENTITY', 'Less dependency identity could not be made unique')
+    const contextKey = hashedKey('c', [loaded.url, ...ancestry])
+    const virtualDirectory = `/__zigcss_less_contexts__/${contextKey}/`
+    if (byVirtualDirectory.has(virtualDirectory)) {
+      abort('LESS_IMPORT_IDENTITY', 'Less dependency context could not be made unique')
     }
     const entry = Object.freeze({
       actualUrl: loaded.url,
       ancestry: Object.freeze([...ancestry]),
-      bytes: Buffer.from(loaded.contents),
+      bytes: canonical.bytes,
       virtualDirectory,
-      virtualFilename,
+      virtualFilename: canonical.virtualFilename,
     })
     byContext.set(contextIdentity, entry)
-    byVirtualFilename.set(virtualFilename, entry)
     byVirtualDirectory.set(virtualDirectory, entry)
     return entry
+  }
+
+  function enqueueContext(entry) {
+    let queue = pendingContexts.get(entry.virtualFilename)
+    if (queue === undefined) {
+      queue = []
+      pendingContexts.set(entry.virtualFilename, queue)
+    }
+    queue.push(entry)
   }
 
   async function resolve(manager, filename, currentDirectory, options) {
@@ -307,6 +333,16 @@ export function createLessImportAuthority({
       return true
     }
 
+    getPath(filename) {
+      const queue = pendingContexts.get(filename)
+      if (queue !== undefined && queue.length !== 0) {
+        const entry = queue.shift()
+        if (queue.length === 0) pendingContexts.delete(filename)
+        return entry.virtualDirectory
+      }
+      return super.getPath(filename)
+    }
+
     pathDiff(url, baseUrl) {
       const actualUrl = actualDirectoryForProviderDirectory(url)
       const actualBase = actualDirectoryForProviderDirectory(baseUrl)
@@ -323,6 +359,7 @@ export function createLessImportAuthority({
       } catch {
         abort('LESS_IMPORT_ENCODING', 'A Less dependency is not valid UTF-8')
       }
+      enqueueContext(entry)
       return { contents, filename: entry.virtualFilename }
     }
 
@@ -362,10 +399,10 @@ export function createLessImportAuthority({
     if (value === 'input.less') return null
     if (typeof value !== 'string' || /[\u0000\r\n]/.test(value)) return undefined
     const virtualFilename = path.posix.resolve(path.posix.dirname(entryFilename), value)
-    const entry = byVirtualFilename.get(virtualFilename)
-    if (entry === undefined) return undefined
+    const canonical = byVirtualFilename.get(virtualFilename)
+    if (canonical === undefined) return undefined
     try {
-      return utf8.decode(entry.bytes)
+      return utf8.decode(canonical.bytes)
     } catch {
       return undefined
     }

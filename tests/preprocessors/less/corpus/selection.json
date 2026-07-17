@@ -1,0 +1,774 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/less/less.js",
+    "tag": "v4.6.7",
+    "tagObject": "1c14e30ca4a857ebf220c9223a5e71fc2fc1764e",
+    "revision": "8ae2cc3bfa79f0718ad6fe5f263a1d6819fe9d5c",
+    "tree": "77299b2e4390d6e2b8592d6ca2dbb495189149b1",
+    "archiveSha256": "9c53e2e65ce1b73fb192e735d3b267c590139212bc76b88151ec546793260577",
+    "rootPackageSha256": "48a2f0e35ec14107beed6d0279e996fd99754e9ca8b258a5adc0b61841eb17fb",
+    "providerPackageSha256": "cc8336c3a08e2be27701c819c066eec04b6c8813d398459049c979c6bc967a46",
+    "packageVersion": "4.6.7",
+    "license": "Apache-2.0",
+    "licenseSha256": "39445b459f86621683f9731fb6a7d070819dc379840e8ef52f62bb1c68942291"
+  },
+  "options": {
+    "success": {
+      "math": "parens-division",
+      "quietDeprecations": false,
+      "rewriteUrls": "all",
+      "strictUnits": false
+    },
+    "error": {
+      "math": "parens",
+      "quietDeprecations": false,
+      "rewriteUrls": "all",
+      "strictUnits": true
+    }
+  },
+  "support": [
+    "tests-unit/charsets/import",
+    "tests-unit/import/import",
+    "tests-unit/import/import-reference-issues",
+    "tests-unit/layer/import"
+  ],
+  "dependencies": {
+    "less-charsets-charsets": [
+      "charsets/import/import-charset-test.less"
+    ],
+    "less-import-import-interpolation": [
+      "import/import/interpolation-vars.less",
+      "import/import/import-test-e.less",
+      "import/import/import-interpolation.less",
+      "import/import/imports/logo.less",
+      "import/import/import-interpolation2.less"
+    ],
+    "less-import-import-once": [
+      "import/import/import-once-test-c.less",
+      "import/import/deeper/import-once-test-a.less",
+      "import/import/import-test-f.less",
+      "import/import/import-test-e.less"
+    ],
+    "less-import-import-reference-issues": [
+      "import/import-reference-issues/global-scope-import.less",
+      "import/import-reference-issues/multiple-import.less",
+      "import/import-reference-issues/simple-mixin.css",
+      "import/import-reference-issues/mixin-1968.less",
+      "import/import-reference-issues/appender-reference-1968.less",
+      "import/import-reference-issues/simple-ruleset-2162.less",
+      "import/import-reference-issues/comments-2991.less",
+      "import/import-reference-issues/global-scope-nested.less",
+      "import/import-reference-issues/multiple-import-nested.less"
+    ],
+    "less-layer-layer": [
+      "layer/import/layer-import.less"
+    ]
+  },
+  "cases": [
+    {
+      "id": "less-at-rules-declarations-at-rules-declarations",
+      "feature": "at-rules-declarations",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "at-rules-declarations/at-rules-declarations.less",
+      "expected": "at-rules-declarations/at-rules-declarations.css"
+    },
+    {
+      "id": "less-at-rules-empty-block-at-rules-empty-block",
+      "feature": "at-rules-empty-block",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "at-rules-empty-block/at-rules-empty-block.less",
+      "expected": "at-rules-empty-block/at-rules-empty-block.css"
+    },
+    {
+      "id": "less-at-rules-empty-at-rules-empty",
+      "feature": "at-rules-empty",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "at-rules-empty/at-rules-empty.less",
+      "expected": "at-rules-empty/at-rules-empty.css"
+    },
+    {
+      "id": "less-at-rules-keyword-comments-at-rules-keyword-comments",
+      "feature": "at-rules-keyword-comments",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "at-rules-keyword-comments/at-rules-keyword-comments.less",
+      "expected": "at-rules-keyword-comments/at-rules-keyword-comments.css"
+    },
+    {
+      "id": "less-at-rules-targeted-at-rules-targeted",
+      "feature": "at-rules-targeted",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "at-rules-targeted/at-rules-targeted.less",
+      "expected": "at-rules-targeted/at-rules-targeted.css"
+    },
+    {
+      "id": "less-calc-calc",
+      "feature": "calc",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "calc/calc.less",
+      "expected": "calc/calc.css"
+    },
+    {
+      "id": "less-charsets-charsets",
+      "feature": "charsets",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "charsets/charsets.less",
+      "expected": "charsets/charsets.css"
+    },
+    {
+      "id": "less-color-functions-alpha",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "color-functions/alpha.less",
+      "expected": "color-functions/alpha.css"
+    },
+    {
+      "id": "less-color-functions-basic",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "color-functions/basic.less",
+      "expected": "color-functions/basic.css"
+    },
+    {
+      "id": "less-color-functions-comprehensive",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "color-functions/comprehensive.less",
+      "expected": "color-functions/comprehensive.css"
+    },
+    {
+      "id": "less-color-functions-formats",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "color-functions/formats.less",
+      "expected": "color-functions/formats.css"
+    },
+    {
+      "id": "less-color-functions-modern-syntax",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "color-functions/modern-syntax.less",
+      "expected": "color-functions/modern-syntax.css"
+    },
+    {
+      "id": "less-color-functions-modern",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "color-functions/modern.less",
+      "expected": "color-functions/modern.css"
+    },
+    {
+      "id": "less-color-functions-operations",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "color-functions/operations.less",
+      "expected": "color-functions/operations.css"
+    },
+    {
+      "id": "less-color-functions-rgba",
+      "feature": "color-functions",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "color-functions/rgba.less",
+      "expected": "color-functions/rgba.css"
+    },
+    {
+      "id": "less-comments-comments",
+      "feature": "comments",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "comments/comments.less",
+      "expected": "comments/comments.css"
+    },
+    {
+      "id": "less-comments-comments2",
+      "feature": "comments",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "comments/comments2.less",
+      "expected": "comments/comments2.css"
+    },
+    {
+      "id": "less-css-escapes-css-escapes",
+      "feature": "css-escapes",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "css-escapes/css-escapes.less",
+      "expected": "css-escapes/css-escapes.css"
+    },
+    {
+      "id": "less-css-grid-css-grid",
+      "feature": "css-grid",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "css-grid/css-grid.less",
+      "expected": "css-grid/css-grid.css"
+    },
+    {
+      "id": "less-css-guards-css-guards",
+      "feature": "css-guards",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "css-guards/css-guards.less",
+      "expected": "css-guards/css-guards.css"
+    },
+    {
+      "id": "less-detached-rulesets-detached-rulesets",
+      "feature": "detached-rulesets",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "detached-rulesets/detached-rulesets.less",
+      "expected": "detached-rulesets/detached-rulesets.css"
+    },
+    {
+      "id": "less-empty-empty",
+      "feature": "empty",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "empty/empty.less",
+      "expected": "empty/empty.css"
+    },
+    {
+      "id": "less-extend-chaining-extend-chaining",
+      "feature": "extend-chaining",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "extend-chaining/extend-chaining.less",
+      "expected": "extend-chaining/extend-chaining.css"
+    },
+    {
+      "id": "less-extend-exact-extend-exact",
+      "feature": "extend-exact",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "extend-exact/extend-exact.less",
+      "expected": "extend-exact/extend-exact.css"
+    },
+    {
+      "id": "less-extend-media-extend-media",
+      "feature": "extend-media",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "extend-media/extend-media.less",
+      "expected": "extend-media/extend-media.css"
+    },
+    {
+      "id": "less-extend-nest-extend-nest",
+      "feature": "extend-nest",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "extend-nest/extend-nest.less",
+      "expected": "extend-nest/extend-nest.css"
+    },
+    {
+      "id": "less-extend-selector-extend-selector",
+      "feature": "extend-selector",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "extend-selector/extend-selector.less",
+      "expected": "extend-selector/extend-selector.css"
+    },
+    {
+      "id": "less-extend-extend",
+      "feature": "extend",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "extend/extend.less",
+      "expected": "extend/extend.css"
+    },
+    {
+      "id": "less-extract-and-length-extract-and-length",
+      "feature": "extract-and-length",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "extract-and-length/extract-and-length.less",
+      "expected": "extract-and-length/extract-and-length.css"
+    },
+    {
+      "id": "less-functions-each-functions-each",
+      "feature": "functions-each",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "functions-each/functions-each.less",
+      "expected": "functions-each/functions-each.css"
+    },
+    {
+      "id": "less-ie-filters-ie-filters",
+      "feature": "ie-filters",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "ie-filters/ie-filters.less",
+      "expected": "ie-filters/ie-filters.css"
+    },
+    {
+      "id": "less-impor-impor",
+      "feature": "impor",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "impor/impor.less",
+      "expected": "impor/impor.css"
+    },
+    {
+      "id": "less-import-import-interpolation",
+      "feature": "import",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "import/import-interpolation.less",
+      "expected": "import/import-interpolation.css"
+    },
+    {
+      "id": "less-import-import-once",
+      "feature": "import",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "import/import-once.less",
+      "expected": "import/import-once.css"
+    },
+    {
+      "id": "less-import-import-reference-issues",
+      "feature": "import",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "import/import-reference-issues.less",
+      "expected": "import/import-reference-issues.css"
+    },
+    {
+      "id": "less-layer-layer",
+      "feature": "layer",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "layer/layer.less",
+      "expected": "layer/layer.css"
+    },
+    {
+      "id": "less-lazy-eval-lazy-eval",
+      "feature": "lazy-eval",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "lazy-eval/lazy-eval.less",
+      "expected": "lazy-eval/lazy-eval.css"
+    },
+    {
+      "id": "less-merge-merge",
+      "feature": "merge",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "merge/merge.less",
+      "expected": "merge/merge.css"
+    },
+    {
+      "id": "less-mixin-noparens-mixin-noparens",
+      "feature": "mixin-noparens",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixin-noparens/mixin-noparens.less",
+      "expected": "mixin-noparens/mixin-noparens.css"
+    },
+    {
+      "id": "less-mixins-closure-mixins-closure",
+      "feature": "mixins-closure",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins-closure/mixins-closure.less",
+      "expected": "mixins-closure/mixins-closure.css"
+    },
+    {
+      "id": "less-mixins-guards-default-func-mixins-guards-default-func",
+      "feature": "mixins-guards-default-func",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins-guards-default-func/mixins-guards-default-func.less",
+      "expected": "mixins-guards-default-func/mixins-guards-default-func.css"
+    },
+    {
+      "id": "less-mixins-guards-mixins-guards",
+      "feature": "mixins-guards",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins-guards/mixins-guards.less",
+      "expected": "mixins-guards/mixins-guards.css"
+    },
+    {
+      "id": "less-mixins-important-mixins-important",
+      "feature": "mixins-important",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins-important/mixins-important.less",
+      "expected": "mixins-important/mixins-important.css"
+    },
+    {
+      "id": "less-mixins-interpolated-mixins-interpolated",
+      "feature": "mixins-interpolated",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins-interpolated/mixins-interpolated.less",
+      "expected": "mixins-interpolated/mixins-interpolated.css"
+    },
+    {
+      "id": "less-mixins-named-args-mixins-named-args",
+      "feature": "mixins-named-args",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins-named-args/mixins-named-args.less",
+      "expected": "mixins-named-args/mixins-named-args.css"
+    },
+    {
+      "id": "less-mixins-nested-mixins-nested",
+      "feature": "mixins-nested",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins-nested/mixins-nested.less",
+      "expected": "mixins-nested/mixins-nested.css"
+    },
+    {
+      "id": "less-mixins-pattern-mixins-pattern",
+      "feature": "mixins-pattern",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins-pattern/mixins-pattern.less",
+      "expected": "mixins-pattern/mixins-pattern.css"
+    },
+    {
+      "id": "less-mixins-maps",
+      "feature": "mixins",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins/maps.less",
+      "expected": "mixins/maps.css"
+    },
+    {
+      "id": "less-mixins-mixins-advanced",
+      "feature": "mixins",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins/mixins-advanced.less",
+      "expected": "mixins/mixins-advanced.css"
+    },
+    {
+      "id": "less-mixins-mixins",
+      "feature": "mixins",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "mixins/mixins.less",
+      "expected": "mixins/mixins.css"
+    },
+    {
+      "id": "less-namespace-targeted-namespace-targeted",
+      "feature": "namespace-targeted",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "namespace-targeted/namespace-targeted.less",
+      "expected": "namespace-targeted/namespace-targeted.css"
+    },
+    {
+      "id": "less-nesting-nesting",
+      "feature": "nesting",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "nesting/nesting.less",
+      "expected": "nesting/nesting.css"
+    },
+    {
+      "id": "less-no-output-no-output",
+      "feature": "no-output",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "no-output/no-output.less",
+      "expected": "no-output/no-output.css"
+    },
+    {
+      "id": "less-operations-operations-advanced",
+      "feature": "operations",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "operations/operations-advanced.less",
+      "expected": "operations/operations-advanced.css"
+    },
+    {
+      "id": "less-operations-operations",
+      "feature": "operations",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "operations/operations.less",
+      "expected": "operations/operations.css"
+    },
+    {
+      "id": "less-parse-interpolation-parse-interpolation",
+      "feature": "parse-interpolation",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "parse-interpolation/parse-interpolation.less",
+      "expected": "parse-interpolation/parse-interpolation.css"
+    },
+    {
+      "id": "less-property-accessors-property-accessors",
+      "feature": "property-accessors",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "property-accessors/property-accessors.less",
+      "expected": "property-accessors/property-accessors.css"
+    },
+    {
+      "id": "less-property-targeted-property-targeted",
+      "feature": "property-targeted",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "property-targeted/property-targeted.less",
+      "expected": "property-targeted/property-targeted.css"
+    },
+    {
+      "id": "less-rulesets-rulesets",
+      "feature": "rulesets",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "rulesets/rulesets.less",
+      "expected": "rulesets/rulesets.css"
+    },
+    {
+      "id": "less-scope-scope",
+      "feature": "scope",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "scope/scope.less",
+      "expected": "scope/scope.css"
+    },
+    {
+      "id": "less-selectors-selectors",
+      "feature": "selectors",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "selectors/selectors.less",
+      "expected": "selectors/selectors.css"
+    },
+    {
+      "id": "less-starting-style-starting-style",
+      "feature": "starting-style",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "starting-style/starting-style.less",
+      "expected": "starting-style/starting-style.css"
+    },
+    {
+      "id": "less-strings-strings",
+      "feature": "strings",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "strings/strings.less",
+      "expected": "strings/strings.css"
+    },
+    {
+      "id": "less-tailwind-tailwind",
+      "feature": "tailwind",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "tailwind/tailwind.less",
+      "expected": "tailwind/tailwind.css"
+    },
+    {
+      "id": "less-variables-in-at-rules-variables-in-at-rules",
+      "feature": "variables-in-at-rules",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "variables-in-at-rules/variables-in-at-rules.less",
+      "expected": "variables-in-at-rules/variables-in-at-rules.css"
+    },
+    {
+      "id": "less-variables-variable-advanced",
+      "feature": "variables",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "variables/variable-advanced.less",
+      "expected": "variables/variable-advanced.css"
+    },
+    {
+      "id": "less-variables-variables",
+      "feature": "variables",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "variables/variables.less",
+      "expected": "variables/variables.css"
+    },
+    {
+      "id": "less-whitespace-whitespace",
+      "feature": "whitespace",
+      "suite": "tests-unit",
+      "outcome": "success",
+      "entry": "whitespace/whitespace.less",
+      "expected": "whitespace/whitespace.css"
+    },
+    {
+      "id": "less-error-eval-add-mixed-units",
+      "feature": "negative-units",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "add-mixed-units.less",
+      "expected": "add-mixed-units.txt"
+    },
+    {
+      "id": "less-error-eval-at-rules-undefined-var",
+      "feature": "negative-variables",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "at-rules-undefined-var.less",
+      "expected": "at-rules-undefined-var.txt"
+    },
+    {
+      "id": "less-error-eval-color-func-invalid-color",
+      "feature": "negative-colors",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "color-func-invalid-color.less",
+      "expected": "color-func-invalid-color.txt"
+    },
+    {
+      "id": "less-error-eval-detached-ruleset-1",
+      "feature": "negative-rulesets",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "detached-ruleset-1.less",
+      "expected": "detached-ruleset-1.txt"
+    },
+    {
+      "id": "less-error-eval-extend-no-selector",
+      "feature": "negative-extend",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "extend-no-selector.less",
+      "expected": "extend-no-selector.txt"
+    },
+    {
+      "id": "less-error-eval-percentage-non-number-argument",
+      "feature": "negative-functions",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "percentage-non-number-argument.less",
+      "expected": "percentage-non-number-argument.txt"
+    },
+    {
+      "id": "less-error-eval-mixin-not-defined",
+      "feature": "negative-mixins",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "mixin-not-defined.less",
+      "expected": "mixin-not-defined.txt"
+    },
+    {
+      "id": "less-error-eval-mixin-not-matched",
+      "feature": "negative-mixins",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "mixin-not-matched.less",
+      "expected": "mixin-not-matched.txt"
+    },
+    {
+      "id": "less-error-eval-namespace-property-not-found",
+      "feature": "negative-namespaces",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "namespace-property-not-found.less",
+      "expected": "namespace-property-not-found.txt"
+    },
+    {
+      "id": "less-error-eval-recursive-variable",
+      "feature": "negative-recursion",
+      "suite": "tests-error/eval",
+      "outcome": "error",
+      "entry": "recursive-variable.less",
+      "expected": "recursive-variable.txt"
+    },
+    {
+      "id": "less-error-parse-at-rules-unmatching-block",
+      "feature": "negative-at-rules",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "at-rules-unmatching-block.less",
+      "expected": "at-rules-unmatching-block.txt"
+    },
+    {
+      "id": "less-error-parse-bad-variable-declaration1",
+      "feature": "negative-parser",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "bad-variable-declaration1.less",
+      "expected": "bad-variable-declaration1.txt"
+    },
+    {
+      "id": "less-error-parse-custom-property-unmatched-block-1",
+      "feature": "negative-custom-properties",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "custom-property-unmatched-block-1.less",
+      "expected": "custom-property-unmatched-block-1.txt"
+    },
+    {
+      "id": "less-error-parse-detached-ruleset-6",
+      "feature": "negative-rulesets",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "detached-ruleset-6.less",
+      "expected": "detached-ruleset-6.txt"
+    },
+    {
+      "id": "less-error-parse-extend-not-at-end",
+      "feature": "negative-extend",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "extend-not-at-end.less",
+      "expected": "extend-not-at-end.txt"
+    },
+    {
+      "id": "less-error-parse-import-malformed",
+      "feature": "negative-imports",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "import-malformed.less",
+      "expected": "import-malformed.txt"
+    },
+    {
+      "id": "less-error-parse-mixed-mixin-definition-args-1",
+      "feature": "negative-mixins",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "mixed-mixin-definition-args-1.less",
+      "expected": "mixed-mixin-definition-args-1.txt"
+    },
+    {
+      "id": "less-error-parse-parens-error-1",
+      "feature": "negative-parser",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "parens-error-1.less",
+      "expected": "parens-error-1.txt"
+    },
+    {
+      "id": "less-error-parse-parse-error-curly-bracket",
+      "feature": "negative-parser",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "parse-error-curly-bracket.less",
+      "expected": "parse-error-curly-bracket.txt"
+    },
+    {
+      "id": "less-error-parse-parse-error-missing-parens",
+      "feature": "negative-parser",
+      "suite": "tests-error/parse",
+      "outcome": "error",
+      "entry": "parse-error-missing-parens.less",
+      "expected": "parse-error-missing-parens.txt"
+    }
+  ]
+}

@@ -508,6 +508,28 @@ test('keeps canonical ancestry distinct for convergent multiple-import branches'
   })
 })
 
+test('deduplicates canonical default imports reached through different parents', async () => {
+  await withFixture(async ({ first }) => {
+    const left = path.join(first, 'left.less')
+    const right = path.join(first, 'right.less')
+    const shared = path.join(first, 'shared.less')
+    fs.writeFileSync(left, '@import "shared";\n.left { order: 1; }\n')
+    fs.writeFileSync(right, '@import "shared.less";\n.right { order: 2; }\n')
+    fs.writeFileSync(shared, '.shared { display: block; }\n')
+    const source = '@import "left";\n@import "right";'
+    const direct = await renderDirect(source, path.join(first, 'input.less'), [first])
+    const result = await compile(first, { source })
+
+    assert.equal(result.css, direct.css)
+    assert.equal((result.css.match(/\.shared \{/g) ?? []).length, 1)
+    assert.deepEqual(result.dependencies, [
+      { url: canonicalUrl(left), kind: 'import' },
+      { url: canonicalUrl(right), kind: 'import' },
+      { url: canonicalUrl(shared), kind: 'import' },
+    ])
+  })
+})
+
 test('confines canonical data-uri and image metadata functions with complete dependency facts', async () => {
   await withFixture(async ({ first, second, outside }) => {
     const textAsset = path.join(first, 'asset.txt')

@@ -457,7 +457,8 @@ test('documents the virtual Less boundary and preserves unavailable public admis
     '`data-uri()` and the three image metadata functions',
     'first-success dependency order',
     '`LESS-012`',
-    'public `.less` row remains unavailable and unverified',
+    'official Less tag `v4.6.7`',
+    '`.less` remains rejected by the public CLI',
   ]) {
     assert.match(documentation, new RegExp(statement.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
