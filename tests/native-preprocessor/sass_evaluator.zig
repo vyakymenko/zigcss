@@ -1139,6 +1139,206 @@ test "native Sass loads the built-in color module without a provider" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass queries math unit predicates without a provider" {
+    const input =
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$order: 0;
+        \\$first: null;
+        \\@function stamp($value) {
+        \\  $order: $order + 1 !global;
+        \\  @if $order == 1 { $first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\.a {
+        \\  compatible: math.compatible(1px, 1in);
+        \\  incompatible: math.compatible(1px, 1s);
+        \\  unitless-mixed: math.compatible(1, 2px);
+        \\  percentage: math.compatible(1%, 2%);
+        \\  percentage-length: math.compatible(1%, 2px);
+        \\  compound: math.compatible(1px * 1s, 2in * 1ms);
+        \\  custom: math.compatible(1foo, 2foo);
+        \\  custom-case: math.compatible(1foo, 2FOO);
+        \\  alias: numbers.compatible(1deg, 1turn);
+        \\  star: compatible(1s, 1ms);
+        \\  is-unitless: math.is-unitless(1);
+        \\  has-unit: math.is-unitless(1px);
+        \\  cancelled: math.is-unitless(1px / 1in);
+        \\  percent-unitless: math.is-unitless(1%);
+        \\  named: math.compatible($number2: stamp(1in), $number1: stamp(1px));
+        \\  first-evaluated: $first;
+        \\  legacy-comparable: comparable(1px, 1in);
+        \\  legacy-unitless: unitless(1);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "math-unit-predicates.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{compatible:true;incompatible:false;unitless-mixed:true;percentage:true;percentage-length:false;compound:true;custom:true;custom-case:false;alias:true;star:true;is-unitless:true;has-unit:false;cancelled:true;percent-unitless:false;named:true;first-evaluated:1in;legacy-comparable:true;legacy-unitless:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:math" as m
+        \\.sass
+        \\  compatible: m.compatible(1px, 1in)
+        \\  incompatible: m.compatible(1px, 1s)
+        \\  mixed: m.compatible(1, 2px)
+        \\  compound: m.compatible(1px * 1s, 2in * 1ms)
+        \\  unitless: m.is-unitless(1)
+        \\  unitful: m.is-unitless(1px)
+        \\  cancelled: m.is-unitless(1px / 1in)
+        \\  global: comparable(1px, 1in)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "math-unit-predicates.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{compatible:true;incompatible:false;mixed:true;compound:true;unitless:true;unitful:false;cancelled:true;global:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var css_functions = try compile(
+        std.testing.allocator,
+        "math-unit-predicate-globals.scss",
+        "@use \"sass:math\"; .plain { compatible: compatible(1px, 1in); unitless: is-unitless(1); }",
+        .scss,
+        .{},
+    );
+    defer css_functions.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{compatible:compatible(1px, 1in);unitless:is-unitless(1)}",
+        css_functions.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), css_functions.nativeDiagnostics().len);
+}
+
+test "native Sass math unit predicates reject unowned calls and unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-math-module.scss",
+            .input = ".a { value: math.compatible(1px, 1in); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unsupported-math-member.scss",
+            .input = "@use \"sass:math\"; .a { value: math.unit($undefined); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unsupported-unprefixed-math-member.scss",
+            .input = "@use \"sass:math\" as *; .a { value: unit(1px); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-math-namespace.scss",
+            .input = "@use \"sass:math\" as Math; .a { value: math.compatible(1px, 1in); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "duplicate-math-namespace.scss",
+            .input = "@use \"sass:map\" as tools; @use \"sass:math\" as tools;",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "math-compatible-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.compatible();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-compatible-short.scss",
+            .input = "@use \"sass:math\"; $value: math.compatible(1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-compatible-long.scss",
+            .input = "@use \"sass:math\"; $value: math.compatible(1px, 1in, 1cm);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-compatible-type.scss",
+            .input = "@use \"sass:math\"; $value: math.compatible(\"1px\", 1in);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-compatible-list-type.scss",
+            .input = "@use \"sass:math\"; $value: math.compatible((1px, 1in), 1cm);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-compatible-unknown-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.compatible(1px, 1in, $other: 1cm);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-compatible-duplicate-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.compatible($number1: 1px, $number1: 1in, $number2: 1cm);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-compatible-splat.scss",
+            .input = "@use \"sass:math\"; $args: (1px, 1in); $value: math.compatible($args...);",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "math-is-unitless-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.is-unitless();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-is-unitless-long.scss",
+            .input = "@use \"sass:math\"; $value: math.is-unitless(1, 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-is-unitless-type.scss",
+            .input = "@use \"sass:math\"; $value: math.is-unitless(null);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "legacy-comparable-type.scss",
+            .input = "$value: comparable(red, 1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "legacy-unitless-type.scss",
+            .input = "$value: unitless(red);",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "math-compatible-argument-limit.scss",
+            "@use \"sass:math\"; $value: math.compatible(1px, 1in);",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass inspects callable keywords through the built-in meta module" {
     const input =
         \\@use "sass:meta";
@@ -1297,7 +1497,7 @@ test "native Sass color module rejects unresolved ambiguous or unsupported use" 
         },
         .{
             .name = "unsupported-builtin-module.scss",
-            .input = "@use \"sass:math\";",
+            .input = "@use \"sass:selector\";",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -4236,6 +4436,7 @@ fn exerciseAllocationFailures(
         \\@use "sass:color";
         \\@use "sass:list" as lists;
         \\@use "sass:map";
+        \\@use "sass:math";
         \\@use "sass:meta";
         \\@use "sass:string" as strings;
         \\$size: 2px;
@@ -4262,6 +4463,8 @@ fn exerciseAllocationFailures(
         \\$deep-removed: map.deep-remove($deep-base, a, b, x);
         \\$enabled: not false;
         \\$inch: 1in;
+        \\$math-compatible: math.compatible($inch, 96px);
+        \\$math-unitless: math.is-unitless($inch / 96px);
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
         \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
         \\@function allocation-target($left, $right: 0) { @return $left + $right; }
@@ -4302,6 +4505,8 @@ fn exerciseAllocationFailures(
         \\  flow-after: $flow;
         \\  converted: $inch + 96px;
         \\  cancelled: ($inch / 2.54cm);
+        \\  math-compatible: $math-compatible;
+        \\  math-unitless: $math-unitless;
         \\  reduced-calc: calc($size + 2px);
         \\  deferred-calc: calc(100% - $size);
         \\  color: rgba(hsl(.5turn, 100%, 50%), .4);
@@ -4356,7 +4561,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

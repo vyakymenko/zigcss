@@ -122,6 +122,8 @@ const Builtin = enum {
     list_join,
     list_zip,
     list_slash,
+    math_compatible,
+    math_is_unitless,
     meta_keywords,
     quote,
     unquote,
@@ -447,12 +449,14 @@ const ArithmeticProbe = union(enum) {
 const ArithmeticContext = enum {
     sass,
     calculation,
+    numeric_function,
 };
 
 const BuiltinModule = enum {
     color,
     list,
     map,
+    math,
     meta,
     string,
 };
@@ -859,6 +863,8 @@ const Engine = struct {
             .list
         else if (std.mem.eql(u8, parsed.url, "sass:map"))
             .map
+        else if (std.mem.eql(u8, parsed.url, "sass:math"))
+            .math
         else if (std.mem.eql(u8, parsed.url, "sass:meta"))
             .meta
         else if (std.mem.eql(u8, parsed.url, "sass:string"))
@@ -883,6 +889,7 @@ const Engine = struct {
                 .color => "color",
                 .list => "list",
                 .map => "map",
+                .math => "math",
                 .meta => "meta",
                 .string => "string",
             };
@@ -3162,7 +3169,7 @@ const Engine = struct {
             .cursor = first,
             .scope = scope,
             .span = span,
-            .allows_slash_division = slashDivisionEnabled(raw),
+            .allows_slash_division = context == .numeric_function or slashDivisionEnabled(raw),
             .strict_additive_units = context == .calculation,
         };
         const numeric = parser.parseExpression() catch |err| {
@@ -3529,6 +3536,91 @@ const Engine = struct {
         };
     }
 
+    fn callMathUnitPredicate(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const result = switch (builtin) {
+            .math_compatible => blk: {
+                if (arguments.len != 2) {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "math compatible() requires exactly two numbers",
+                    );
+                    return error.InvalidExpression;
+                }
+                const left = try self.mathNumericArgument(arguments[0].*, span);
+                const right = try self.mathNumericArgument(arguments[1].*, span);
+                break :blk native_numeric.compatible(left, right);
+            },
+            .math_is_unitless => blk: {
+                if (arguments.len != 1) {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "math is-unitless() requires exactly one number",
+                    );
+                    return error.InvalidExpression;
+                }
+                const number = try self.mathNumericArgument(arguments[0].*, span);
+                break :blk number.isDimensionless();
+            },
+            else => unreachable,
+        };
+        return self.values.own(.{ .boolean = result });
+    }
+
+    fn mathNumericArgument(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!Numeric {
+        const number = switch (item) {
+            .number => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass math predicate requires a number");
+                return error.InvalidExpression;
+            },
+        };
+        return native_numeric.Numeric.fromNumber(number) catch |err| {
+            try self.report(
+                if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
+                span,
+                "invalid native Sass math predicate number",
+            );
+            return err;
+        };
+    }
+
+    fn evaluateMathPredicateArgument(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        switch (try self.probeArithmetic(raw, scope, span, .numeric_function)) {
+            .numeric => |numeric| {
+                var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                return self.values.own(.{
+                    .number = try numeric.toNumber(&numerator, &denominator),
+                });
+            },
+            .none => return self.evaluateExpressionBytes(raw, scope, span),
+            .incompatible, .invalid => {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "invalid native Sass math predicate expression",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
     fn tryModuleBuiltin(
         self: *Engine,
         name: []const u8,
@@ -3541,10 +3633,19 @@ const Engine = struct {
                     .color => colorModuleBuiltin(name),
                     .list => listModuleBuiltin(name),
                     .map => mapModuleBuiltin(name),
+                    .math => mathModuleBuiltin(name),
                     .meta => metaModuleBuiltin(name),
                     .string => stringModuleBuiltin(name),
                 };
                 if (builtin) |resolved| return resolved;
+                if (binding.kind == .math and mathModuleOwnsFunction(name)) {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "undefined native Sass module function",
+                    );
+                    return error.InvalidExpression;
+                }
             }
             return null;
         }
@@ -3566,6 +3667,7 @@ const Engine = struct {
             .color => colorModuleBuiltin(qualified.member),
             .list => listModuleBuiltin(qualified.member),
             .map => mapModuleBuiltin(qualified.member),
+            .math => mathModuleBuiltin(qualified.member),
             .meta => metaModuleBuiltin(qualified.member),
             .string => stringModuleBuiltin(qualified.member),
         };
@@ -3619,6 +3721,10 @@ const Engine = struct {
             .list_join
         else if (sassNameEql(name, "zip"))
             .list_zip
+        else if (sassNameEql(name, "comparable"))
+            .math_compatible
+        else if (sassNameEql(name, "unitless"))
+            .math_is_unitless
         else if (sassNameEql(name, "quote"))
             .quote
         else if (sassNameEql(name, "unquote"))
@@ -3774,6 +3880,8 @@ const Engine = struct {
             .list_join,
             .map_keys,
             .map_values,
+            .math_compatible,
+            .math_is_unitless,
             .meta_keywords,
             .red,
             .green,
@@ -7024,6 +7132,11 @@ const Engine = struct {
                 .{ .name = "bracketed", .required = false },
             },
             .map_keys, .map_values => &.{.{ .name = "map" }},
+            .math_compatible => &.{
+                .{ .name = "number1" },
+                .{ .name = "number2" },
+            },
+            .math_is_unitless => &.{.{ .name = "number" }},
             .meta_keywords => &.{.{ .name = "args" }},
             .red,
             .green,
@@ -7091,11 +7204,15 @@ const Engine = struct {
 
         var evaluated: [4]*const native_value.Value = undefined;
         for (parsed.items, 0..) |argument, index| {
-            evaluated[index] = try self.evaluateExpressionBytes(
-                body[argument.value.start..argument.value.end],
-                scope,
-                span,
-            );
+            const argument_raw = body[argument.value.start..argument.value.end];
+            evaluated[index] = switch (builtin) {
+                .math_compatible, .math_is_unitless => try self.evaluateMathPredicateArgument(
+                    argument_raw,
+                    scope,
+                    span,
+                ),
+                else => try self.evaluateExpressionBytes(argument_raw, scope, span),
+            };
         }
 
         const automatic_list_option = native_value.Value{ .string = .{ .bytes = "auto" } };
@@ -7138,6 +7255,11 @@ const Engine = struct {
             .list_set_nth => self.callListSetNth(arguments, span),
             .list_join => self.callListJoin(arguments, span),
             .map_keys, .map_values => self.callMapEntries(builtin, arguments, span),
+            .math_compatible, .math_is_unitless => self.callMathUnitPredicate(
+                builtin,
+                arguments,
+                span,
+            ),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
                 builtin,
@@ -8278,6 +8400,25 @@ fn mapModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "deep-merge")) return .map_deep_merge;
     if (sassNameEql(name, "deep-remove")) return .map_deep_remove;
     return null;
+}
+
+fn mathModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "compatible")) return .math_compatible;
+    if (sassNameEql(name, "is-unitless")) return .math_is_unitless;
+    return null;
+}
+
+fn mathModuleOwnsFunction(name: []const u8) bool {
+    const functions = [_][]const u8{
+        "abs",   "acos", "asin",       "atan",  "atan2",      "ceil",
+        "clamp", "cos",  "div",        "floor", "hypot",      "log",
+        "max",   "min",  "percentage", "pow",   "random",     "round",
+        "sin",   "sqrt", "tan",        "unit",  "compatible", "is-unitless",
+    };
+    for (functions) |function| {
+        if (sassNameEql(name, function)) return true;
+    }
+    return false;
 }
 
 fn metaModuleBuiltin(name: []const u8) ?Builtin {

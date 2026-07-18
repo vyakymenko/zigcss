@@ -225,6 +225,11 @@ pub fn compare(left: Numeric, right: Numeric) Error!Ordering {
     return if (left_value < right_value) .less else .greater;
 }
 
+pub fn compatible(left: Numeric, right: Numeric) bool {
+    if (left.isDimensionless() or right.isDimensionless()) return true;
+    return dimensionsEqual(left, right);
+}
+
 /// Matches Dart Sass's non-inspect number precision: shortest decimal values
 /// longer than eleven bytes are rounded to at most ten fractional digits.
 pub fn serialize(

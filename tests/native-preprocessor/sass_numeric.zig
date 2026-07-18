@@ -84,6 +84,42 @@ test "native Sass numeric equality and ordering use canonical dimensions" {
     ));
 }
 
+test "native Sass numeric compatibility matches unit addition domains" {
+    const unitless = try numeric.Numeric.init(1, null);
+    const pixels = try unitNumber(1, "px");
+    try std.testing.expect(numeric.compatible(unitless, pixels));
+    try std.testing.expect(numeric.compatible(pixels, try unitNumber(1, "in")));
+    try std.testing.expect(!numeric.compatible(pixels, try unitNumber(1, "s")));
+    try std.testing.expect(numeric.compatible(
+        try unitNumber(1, "%"),
+        try unitNumber(2, "%"),
+    ));
+    try std.testing.expect(!numeric.compatible(
+        try unitNumber(1, "%"),
+        pixels,
+    ));
+    try std.testing.expect(numeric.compatible(
+        try unitNumber(1, "custom"),
+        try unitNumber(2, "custom"),
+    ));
+    try std.testing.expect(!numeric.compatible(
+        try unitNumber(1, "custom"),
+        try unitNumber(2, "CUSTOM"),
+    ));
+
+    const left = try numeric.multiply(
+        try unitNumber(1, "px"),
+        try unitNumber(1, "s"),
+        '*',
+    );
+    const right = try numeric.multiply(
+        try unitNumber(2, "in"),
+        try unitNumber(1, "ms"),
+        '*',
+    );
+    try std.testing.expect(numeric.compatible(left, right));
+}
+
 test "native Sass numeric algebra rejects incompatible unsafe and oversized units" {
     try std.testing.expectError(
         error.IncompatibleUnits,
