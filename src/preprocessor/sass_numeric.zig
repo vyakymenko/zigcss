@@ -355,7 +355,7 @@ fn unitFactor(unit: []const u8) f64 {
 
 fn unitDefinition(unit: []const u8) ?Definition {
     for (definitions) |definition| {
-        if (std.ascii.eqlIgnoreCase(unit, definition.name)) return definition;
+        if (std.mem.eql(u8, unit, definition.name)) return definition;
     }
     return null;
 }

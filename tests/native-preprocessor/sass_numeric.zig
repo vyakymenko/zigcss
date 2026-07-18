@@ -106,6 +106,23 @@ test "native Sass numeric compatibility matches unit addition domains" {
         try unitNumber(1, "custom"),
         try unitNumber(2, "CUSTOM"),
     ));
+    try std.testing.expect(!numeric.compatible(
+        try unitNumber(1, "PX"),
+        pixels,
+    ));
+    try std.testing.expectError(
+        error.IncompatibleUnits,
+        numeric.add(try unitNumber(1, "PX"), pixels, '+'),
+    );
+    const cased_ratio = try numeric.multiply(
+        try unitNumber(1, "PX"),
+        try unitNumber(1, "in"),
+        '/',
+    );
+    try std.testing.expect(!cased_ratio.isDimensionless());
+    const cased_output = try valueNumber(cased_ratio);
+    try std.testing.expectEqualStrings("PX", cased_output.numerator_units[0]);
+    try std.testing.expectEqualStrings("in", cased_output.denominator_units[0]);
 
     const left = try numeric.multiply(
         try unitNumber(1, "px"),

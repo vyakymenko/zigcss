@@ -1160,11 +1160,13 @@ test "native Sass queries math unit predicates without a provider" {
         \\  compound: math.compatible(1px * 1s, 2in * 1ms);
         \\  custom: math.compatible(1foo, 2foo);
         \\  custom-case: math.compatible(1foo, 2FOO);
+        \\  known-case: math.compatible(1PX, 2px);
         \\  alias: numbers.compatible(1deg, 1turn);
         \\  star: compatible(1s, 1ms);
         \\  is-unitless: math.is-unitless(1);
         \\  has-unit: math.is-unitless(1px);
         \\  cancelled: math.is-unitless(1px / 1in);
+        \\  known-case-cancelled: math.is-unitless(1PX / 1in);
         \\  percent-unitless: math.is-unitless(1%);
         \\  named: math.compatible($number2: stamp(1in), $number1: stamp(1px));
         \\  first-evaluated: $first;
@@ -1175,7 +1177,7 @@ test "native Sass queries math unit predicates without a provider" {
     var result = try compile(std.testing.allocator, "math-unit-predicates.scss", input, .scss, .{});
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".a{compatible:true;incompatible:false;unitless-mixed:true;percentage:true;percentage-length:false;compound:true;custom:true;custom-case:false;alias:true;star:true;is-unitless:true;has-unit:false;cancelled:true;percent-unitless:false;named:true;first-evaluated:1in;legacy-comparable:true;legacy-unitless:true}",
+        ".a{compatible:true;incompatible:false;unitless-mixed:true;percentage:true;percentage-length:false;compound:true;custom:true;custom-case:false;known-case:false;alias:true;star:true;is-unitless:true;has-unit:false;cancelled:true;known-case-cancelled:false;percent-unitless:false;named:true;first-evaluated:1in;legacy-comparable:true;legacy-unitless:true}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
