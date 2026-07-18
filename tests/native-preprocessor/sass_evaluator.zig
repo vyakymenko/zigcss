@@ -349,6 +349,145 @@ test "native Sass rejects maps as CSS values and duplicate map keys" {
     );
 }
 
+test "native Sass queries maps through global and built-in module functions" {
+    const input =
+        \\@use "sass:map";
+        \\@use "sass:map" as maps;
+        \\@use "sass:map" as *;
+        \\$theme: (tone: blue, nested: (tone: red), spaces: (1, 2));
+        \\@function empty-rest($args...) { @return map.has-key($args, tone); }
+        \\.a {
+        \\  get: map.get($theme, nested, tone);
+        \\  alias: maps.get($theme, tone);
+        \\  star: get($theme, tone);
+        \\  legacy: map-get($theme, nested, tone);
+        \\  keyword-get: map.get($key: tone, $map: $theme);
+        \\  has: map.has-key($theme, nested, tone);
+        \\  missing: map.has-key($theme, nested, absent);
+        \\  nested-non-map: map.has-key($theme, tone, absent);
+        \\  legacy-has: map-has-key($theme, tone);
+        \\  keyword-has: maps.has-key($key: tone, $map: $theme);
+        \\  second-key: nth(map.keys($theme), 2);
+        \\  first-value: nth(maps.values($theme), 1);
+        \\  key-count: length(keys($theme));
+        \\  legacy-key: nth(map-keys($theme), 3);
+        \\  legacy-value: nth(map-values($theme), 3);
+        \\  keyword-key: nth(map.keys($map: $theme), 1);
+        \\  empty-keys: length(map.keys(()));
+        \\  empty-brackets: length(map.values([]));
+        \\  empty-has: map.has-key((), tone);
+        \\  empty-rest: empty-rest();
+        \\  omitted-missing: map.get($theme, nested, absent);
+        \\  omitted-non-map: map.get($theme, tone, absent);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "map-queries.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{get:red;alias:blue;star:blue;legacy:red;keyword-get:blue;has:true;missing:false;nested-non-map:false;legacy-has:true;keyword-has:true;second-key:nested;first-value:blue;key-count:3;legacy-key:spaces;legacy-value:1,2;keyword-key:tone;empty-keys:0;empty-brackets:0;empty-has:false;empty-rest:false}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:map" as m
+        \\$theme: (tone: purple, nested: (tone: orange))
+        \\.sass
+        \\  value: m.get($theme, nested, tone)
+        \\  has: m.has-key($theme, tone)
+        \\  key: nth(m.keys($theme), 1)
+        \\  nested: map-get(nth(m.values($theme), 2), tone)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "map-queries.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{value:orange;has:true;key:tone;nested:orange}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass map queries reject unowned calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-map-module.scss",
+            .input = ".a { value: map.get((tone: blue), tone); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-map-member.scss",
+            .input = "@use \"sass:map\"; .a { value: map.nope($undefined); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-get-type.scss",
+            .input = "@use \"sass:map\"; .a { value: map.get(1, tone); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-has-key-type.scss",
+            .input = "@use \"sass:map\"; .a { value: map.has-key(1, tone); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-keys-type.scss",
+            .input = "@use \"sass:map\"; .a { value: map.keys(1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-values-type.scss",
+            .input = "@use \"sass:map\"; .a { value: map.values(1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-get-arity.scss",
+            .input = "@use \"sass:map\"; .a { value: map.get((tone: blue)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-has-key-arity.scss",
+            .input = "@use \"sass:map\"; .a { value: map.has-key((tone: blue)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-keys-arity.scss",
+            .input = "@use \"sass:map\"; .a { value: map.keys((tone: blue), tone); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-values-arity.scss",
+            .input = "@use \"sass:map\"; .a { value: map.values(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "map-query-splat.scss",
+            .input = "@use \"sass:map\"; $args: ((tone: blue), tone); .a { value: map.get($args...); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "duplicate-map-module-namespace.scss",
+            .input = "@use \"sass:meta\" as tools; @use \"sass:map\" as tools;",
+            .expected = error.InvalidSassSyntax,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass bounds recursive collection evaluation" {
     var limits = sass_evaluator.Limits{};
     limits.max_evaluation_depth = 3;
@@ -2821,6 +2960,7 @@ fn exerciseAllocationFailures(
     defer sources.deinit();
     const input =
         \\@use "sass:color";
+        \\@use "sass:map";
         \\@use "sass:meta";
         \\$size: 2px;
         \\$name: card;
@@ -2879,6 +3019,10 @@ fn exerciseAllocationFailures(
         \\  modern-color: oklab($channels: 50% 10% -10% / .5);
         \\  wide-color: color($description: display-p3 100% 0% -10% / .5);
         \\  map-keyword: map-get($key: tone, $map: $theme);
+        \\  module-map: map.get($theme, tone);
+        \\  map-has: map.has-key($theme, tone);
+        \\  map-first-key: nth(map.keys($theme), 1);
+        \\  map-first-value: nth(map.values($theme), 1);
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
         \\  string-quote: quote(foo);
@@ -2906,7 +3050,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

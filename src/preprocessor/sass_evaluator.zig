@@ -104,6 +104,9 @@ const SplitSeparator = enum {
 
 const Builtin = enum {
     map_get,
+    map_has_key,
+    map_keys,
+    map_values,
     nth,
     length,
     meta_keywords,
@@ -435,6 +438,7 @@ const ArithmeticContext = enum {
 
 const BuiltinModule = enum {
     color,
+    map,
     meta,
 };
 
@@ -805,6 +809,8 @@ const Engine = struct {
         };
         const module_kind: BuiltinModule = if (std.mem.eql(u8, parsed.url, "sass:color"))
             .color
+        else if (std.mem.eql(u8, parsed.url, "sass:map"))
+            .map
         else if (std.mem.eql(u8, parsed.url, "sass:meta"))
             .meta
         else {
@@ -825,6 +831,7 @@ const Engine = struct {
         else
             parsed.namespace orelse switch (module_kind) {
                 .color => "color",
+                .map => "map",
                 .meta => "meta",
             };
         if (namespace) |candidate| {
@@ -3476,6 +3483,7 @@ const Engine = struct {
                 if (binding.namespace != null) continue;
                 const builtin = switch (binding.kind) {
                     .color => colorModuleBuiltin(name),
+                    .map => mapModuleBuiltin(name),
                     .meta => metaModuleBuiltin(name),
                 };
                 if (builtin) |resolved| return resolved;
@@ -3498,6 +3506,7 @@ const Engine = struct {
         };
         const builtin = switch (module) {
             .color => colorModuleBuiltin(qualified.member),
+            .map => mapModuleBuiltin(qualified.member),
             .meta => metaModuleBuiltin(qualified.member),
         };
         return builtin orelse {
@@ -3522,6 +3531,12 @@ const Engine = struct {
             return null
         else if (sassNameEql(name, "map-get"))
             .map_get
+        else if (sassNameEql(name, "map-has-key"))
+            .map_has_key
+        else if (sassNameEql(name, "map-keys"))
+            .map_keys
+        else if (sassNameEql(name, "map-values"))
+            .map_values
         else if (sassNameEql(name, "nth"))
             .nth
         else if (sassNameEql(name, "length"))
@@ -3640,7 +3655,8 @@ const Engine = struct {
         }
 
         switch (builtin) {
-            .map_get => return try self.callMapGetRaw(
+            .map_get, .map_has_key => return try self.callMapQueryRaw(
+                builtin,
                 body,
                 ranges.items,
                 scope,
@@ -3648,6 +3664,8 @@ const Engine = struct {
             ),
             .nth,
             .length,
+            .map_keys,
+            .map_values,
             .meta_keywords,
             .red,
             .green,
@@ -5360,29 +5378,60 @@ const Engine = struct {
             try self.report(.invalid_operation, span, "map-get() requires a map and at least one key");
             return error.InvalidExpression;
         }
-        var current = arguments[0];
-        for (arguments[1..]) |key| {
-            const map = switch (current.*) {
-                .map => |item| item,
-                else => {
-                    try self.report(.type_mismatch, span, "map-get() requires a map value");
-                    return error.InvalidExpression;
-                },
-            };
-            var found: ?*const native_value.Value = null;
-            for (map.entries, 0..) |entry, index| {
-                if (sassValuesEqual(entry.key, key.*)) {
-                    found = &map.entries[index].value;
-                    break;
-                }
-            }
-            current = found orelse return self.values.own(.{ .null_value = {} });
+        var map = nativeMapView(arguments[0].*) orelse {
+            try self.report(.type_mismatch, span, "map-get() requires a map value");
+            return error.InvalidExpression;
+        };
+        for (arguments[1..], 0..) |key, index| {
+            const current = (try self.findMapValue(map, key.*)) orelse
+                return self.values.own(.{ .null_value = {} });
+            if (index + 1 == arguments.len - 1) return current;
+            map = nativeMapView(current.*) orelse
+                return self.values.own(.{ .null_value = {} });
         }
-        return current;
+        unreachable;
     }
 
-    fn callMapGetRaw(
+    fn callMapHasKey(
         self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 2) {
+            try self.report(.invalid_operation, span, "map-has-key() requires a map and at least one key");
+            return error.InvalidExpression;
+        }
+        var map = nativeMapView(arguments[0].*) orelse {
+            try self.report(.type_mismatch, span, "map-has-key() requires a map value");
+            return error.InvalidExpression;
+        };
+        for (arguments[1..], 0..) |key, index| {
+            const current = (try self.findMapValue(map, key.*)) orelse
+                return self.values.own(.{ .boolean = false });
+            if (index + 1 == arguments.len - 1) {
+                return self.values.own(.{ .boolean = true });
+            }
+            map = nativeMapView(current.*) orelse
+                return self.values.own(.{ .boolean = false });
+        }
+        unreachable;
+    }
+
+    fn findMapValue(
+        self: *Engine,
+        map: native_value.Map,
+        key: native_value.Value,
+    ) Error!?*const native_value.Value {
+        for (map.entries, 0..) |entry, index| {
+            try self.transaction.consumeOperations(1);
+            if (sassValuesEqual(entry.key, key)) return &map.entries[index].value;
+        }
+        return null;
+    }
+
+    fn callMapQueryRaw(
+        self: *Engine,
+        builtin: Builtin,
         body: []const u8,
         ranges: []const ExpressionRange,
         scope: native_environment.ScopeId,
@@ -5399,10 +5448,7 @@ const Engine = struct {
         var has_keyword = false;
         for (parsed.items) |argument| {
             if (argument.splat) return self.argumentsFailure(error.SplatUnsupported, span);
-            if (argument.name != null) {
-                has_keyword = true;
-                break;
-            }
+            if (argument.name != null) has_keyword = true;
         }
         if (!has_keyword) {
             var arguments: std.ArrayList(*const native_value.Value) = .empty;
@@ -5417,7 +5463,11 @@ const Engine = struct {
                     ),
                 );
             }
-            return self.callMapGet(arguments.items, span);
+            return switch (builtin) {
+                .map_get => self.callMapGet(arguments.items, span),
+                .map_has_key => self.callMapHasKey(arguments.items, span),
+                else => unreachable,
+            };
         }
 
         const parameters = [_]native_arguments.Parameter{
@@ -5441,7 +5491,49 @@ const Engine = struct {
                 span,
             );
         }
-        return self.callMapGet(&arguments, span);
+        return switch (builtin) {
+            .map_get => self.callMapGet(&arguments, span),
+            .map_has_key => self.callMapHasKey(&arguments, span),
+            else => unreachable,
+        };
+    }
+
+    fn callMapEntries(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, switch (builtin) {
+                .map_keys => "map-keys() requires exactly one map",
+                .map_values => "map-values() requires exactly one map",
+                else => unreachable,
+            });
+            return error.InvalidExpression;
+        }
+        const map = nativeMapView(arguments[0].*) orelse {
+            try self.report(.type_mismatch, span, switch (builtin) {
+                .map_keys => "map-keys() requires a map value",
+                .map_values => "map-values() requires a map value",
+                else => unreachable,
+            });
+            return error.InvalidExpression;
+        };
+        var items: std.ArrayList(native_value.Value) = .empty;
+        defer items.deinit(self.allocator);
+        for (map.entries) |entry| {
+            try self.transaction.consumeOperations(1);
+            try items.append(self.allocator, switch (builtin) {
+                .map_keys => entry.key,
+                .map_values => entry.value,
+                else => unreachable,
+            });
+        }
+        return self.values.own(.{ .list = .{
+            .items = items.items,
+            .separator = .comma,
+        } });
     }
 
     fn callNth(
@@ -5754,6 +5846,7 @@ const Engine = struct {
                 .{ .name = "n" },
             },
             .length => &.{.{ .name = "list" }},
+            .map_keys, .map_values => &.{.{ .name = "map" }},
             .meta_keywords => &.{.{ .name = "args" }},
             .red,
             .green,
@@ -5844,6 +5937,7 @@ const Engine = struct {
         return switch (builtin) {
             .nth => self.callNth(arguments, span),
             .length => self.callLength(arguments, span),
+            .map_keys, .map_values => self.callMapEntries(builtin, arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
                 builtin,
@@ -6959,6 +7053,14 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     return null;
 }
 
+fn mapModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "get")) return .map_get;
+    if (sassNameEql(name, "has-key")) return .map_has_key;
+    if (sassNameEql(name, "keys")) return .map_keys;
+    if (sassNameEql(name, "values")) return .map_values;
+    return null;
+}
+
 fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "keywords")) return .meta_keywords;
     return null;
@@ -7151,6 +7253,18 @@ fn startsSassWord(input: []const u8, start: usize, word: []const u8) bool {
 fn endsSassWord(input: []const u8, end: usize, word: []const u8) bool {
     if (end < word.len or !std.mem.eql(u8, input[end - word.len .. end], word)) return false;
     return end == word.len or !isVariableNameContinue(input[end - word.len - 1]);
+}
+
+fn nativeMapView(item: native_value.Value) ?native_value.Map {
+    return switch (item) {
+        .map => |map| map,
+        .list => |list| if (list.items.len == 0) .{ .entries = &.{} } else null,
+        .argument_list => |argument_list| if (argument_list.positional.len == 0)
+            .{ .entries = &.{} }
+        else
+            null,
+        else => null,
+    };
 }
 
 fn sassTruthy(item: native_value.Value) bool {
