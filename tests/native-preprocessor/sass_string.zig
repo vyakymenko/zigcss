@@ -127,6 +127,10 @@ test "native Sass strings fail closed on malformed data and output ceilings" {
         string.decodeAlloc(allocator, &.{0xff}, true, 1024),
     );
     try std.testing.expectError(
+        error.InvalidString,
+        string.decodeAlloc(allocator, &.{ '\\', 0 }, false, 1024),
+    );
+    try std.testing.expectError(
         error.OutputLimitExceeded,
         string.insertAlloc(allocator, "abcd", true, "efgh", true, 1, 7),
     );

@@ -205,7 +205,8 @@ pub fn decodeAlloc(
         const end = std.math.add(usize, index, scalar_length) catch
             return error.InvalidString;
         if (end > raw.len) return error.InvalidString;
-        _ = std.unicode.utf8Decode(raw[index..end]) catch return error.InvalidString;
+        const scalar = std.unicode.utf8Decode(raw[index..end]) catch return error.InvalidString;
+        if (scalar == 0) return error.InvalidString;
         if (!quoted) try appendBounded(&output, allocator, "\\", maximum_bytes);
         try appendBounded(&output, allocator, raw[index..end], maximum_bytes);
         index = end;
