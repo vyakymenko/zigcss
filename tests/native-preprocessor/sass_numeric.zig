@@ -182,3 +182,56 @@ test "native Sass number serialization matches the ten-place contract" {
         try numeric.serialize(1.0 / 3.0, &expanded_buffer, false),
     );
 }
+
+test "native Sass unit serialization preserves exact compound spelling" {
+    const cases = [_]struct {
+        number: preprocessor.value.Number,
+        expected: []const u8,
+    }{
+        .{ .number = .{ .value = 1 }, .expected = "" },
+        .{ .number = .{ .value = 1, .numerator_units = &.{"px"} }, .expected = "px" },
+        .{ .number = .{ .value = 1, .numerator_units = &.{ "px", "s" } }, .expected = "px*s" },
+        .{ .number = .{ .value = 1, .numerator_units = &.{ "s", "px" } }, .expected = "s*px" },
+        .{ .number = .{ .value = 1, .denominator_units = &.{"s"} }, .expected = "s^-1" },
+        .{ .number = .{ .value = 1, .denominator_units = &.{ "s", "foo" } }, .expected = "(s*foo)^-1" },
+        .{
+            .number = .{
+                .value = 1,
+                .numerator_units = &.{"px"},
+                .denominator_units = &.{"s"},
+            },
+            .expected = "px/s",
+        },
+        .{
+            .number = .{
+                .value = 1,
+                .numerator_units = &.{ "px", "px" },
+                .denominator_units = &.{ "s", "s" },
+            },
+            .expected = "px*px/(s*s)",
+        },
+        .{
+            .number = .{
+                .value = 1,
+                .numerator_units = &.{ "Foo", "bar" },
+                .denominator_units = &.{ "BAZ", "qux" },
+            },
+            .expected = "Foo*bar/(BAZ*qux)",
+        },
+    };
+    for (cases) |case| {
+        const length = try numeric.unitStringLength(case.number);
+        try std.testing.expectEqual(case.expected.len, length);
+        var buffer: [64]u8 = undefined;
+        try std.testing.expectEqualStrings(
+            case.expected,
+            try numeric.serializeUnits(case.number, &buffer),
+        );
+        if (length > 0) {
+            try std.testing.expectError(
+                error.SerializationLimitExceeded,
+                numeric.serializeUnits(case.number, buffer[0 .. length - 1]),
+            );
+        }
+    }
+}

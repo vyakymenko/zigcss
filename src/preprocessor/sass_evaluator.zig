@@ -124,6 +124,7 @@ const Builtin = enum {
     list_slash,
     math_compatible,
     math_is_unitless,
+    math_unit,
     meta_keywords,
     quote,
     unquote,
@@ -3578,13 +3579,7 @@ const Engine = struct {
         item: native_value.Value,
         span: native_source.Span,
     ) Error!Numeric {
-        const number = switch (item) {
-            .number => |value| value,
-            else => {
-                try self.report(.type_mismatch, span, "native Sass math predicate requires a number");
-                return error.InvalidExpression;
-            },
-        };
+        const number = try self.mathNumberArgument(item, span);
         return native_numeric.Numeric.fromNumber(number) catch |err| {
             try self.report(
                 if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
@@ -3595,7 +3590,71 @@ const Engine = struct {
         };
     }
 
-    fn evaluateMathPredicateArgument(
+    fn mathNumberArgument(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Number {
+        return switch (item) {
+            .number => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass math function requires a number");
+                return error.InvalidExpression;
+            },
+        };
+    }
+
+    fn callMathUnit(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "math unit() requires exactly one number");
+            return error.InvalidExpression;
+        }
+        const number = try self.mathNumberArgument(arguments[0].*, span);
+        const unit_count = std.math.add(
+            usize,
+            number.numerator_units.len,
+            number.denominator_units.len,
+        ) catch {
+            try self.report(.resource_limit, span, "native Sass math unit limit exceeded");
+            return error.UnitLimitExceeded;
+        };
+        const operation_count = std.math.add(usize, unit_count, 1) catch {
+            try self.report(.resource_limit, span, "native Sass math unit limit exceeded");
+            return error.UnitLimitExceeded;
+        };
+        try self.transaction.consumeOperations(operation_count);
+        const length = native_numeric.unitStringLength(number) catch |err| {
+            try self.report(
+                switch (err) {
+                    error.UnitLimitExceeded, error.SerializationLimitExceeded => .resource_limit,
+                    else => .invalid_operation,
+                },
+                span,
+                "invalid native Sass math unit serialization",
+            );
+            return err;
+        };
+        if (length > self.limits.max_temporary_bytes) {
+            try self.report(.resource_limit, span, "native Sass math unit output limit exceeded");
+            return error.TemporaryLimitExceeded;
+        }
+        if (length == 0) {
+            return self.values.own(.{ .string = .{ .bytes = "", .quoted = true } });
+        }
+        const bytes = try self.allocator.alloc(u8, length);
+        defer self.allocator.free(bytes);
+        const serialized = native_numeric.serializeUnits(number, bytes) catch |err| {
+            try self.report(.invalid_operation, span, "invalid native Sass math unit serialization");
+            return err;
+        };
+        return self.values.own(.{ .string = .{ .bytes = serialized, .quoted = true } });
+    }
+
+    fn evaluateMathNumericArgument(
         self: *Engine,
         raw: []const u8,
         scope: native_environment.ScopeId,
@@ -3614,7 +3673,7 @@ const Engine = struct {
                 try self.report(
                     .invalid_operation,
                     span,
-                    "invalid native Sass math predicate expression",
+                    "invalid native Sass math function expression",
                 );
                 return error.InvalidExpression;
             },
@@ -3725,6 +3784,8 @@ const Engine = struct {
             .math_compatible
         else if (sassNameEql(name, "unitless"))
             .math_is_unitless
+        else if (sassNameEql(name, "unit"))
+            .math_unit
         else if (sassNameEql(name, "quote"))
             .quote
         else if (sassNameEql(name, "unquote"))
@@ -3882,6 +3943,7 @@ const Engine = struct {
             .map_values,
             .math_compatible,
             .math_is_unitless,
+            .math_unit,
             .meta_keywords,
             .red,
             .green,
@@ -7137,6 +7199,7 @@ const Engine = struct {
                 .{ .name = "number2" },
             },
             .math_is_unitless => &.{.{ .name = "number" }},
+            .math_unit => &.{.{ .name = "number" }},
             .meta_keywords => &.{.{ .name = "args" }},
             .red,
             .green,
@@ -7206,7 +7269,7 @@ const Engine = struct {
         for (parsed.items, 0..) |argument, index| {
             const argument_raw = body[argument.value.start..argument.value.end];
             evaluated[index] = switch (builtin) {
-                .math_compatible, .math_is_unitless => try self.evaluateMathPredicateArgument(
+                .math_compatible, .math_is_unitless, .math_unit => try self.evaluateMathNumericArgument(
                     argument_raw,
                     scope,
                     span,
@@ -7260,6 +7323,7 @@ const Engine = struct {
                 arguments,
                 span,
             ),
+            .math_unit => self.callMathUnit(arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
                 builtin,
@@ -8405,6 +8469,7 @@ fn mapModuleBuiltin(name: []const u8) ?Builtin {
 fn mathModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "compatible")) return .math_compatible;
     if (sassNameEql(name, "is-unitless")) return .math_is_unitless;
+    if (sassNameEql(name, "unit")) return .math_unit;
     return null;
 }
 

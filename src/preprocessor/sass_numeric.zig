@@ -230,6 +230,47 @@ pub fn compatible(left: Numeric, right: Numeric) bool {
     return dimensionsEqual(left, right);
 }
 
+pub fn unitStringLength(number: native_value.Number) Error!usize {
+    const instance_count = std.math.add(
+        usize,
+        number.numerator_units.len,
+        number.denominator_units.len,
+    ) catch return error.UnitLimitExceeded;
+    if (instance_count > max_unit_instances) return error.UnitLimitExceeded;
+
+    var length: usize = 0;
+    if (number.numerator_units.len > 0) {
+        try addUnitListLength(&length, number.numerator_units);
+    }
+    if (number.denominator_units.len > 0) {
+        if (number.numerator_units.len > 0) try addSerializedLength(&length, 1);
+        if (number.denominator_units.len > 1) try addSerializedLength(&length, 1);
+        try addUnitListLength(&length, number.denominator_units);
+        if (number.denominator_units.len > 1) try addSerializedLength(&length, 1);
+        if (number.numerator_units.len == 0) try addSerializedLength(&length, 3);
+    }
+    return length;
+}
+
+pub fn serializeUnits(number: native_value.Number, output: []u8) Error![]const u8 {
+    const length = try unitStringLength(number);
+    if (output.len < length) return error.SerializationLimitExceeded;
+
+    var cursor: usize = 0;
+    if (number.numerator_units.len > 0) {
+        writeUnitList(output, &cursor, number.numerator_units);
+    }
+    if (number.denominator_units.len > 0) {
+        if (number.numerator_units.len > 0) writeSerialized(output, &cursor, "/");
+        if (number.denominator_units.len > 1) writeSerialized(output, &cursor, "(");
+        writeUnitList(output, &cursor, number.denominator_units);
+        if (number.denominator_units.len > 1) writeSerialized(output, &cursor, ")");
+        if (number.numerator_units.len == 0) writeSerialized(output, &cursor, "^-1");
+    }
+    std.debug.assert(cursor == length);
+    return output[0..length];
+}
+
 /// Matches Dart Sass's non-inspect number precision: shortest decimal values
 /// longer than eleven bytes are rounded to at most ten fractional digits.
 pub fn serialize(
@@ -266,6 +307,31 @@ fn finishSerialization(
         return buffer[0 .. formatted.len - 1];
     }
     return formatted;
+}
+
+fn addUnitListLength(length: *usize, units: []const []const u8) Error!void {
+    for (units, 0..) |unit, index| {
+        if (unit.len == 0) return error.InvalidNumber;
+        if (index > 0) try addSerializedLength(length, 1);
+        try addSerializedLength(length, unit.len);
+    }
+}
+
+fn addSerializedLength(length: *usize, amount: usize) Error!void {
+    length.* = std.math.add(usize, length.*, amount) catch
+        return error.SerializationLimitExceeded;
+}
+
+fn writeUnitList(output: []u8, cursor: *usize, units: []const []const u8) void {
+    for (units, 0..) |unit, index| {
+        if (index > 0) writeSerialized(output, cursor, "*");
+        writeSerialized(output, cursor, unit);
+    }
+}
+
+fn writeSerialized(output: []u8, cursor: *usize, bytes: []const u8) void {
+    std.mem.copyForwards(u8, output[cursor.* .. cursor.* + bytes.len], bytes);
+    cursor.* += bytes.len;
 }
 
 fn simplifyUnits(number: *Numeric) Error!void {
