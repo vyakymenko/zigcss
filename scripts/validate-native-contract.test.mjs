@@ -68,6 +68,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-list-join'), true)
   assert.equal(sassCore.capabilities.includes('built-in-list-zip'), true)
   assert.equal(sassCore.capabilities.includes('built-in-list-slash'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-math-constants-deterministic-random'), true)
   assert.equal(sassCore.capabilities.includes('built-in-math-division'), true)
   assert.equal(sassCore.capabilities.includes('built-in-math-extrema-hypotenuse'), true)
   assert.equal(sassCore.capabilities.includes('built-in-math-powers-roots-logarithms'), true)

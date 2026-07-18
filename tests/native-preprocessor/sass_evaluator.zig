@@ -1248,14 +1248,14 @@ test "native Sass math unit predicates reject unowned calls and unsafe arguments
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "unsupported-math-member.scss",
+            .name = "math-random-undefined-limit.scss",
             .input = "@use \"sass:math\"; .a { value: math.random($undefined); }",
-            .expected = error.InvalidExpression,
+            .expected = error.UndefinedVariable,
         },
         .{
-            .name = "unsupported-unprefixed-math-member.scss",
+            .name = "unprefixed-math-random-undefined-limit.scss",
             .input = "@use \"sass:math\" as *; .a { value: random($undefined); }",
-            .expected = error.InvalidExpression,
+            .expected = error.UndefinedVariable,
         },
         .{
             .name = "case-sensitive-math-namespace.scss",
@@ -2668,6 +2668,282 @@ test "native Sass extrema clamping and hypotenuse reject unsafe arguments" {
             limits,
         ),
     );
+}
+
+test "native Sass resolves math constants and deterministic random values without a provider" {
+    const constants =
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\@function local-pi() { $pi: 1; @return $pi; }
+        \\.constants {
+        \\  e: math.$e;
+        \\  pi: math.$pi;
+        \\  epsilon-scaled: math.$epsilon * 1000000000000000;
+        \\  max-ratio: math.div(math.$max-number, 1e300);
+        \\  max-safe: math.$max-safe-integer;
+        \\  min-number: math.$min-number;
+        \\  min-safe: math.$min-safe-integer;
+        \\  alias: numbers.$pi;
+        \\  star: $e;
+        \\  underscore: math.$max_safe_integer;
+        \\  trig: math.sin(math.div(math.$pi, 2));
+        \\  interpolated: #{math.$pi};
+        \\  local-shadow: local-pi();
+        \\}
+    ;
+    var constants_result = try compile(
+        std.testing.allocator,
+        "math-constants.scss",
+        constants,
+        .scss,
+        .{},
+    );
+    defer constants_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".constants{e:2.7182818285;pi:3.1415926536;epsilon-scaled:.2220446049;max-ratio:179769313.48623157;max-safe:9007199254740991;min-number:0;min-safe:-9007199254740991;alias:3.1415926536;star:2.7182818285;underscore:9007199254740991;trig:1;interpolated:3.1415926536;local-shadow:1}",
+        constants_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), constants_result.nativeDiagnostics().len);
+
+    const random =
+        \\@use "sass:math";
+        \\@use "sass:math" as rng;
+        \\@use "sass:math" as *;
+        \\$evaluations: 0;
+        \\@function stamp($value) { $evaluations: $evaluations + 1 !global; @return $value; }
+        \\$unit-a: math.random();
+        \\$unit-b: math.random(null);
+        \\$unit-c: math.random();
+        \\$bounded: math.random(5);
+        \\$named: rng.random($limit: 7);
+        \\$splat: random((9,)...);
+        \\$map-splat: math.random((limit: 11)...);
+        \\$empty-splat: math.random(()...);
+        \\$overridden: math.random($limit: 0, (limit: 5)...);
+        \\$maximum: math.random(4294967296);
+        \\$stamped: math.random($limit: stamp(6));
+        \\$unit-limit: math.random(4px);
+        \\.random {
+        \\  unit-range: $unit-a >= 0 and $unit-a < 1 and $unit-b >= 0 and $unit-b < 1 and $unit-c >= 0 and $unit-c < 1;
+        \\  sequence-varies: $unit-a != $unit-b or $unit-b != $unit-c;
+        \\  bounded-range: $bounded >= 1 and $bounded <= 5 and $bounded == math.floor($bounded);
+        \\  named-range: $named >= 1 and $named <= 7 and $named == math.floor($named);
+        \\  splat-range: $splat >= 1 and $splat <= 9 and $splat == math.floor($splat);
+        \\  map-splat-range: $map-splat >= 1 and $map-splat <= 11 and $map-splat == math.floor($map-splat);
+        \\  empty-splat-range: $empty-splat >= 0 and $empty-splat < 1;
+        \\  override-range: $overridden >= 1 and $overridden <= 5;
+        \\  maximum-range: $maximum >= 1 and $maximum <= 4294967296 and $maximum == math.floor($maximum);
+        \\  stamped-range: $stamped >= 1 and $stamped <= 6 and $evaluations == 1;
+        \\  unit-limit-range: $unit-limit >= 1 and $unit-limit <= 4 and $unit-limit == math.floor($unit-limit) and math.is-unitless($unit-limit);
+        \\  samples: $unit-a $unit-b $unit-c $bounded $named $splat $map-splat $empty-splat $overridden $maximum $stamped $unit-limit;
+        \\}
+    ;
+    var first_random = try compile(
+        std.testing.allocator,
+        "math-random-first.scss",
+        random,
+        .scss,
+        .{},
+    );
+    defer first_random.deinit();
+    var replay_random = try compile(
+        std.testing.allocator,
+        "math-random-replay.scss",
+        random,
+        .scss,
+        .{},
+    );
+    defer replay_random.deinit();
+    try std.testing.expectEqualStrings(first_random.css(), replay_random.css());
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        first_random.css(),
+        ".random{unit-range:true;sequence-varies:true;bounded-range:true;named-range:true;splat-range:true;map-splat-range:true;empty-splat-range:true;override-range:true;maximum-range:true;stamped-range:true;unit-limit-range:true;samples:",
+    ));
+    try std.testing.expect(std.mem.endsWith(u8, first_random.css(), "}"));
+
+    const deterministic_golden =
+        \\@use "sass:math";
+        \\.golden {
+        \\  first: math.random();
+        \\  bounded: math.random(10);
+        \\  second: math.random();
+        \\}
+    ;
+    var golden_result = try compile(
+        std.testing.allocator,
+        "math-random-golden.scss",
+        deterministic_golden,
+        .scss,
+        .{},
+    );
+    defer golden_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".golden{first:.7417619928;bounded:5;second:.2622934202}",
+        golden_result.css(),
+    );
+
+    const indented =
+        \\@use "sass:math" as m
+        \\$sample: m.random(8)
+        \\.sass
+        \\  e: m.$e
+        \\  pi: m.$pi
+        \\  safe: m.$min-safe-integer
+        \\  random-range: $sample >= 1 and $sample <= 8 and $sample == m.floor($sample)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "math-constants-random.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{e:2.7182818285;pi:3.1415926536;safe:-9007199254740991;random-range:true}",
+        sass_result.css(),
+    );
+
+    const global_random =
+        \\$sample: random(6);
+        \\.global { range: $sample >= 1 and $sample <= 6; sample: $sample; }
+    ;
+    var first_global = try compile(
+        std.testing.allocator,
+        "math-global-random-first.scss",
+        global_random,
+        .scss,
+        .{},
+    );
+    defer first_global.deinit();
+    var replay_global = try compile(
+        std.testing.allocator,
+        "math-global-random-replay.scss",
+        global_random,
+        .scss,
+        .{},
+    );
+    defer replay_global.deinit();
+    try std.testing.expectEqualStrings(first_global.css(), replay_global.css());
+    try std.testing.expect(std.mem.startsWith(u8, first_global.css(), ".global{range:true;sample:"));
+    try std.testing.expect(std.mem.endsWith(u8, first_global.css(), "}"));
+}
+
+test "native Sass math constants and random reject unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-math-constant-module.scss",
+            .input = ".a { value: math.$pi; }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "plain-math-constant-without-star.scss",
+            .input = "@use \"sass:math\"; .a { value: $pi; }",
+            .expected = error.UndefinedVariable,
+        },
+        .{
+            .name = "unknown-math-constant.scss",
+            .input = "@use \"sass:math\"; .a { value: math.$unknown; }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "cased-math-constant.scss",
+            .input = "@use \"sass:math\"; .a { value: math.$PI; }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-math-constant-namespace.scss",
+            .input = "@use \"sass:math\" as Math; .a { value: math.$pi; }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "wrong-module-math-constant.scss",
+            .input = "@use \"sass:list\"; .a { value: list.$pi; }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "modify-star-math-constant.scss",
+            .input = "@use \"sass:math\" as *; $pi: 1; .a { value: $pi; }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "modify-qualified-math-constant.scss",
+            .input = "@use \"sass:math\"; math.$pi: 1; .a { value: math.$pi; }",
+            .expected = error.InvalidSyntax,
+        },
+        .{
+            .name = "preexisting-star-math-constant.scss",
+            .input = "$pi: 1; @use \"sass:math\" as *; .a { value: $pi; }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "global-modify-star-math-constant.scss",
+            .input = "@use \"sass:math\" as *; @function mutate() { $pi: 1 !global; @return $pi; } .a { value: mutate(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-decimal.scss",
+            .input = "@use \"sass:math\"; $value: math.random(2.5);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-zero.scss",
+            .input = "@use \"sass:math\"; $value: math.random(0);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-negative.scss",
+            .input = "@use \"sass:math\"; $value: math.random(-2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-bound-too-large.scss",
+            .input = "@use \"sass:math\"; $value: math.random(4294967297);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-string.scss",
+            .input = "@use \"sass:math\"; $value: math.random(foo);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-dynamic.scss",
+            .input = "@use \"sass:math\"; $value: math.random(var(--limit));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-too-many.scss",
+            .input = "@use \"sass:math\"; $value: math.random(1, 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-unknown-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.random($other: 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-duplicate-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.random(2, $limit: 3);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-random-position-and-map-splat.scss",
+            .input = "@use \"sass:math\"; $value: math.random(2, (limit: 3)...);",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
 }
 
 test "native Sass inspects callable keywords through the built-in meta module" {
@@ -5685,6 +5961,10 @@ const AllocationContext = struct {
     root: []const u8,
 };
 
+const MathAllocationContext = struct {
+    root: []const u8,
+};
+
 // Heap-layout-dependent in-place remaps make allocation counts unstable across
 // hosts. Force growth through explicit allocations so every OOM point is tested.
 const DeterministicAllocationBacking = struct {
@@ -5954,6 +6234,68 @@ test "native Sass semantic core handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         backing.allocator(),
         exerciseAllocationFailures,
+        .{&context},
+    );
+}
+
+fn exerciseMathConstantRandomAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const MathAllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input =
+        \\@use "sass:math";
+        \\$sample: math.random((limit: 5px)...);
+        \\.allocation {
+        \\  e: math.$e;
+        \\  epsilon: math.$epsilon * 1000000000000000;
+        \\  random-range: $sample >= 1 and $sample <= 5;
+        \\  random: $sample;
+        \\}
+    ;
+    const source_id = try sources.add("math-allocation.scss", input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        result.css(),
+        ".allocation{e:2.7182818285;epsilon:.2220446049;random-range:true;random:",
+    ));
+    try std.testing.expect(std.mem.endsWith(u8, result.css(), "}"));
+    try std.testing.expectEqual(@as(usize, 1), result.nativeDiagnostics().len);
+}
+
+test "native Sass math constants and random handle every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const context = MathAllocationContext{ .root = root };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMathConstantRandomAllocationFailures,
         .{&context},
     );
 }

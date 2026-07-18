@@ -215,6 +215,25 @@ test "native Sass number serialization matches the ten-place contract" {
     );
 }
 
+test "native Sass built-in constants retain IEEE precision until arithmetic" {
+    const epsilon = try numeric.Numeric.fromBuiltinConstant(std.math.floatEps(f64));
+    try std.testing.expectEqual(std.math.floatEps(f64), epsilon.value);
+    const scaled = try numeric.multiply(
+        epsilon,
+        try numeric.Numeric.init(1_000_000_000_000_000, null),
+        '*',
+    );
+    try std.testing.expectApproxEqAbs(@as(f64, 0.2220446049250313), scaled.value, 1e-15);
+
+    const true_minimum = try numeric.Numeric.fromBuiltinConstant(std.math.floatTrueMin(f64));
+    try std.testing.expect(true_minimum.value > 0);
+    try std.testing.expectEqual(std.math.floatTrueMin(f64), true_minimum.value);
+    try std.testing.expectEqual(
+        std.math.floatMax(f64),
+        (try numeric.Numeric.fromBuiltinConstant(std.math.floatMax(f64))).value,
+    );
+}
+
 test "native Sass unit serialization preserves exact compound spelling" {
     const cases = [_]struct {
         number: preprocessor.value.Number,

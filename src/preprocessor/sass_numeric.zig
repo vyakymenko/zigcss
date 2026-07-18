@@ -83,6 +83,15 @@ pub const Numeric = struct {
         return result;
     }
 
+    /// Retains a built-in IEEE constant's complete f64 payload until an
+    /// operation consumes it. Display rounding may serialize epsilon or the
+    /// true minimum as zero, but eager arithmetic canonicalization would make
+    /// later multiplication observably incorrect.
+    pub fn fromBuiltinConstant(value: f64) Error!Numeric {
+        if (!std.math.isFinite(value)) return error.InvalidNumber;
+        return .{ .value = value };
+    }
+
     pub fn toNumber(
         self: Numeric,
         numerator: *[max_unit_instances][]const u8,

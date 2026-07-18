@@ -139,6 +139,7 @@ const Builtin = enum {
     math_min,
     math_percentage,
     math_pow,
+    math_random,
     math_round,
     math_sin,
     math_sqrt,
@@ -482,6 +483,21 @@ const BuiltinModule = enum {
     string,
 };
 
+const max_random_limit: u64 = 1 << 32;
+const MathConstantDefinition = struct {
+    name: []const u8,
+    value: f64,
+};
+const math_constants = [_]MathConstantDefinition{
+    .{ .name = "e", .value = std.math.e },
+    .{ .name = "epsilon", .value = std.math.floatEps(f64) },
+    .{ .name = "max-number", .value = std.math.floatMax(f64) },
+    .{ .name = "max-safe-integer", .value = 9_007_199_254_740_991.0 },
+    .{ .name = "min-number", .value = std.math.floatTrueMin(f64) },
+    .{ .name = "min-safe-integer", .value = -9_007_199_254_740_991.0 },
+    .{ .name = "pi", .value = std.math.pi },
+};
+
 const ModuleBinding = struct {
     kind: BuiltinModule,
     namespace: ?[]const u8,
@@ -578,6 +594,7 @@ const Engine = struct {
     expression_depth: u16 = 0,
     selector_count: usize = 0,
     selector_bytes: usize = 0,
+    random_state: u64,
 
     fn init(
         allocator: std.mem.Allocator,
@@ -589,6 +606,8 @@ const Engine = struct {
         try validateLimits(limits);
         var environment = try native_environment.Environment.init(allocator, limits.environment);
         errdefer environment.deinit();
+        const root = document.get(document.root) catch return error.InvalidSassSyntax;
+        const root_source = try sources.get(root.span.source);
         return .{
             .allocator = allocator,
             .sources = sources,
@@ -598,6 +617,7 @@ const Engine = struct {
             .values = native_value.Store.init(allocator, limits.values),
             .environment = environment,
             .global_scope = environment.root(),
+            .random_state = deterministicRandomSeed(root_source.bytes),
         };
     }
 
@@ -925,6 +945,17 @@ const Engine = struct {
                 .meta => "meta",
                 .string => "string",
             };
+        if (namespace == null and module_kind == .math) {
+            for (math_constants) |constant| {
+                if (try self.environment.lookup(self.global_scope, constant.name) == null) continue;
+                try self.report(
+                    .duplicate_binding,
+                    node.span,
+                    "unprefixed Sass module variable conflicts with an existing variable",
+                );
+                return error.InvalidExpression;
+            }
+        }
         if (namespace) |candidate| {
             for (self.modules.items) |binding| {
                 if (binding.namespace) |existing| {
@@ -2872,6 +2903,12 @@ const Engine = struct {
         defer self.allocator.free(normalized);
         const expression_bytes = try self.sources.slice(expression_node.text.?);
         const assignment = try self.parseVariableAssignment(expression_bytes, expression_node.span);
+        if (self.unprefixedMathConstant(normalized) != null and
+            (scope.kind == .global or assignment.global))
+        {
+            try self.report(.invalid_operation, declaration.span, "cannot modify a native Sass built-in variable");
+            return error.InvalidExpression;
+        }
         const existing = if (assignment.global)
             try self.environment.lookup(self.global_scope, normalized)
         else
@@ -3357,6 +3394,7 @@ const Engine = struct {
         self.expression_depth += 1;
         defer self.expression_depth -= 1;
         try self.transaction.consumeOperations(@intCast(trimmed.len + 1));
+        if (try self.tryModuleVariable(trimmed, diagnostic_span)) |item| return item;
         if (trimmed.len > 0 and trimmed[0] == '$' and variableEnd(trimmed, 1) == trimmed.len) {
             return self.lookupVariable(trimmed, scope, diagnostic_span);
         }
@@ -4196,6 +4234,43 @@ const Engine = struct {
         };
     }
 
+    fn tryModuleVariable(
+        self: *Engine,
+        raw: []const u8,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const constant = (try self.tryModuleConstant(raw, span)) orelse return null;
+        return self.values.own(.{ .number = .{ .value = constant } });
+    }
+
+    fn tryModuleConstant(
+        self: *Engine,
+        raw: []const u8,
+        span: native_source.Span,
+    ) Error!?f64 {
+        const qualified = parseQualifiedVariable(raw) orelse return null;
+        var matched: ?BuiltinModule = null;
+        for (self.modules.items) |binding| {
+            const namespace = binding.namespace orelse continue;
+            if (std.mem.eql(u8, namespace, qualified.namespace)) {
+                matched = binding.kind;
+                break;
+            }
+        }
+        const module = matched orelse {
+            try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
+            return error.InvalidExpression;
+        };
+        const value = if (module == .math)
+            mathModuleConstant(qualified.member)
+        else
+            null;
+        return value orelse {
+            try self.report(.undefined_variable, span, "undefined native Sass module variable");
+            return error.InvalidExpression;
+        };
+    }
+
     fn tryBuiltinCall(
         self: *Engine,
         raw: []const u8,
@@ -4266,6 +4341,8 @@ const Engine = struct {
             .math_percentage
         else if (sassNameEql(name, "pow"))
             .math_pow
+        else if (sassNameEql(name, "random"))
+            .math_random
         else if (sassNameEql(name, "round"))
             .math_round
         else if (sassNameEql(name, "sin"))
@@ -4489,6 +4566,12 @@ const Engine = struct {
                 builtin,
                 module_builtin != null,
                 raw,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
+            .math_random => return try self.callMathRandomRaw(
                 body,
                 ranges.items,
                 scope,
@@ -7764,6 +7847,87 @@ const Engine = struct {
         };
     }
 
+    fn callMathRandomRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        if (evaluated.positional.items.len > 1) {
+            return self.argumentsFailure(error.PositionalLimitExceeded, span);
+        }
+
+        var limit: ?*const native_value.Value = if (evaluated.positional.items.len == 1)
+            evaluated.positional.items[0]
+        else
+            null;
+        for (evaluated.keywords.items) |keyword| {
+            const matches = if (keyword.normalize_name)
+                native_arguments.nameEql(keyword.name, "limit")
+            else
+                std.mem.eql(u8, keyword.name, "limit");
+            if (!matches) return self.argumentsFailure(error.UnknownArgument, span);
+            if (limit != null) return self.argumentsFailure(error.DuplicateArgument, span);
+            limit = keyword.value;
+        }
+        return self.callMathRandom(limit, span);
+    }
+
+    fn callMathRandom(
+        self: *Engine,
+        limit_value: ?*const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const item = limit_value orelse return self.randomUnitValue();
+        if (item.* == .null_value) return self.randomUnitValue();
+        const number = try self.mathNumberArgument(item.*, span);
+        if (!std.math.isFinite(number.value) or @floor(number.value) != number.value or
+            number.value <= 0 or number.value > @as(f64, @floatFromInt(max_random_limit)))
+        {
+            try self.report(.invalid_operation, span, "math random() limit must be a positive 32-bit integer");
+            return error.InvalidExpression;
+        }
+        if (number.numerator_units.len != 0 or number.denominator_units.len != 0) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "math.random() currently ignores $limit units",
+                &.{},
+            );
+        }
+        const limit: u64 = @intFromFloat(number.value);
+        const threshold = ((~limit) +% 1) % limit;
+        while (true) {
+            try self.transaction.consumeOperations(1);
+            const candidate = self.nextRandomU64();
+            if (candidate < threshold) continue;
+            const selected = candidate % limit + 1;
+            return self.values.own(.{ .number = .{ .value = @floatFromInt(selected) } });
+        }
+    }
+
+    fn randomUnitValue(self: *Engine) Error!*const native_value.Value {
+        try self.transaction.consumeOperations(1);
+        const mantissa = self.nextRandomU64() >> 11;
+        const value = @as(f64, @floatFromInt(mantissa)) * (1.0 / 9_007_199_254_740_992.0);
+        return self.values.own(.{ .number = .{ .value = value } });
+    }
+
+    fn nextRandomU64(self: *Engine) u64 {
+        // A fixed SplitMix64 stream makes the intrinsically nondeterministic
+        // upstream Sass function reproducible for identical source bytes. This
+        // is a build-reproducibility primitive, never a cryptographic RNG.
+        self.random_state +%= 0x9e3779b97f4a7c15;
+        var value = self.random_state;
+        value = (value ^ (value >> 30)) *% 0xbf58476d1ce4e5b9;
+        value = (value ^ (value >> 27)) *% 0x94d049bb133111eb;
+        return value ^ (value >> 31);
+    }
+
     fn preserveGlobalHypotIfNeeded(
         self: *Engine,
         raw: []const u8,
@@ -8388,8 +8552,19 @@ const Engine = struct {
         const normalized = try self.normalizeVariable(raw_name);
         defer self.allocator.free(normalized);
         if (try self.lookupVisibleVariable(scope, normalized)) |item| return item;
+        if (self.unprefixedMathConstant(normalized)) |constant| {
+            return self.values.own(.{ .number = .{ .value = constant } });
+        }
         try self.report(.undefined_variable, span, "undefined Sass variable");
         return error.UndefinedVariable;
+    }
+
+    fn unprefixedMathConstant(self: *const Engine, name: []const u8) ?f64 {
+        for (self.modules.items) |binding| {
+            if (binding.kind != .math or binding.namespace != null) continue;
+            return mathModuleConstant(name);
+        }
+        return null;
     }
 
     fn lookupVisibleVariable(
@@ -8800,6 +8975,12 @@ const ArithmeticParser = struct {
             },
             .variable => {
                 self.cursor += 1;
+                const raw_name = token.raw(self.raw);
+                const normalized = try self.engine.normalizeVariable(raw_name);
+                defer self.engine.allocator.free(normalized);
+                if (self.engine.unprefixedMathConstant(normalized)) |constant| {
+                    return native_numeric.Numeric.fromBuiltinConstant(constant);
+                }
                 const item = try self.engine.lookupVariable(token.raw(self.raw), self.scope, self.span);
                 return switch (item.*) {
                     .number => |number| native_numeric.Numeric.fromNumber(number),
@@ -8807,6 +8988,21 @@ const ArithmeticParser = struct {
                 };
             },
             .identifier => {
+                if (self.cursor + 2 < self.tokens.len) {
+                    const separator = self.tokens[self.cursor + 1];
+                    const variable = self.tokens[self.cursor + 2];
+                    if (separator.kind == .delimiter and variable.kind == .variable and
+                        token.span.end == separator.span.start and
+                        separator.span.end == variable.span.start and
+                        std.mem.eql(u8, separator.raw(self.raw), "."))
+                    {
+                        const qualified = self.raw[token.span.start..variable.span.end];
+                        const constant = (try self.engine.tryModuleConstant(qualified, self.span)) orelse
+                            return error.InvalidExpression;
+                        self.cursor += 3;
+                        return native_numeric.Numeric.fromBuiltinConstant(constant);
+                    }
+                }
                 var opening_index = self.cursor + 1;
                 while (opening_index < self.tokens.len and
                     isExpressionTrivia(self.tokens[opening_index].kind))
@@ -9260,11 +9456,19 @@ fn mathModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "min")) return .math_min;
     if (sassNameEql(name, "percentage")) return .math_percentage;
     if (sassNameEql(name, "pow")) return .math_pow;
+    if (sassNameEql(name, "random")) return .math_random;
     if (sassNameEql(name, "round")) return .math_round;
     if (sassNameEql(name, "sin")) return .math_sin;
     if (sassNameEql(name, "sqrt")) return .math_sqrt;
     if (sassNameEql(name, "tan")) return .math_tan;
     if (sassNameEql(name, "unit")) return .math_unit;
+    return null;
+}
+
+fn mathModuleConstant(name: []const u8) ?f64 {
+    for (math_constants) |constant| {
+        if (sassNameEql(name, constant.name)) return constant.value;
+    }
     return null;
 }
 
@@ -9873,6 +10077,27 @@ fn parseQualifiedName(input: []const u8) ?QualifiedName {
     const member = input[dot + 1 ..];
     if (!isSimpleIdentifier(namespace) or !isSimpleIdentifier(member)) return null;
     return .{ .namespace = namespace, .member = member };
+}
+
+fn parseQualifiedVariable(input: []const u8) ?QualifiedName {
+    const dot = std.mem.indexOfScalar(u8, input, '.') orelse return null;
+    const namespace = input[0..dot];
+    const variable = input[dot + 1 ..];
+    if (!isSimpleIdentifier(namespace) or variable.len < 2 or variable[0] != '$') return null;
+    if (!isVariableNameStart(variable[1]) or variableEnd(variable, 1) != variable.len) return null;
+    return .{ .namespace = namespace, .member = variable[1..] };
+}
+
+fn deterministicRandomSeed(bytes: []const u8) u64 {
+    // Stable FNV-1a over the root bytes deliberately excludes paths, process
+    // state, clocks, and host entropy so serial and parallel builds agree.
+    var hash: u64 = 0xcbf29ce484222325;
+    for (bytes) |byte| {
+        hash ^= byte;
+        hash *%= 0x100000001b3;
+    }
+    hash ^= @as(u64, @intCast(bytes.len));
+    return hash;
 }
 
 fn variableEnd(input: []const u8, start: usize) usize {
