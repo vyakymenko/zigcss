@@ -229,10 +229,34 @@ const UserFunction = struct {
     }
 };
 
+const UserMixin = struct {
+    allocator: std.mem.Allocator,
+    name: []u8,
+    parameters: []CallableParameter,
+    block: native_syntax.NodeId,
+    owner: *ScopeFrame,
+    span: native_source.Span,
+    accepts_content: bool,
+
+    fn deinit(self: *UserMixin) void {
+        self.allocator.free(self.name);
+        for (self.parameters) |parameter| self.allocator.free(parameter.name);
+        if (self.parameters.len > 0) self.allocator.free(self.parameters);
+        self.* = undefined;
+    }
+};
+
+const ContentInvocation = struct {
+    block: native_syntax.NodeId,
+    owner: *ScopeFrame,
+    captured_content: ?*const ContentInvocation,
+};
+
 const CallableValidationContext = struct {
     in_function: bool = false,
     in_control: bool = false,
     in_mixin: bool = false,
+    allows_content: bool = false,
 };
 
 const ParsedForLoop = struct {
@@ -298,6 +322,8 @@ const Engine = struct {
     environment: native_environment.Environment,
     global_scope: native_environment.ScopeId,
     user_functions: std.ArrayList(UserFunction) = .empty,
+    user_mixins: std.ArrayList(UserMixin) = .empty,
+    active_content: ?*const ContentInvocation = null,
     expression_depth: u16 = 0,
     selector_count: usize = 0,
     selector_bytes: usize = 0,
@@ -327,6 +353,8 @@ const Engine = struct {
     fn deinit(self: *Engine) void {
         for (self.user_functions.items) |*function| function.deinit();
         self.user_functions.deinit(self.allocator);
+        for (self.user_mixins.items) |*mixin| mixin.deinit();
+        self.user_mixins.deinit(self.allocator);
         self.environment.deinit();
         self.values.deinit();
         self.* = undefined;
@@ -367,11 +395,25 @@ const Engine = struct {
             },
             .conditional, .loop => child_context.in_control = true,
             .mixin => {
-                if (context.in_function) {
-                    try self.report(.syntax, node.span, "Sass functions may not include or declare mixins");
+                const keyword_span = node.text orelse return error.InvalidSassSyntax;
+                const keyword = try self.sources.slice(keyword_span);
+                if (std.ascii.eqlIgnoreCase(keyword, "@mixin")) {
+                    if (context.in_function or context.in_control or context.in_mixin) {
+                        try self.report(.syntax, node.span, "native Sass mixin declaration is not allowed here");
+                        return error.InvalidSassSyntax;
+                    }
+                    child_context = .{ .in_mixin = true, .allows_content = true };
+                } else if (std.ascii.eqlIgnoreCase(keyword, "@include")) {
+                    if (context.in_function) {
+                        try self.report(.syntax, node.span, "Sass functions may not include mixins");
+                        return error.InvalidSassSyntax;
+                    }
+                    try self.validateMixinCallSyntax(node_id);
+                    child_context.in_mixin = true;
+                } else {
+                    try self.report(.syntax, node.span, "unknown native Sass mixin directive");
                     return error.InvalidSassSyntax;
                 }
-                child_context.in_mixin = true;
             },
             .return_statement => {
                 if (!context.in_function) {
@@ -403,7 +445,23 @@ const Engine = struct {
                     return error.InvalidSassSyntax;
                 }
             },
-            .content, .import, .module => {
+            .content => {
+                if (!context.allows_content) {
+                    try self.report(.syntax, node.span, "Sass @content is only valid inside a mixin declaration");
+                    return error.InvalidSassSyntax;
+                }
+                const content_children = self.document.children(node_id) catch
+                    return error.InvalidSassSyntax;
+                if (content_children.len != 0) {
+                    try self.report(
+                        .unsupported_feature,
+                        node.span,
+                        "Sass content arguments are not implemented by the native evaluator yet",
+                    );
+                    return error.UnsupportedFeature;
+                }
+            },
+            .import, .module => {
                 if (context.in_function) {
                     try self.report(.syntax, node.span, "at-rule is not valid inside a Sass function");
                     return error.InvalidSassSyntax;
@@ -477,6 +535,8 @@ const Engine = struct {
                     continue;
                 },
                 .loop => try self.executeLoop(child_id, scope, depth, .root),
+                .mixin => try self.executeMixinDirective(child_id, scope, depth, .root),
+                .content => try self.executeContentDirective(child_id, depth, .root),
                 .function => try self.defineUserFunction(child_id, scope),
                 .return_statement => {
                     try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
@@ -616,6 +676,16 @@ const Engine = struct {
                     .selectors = selectors,
                     .declarations = declarations,
                 } }),
+                .mixin => try self.executeMixinDirective(child_id, scope, depth, .{ .rule = .{
+                    .owner_span = owner_span,
+                    .selectors = selectors,
+                    .declarations = declarations,
+                } }),
+                .content => try self.executeContentDirective(child_id, depth, .{ .rule = .{
+                    .owner_span = owner_span,
+                    .selectors = selectors,
+                    .declarations = declarations,
+                } }),
                 .function => try self.defineUserFunction(child_id, scope),
                 .return_statement => {
                     try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
@@ -646,6 +716,493 @@ const Engine = struct {
         };
     }
 
+    fn validateMixinCallSyntax(
+        self: *Engine,
+        directive_id: native_syntax.NodeId,
+    ) Error!void {
+        const directive = self.document.get(directive_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(directive_id) catch return error.InvalidSassSyntax;
+        if (directive.kind != .mixin or children.len < 1 or children.len > 2) {
+            try self.report(.syntax, directive.span, "malformed native Sass @include");
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null) {
+            try self.report(.syntax, directive.span, "native Sass @include requires a mixin name");
+            return error.InvalidSassSyntax;
+        }
+        if (children.len == 2) {
+            const block = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+            if (block.kind != .block) {
+                try self.report(.syntax, directive.span, "native Sass @include content requires a block");
+                return error.InvalidSassSyntax;
+            }
+        }
+
+        const prelude = trimWhitespace(try self.sources.slice(prelude_node.text.?));
+        if (hasTopLevelWordAfterPrefix(prelude, "using")) return;
+        const opening = std.mem.indexOfScalar(u8, prelude, '(');
+        const raw_name = trimWhitespace(if (opening) |index| prelude[0..index] else prelude);
+        if (!isSimpleIdentifier(raw_name)) {
+            try self.report(.syntax, prelude_node.span, "invalid native Sass mixin name");
+            return error.InvalidSassSyntax;
+        }
+        const body = if (opening) |index| blk: {
+            if (!fullyWrapped(prelude[index..], '(', ')')) {
+                try self.report(.syntax, prelude_node.span, "malformed native Sass mixin argument list");
+                return error.InvalidSassSyntax;
+            }
+            break :blk prelude[index + 1 .. prelude.len - 1];
+        } else "";
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
+        }
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges.items,
+            self.limits.max_function_arguments,
+        ) catch |err| switch (err) {
+            error.SplatUnsupported => return,
+            else => return self.argumentsFailure(err, prelude_node.span),
+        };
+        defer parsed.deinit();
+        for (parsed.items, 0..) |argument, index| {
+            const name = argument.name orelse continue;
+            for (parsed.items[0..index]) |previous| {
+                const previous_name = previous.name orelse continue;
+                if (native_arguments.nameEql(name, previous_name)) {
+                    return self.argumentsFailure(error.DuplicateArgument, prelude_node.span);
+                }
+            }
+        }
+    }
+
+    fn executeMixinDirective(
+        self: *Engine,
+        directive_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        const directive = self.document.get(directive_id) catch return error.InvalidSassSyntax;
+        if (directive.kind != .mixin or directive.text == null) {
+            try self.report(.syntax, directive.span, "malformed native Sass mixin directive");
+            return error.InvalidSassSyntax;
+        }
+        const keyword = try self.sources.slice(directive.text.?);
+        if (std.ascii.eqlIgnoreCase(keyword, "@mixin")) {
+            try self.defineUserMixin(directive_id, scope);
+            return;
+        }
+        if (!std.ascii.eqlIgnoreCase(keyword, "@include")) {
+            try self.report(.syntax, directive.span, "unknown native Sass mixin directive");
+            return error.InvalidSassSyntax;
+        }
+
+        const children = self.document.children(directive_id) catch return error.InvalidSassSyntax;
+        if (children.len < 1 or children.len > 2) {
+            try self.report(.syntax, directive.span, "malformed native Sass @include");
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null) {
+            try self.report(.syntax, directive.span, "native Sass @include requires a mixin name");
+            return error.InvalidSassSyntax;
+        }
+        const prelude = trimWhitespace(try self.sources.slice(prelude_node.text.?));
+        if (hasTopLevelWordAfterPrefix(prelude, "using")) {
+            try self.report(
+                .unsupported_feature,
+                prelude_node.span,
+                "Sass content-block parameters are not implemented by the native evaluator yet",
+            );
+            return error.UnsupportedFeature;
+        }
+
+        const opening = std.mem.indexOfScalar(u8, prelude, '(');
+        const raw_name = trimWhitespace(if (opening) |index| prelude[0..index] else prelude);
+        if (!isSimpleIdentifier(raw_name)) {
+            try self.report(.syntax, prelude_node.span, "invalid native Sass mixin name");
+            return error.InvalidSassSyntax;
+        }
+        const body = if (opening) |index| blk: {
+            if (!fullyWrapped(prelude[index..], '(', ')')) {
+                try self.report(.syntax, prelude_node.span, "malformed native Sass mixin argument list");
+                return error.InvalidSassSyntax;
+            }
+            break :blk prelude[index + 1 .. prelude.len - 1];
+        } else "";
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
+        }
+
+        const mixin_id = try self.lookupUserMixin(raw_name, scope.cursor) orelse {
+            try self.report(.syntax, prelude_node.span, "undefined native Sass mixin");
+            return error.InvalidSassSyntax;
+        };
+        const content_block = if (children.len == 2) blk: {
+            const block = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+            if (block.kind != .block) {
+                try self.report(.syntax, directive.span, "native Sass @include content requires a block");
+                return error.InvalidSassSyntax;
+            }
+            break :blk children[1];
+        } else null;
+        try self.callUserMixin(
+            mixin_id,
+            body,
+            ranges.items,
+            scope,
+            content_block,
+            prelude_node.span,
+            depth,
+            context,
+        );
+    }
+
+    fn defineUserMixin(
+        self: *Engine,
+        mixin_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
+    ) Error!void {
+        const mixin_node = self.document.get(mixin_id) catch return error.InvalidSassSyntax;
+        if (scope.kind == .flow) {
+            try self.report(.syntax, mixin_node.span, "Sass mixins may not be declared in control flow");
+            return error.InvalidSassSyntax;
+        }
+        if (self.callableLimitReached() or self.user_mixins.items.len >= std.math.maxInt(u32)) {
+            try self.report(.resource_limit, mixin_node.span, "native Sass callable limit exceeded");
+            return error.CallableLimitExceeded;
+        }
+
+        var mixin = try self.parseUserMixin(mixin_id, scope);
+        errdefer mixin.deinit();
+        const callable_id: u32 = @intCast(self.user_mixins.items.len);
+        const callable = try self.values.own(.{ .callable = .{
+            .kind = .mixin,
+            .id = callable_id,
+        } });
+        const key = try self.callableKey("@mixin:", mixin.name);
+        defer self.allocator.free(key);
+        if (scope.kind == .global) {
+            try self.assignGlobalVariable(scope, key, callable);
+        } else {
+            scope.cursor = try self.environment.set(scope.cursor, key, callable);
+        }
+        try self.user_mixins.append(self.allocator, mixin);
+    }
+
+    fn parseUserMixin(
+        self: *Engine,
+        mixin_id: native_syntax.NodeId,
+        owner: *ScopeFrame,
+    ) Error!UserMixin {
+        const mixin_node = self.document.get(mixin_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(mixin_id) catch return error.InvalidSassSyntax;
+        if (mixin_node.kind != .mixin or mixin_node.text == null or children.len != 2) {
+            try self.report(.syntax, mixin_node.span, "malformed native Sass mixin declaration");
+            return error.InvalidSassSyntax;
+        }
+        const keyword = try self.sources.slice(mixin_node.text.?);
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+        if (!std.ascii.eqlIgnoreCase(keyword, "@mixin") or
+            prelude_node.kind != .expression or prelude_node.text == null or
+            block_node.kind != .block)
+        {
+            try self.report(.syntax, mixin_node.span, "native Sass mixin requires a signature and block");
+            return error.InvalidSassSyntax;
+        }
+
+        const prelude = trimWhitespace(try self.sources.slice(prelude_node.text.?));
+        const opening = std.mem.indexOfScalar(u8, prelude, '(');
+        const raw_name = trimWhitespace(if (opening) |index| prelude[0..index] else prelude);
+        if (!isSimpleIdentifier(raw_name) or std.mem.startsWith(u8, raw_name, "--")) {
+            try self.report(.syntax, prelude_node.span, "invalid native Sass mixin name");
+            return error.InvalidSassSyntax;
+        }
+        const accepts_content = try self.containsContentDirective(children[1]);
+        const name = try self.normalizeCallableName(raw_name);
+        errdefer self.allocator.free(name);
+        const parameter_body = if (opening) |index| blk: {
+            if (!fullyWrapped(prelude[index..], '(', ')')) {
+                try self.report(.syntax, prelude_node.span, "malformed native Sass mixin parameter list");
+                return error.InvalidSassSyntax;
+            }
+            break :blk prelude[index + 1 .. prelude.len - 1];
+        } else "";
+        const parameters = try self.parseMixinParameters(parameter_body, prelude_node.span);
+        return .{
+            .allocator = self.allocator,
+            .name = name,
+            .parameters = parameters,
+            .block = children[1],
+            .owner = owner,
+            .span = mixin_node.span,
+            .accepts_content = accepts_content,
+        };
+    }
+
+    fn containsContentDirective(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+    ) Error!bool {
+        const node = self.document.get(node_id) catch return error.InvalidSassSyntax;
+        if (node.kind == .content) return true;
+        const children = self.document.children(node_id) catch return error.InvalidSassSyntax;
+        for (children) |child_id| {
+            if (try self.containsContentDirective(child_id)) return true;
+        }
+        return false;
+    }
+
+    fn parseMixinParameters(
+        self: *Engine,
+        body: []const u8,
+        span: native_source.Span,
+    ) Error![]CallableParameter {
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
+        }
+        if (ranges.items.len > self.limits.max_function_arguments) {
+            try self.report(.resource_limit, span, "native Sass mixin parameter limit exceeded");
+            return error.FunctionArgumentLimitExceeded;
+        }
+
+        var parameters: std.ArrayList(CallableParameter) = .empty;
+        errdefer {
+            for (parameters.items) |parameter| self.allocator.free(parameter.name);
+            parameters.deinit(self.allocator);
+        }
+        for (ranges.items) |range| {
+            const raw_parameter = trimWhitespace(body[range.start..range.end]);
+            if (raw_parameter.len == 0) {
+                try self.report(.syntax, span, "empty native Sass mixin parameter");
+                return error.InvalidSassSyntax;
+            }
+            if (std.mem.endsWith(u8, raw_parameter, "...")) {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "Sass rest parameters are not implemented by the native evaluator yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            const colon = findTopLevelByte(raw_parameter, ':');
+            const raw_parameter_name = trimWhitespace(raw_parameter[0 .. colon orelse raw_parameter.len]);
+            if (raw_parameter_name.len < 2 or raw_parameter_name[0] != '$' or
+                !isSimpleIdentifier(raw_parameter_name[1..]))
+            {
+                try self.report(.syntax, span, "invalid native Sass mixin parameter");
+                return error.InvalidSassSyntax;
+            }
+            const parameter_name = try self.normalizeCallableName(raw_parameter_name[1..]);
+            errdefer self.allocator.free(parameter_name);
+            for (parameters.items) |parameter| {
+                if (std.mem.eql(u8, parameter.name, parameter_name)) {
+                    try self.report(.syntax, span, "duplicate native Sass mixin parameter");
+                    return error.InvalidSassSyntax;
+                }
+            }
+            const default_value = if (colon) |separator| blk: {
+                const value = trimWhitespace(raw_parameter[separator + 1 ..]);
+                if (value.len == 0) {
+                    try self.report(.syntax, span, "native Sass mixin parameter default is missing");
+                    return error.InvalidSassSyntax;
+                }
+                break :blk value;
+            } else null;
+            try parameters.append(self.allocator, .{
+                .name = parameter_name,
+                .default_value = default_value,
+            });
+        }
+        return parameters.toOwnedSlice(self.allocator);
+    }
+
+    fn lookupUserMixin(
+        self: *Engine,
+        raw_name: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!?u32 {
+        const name = try self.normalizeCallableName(raw_name);
+        defer self.allocator.free(name);
+        const key = try self.callableKey("@mixin:", name);
+        defer self.allocator.free(key);
+        const item = if (try self.environment.lookupNonGlobal(scope, key)) |local|
+            local
+        else
+            try self.environment.lookup(self.global_scope, key) orelse return null;
+        return switch (item.*) {
+            .callable => |callable| if (callable.kind == .mixin and
+                callable.id < self.user_mixins.items.len)
+                callable.id
+            else
+                error.InvalidSassSyntax,
+            else => error.InvalidSassSyntax,
+        };
+    }
+
+    fn callUserMixin(
+        self: *Engine,
+        mixin_id: u32,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        if (mixin_id >= self.user_mixins.items.len or context == .callable) {
+            return error.InvalidSassSyntax;
+        }
+        const mixin = &self.user_mixins.items[mixin_id];
+        if (content_block != null and !mixin.accepts_content) {
+            try self.report(.syntax, span, "native Sass mixin does not accept a content block");
+            return error.InvalidSassSyntax;
+        }
+        const parameter_specs = try self.allocator.alloc(
+            native_arguments.Parameter,
+            mixin.parameters.len,
+        );
+        defer if (parameter_specs.len > 0) self.allocator.free(parameter_specs);
+        for (mixin.parameters, 0..) |parameter, index| {
+            parameter_specs[index] = .{
+                .name = parameter.name,
+                .required = parameter.default_value == null,
+            };
+        }
+
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            parameter_specs,
+            parameter_specs.len,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        const evaluated = try self.allocator.alloc(?*const native_value.Value, mixin.parameters.len);
+        defer if (evaluated.len > 0) self.allocator.free(evaluated);
+        @memset(evaluated, null);
+        var positional: usize = 0;
+        for (parsed.items) |argument| {
+            const parameter_index = if (argument.name) |argument_name| blk: {
+                for (mixin.parameters, 0..) |parameter, index| {
+                    if (native_arguments.nameEql(argument_name, parameter.name)) break :blk index;
+                }
+                unreachable;
+            } else blk: {
+                const index = positional;
+                positional += 1;
+                break :blk index;
+            };
+            evaluated[parameter_index] = try self.evaluateExpressionBytes(
+                body[argument.value.start..argument.value.end],
+                caller_scope.cursor,
+                span,
+            );
+        }
+
+        try self.transaction.enterCall();
+        var active_call = true;
+        defer if (active_call) self.transaction.leaveCall() catch {};
+        var call_scope = ScopeFrame{
+            .cursor = try self.environment.push(mixin.owner.cursor),
+            .kind = .lexical,
+            .parent = mixin.owner,
+        };
+        for (mixin.parameters, 0..) |parameter, index| {
+            const item = evaluated[index] orelse try self.evaluateExpressionBytes(
+                parameter.default_value orelse return error.InvalidSassSyntax,
+                call_scope.cursor,
+                mixin.span,
+            );
+            try self.defineOwnedVariable(&call_scope, parameter.name, item);
+        }
+
+        const previous_content = self.active_content;
+        var invocation: ContentInvocation = undefined;
+        self.active_content = if (content_block) |block| blk: {
+            invocation = .{
+                .block = block,
+                .owner = caller_scope,
+                .captured_content = previous_content,
+            };
+            break :blk &invocation;
+        } else null;
+        defer self.active_content = previous_content;
+
+        const children = self.document.children(mixin.block) catch return error.InvalidSassSyntax;
+        try self.executeLoopBody(children, &call_scope, depth + 1, context);
+        active_call = false;
+        try self.transaction.leaveCall();
+    }
+
+    fn executeContentDirective(
+        self: *Engine,
+        content_id: native_syntax.NodeId,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        const content_node = self.document.get(content_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(content_id) catch return error.InvalidSassSyntax;
+        if (content_node.kind != .content or children.len != 0 or context == .callable) {
+            try self.report(.syntax, content_node.span, "malformed native Sass @content");
+            return error.InvalidSassSyntax;
+        }
+        const invocation = self.active_content orelse return;
+        try self.transaction.enterCall();
+        var active_call = true;
+        defer if (active_call) self.transaction.leaveCall() catch {};
+        const previous_content = self.active_content;
+        self.active_content = invocation.captured_content;
+        defer self.active_content = previous_content;
+
+        var content_scope = ScopeFrame{
+            .cursor = try self.environment.push(invocation.owner.cursor),
+            .kind = .lexical,
+            .parent = invocation.owner,
+        };
+        const content_children = self.document.children(invocation.block) catch
+            return error.InvalidSassSyntax;
+        try self.executeLoopBody(content_children, &content_scope, depth + 1, context);
+        active_call = false;
+        try self.transaction.leaveCall();
+    }
+
+    fn callableLimitReached(self: *const Engine) bool {
+        const total = std.math.add(
+            usize,
+            self.user_functions.items.len,
+            self.user_mixins.items.len,
+        ) catch return true;
+        return total >= self.limits.max_callables;
+    }
+
     fn defineUserFunction(
         self: *Engine,
         function_id: native_syntax.NodeId,
@@ -656,7 +1213,7 @@ const Engine = struct {
             try self.report(.syntax, function_node.span, "Sass functions may not be declared in control flow");
             return error.InvalidSassSyntax;
         }
-        if (self.user_functions.items.len >= self.limits.max_callables or
+        if (self.callableLimitReached() or
             self.user_functions.items.len >= std.math.maxInt(u32))
         {
             try self.report(.resource_limit, function_node.span, "native Sass callable limit exceeded");
@@ -5388,6 +5945,80 @@ fn findTopLevelByte(input: []const u8, target: u8) ?usize {
         index += 1;
     }
     return null;
+}
+
+fn findTopLevelWord(input: []const u8, word: []const u8) ?usize {
+    if (word.len == 0 or input.len < word.len) return null;
+
+    var index: usize = 0;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var curly_depth: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 2;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 2;
+            continue;
+        }
+        if (commentEnd(input, index)) |end| {
+            index = end;
+            continue;
+        }
+
+        const top_level = paren_depth == 0 and square_depth == 0 and curly_depth == 0;
+        const word_end = std.math.add(usize, index, word.len) catch input.len +| 1;
+        if (top_level and word_end <= input.len and
+            std.ascii.eqlIgnoreCase(input[index..word_end], word) and
+            (index == 0 or !isVariableNameContinue(input[index - 1])) and
+            (word_end == input.len or !isVariableNameContinue(input[word_end])))
+        {
+            return index;
+        }
+
+        switch (byte) {
+            '(' => paren_depth += 1,
+            ')' => if (paren_depth > 0) {
+                paren_depth -= 1;
+            },
+            '[' => square_depth += 1,
+            ']' => if (square_depth > 0) {
+                square_depth -= 1;
+            },
+            '{' => curly_depth += 1,
+            '}' => if (curly_depth > 0) {
+                curly_depth -= 1;
+            },
+            else => {},
+        }
+        index += 1;
+    }
+    return null;
+}
+
+fn hasTopLevelWordAfterPrefix(input: []const u8, word: []const u8) bool {
+    var search_start: usize = 0;
+    while (search_start < input.len) {
+        const relative = findTopLevelWord(input[search_start..], word) orelse return false;
+        const index = search_start + relative;
+        if (trimWhitespace(input[0..index]).len > 0) return true;
+        search_start = index + word.len;
+    }
+    return false;
 }
 
 fn commentEnd(input: []const u8, start: usize) ?usize {

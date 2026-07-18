@@ -1818,6 +1818,187 @@ test "native Sass user functions enforce callable parameter and transaction limi
     );
 }
 
+test "native Sass evaluates bounded source-ordered mixins and content blocks" {
+    const input =
+        \\$base: 1;
+        \\@mixin dimensions($size, $gap: $size + 1px) {
+        \\  width: $size;
+        \\  gap: $gap;
+        \\  @content;
+        \\}
+        \\@mixin optional-content() { marker: yes; @content; }
+        \\@mixin frame($size) { border-width: $size; @content; }
+        \\@mixin card($size) { @include frame($size) { padding: $size; } }
+        \\@mixin repeat-content($count) {
+        \\  @for $i from 1 through $count { @content; }
+        \\}
+        \\@mixin using($value: allowed) { using-value: $value; }
+        \\@mixin inner-content { @content; }
+        \\@mixin forward-content { @include inner-content { @content; } }
+        \\@mixin swallow-content { @content; }
+        \\@mixin isolate-content { @if false { @content; } @include swallow-content; }
+        \\@if false { @include unavailable($arguments...); }
+        \\$base: 2;
+        \\@mixin use-base($value: $base) { base: $value; }
+        \\.card {
+        \\  $base: 10;
+        \\  @include dimensions(3px, $gap: 5px) { content-base: $base; }
+        \\  @include optional-content;
+        \\  @include card(2px);
+        \\  @include repeat-content(2) { repeated: $base; }
+        \\  @include using;
+        \\  @include forward-content { forwarded: $base; }
+        \\  @include isolate-content { leaked: no; }
+        \\  @include use-base;
+        \\}
+        \\@mixin use-base($value: $base) { base: $value + 1; }
+        \\.redefined { @include use_base; }
+        \\@mixin root-rule($name) { .#{$name} { value: ok; } }
+        \\@include root-rule(generated);
+    ;
+    var result = try compile(std.testing.allocator, "user-mixins.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".card{width:3px;gap:5px;content-base:10;marker:yes;border-width:2px;padding:2px;repeated:10;repeated:10;using-value:allowed;forwarded:10;base:2}.redefined{base:3}.generated{value:ok}",
+        result.css(),
+    );
+}
+
+test "native Sass mixins retain lexical definition and content scope in both syntaxes" {
+    const scss =
+        \\.scope {
+        \\  $local: 4;
+        \\  @mixin local($value: $local) { first: $value; @content; }
+        \\  @include local { from-content: $local; }
+        \\  $local: 5;
+        \\  @include local;
+        \\  .child { @include local($value: 6); }
+        \\}
+    ;
+    var scss_result = try compile(std.testing.allocator, "lexical-mixins.scss", scss, .scss, .{});
+    defer scss_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".scope{first:4;from-content:4;first:5}.scope .child{first:6}",
+        scss_result.css(),
+    );
+
+    const indented =
+        \\@mixin badge($value: 2)
+        \\  width: $value * 1px
+        \\  @content
+        \\.sass
+        \\  @include badge(3)
+        \\    height: 4px
+    ;
+    var sass_result = try compile(std.testing.allocator, "user-mixins.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(".sass{width:3px;height:4px}", sass_result.css());
+}
+
+test "native Sass mixins reject invalid declarations calls content and placement" {
+    const invalid_syntax = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "mixin-missing-name.scss", .input = "@mixin { .a { value: no; } }" },
+        .{ .name = "mixin-missing-block.scss", .input = "@mixin f;" },
+        .{ .name = "mixin-reserved-name.scss", .input = "@mixin --f { .a { value: no; } }" },
+        .{ .name = "mixin-empty-parameter.scss", .input = "@mixin f($a,, $b) { .a { value: no; } }" },
+        .{ .name = "mixin-empty-default.scss", .input = "@mixin f($a:) { .a { value: no; } }" },
+        .{ .name = "mixin-duplicate-parameter.scss", .input = "@mixin f($a_b, $a-b) { .a { value: no; } }" },
+        .{ .name = "mixin-selected-control.scss", .input = "@if true { @mixin f { .a { value: no; } } }" },
+        .{ .name = "mixin-unselected-control.scss", .input = "@if false { @mixin f { .a { value: no; } } } .a { value: ok; }" },
+        .{ .name = "nested-mixin.scss", .input = "@mixin outer { @mixin inner { .a { value: no; } } }" },
+        .{ .name = "content-at-root.scss", .input = "@content;" },
+        .{ .name = "unknown-mixin.scss", .input = ".a { @include unavailable; }" },
+        .{ .name = "mixin-rejects-content.scss", .input = "@mixin f { value: yes; } .a { @include f { value: no; } }" },
+        .{ .name = "local-mixin-escape.scss", .input = ".scope { @mixin local { value: yes; } } .outside { @include local; }" },
+    };
+    for (invalid_syntax) |case| {
+        try std.testing.expectError(
+            error.InvalidSassSyntax,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    const invalid_calls = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "mixin-missing-argument.scss", .input = "@mixin f($a) { value: $a; } .a { @include f; }" },
+        .{ .name = "mixin-unknown-keyword.scss", .input = "@mixin f($a) { value: $a; } .a { @include f($b: 1); }" },
+        .{ .name = "mixin-duplicate-argument.scss", .input = "@mixin f($a) { value: $a; } .a { @include f(1, $a: 2); }" },
+        .{ .name = "unselected-mixin-duplicate-argument.scss", .input = "@mixin f($a) {} @if false { @include f($a_b: 1, $a-b: 2); } .a { value: ok; }" },
+        .{ .name = "mixin-positional-after-keyword.scss", .input = "@mixin f($a, $b) { value: $a; } .a { @include f($a: 1, 2); }" },
+        .{ .name = "unselected-mixin-positional-after-keyword.scss", .input = "@mixin f($a, $b) {} @if false { @include f($a: 1, 2); } .a { value: ok; }" },
+        .{ .name = "mixin-too-many-arguments.scss", .input = "@mixin f { value: yes; } .a { @include f(1); }" },
+    };
+    for (invalid_calls) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    const unsupported = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "mixin-rest-parameter.scss", .input = "@mixin f($args...) { .a { value: no; } }" },
+        .{ .name = "mixin-splat-call.scss", .input = "@mixin f($a) { value: $a; } $args: 1; .a { @include f($args...); }" },
+        .{ .name = "content-arguments.scss", .input = "@mixin f { @content(1); } .a { @include f { value: yes; } }" },
+        .{ .name = "content-using.scss", .input = "@mixin f { @content(1); } .a { @include f using ($value) { value: $value; } }" },
+    };
+    for (unsupported) |case| {
+        try std.testing.expectError(
+            error.UnsupportedFeature,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
+test "native Sass mixins enforce callable and transaction limits" {
+    var semantic_limits = sass_evaluator.Limits{};
+    semantic_limits.max_callables = 1;
+    try std.testing.expectError(
+        error.CallableLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "mixed-callable-count-limit.scss",
+            "@function f() { @return 1; } @mixin m { .a { value: no; } }",
+            .scss,
+            semantic_limits,
+        ),
+    );
+
+    var transaction_limits = evaluator.Limits{};
+    transaction_limits.budget.max_call_depth = 2;
+    try std.testing.expectError(
+        error.CallDepthExceeded,
+        compileWithTransactionLimits(
+            std.testing.allocator,
+            "mixin-depth-limit.scss",
+            "@mixin recurse($n) { @if $n > 0 { @include recurse($n - 1); } } .a { @include recurse(3); }",
+            .scss,
+            .{},
+            transaction_limits,
+        ),
+    );
+    transaction_limits = .{};
+    transaction_limits.budget.max_calls = 1;
+    try std.testing.expectError(
+        error.CallCountExceeded,
+        compileWithTransactionLimits(
+            std.testing.allocator,
+            "content-call-limit.scss",
+            "@mixin f { @content; } .a { @include f { value: yes; } }",
+            .scss,
+            .{},
+            transaction_limits,
+        ),
+    );
+}
+
 test "native Sass conditionals reject malformed chains" {
     const invalid = [_]struct {
         name: []const u8,
@@ -2204,6 +2385,7 @@ fn exerciseAllocationFailures(
         \\$enabled: not false;
         \\$inch: 1in;
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
+        \\@mixin allocation-mixin($value, $extra: 1) { mixin-value: $value + $extra; @content; }
         \\.#{$name} {
         \\  $flow: 1px;
         \\  $loop-total: 0;
@@ -2212,6 +2394,7 @@ fn exerciseAllocationFailures(
         \\  gap: nth(map-get($theme, spaces), 2);
         \\  enabled: $enabled and true;
         \\  function-value: allocation_value(2);
+        \\  @include allocation-mixin(2) { mixin-content: yes; }
         \\  @if $enabled { $flow: 2px; $ephemeral: yes; conditional: $flow; ephemeral: $ephemeral; }
         \\  @for $iteration from 1 through 1 { $loop-total: $loop-total + $iteration; for-loop: $iteration; }
         \\  @each $entry in only { each-loop: $entry; }
@@ -2261,7 +2444,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;mixin-value:3;mixin-content:yes;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
