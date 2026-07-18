@@ -443,6 +443,7 @@ const ArithmeticContext = enum {
 
 const BuiltinModule = enum {
     color,
+    list,
     map,
     meta,
     string,
@@ -820,6 +821,8 @@ const Engine = struct {
         };
         const module_kind: BuiltinModule = if (std.mem.eql(u8, parsed.url, "sass:color"))
             .color
+        else if (std.mem.eql(u8, parsed.url, "sass:list"))
+            .list
         else if (std.mem.eql(u8, parsed.url, "sass:map"))
             .map
         else if (std.mem.eql(u8, parsed.url, "sass:meta"))
@@ -844,6 +847,7 @@ const Engine = struct {
         else
             parsed.namespace orelse switch (module_kind) {
                 .color => "color",
+                .list => "list",
                 .map => "map",
                 .meta => "meta",
                 .string => "string",
@@ -3497,6 +3501,7 @@ const Engine = struct {
                 if (binding.namespace != null) continue;
                 const builtin = switch (binding.kind) {
                     .color => colorModuleBuiltin(name),
+                    .list => listModuleBuiltin(name),
                     .map => mapModuleBuiltin(name),
                     .meta => metaModuleBuiltin(name),
                     .string => stringModuleBuiltin(name),
@@ -3521,6 +3526,7 @@ const Engine = struct {
         };
         const builtin = switch (module) {
             .color => colorModuleBuiltin(qualified.member),
+            .list => listModuleBuiltin(qualified.member),
             .map => mapModuleBuiltin(qualified.member),
             .meta => metaModuleBuiltin(qualified.member),
             .string => stringModuleBuiltin(qualified.member),
@@ -6498,17 +6504,26 @@ const Engine = struct {
         defer bound.deinit();
 
         var evaluated: [3]*const native_value.Value = undefined;
-        var count: usize = 0;
-        for (bound.values) |value_range| {
-            const range = value_range orelse continue;
-            evaluated[count] = try self.evaluateExpressionBytes(
-                body[range.start..range.end],
+        for (parsed.items, 0..) |argument, index| {
+            evaluated[index] = try self.evaluateExpressionBytes(
+                body[argument.value.start..argument.value.end],
                 scope,
                 span,
             );
-            count += 1;
         }
-        const arguments = evaluated[0..count];
+
+        var ordered: [3]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values, 0..) |value_range, parameter_index| {
+            const range = value_range orelse continue;
+            for (parsed.items, 0..) |argument, argument_index| {
+                if (argument.value.start != range.start or argument.value.end != range.end) continue;
+                ordered[parameter_index] = evaluated[argument_index];
+                count = parameter_index + 1;
+                break;
+            }
+        }
+        const arguments = ordered[0..count];
         const filter_conflict = builtin == .saturate or builtin == .grayscale or
             builtin == .invert or builtin == .opacity;
         if (has_keyword and filter_conflict and arguments.len == 1 and arguments[0].* != .color) {
@@ -7635,6 +7650,12 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "adjust")) return .adjust_color;
     if (sassNameEql(name, "change")) return .change_color;
     if (sassNameEql(name, "scale")) return .scale_color;
+    return null;
+}
+
+fn listModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "nth")) return .nth;
+    if (sassNameEql(name, "length")) return .length;
     return null;
 }
 

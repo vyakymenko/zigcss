@@ -3075,6 +3075,117 @@ test "native Sass string module rejects unowned calls" {
     }
 }
 
+test "native Sass loads the admitted built-in list module without a provider" {
+    const input =
+        \\@use "sass:list";
+        \\@use "sass:list" as seq;
+        \\@use "sass:list" as *;
+        \\$order: 0;
+        \\$first: null;
+        \\@function stamp($value) {
+        \\  $order: $order + 1 !global;
+        \\  @if $order == 1 { $first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\.a {
+        \\  nth: list.nth((a, b, c), -1);
+        \\  length: seq.length((a, b, c));
+        \\  scalar: length(solo);
+        \\  map-nth: list.nth((a: 1, b: 2), 2);
+        \\  source-order: list.nth($n: stamp(2), $list: stamp((a, b, c)));
+        \\  first: $first;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "list-module.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{nth:c;length:3;scalar:1;map-nth:b 2;source-order:b;first:2}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:list" as l
+        \\.sass
+        \\  nth: l.nth((a, b, c), -2)
+        \\  length: l.length((a, b, c))
+        \\  scalar: l.length(solo)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "list-module.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{nth:b;length:3;scalar:1}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass list module rejects unowned calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-list-module.scss",
+            .input = ".a { value: list.length((a, b)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-list-member.scss",
+            .input = "@use \"sass:list\"; .a { value: list.nope($undefined); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-list-namespace.scss",
+            .input = "@use \"sass:list\" as List; .a { value: list.length((a, b)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "duplicate-list-namespace.scss",
+            .input = "@use \"sass:map\" as tools; @use \"sass:list\" as tools;",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "unsupported-list-member.scss",
+            .input = "@use \"sass:list\"; .a { value: list.append($undefined, b); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "list-module-index-type.scss",
+            .input = "@use \"sass:list\"; .a { value: list.nth((a, b), nope); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "list-module-index-bounds.scss",
+            .input = "@use \"sass:list\"; .a { value: list.nth((a, b), 0); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "list-module-arity.scss",
+            .input = "@use \"sass:list\"; .a { value: list.nth((a, b)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "list-module-splat.scss",
+            .input = "@use \"sass:list\"; $args: ((a, b), 1); .a { value: list.nth($args...); }",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass string functions reject unsafe arity types indexes and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -3388,12 +3499,15 @@ fn exerciseAllocationFailures(
     defer sources.deinit();
     const input =
         \\@use "sass:color";
+        \\@use "sass:list" as lists;
         \\@use "sass:map";
         \\@use "sass:meta";
         \\@use "sass:string" as strings;
         \\$size: 2px;
         \\$name: card;
         \\$spaces: 1px 2px 3px;
+        \\$list-length: lists.length($spaces);
+        \\$list-nth: lists.nth($spaces, 2);
         \\$theme: (tone: blue, spaces: $spaces);
         \\$merged-theme: map.merge($theme, (accent: red));
         \\$removed-theme: map.remove($merged-theme, tone);
@@ -3420,9 +3534,9 @@ fn exerciseAllocationFailures(
         \\.#{$name} {
         \\  $flow: 1px;
         \\  $loop-total: 0;
-        \\  width: $size * 3;
+        \\  width: $size * $list-length;
         \\  color: map-get($theme, tone);
-        \\  gap: nth(map-get($theme, spaces), 2);
+        \\  gap: $list-nth;
         \\  enabled: $enabled and true;
         \\  function-value: allocation_value(2);
         \\  rest-function: allocation-rest(1, (2, 3)...);
