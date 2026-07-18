@@ -839,6 +839,11 @@ fn exerciseAllocationFailures(
         \\  adjusted-color: lighten(#123456, 10%);
         \\  string-length: str-length("💚a");
         \\  string-slice: str-slice("hello", -2);
+        \\  string-quote: quote(foo);
+        \\  string-unquote: unquote("foo bar");
+        \\  string-index: str-index("a💚b", "💚");
+        \\  string-insert: str-insert("ab", "X", 2);
+        \\  string-upper: to-upper-case("Abc-é");
         \\  &:hover { margin: $size + 1px; }
         \\}
     ;
@@ -859,7 +864,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);string-length:2;string-slice:\"lo\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
