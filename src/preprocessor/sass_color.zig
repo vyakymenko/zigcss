@@ -257,7 +257,7 @@ pub fn modern(
     input_channels: [4]f64,
     missing_mask: u4,
 ) Error!native_value.Color {
-    if (!isModernSpace(space)) return error.InvalidColor;
+    if (!isLabSpace(space)) return error.InvalidColor;
     var channels = input_channels;
     for (&channels, 0..) |*channel, index| {
         if (channelMissing(missing_mask, index)) {
@@ -279,6 +279,24 @@ pub fn modern(
     }
     if ((space == .lch or space == .oklch) and !channelMissing(missing_mask, 2)) {
         channels[2] = normalizeHue(channels[2]);
+    }
+    if (!channelMissing(missing_mask, 3)) channels[3] = clamp(channels[3], 0, 1);
+    return .{ .space = space, .channels = channels, .missing_mask = missing_mask };
+}
+
+pub fn predefined(
+    space: native_value.ColorSpace,
+    input_channels: [4]f64,
+    missing_mask: u4,
+) Error!native_value.Color {
+    if (!isPredefinedSpace(space)) return error.InvalidColor;
+    var channels = input_channels;
+    for (&channels, 0..) |*channel, index| {
+        if (channelMissing(missing_mask, index)) {
+            channel.* = 0;
+        } else if (!std.math.isFinite(channel.*)) {
+            return error.InvalidColor;
+        }
     }
     if (!channelMissing(missing_mask, 3)) channels[3] = clamp(channels[3], 0, 1);
     return .{ .space = space, .channels = channels, .missing_mask = missing_mask };
@@ -333,7 +351,7 @@ pub fn toHwb(input: native_value.Color) Error![4]f64 {
 }
 
 pub fn equal(left: native_value.Color, right: native_value.Color) bool {
-    if (isModernSpace(left.space) or isModernSpace(right.space)) {
+    if (isTypedColorSpace(left.space) or isTypedColorSpace(right.space)) {
         if (left.space != right.space or left.missing_mask != right.missing_mask) return false;
         for (left.channels, right.channels, 0..) |left_channel, right_channel, index| {
             if (channelMissing(left.missing_mask, index)) continue;
@@ -540,7 +558,8 @@ pub fn serialize(
     buffer: *[max_serialized_bytes]u8,
     minified: bool,
 ) Error![]const u8 {
-    if (isModernSpace(input.space)) return serializeModern(input, buffer, minified);
+    if (isLabSpace(input.space)) return serializeModern(input, buffer, minified);
+    if (isPredefinedSpace(input.space)) return serializePredefined(input, buffer, minified);
     if (input.space == .rgb and
         (input.channels[0] < 0 or input.channels[0] > 255 or
             input.channels[1] < 0 or input.channels[1] > 255 or
@@ -624,6 +643,56 @@ fn serializeModern(
     try append(buffer, &cursor, "(");
     for (normalized.channels[0..3], 0..) |channel, index| {
         if (index > 0) try append(buffer, &cursor, " ");
+        if (channelMissing(normalized.missing_mask, index)) {
+            try append(buffer, &cursor, "none");
+            continue;
+        }
+        var number_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        try appendModernNumber(buffer, &cursor, channel, &number_buffer, minified);
+    }
+    if (channelMissing(normalized.missing_mask, 3) or
+        !approximatelyEqual(normalized.channels[3], 1))
+    {
+        try append(buffer, &cursor, if (minified) "/" else " / ");
+        if (channelMissing(normalized.missing_mask, 3)) {
+            try append(buffer, &cursor, "none");
+        } else {
+            var alpha_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+            try appendModernNumber(
+                buffer,
+                &cursor,
+                normalized.channels[3],
+                &alpha_buffer,
+                minified,
+            );
+        }
+    }
+    try append(buffer, &cursor, ")");
+    return buffer[0..cursor];
+}
+
+fn serializePredefined(
+    input: native_value.Color,
+    buffer: *[max_serialized_bytes]u8,
+    minified: bool,
+) Error![]const u8 {
+    const normalized = try predefined(input.space, input.channels, input.missing_mask);
+    const space_name: []const u8 = switch (normalized.space) {
+        .srgb => "srgb",
+        .srgb_linear => "srgb-linear",
+        .display_p3 => "display-p3",
+        .a98_rgb => "a98-rgb",
+        .prophoto_rgb => "prophoto-rgb",
+        .rec2020 => "rec2020",
+        .xyz_d50 => "xyz-d50",
+        .xyz => "xyz",
+        else => unreachable,
+    };
+    var cursor: usize = 0;
+    try append(buffer, &cursor, "color(");
+    try append(buffer, &cursor, space_name);
+    for (normalized.channels[0..3], 0..) |channel, index| {
+        try append(buffer, &cursor, " ");
         if (channelMissing(normalized.missing_mask, index)) {
             try append(buffer, &cursor, "none");
             continue;
@@ -843,11 +912,30 @@ fn appendModernNumber(
     return append(buffer, cursor, serialized);
 }
 
-fn isModernSpace(space: native_value.ColorSpace) bool {
+fn isLabSpace(space: native_value.ColorSpace) bool {
     return switch (space) {
         .lab, .lch, .oklab, .oklch => true,
         else => false,
     };
+}
+
+fn isPredefinedSpace(space: native_value.ColorSpace) bool {
+    return switch (space) {
+        .srgb,
+        .srgb_linear,
+        .display_p3,
+        .a98_rgb,
+        .prophoto_rgb,
+        .rec2020,
+        .xyz_d50,
+        .xyz,
+        => true,
+        else => false,
+    };
+}
+
+fn isTypedColorSpace(space: native_value.ColorSpace) bool {
+    return isLabSpace(space) or isPredefinedSpace(space);
 }
 
 fn channelMissing(mask: u4, index: usize) bool {

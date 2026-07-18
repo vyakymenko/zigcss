@@ -15,6 +15,13 @@ pub const ColorSpace = enum {
     lch,
     oklab,
     oklch,
+    srgb,
+    srgb_linear,
+    display_p3,
+    a98_rgb,
+    prophoto_rgb,
+    rec2020,
+    xyz_d50,
     xyz,
 };
 

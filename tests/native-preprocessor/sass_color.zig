@@ -99,6 +99,54 @@ test "native Sass modern color constructors normalize missing channels and seria
     );
 }
 
+test "native Sass predefined color spaces serialize canonical CSS Color 4 functions" {
+    const cases = [_]struct {
+        space: preprocessor.value.ColorSpace,
+        expected: []const u8,
+    }{
+        .{ .space = .srgb, .expected = "color(srgb 1 0 -0.1/.5)" },
+        .{ .space = .srgb_linear, .expected = "color(srgb-linear 1 0 -0.1/.5)" },
+        .{ .space = .display_p3, .expected = "color(display-p3 1 0 -0.1/.5)" },
+        .{ .space = .a98_rgb, .expected = "color(a98-rgb 1 0 -0.1/.5)" },
+        .{ .space = .prophoto_rgb, .expected = "color(prophoto-rgb 1 0 -0.1/.5)" },
+        .{ .space = .rec2020, .expected = "color(rec2020 1 0 -0.1/.5)" },
+        .{ .space = .xyz_d50, .expected = "color(xyz-d50 1 0 -0.1/.5)" },
+        .{ .space = .xyz, .expected = "color(xyz 1 0 -0.1/.5)" },
+    };
+    for (cases) |case| {
+        const value = try color.predefined(case.space, .{ 1, 0, -0.1, 0.5 }, 0);
+        var buffer: [color.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(
+            case.expected,
+            try color.serialize(value, &buffer, true),
+        );
+    }
+
+    const missing = try color.predefined(.display_p3, .{ 1, 2, 3, 4 }, 0b1111);
+    var missing_buffer: [color.max_serialized_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "color(display-p3 none none none/none)",
+        try color.serialize(missing, &missing_buffer, true),
+    );
+    var pretty_buffer: [color.max_serialized_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "color(display-p3 1 0 -0.1 / 0.5)",
+        try color.serialize(
+            try color.predefined(.display_p3, .{ 1, 0, -0.1, 0.5 }, 0),
+            &pretty_buffer,
+            false,
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.predefined(.lab, .{ 0, 0, 0, 1 }, 0),
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.predefined(.srgb, .{ std.math.nan(f64), 0, 0, 1 }, 0),
+    );
+}
+
 test "native Sass legacy colors compare and expose channels across spaces" {
     const purple = color.parseLiteral("purple").?;
     const equivalent = try color.hsl(300, 100, 25.098039215686, 1);
@@ -131,6 +179,23 @@ test "native Sass modern colors compare exactly within a normalized space" {
     try std.testing.expect(!color.equal(
         missing_left,
         try color.modern(.lab, .{ 50, 0, 20, 1 }, 0),
+    ));
+}
+
+test "native Sass predefined colors compare within canonical space identity" {
+    const display_p3 = try color.predefined(.display_p3, .{ 1, 0, 0, 1 }, 0);
+    try std.testing.expect(color.equal(
+        display_p3,
+        try color.predefined(.display_p3, .{ 1, 0, 0, 1 }, 0),
+    ));
+    try std.testing.expect(!color.equal(
+        display_p3,
+        try color.predefined(.srgb, .{ 1, 0, 0, 1 }, 0),
+    ));
+    try std.testing.expect(!color.equal(display_p3, color.parseLiteral("red").?));
+    try std.testing.expect(color.equal(
+        try color.predefined(.xyz, .{ 0.4, 0.3, 0.2, 1 }, 0),
+        try color.predefined(.xyz, .{ 0.4, 0.3, 0.2, 1 }, 0),
     ));
 }
 

@@ -145,6 +145,7 @@ const expectedImplementations = Object.freeze([
       'color-constructor-keyword-overloads',
       'variadic-map-get-binding',
       'modern-lab-color-constructors',
+      'predefined-wide-gamut-colors',
       'unicode-string-core',
       'legacy-string-builtins',
       'typed-collections',

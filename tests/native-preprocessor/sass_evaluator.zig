@@ -1000,6 +1000,113 @@ test "native Sass modern Lab constructors reject ambiguous and invalid calls" {
     );
 }
 
+test "native Sass evaluates predefined wide-gamut colors without a provider" {
+    const input =
+        \\$space: display-p3;
+        \\$red: 100%;
+        \\.a {
+        \\  srgb: color(srgb 1 0 0);
+        \\  linear: color(srgb-linear 1 0 0 / .5);
+        \\  p3: color(display-p3 1 0 0 / .5);
+        \\  a98: color(a98-rgb 1 0 0 / .5);
+        \\  prophoto: color(prophoto-rgb 1 0 0 / .5);
+        \\  rec2020: color(rec2020 1 0 0 / .5);
+        \\  xyz: color(xyz .4 .3 .2 / .5);
+        \\  xyz50: color(xyz-d50 .4 .3 .2 / .5);
+        \\  xyz65: color(xyz-d65 .4 .3 .2 / .5);
+        \\  variable: color($space $red 0% -10% / 50%);
+        \\  keyword: color($description: display-p3 1 0 0 / .5);
+        \\  uppercase: color(DISPLAY-P3 1 0 0);
+        \\  missing: color(display-p3 none none none / none);
+        \\  alias-equal: color(xyz .4 .3 .2) == color(xyz-d65 .4 .3 .2);
+        \\  same: color(display-p3 1 0 0) == color(display-p3 1 0 0);
+        \\  legacy-distinct: color(srgb 1 0 0) == red;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "wide-colors.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{srgb:color(srgb 1 0 0);linear:color(srgb-linear 1 0 0/.5);p3:color(display-p3 1 0 0/.5);a98:color(a98-rgb 1 0 0/.5);prophoto:color(prophoto-rgb 1 0 0/.5);rec2020:color(rec2020 1 0 0/.5);xyz:color(xyz .4 .3 .2/.5);xyz50:color(xyz-d50 .4 .3 .2/.5);xyz65:color(xyz .4 .3 .2/.5);variable:color(display-p3 1 0 -0.1/.5);keyword:color(display-p3 1 0 0/.5);uppercase:color(display-p3 1 0 0);missing:color(display-p3 none none none/none);alias-equal:true;same:true;legacy-distinct:false}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    var deferred = try compile(
+        std.testing.allocator,
+        "deferred-wide-colors.scss",
+        ".a { description: color(var(--description)); channel: color(display-p3 var(--r) 0 0); }",
+        .scss,
+        .{},
+    );
+    defer deferred.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{description:color(var(--description));channel:color(display-p3 var(--r) 0 0)}",
+        deferred.css(),
+    );
+}
+
+test "native Sass predefined colors reject unknown and ambiguous descriptions" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "wide-comma.scss", .input = ".a { color: color(display-p3, 1, 0, 0); }" },
+        .{ .name = "wide-short.scss", .input = ".a { color: color(display-p3 1 0); }" },
+        .{ .name = "wide-long.scss", .input = ".a { color: color(display-p3 1 0 0 1); }" },
+        .{ .name = "wide-alpha-without-slash.scss", .input = ".a { color: color(display-p3 1 0 0 .5); }" },
+        .{ .name = "wide-unit.scss", .input = ".a { color: color(display-p3 1px 0 0); }" },
+        .{ .name = "wide-quoted-space.scss", .input = ".a { color: color(\"display-p3\" 1 0 0); }" },
+        .{ .name = "wide-underscore-space.scss", .input = ".a { color: color(display_p3 1 0 0); }" },
+        .{ .name = "wide-custom-space.scss", .input = ".a { color: color(--profile 1 0 0); }" },
+        .{ .name = "wide-unknown-space.scss", .input = ".a { color: color(unknown $undefined $also-undefined $still-undefined); }" },
+        .{ .name = "wide-missing.scss", .input = ".a { color: color(); }" },
+        .{ .name = "wide-unknown-keyword.scss", .input = ".a { color: color($unknown: $undefined); }" },
+        .{ .name = "wide-duplicate.scss", .input = ".a { color: color(display-p3 1 0 0, $description: $undefined); }" },
+        .{ .name = "wide-order.scss", .input = ".a { color: color($description: display-p3 1 0 0, $undefined); }" },
+        .{ .name = "wide-double-alpha.scss", .input = ".a { color: color(display-p3 1 0 0 / .5 / .4); }" },
+        .{ .name = "wide-deferred-double-alpha.scss", .input = ".a { color: color(var(--description) / .5 / .4); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "wide-splat.scss",
+            ".a { color: color($description...); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "wide-keyword-deferred.scss",
+            ".a { color: color($description: var(--description)); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "wide-channel-limit.scss",
+            ".a { color: color(display-p3 1 0 0); }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass evaluates bounded Unicode string functions without a provider" {
     const input =
         \\.a {
@@ -1301,6 +1408,7 @@ fn exerciseAllocationFailures(
         \\  nth-keyword: nth($n: 2, $list: (a, b));
         \\  constructor-keyword: rgb($channels: 255 0 0 / .5);
         \\  modern-color: oklab($channels: 50% 10% -10% / .5);
+        \\  wide-color: color($description: display-p3 100% 0% -10% / .5);
         \\  map-keyword: map-get($key: tone, $map: $theme);
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
@@ -1329,7 +1437,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

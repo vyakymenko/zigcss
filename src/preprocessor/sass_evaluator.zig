@@ -114,6 +114,7 @@ const Builtin = enum {
     lch,
     oklab,
     oklch,
+    color,
     red,
     green,
     blue,
@@ -158,6 +159,7 @@ const ModernColorChannelKind = enum {
     oklab_axis,
     lch_chroma,
     oklch_chroma,
+    predefined,
     hue,
     alpha,
 };
@@ -1070,6 +1072,8 @@ const Engine = struct {
             .oklab
         else if (sassNameEql(name, "oklch"))
             .oklch
+        else if (sassNameEql(name, "color"))
+            .color
         else if (sassNameEql(name, "red"))
             .red
         else if (sassNameEql(name, "green"))
@@ -1234,7 +1238,154 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .color => return try self.callPredefinedColorRaw(
+                raw,
+                body,
+                ranges.items,
+                comma_separated,
+                scope,
+                span,
+            ),
         }
+    }
+
+    fn callPredefinedColorRaw(
+        self: *Engine,
+        raw: []const u8,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        comma_separated: bool,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (comma_separated) {
+            try self.report(.syntax, span, "color() requires one space-separated description");
+            return error.InvalidExpression;
+        }
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        const parameters = [_]native_arguments.Parameter{.{ .name = "description" }};
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            &parameters,
+            1,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+        const description_range = bound.values[0].?;
+        const allow_deferred = parsed.items.len == 1 and parsed.items[0].name == null;
+        return self.callPredefinedColor(
+            raw,
+            body[description_range.start..description_range.end],
+            allow_deferred,
+            scope,
+            span,
+        );
+    }
+
+    fn callPredefinedColor(
+        self: *Engine,
+        raw: []const u8,
+        body: []const u8,
+        allow_deferred: bool,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        const slash = findTopLevelByte(body, '/');
+        if (slash) |separator| {
+            if (findTopLevelByte(body[separator + 1 ..], '/') != null) {
+                try self.report(.syntax, span, "color() has multiple alpha separators");
+                return error.InvalidExpression;
+            }
+            if (trimWhitespace(body[separator + 1 ..]).len == 0) {
+                try self.report(.syntax, span, "color() is missing its alpha channel");
+                return error.InvalidExpression;
+            }
+        }
+        const description_end = slash orelse body.len;
+        _ = try splitTopLevelRanges(
+            self.allocator,
+            body[0..description_end],
+            .color_whitespace,
+            &ranges,
+        );
+        if (trimWhitespace(body[0..description_end]).len == 0) ranges.clearRetainingCapacity();
+        const total_parts = ranges.items.len + @intFromBool(slash != null);
+        if (total_parts > self.limits.max_function_arguments) {
+            try self.report(.resource_limit, span, "native Sass function argument limit exceeded");
+            return error.FunctionArgumentLimitExceeded;
+        }
+        if (containsDeferredCssCalculation(body)) {
+            if (allow_deferred) return self.preserveColorFunction(raw, scope, span);
+            try self.report(
+                .unsupported_feature,
+                span,
+                "deferred Sass keyword color descriptions are not implemented by the native evaluator yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        if (ranges.items.len != 4) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "color() requires one predefined space and exactly three channels",
+            );
+            return error.InvalidExpression;
+        }
+        if (slash) |separator| {
+            try ranges.append(self.allocator, .{ .start = separator + 1, .end = body.len });
+        }
+        for (ranges.items) |range| {
+            if (trimWhitespace(body[range.start..range.end]).len == 0) {
+                try self.report(.syntax, span, "empty color() description component");
+                return error.InvalidExpression;
+            }
+        }
+
+        const space_item = try self.evaluateExpressionBytes(
+            body[ranges.items[0].start..ranges.items[0].end],
+            scope,
+            span,
+        );
+        if (isDeferredColorValue(space_item.*)) {
+            if (allow_deferred) return self.preserveColorFunction(raw, scope, span);
+            try self.report(
+                .unsupported_feature,
+                span,
+                "deferred Sass keyword color descriptions are not implemented by the native evaluator yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        const space = try self.predefinedColorSpace(space_item.*, span);
+        var channels = [4]f64{ 0, 0, 0, 1 };
+        var missing_mask: u4 = 0;
+        const missing_bits = [4]u4{ 0b0001, 0b0010, 0b0100, 0b1000 };
+        for (ranges.items[1..], 0..) |range, index| {
+            const item = try self.evaluateExpressionBytes(body[range.start..range.end], scope, span);
+            if (isDeferredColorValue(item.*)) {
+                if (allow_deferred) return self.preserveColorFunction(raw, scope, span);
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "deferred Sass keyword color descriptions are not implemented by the native evaluator yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            const kind: ModernColorChannelKind = if (index == 3) .alpha else .predefined;
+            const channel = try self.modernColorChannel(item.*, kind, span);
+            channels[index] = channel.value;
+            if (channel.missing) missing_mask |= missing_bits[index];
+        }
+        return self.values.own(.{
+            .color = try native_color.predefined(space, channels, missing_mask),
+        });
     }
 
     fn callModernColorConstructorRaw(
@@ -2219,8 +2370,37 @@ const Engine = struct {
             .oklab_axis => if (percentage) number.value * 0.004 else number.value,
             .lch_chroma => if (percentage) number.value * 1.5 else number.value,
             .oklch_chroma => if (percentage) number.value * 0.004 else number.value,
+            .predefined => if (percentage) number.value / 100 else number.value,
             .hue, .alpha => unreachable,
         } };
+    }
+
+    fn predefinedColorSpace(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.ColorSpace {
+        const name = switch (item) {
+            .string => |string| if (!string.quoted) string.bytes else {
+                try self.report(.type_mismatch, span, "color() space must be an unquoted string");
+                return error.InvalidExpression;
+            },
+            else => {
+                try self.report(.type_mismatch, span, "color() space must be an unquoted string");
+                return error.InvalidExpression;
+            },
+        };
+        if (std.ascii.eqlIgnoreCase(name, "srgb")) return .srgb;
+        if (std.ascii.eqlIgnoreCase(name, "srgb-linear")) return .srgb_linear;
+        if (std.ascii.eqlIgnoreCase(name, "display-p3")) return .display_p3;
+        if (std.ascii.eqlIgnoreCase(name, "a98-rgb")) return .a98_rgb;
+        if (std.ascii.eqlIgnoreCase(name, "prophoto-rgb")) return .prophoto_rgb;
+        if (std.ascii.eqlIgnoreCase(name, "rec2020")) return .rec2020;
+        if (std.ascii.eqlIgnoreCase(name, "xyz-d50")) return .xyz_d50;
+        if (std.ascii.eqlIgnoreCase(name, "xyz") or
+            std.ascii.eqlIgnoreCase(name, "xyz-d65")) return .xyz;
+        try self.report(.invalid_operation, span, "unknown predefined color() space");
+        return error.InvalidExpression;
     }
 
     fn colorNumber(
