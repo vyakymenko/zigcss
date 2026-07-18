@@ -199,6 +199,49 @@ test "native Sass predefined colors compare within canonical space identity" {
     ));
 }
 
+test "native Sass color conversion spans every owned CSS Color 4 family" {
+    const source = try color.rgb(51, 102, 153, 0.7);
+    const cases = [_]struct {
+        space: preprocessor.value.ColorSpace,
+        expected: [3]f64,
+    }{
+        .{ .space = .srgb, .expected = .{ 0.2, 0.4, 0.6 } },
+        .{ .space = .srgb_linear, .expected = .{ 0.0331047666, 0.1328683216, 0.3185467781 } },
+        .{ .space = .display_p3, .expected = .{ 0.2498513331, 0.3952400722, 0.5840337708 } },
+        .{ .space = .a98_rgb, .expected = .{ 0.2814316253, 0.3994051501, 0.5878866513 } },
+        .{ .space = .prophoto_rgb, .expected = .{ 0.2876613559, 0.3195515327, 0.5045379079 } },
+        .{ .space = .rec2020, .expected = .{ 0.2501283074, 0.3367053823, 0.5377935675 } },
+        .{ .space = .xyz_d50, .expected = .{ 0.1111874591, 0.1219274040, 0.2408340301 } },
+        .{ .space = .xyz, .expected = .{ 0.1186553058, 0.1250592561, 0.3192661072 } },
+        .{ .space = .lab, .expected = .{ 41.5208239274, -4.5730899326, -33.4941945924 } },
+        .{ .space = .lch, .expected = .{ 41.5208239274, 33.8049437646, 262.2252620788 } },
+        .{ .space = .oklab, .expected = .{ 0.4993144558, -0.0330434876, -0.0929665921 } },
+        .{ .space = .oklch, .expected = .{ 0.4993144558, 0.0986643771, 250.4330574202 } },
+    };
+    for (cases) |case| {
+        const converted = try color.convert(source, case.space);
+        try std.testing.expectEqual(case.space, converted.space);
+        for (case.expected, converted.channels[0..3]) |expected, actual| {
+            try std.testing.expectApproxEqAbs(expected, actual, 1e-9);
+        }
+        try std.testing.expectApproxEqAbs(@as(f64, 0.7), converted.channels[3], 1e-12);
+
+        const round_trip = try color.convert(converted, .rgb);
+        for (source.channels, round_trip.channels) |expected, actual| {
+            try std.testing.expectApproxEqAbs(expected, actual, 1e-8);
+        }
+    }
+}
+
+test "native Sass color conversion fails closed for missing cross-space channels" {
+    const missing = try color.modern(.oklch, .{ 0.5, 0.2, 120, 1 }, 0b0010);
+    try std.testing.expectEqual(missing, try color.convert(missing, .oklch));
+    try std.testing.expectError(error.InvalidColor, color.convert(missing, .lab));
+
+    const modern = try color.modern(.lab, .{ 50, 10, 20, 1 }, 0);
+    try std.testing.expectError(error.InvalidColor, color.adjustLightness(modern, 10));
+}
+
 test "native Sass legacy color manipulation matches closed conversion rules" {
     const base = color.parseLiteral("#123456").?;
     const cases = [_]struct {

@@ -55,6 +55,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('variadic-map-get-binding'), true)
   assert.equal(sassCore.capabilities.includes('modern-lab-color-constructors'), true)
   assert.equal(sassCore.capabilities.includes('predefined-wide-gamut-colors'), true)
+  assert.equal(sassCore.capabilities.includes('cross-space-color-conversion'), true)
   assert.equal(sassCore.capabilities.includes('unicode-string-core'), true)
   assert.equal(sassCore.capabilities.includes('legacy-string-builtins'), true)
   assert.equal(sassCore.capabilities.includes('lazy-conditional-emission'), true)

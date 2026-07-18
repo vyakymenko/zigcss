@@ -1,6 +1,6 @@
-//! Allocation-free legacy Sass color semantics for the private native
-//! evaluator. The table and conversion math are compiled into ZigCSS; no
-//! runtime stylesheet provider or package is consulted.
+//! Allocation-free Sass color semantics for the private native evaluator.
+//! The tables, transfer functions, and conversion matrices are compiled into
+//! ZigCSS; no runtime stylesheet provider or package is consulted.
 
 const std = @import("std");
 const native_numeric = @import("sass_numeric.zig");
@@ -39,6 +39,9 @@ pub const HwbTransform = struct {
     blackness: ?f64 = null,
     alpha: ?f64 = null,
 };
+
+const Vec3 = [3]f64;
+const Matrix3 = [3][3]f64;
 
 const NamedColor = struct {
     name: []const u8,
@@ -313,7 +316,35 @@ pub fn toRgb(input: native_value.Color) Error![4]f64 {
 
 pub fn toHsl(input: native_value.Color) Error![4]f64 {
     if (input.space == .hsl) return input.channels;
-    const channels = try toRgb(input);
+    return rgbToHsl(try toRgb(input));
+}
+
+pub fn toHwb(input: native_value.Color) Error![4]f64 {
+    if (input.space == .hwb) return input.channels;
+    return rgbToHwb(try toRgb(input));
+}
+
+/// Converts between every color space represented by the native value model.
+/// The conversion pipeline is allocation-free and preserves extended-gamut
+/// channel values. Missing components are currently accepted only for an
+/// identity conversion so unsupported propagation cannot silently change CSS.
+pub fn convert(
+    input: native_value.Color,
+    target: native_value.ColorSpace,
+) Error!native_value.Color {
+    if (input.space == target) return input;
+    if (input.missing_mask != 0 or !allFinite(input.channels)) {
+        return error.InvalidColor;
+    }
+
+    const xyz_d65 = colorToXyzD65(input);
+    var result = xyzD65ToColor(xyz_d65, target, input.channels[3]);
+    if (!allFinite(result.channels)) return error.InvalidColor;
+    result.channels[3] = input.channels[3];
+    return result;
+}
+
+fn rgbToHsl(channels: [4]f64) [4]f64 {
     const red = channels[0] / 255;
     const green = channels[1] / 255;
     const blue = channels[2] / 255;
@@ -335,13 +366,11 @@ pub fn toHsl(input: native_value.Color) Error![4]f64 {
     return .{ normalizeHue(hue), saturation * 100, lightness * 100, channels[3] };
 }
 
-pub fn toHwb(input: native_value.Color) Error![4]f64 {
-    if (input.space == .hwb) return input.channels;
-    const channels = try toRgb(input);
+fn rgbToHwb(channels: [4]f64) [4]f64 {
     const red = channels[0] / 255;
     const green = channels[1] / 255;
     const blue = channels[2] / 255;
-    const hsl_channels = try toHsl(input);
+    const hsl_channels = rgbToHsl(channels);
     return .{
         hsl_channels[0],
         @min(red, @min(green, blue)) * 100,
@@ -816,6 +845,466 @@ fn hwbToRgb(channels: [4]f64) [4]f64 {
         (base[2] / 255 * factor + white) * 255,
         channels[3],
     };
+}
+
+fn colorToXyzD65(input: native_value.Color) Vec3 {
+    return switch (input.space) {
+        .rgb => srgbToXyz(.{
+            input.channels[0] / 255,
+            input.channels[1] / 255,
+            input.channels[2] / 255,
+        }),
+        .hsl => blk: {
+            const rgb_channels = hslToRgb(input.channels);
+            break :blk srgbToXyz(.{
+                rgb_channels[0] / 255,
+                rgb_channels[1] / 255,
+                rgb_channels[2] / 255,
+            });
+        },
+        .hwb => blk: {
+            const rgb_channels = hwbToRgb(input.channels);
+            break :blk srgbToXyz(.{
+                rgb_channels[0] / 255,
+                rgb_channels[1] / 255,
+                rgb_channels[2] / 255,
+            });
+        },
+        .lab => d50ToD65(labToXyz(input.channels[0..3].*)),
+        .lch => d50ToD65(labToXyz(polarToRectangular(input.channels[0..3].*))),
+        .oklab => oklabToXyz(input.channels[0..3].*),
+        .oklch => oklabToXyz(polarToRectangular(input.channels[0..3].*)),
+        .srgb => srgbToXyz(input.channels[0..3].*),
+        .srgb_linear => linearSrgbToXyz(input.channels[0..3].*),
+        .display_p3 => linearP3ToXyz(linearizeSrgb(input.channels[0..3].*)),
+        .a98_rgb => linearA98ToXyz(linearizeA98(input.channels[0..3].*)),
+        .prophoto_rgb => d50ToD65(linearProphotoToXyz(
+            linearizeProphoto(input.channels[0..3].*),
+        )),
+        .rec2020 => linearRec2020ToXyz(linearizeRec2020(input.channels[0..3].*)),
+        .xyz_d50 => d50ToD65(input.channels[0..3].*),
+        .xyz => input.channels[0..3].*,
+    };
+}
+
+fn xyzD65ToColor(
+    xyz: Vec3,
+    target: native_value.ColorSpace,
+    alpha: f64,
+) native_value.Color {
+    return switch (target) {
+        .rgb => blk: {
+            const srgb = xyzToSrgb(xyz);
+            break :blk colorFromChannels(.rgb, .{
+                srgb[0] * 255,
+                srgb[1] * 255,
+                srgb[2] * 255,
+            }, alpha, 0);
+        },
+        .hsl => blk: {
+            const srgb = xyzToSrgb(xyz);
+            const channels = rgbToHsl(.{
+                srgb[0] * 255,
+                srgb[1] * 255,
+                srgb[2] * 255,
+                alpha,
+            });
+            break :blk .{ .space = .hsl, .channels = channels };
+        },
+        .hwb => blk: {
+            const srgb = xyzToSrgb(xyz);
+            const channels = rgbToHwb(.{
+                srgb[0] * 255,
+                srgb[1] * 255,
+                srgb[2] * 255,
+                alpha,
+            });
+            break :blk .{ .space = .hwb, .channels = channels };
+        },
+        .lab => colorFromChannels(.lab, xyzToLab(d65ToD50(xyz)), alpha, 0),
+        .lch => blk: {
+            const channels = rectangularToPolar(xyzToLab(d65ToD50(xyz)), 0.0015);
+            break :blk colorFromChannels(
+                .lch,
+                channels,
+                alpha,
+                if (channels[1] <= 0.0015) 0b0100 else 0,
+            );
+        },
+        .oklab => colorFromChannels(.oklab, xyzToOklab(xyz), alpha, 0),
+        .oklch => blk: {
+            const channels = rectangularToPolar(xyzToOklab(xyz), 0.000004);
+            break :blk colorFromChannels(
+                .oklch,
+                channels,
+                alpha,
+                if (channels[1] <= 0.000004) 0b0100 else 0,
+            );
+        },
+        .srgb => colorFromChannels(.srgb, xyzToSrgb(xyz), alpha, 0),
+        .srgb_linear => colorFromChannels(.srgb_linear, xyzToLinearSrgb(xyz), alpha, 0),
+        .display_p3 => colorFromChannels(
+            .display_p3,
+            gammaSrgb(xyzToLinearP3(xyz)),
+            alpha,
+            0,
+        ),
+        .a98_rgb => colorFromChannels(.a98_rgb, gammaA98(xyzToLinearA98(xyz)), alpha, 0),
+        .prophoto_rgb => colorFromChannels(
+            .prophoto_rgb,
+            gammaProphoto(xyzToLinearProphoto(d65ToD50(xyz))),
+            alpha,
+            0,
+        ),
+        .rec2020 => colorFromChannels(
+            .rec2020,
+            gammaRec2020(xyzToLinearRec2020(xyz)),
+            alpha,
+            0,
+        ),
+        .xyz_d50 => colorFromChannels(.xyz_d50, d65ToD50(xyz), alpha, 0),
+        .xyz => colorFromChannels(.xyz, xyz, alpha, 0),
+    };
+}
+
+fn colorFromChannels(
+    space: native_value.ColorSpace,
+    channels: Vec3,
+    alpha: f64,
+    missing_mask: u4,
+) native_value.Color {
+    return .{
+        .space = space,
+        .channels = .{ channels[0], channels[1], channels[2], alpha },
+        .missing_mask = missing_mask,
+    };
+}
+
+fn srgbToXyz(channels: Vec3) Vec3 {
+    return linearSrgbToXyz(linearizeSrgb(channels));
+}
+
+fn xyzToSrgb(xyz: Vec3) Vec3 {
+    return gammaSrgb(xyzToLinearSrgb(xyz));
+}
+
+fn linearizeSrgb(channels: Vec3) Vec3 {
+    var result: Vec3 = undefined;
+    for (channels, 0..) |channel, index| {
+        const magnitude = @abs(channel);
+        result[index] = if (magnitude <= 0.04045)
+            channel / 12.92
+        else
+            signedPow((magnitude + 0.055) / 1.055, 2.4, channel);
+    }
+    return result;
+}
+
+fn gammaSrgb(channels: Vec3) Vec3 {
+    var result: Vec3 = undefined;
+    for (channels, 0..) |channel, index| {
+        const magnitude = @abs(channel);
+        result[index] = if (magnitude > 0.0031308)
+            signOf(channel) * (1.055 * std.math.pow(f64, magnitude, 1.0 / 2.4) - 0.055)
+        else
+            12.92 * channel;
+    }
+    return result;
+}
+
+fn linearSrgbToXyz(channels: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 506752.0 / 1228815.0, 87881.0 / 245763.0, 12673.0 / 70218.0 },
+        .{ 87098.0 / 409605.0, 175762.0 / 245763.0, 12673.0 / 175545.0 },
+        .{ 7918.0 / 409605.0, 87881.0 / 737289.0, 1001167.0 / 1053270.0 },
+    };
+    return multiplyMatrix(matrix, channels);
+}
+
+fn xyzToLinearSrgb(xyz: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 12831.0 / 3959.0, -329.0 / 214.0, -1974.0 / 3959.0 },
+        .{ -851781.0 / 878810.0, 1648619.0 / 878810.0, 36519.0 / 878810.0 },
+        .{ 705.0 / 12673.0, -2585.0 / 12673.0, 705.0 / 667.0 },
+    };
+    return multiplyMatrix(matrix, xyz);
+}
+
+fn linearP3ToXyz(channels: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 608311.0 / 1250200.0, 189793.0 / 714400.0, 198249.0 / 1000160.0 },
+        .{ 35783.0 / 156275.0, 247089.0 / 357200.0, 198249.0 / 2500400.0 },
+        .{ 0, 32229.0 / 714400.0, 5220557.0 / 5000800.0 },
+    };
+    return multiplyMatrix(matrix, channels);
+}
+
+fn xyzToLinearP3(xyz: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 446124.0 / 178915.0, -333277.0 / 357830.0, -72051.0 / 178915.0 },
+        .{ -14852.0 / 17905.0, 63121.0 / 35810.0, 423.0 / 17905.0 },
+        .{ 11844.0 / 330415.0, -50337.0 / 660830.0, 316169.0 / 330415.0 },
+    };
+    return multiplyMatrix(matrix, xyz);
+}
+
+fn linearizeProphoto(channels: Vec3) Vec3 {
+    var result: Vec3 = undefined;
+    for (channels, 0..) |channel, index| {
+        result[index] = if (@abs(channel) <= 16.0 / 512.0)
+            channel / 16
+        else
+            signedPow(@abs(channel), 1.8, channel);
+    }
+    return result;
+}
+
+fn gammaProphoto(channels: Vec3) Vec3 {
+    var result: Vec3 = undefined;
+    for (channels, 0..) |channel, index| {
+        result[index] = if (@abs(channel) >= 1.0 / 512.0)
+            signedPow(@abs(channel), 1.0 / 1.8, channel)
+        else
+            16 * channel;
+    }
+    return result;
+}
+
+fn linearProphotoToXyz(channels: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 0.79776664490064230, 0.13518129740053308, 0.03134773412839220 },
+        .{ 0.28807482881940130, 0.71183523424187300, 0.00008993693872564 },
+        .{ 0, 0, 0.82510460251046020 },
+    };
+    return multiplyMatrix(matrix, channels);
+}
+
+fn xyzToLinearProphoto(xyz: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 1.34578688164715830, -0.25557208737979464, -0.05110186497554526 },
+        .{ -0.54463070512490190, 1.50824774284514680, 0.02052744743642139 },
+        .{ 0, 0, 1.21196754563894520 },
+    };
+    return multiplyMatrix(matrix, xyz);
+}
+
+fn linearizeA98(channels: Vec3) Vec3 {
+    var result: Vec3 = undefined;
+    for (channels, 0..) |channel, index| {
+        result[index] = signedPow(@abs(channel), 563.0 / 256.0, channel);
+    }
+    return result;
+}
+
+fn gammaA98(channels: Vec3) Vec3 {
+    var result: Vec3 = undefined;
+    for (channels, 0..) |channel, index| {
+        result[index] = signedPow(@abs(channel), 256.0 / 563.0, channel);
+    }
+    return result;
+}
+
+fn linearA98ToXyz(channels: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 573536.0 / 994567.0, 263643.0 / 1420810.0, 187206.0 / 994567.0 },
+        .{ 591459.0 / 1989134.0, 6239551.0 / 9945670.0, 374412.0 / 4972835.0 },
+        .{ 53769.0 / 1989134.0, 351524.0 / 4972835.0, 4929758.0 / 4972835.0 },
+    };
+    return multiplyMatrix(matrix, channels);
+}
+
+fn xyzToLinearA98(xyz: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 1829569.0 / 896150.0, -506331.0 / 896150.0, -308931.0 / 896150.0 },
+        .{ -851781.0 / 878810.0, 1648619.0 / 878810.0, 36519.0 / 878810.0 },
+        .{ 16779.0 / 1248040.0, -147721.0 / 1248040.0, 1266979.0 / 1248040.0 },
+    };
+    return multiplyMatrix(matrix, xyz);
+}
+
+fn linearizeRec2020(channels: Vec3) Vec3 {
+    // Dart Sass 1.101.0 follows the CSS Color 4 2025 CRD's piecewise
+    // BT.2020 transfer curve. These constants are intentionally pinned to
+    // that compatibility target rather than silently tracking draft changes.
+    const alpha = 1.09929682680944;
+    const beta = 0.018053968510807;
+    var result: Vec3 = undefined;
+    for (channels, 0..) |channel, index| {
+        const magnitude = @abs(channel);
+        result[index] = if (magnitude < beta * 4.5)
+            channel / 4.5
+        else
+            signedPow((magnitude + alpha - 1) / alpha, 1.0 / 0.45, channel);
+    }
+    return result;
+}
+
+fn gammaRec2020(channels: Vec3) Vec3 {
+    const alpha = 1.09929682680944;
+    const beta = 0.018053968510807;
+    var result: Vec3 = undefined;
+    for (channels, 0..) |channel, index| {
+        result[index] = if (@abs(channel) >= beta)
+            signOf(channel) * (alpha * std.math.pow(f64, @abs(channel), 0.45) - (alpha - 1))
+        else
+            4.5 * channel;
+    }
+    return result;
+}
+
+fn linearRec2020ToXyz(channels: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 63426534.0 / 99577255.0, 20160776.0 / 139408157.0, 47086771.0 / 278816314.0 },
+        .{ 26158966.0 / 99577255.0, 472592308.0 / 697040785.0, 8267143.0 / 139408157.0 },
+        .{ 0, 19567812.0 / 697040785.0, 295819943.0 / 278816314.0 },
+    };
+    return multiplyMatrix(matrix, channels);
+}
+
+fn xyzToLinearRec2020(xyz: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 30757411.0 / 17917100.0, -6372589.0 / 17917100.0, -4539589.0 / 17917100.0 },
+        .{ -19765991.0 / 29648200.0, 47925759.0 / 29648200.0, 467509.0 / 29648200.0 },
+        .{ 792561.0 / 44930125.0, -1921689.0 / 44930125.0, 42328811.0 / 44930125.0 },
+    };
+    return multiplyMatrix(matrix, xyz);
+}
+
+fn d65ToD50(xyz: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 1.0479297925449969, 0.022946870601609652, -0.05019226628920524 },
+        .{ 0.02962780877005599, 0.9904344267538799, -0.017073799063418826 },
+        .{ -0.009243040646204504, 0.015055191490298152, 0.7518742814281371 },
+    };
+    return multiplyMatrix(matrix, xyz);
+}
+
+fn d50ToD65(xyz: Vec3) Vec3 {
+    const matrix: Matrix3 = .{
+        .{ 0.955473421488075, -0.02309845494876471, 0.06325924320057072 },
+        .{ -0.0283697093338637, 1.0099953980813041, 0.021041441191917323 },
+        .{ 0.012314014864481998, -0.020507649298898964, 1.330365926242124 },
+    };
+    return multiplyMatrix(matrix, xyz);
+}
+
+fn xyzToLab(xyz: Vec3) Vec3 {
+    const epsilon = 216.0 / 24389.0;
+    const kappa = 24389.0 / 27.0;
+    const d50: Vec3 = .{
+        0.3457 / 0.3585,
+        1,
+        (1.0 - 0.3457 - 0.3585) / 0.3585,
+    };
+    var f: Vec3 = undefined;
+    for (xyz, d50, 0..) |channel, white, index| {
+        const scaled = channel / white;
+        f[index] = if (scaled > epsilon)
+            std.math.cbrt(scaled)
+        else
+            (kappa * scaled + 16) / 116;
+    }
+    return .{
+        116 * f[1] - 16,
+        500 * (f[0] - f[1]),
+        200 * (f[1] - f[2]),
+    };
+}
+
+fn labToXyz(lab_channels: Vec3) Vec3 {
+    const epsilon = 216.0 / 24389.0;
+    const kappa = 24389.0 / 27.0;
+    const d50: Vec3 = .{
+        0.3457 / 0.3585,
+        1,
+        (1.0 - 0.3457 - 0.3585) / 0.3585,
+    };
+    const fy = (lab_channels[0] + 16) / 116;
+    const f: Vec3 = .{
+        lab_channels[1] / 500 + fy,
+        fy,
+        fy - lab_channels[2] / 200,
+    };
+    const f0_cubed = f[0] * f[0] * f[0];
+    const f2_cubed = f[2] * f[2] * f[2];
+    const scaled: Vec3 = .{
+        if (f0_cubed > epsilon) f0_cubed else (116 * f[0] - 16) / kappa,
+        if (lab_channels[0] > kappa * epsilon)
+            fy * fy * fy
+        else
+            lab_channels[0] / kappa,
+        if (f2_cubed > epsilon) f2_cubed else (116 * f[2] - 16) / kappa,
+    };
+    return .{
+        scaled[0] * d50[0],
+        scaled[1] * d50[1],
+        scaled[2] * d50[2],
+    };
+}
+
+fn xyzToOklab(xyz: Vec3) Vec3 {
+    const xyz_to_lms: Matrix3 = .{
+        .{ 0.8190224379967030, 0.3619062600528904, -0.1288737815209879 },
+        .{ 0.0329836539323885, 0.9292868615863434, 0.0361446663506424 },
+        .{ 0.0481771893596242, 0.2642395317527308, 0.6335478284694309 },
+    };
+    const lms_to_oklab: Matrix3 = .{
+        .{ 0.2104542683093140, 0.7936177747023054, -0.0040720430116193 },
+        .{ 1.9779985324311684, -2.4285922420485799, 0.4505937096174110 },
+        .{ 0.0259040424655478, 0.7827717124575296, -0.8086757549230774 },
+    };
+    var lms = multiplyMatrix(xyz_to_lms, xyz);
+    for (&lms) |*channel| channel.* = std.math.cbrt(channel.*);
+    return multiplyMatrix(lms_to_oklab, lms);
+}
+
+fn oklabToXyz(oklab_channels: Vec3) Vec3 {
+    const oklab_to_lms: Matrix3 = .{
+        .{ 1, 0.3963377773761749, 0.2158037573099136 },
+        .{ 1, -0.1055613458156586, -0.0638541728258133 },
+        .{ 1, -0.0894841775298119, -1.2914855480194092 },
+    };
+    const lms_to_xyz: Matrix3 = .{
+        .{ 1.2268798758459243, -0.5578149944602171, 0.2813910456659647 },
+        .{ -0.0405757452148008, 1.1122868032803170, -0.0717110580655164 },
+        .{ -0.0763729366746601, -0.4214933324022432, 1.5869240198367816 },
+    };
+    var lms = multiplyMatrix(oklab_to_lms, oklab_channels);
+    for (&lms) |*channel| channel.* = channel.* * channel.* * channel.*;
+    return multiplyMatrix(lms_to_xyz, lms);
+}
+
+fn rectangularToPolar(channels: Vec3, epsilon: f64) Vec3 {
+    const chroma = @sqrt(channels[1] * channels[1] + channels[2] * channels[2]);
+    var hue = std.math.atan2(channels[2], channels[1]) * 180 / std.math.pi;
+    if (hue < 0) hue += 360;
+    if (chroma <= epsilon) hue = 0;
+    return .{ channels[0], chroma, hue };
+}
+
+fn polarToRectangular(channels: Vec3) Vec3 {
+    const radians = channels[2] * std.math.pi / 180;
+    return .{
+        channels[0],
+        channels[1] * @cos(radians),
+        channels[1] * @sin(radians),
+    };
+}
+
+fn multiplyMatrix(matrix: Matrix3, vector: Vec3) Vec3 {
+    return .{
+        matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2],
+        matrix[1][0] * vector[0] + matrix[1][1] * vector[1] + matrix[1][2] * vector[2],
+        matrix[2][0] * vector[0] + matrix[2][1] * vector[1] + matrix[2][2] * vector[2],
+    };
+}
+
+fn signedPow(magnitude: f64, exponent: f64, source: f64) f64 {
+    return signOf(source) * std.math.pow(f64, magnitude, exponent);
+}
+
+fn signOf(value: f64) f64 {
+    return if (value < 0) -1 else 1;
 }
 
 fn serializeFunctional(
