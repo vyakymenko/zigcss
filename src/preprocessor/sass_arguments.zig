@@ -106,12 +106,15 @@ pub fn bindAlloc(
     parameters: []const Parameter,
     maximum_positional: usize,
 ) Error!Bound {
-    if (parameters.len == 0 or maximum_positional > parameters.len) return error.InvalidLimits;
+    if (maximum_positional > parameters.len) return error.InvalidLimits;
     for (parameters, 0..) |parameter, index| {
         if (!validName(parameter.name)) return error.InvalidLimits;
         for (parameters[0..index]) |previous| {
             if (nameEql(parameter.name, previous.name)) return error.InvalidLimits;
         }
+    }
+    if (parameters.len == 0 and arguments.len == 0) {
+        return .{ .allocator = allocator, .values = &.{} };
     }
     const values = try allocator.alloc(?Range, parameters.len);
     errdefer allocator.free(values);

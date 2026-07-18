@@ -1593,6 +1593,231 @@ test "native Sass loops reject malformed unbounded and escaping evaluation" {
     );
 }
 
+test "native Sass evaluates bounded source-ordered user functions" {
+    const input =
+        \\$base: 2;
+        \\@function twice($value) { @return $value * 2; }
+        \\@function add($a, $b: $a + 1) { @return $a + $b; }
+        \\@function count-down($n) {
+        \\  @if $n <= 0 { @return 0; }
+        \\  @return count_down($n - 1) + 1;
+        \\}
+        \\@function stop-at-two($limit) {
+        \\  @for $i from 1 through $limit { @if $i == 2 { @return $i; } }
+        \\  @return 0;
+        \\}
+        \\@function first-item($items) {
+        \\  @each $item in $items { @return $item; }
+        \\  @return null;
+        \\}
+        \\@function while-once() {
+        \\  $value: 0;
+        \\  @while $value < 1 { $value: $value + 1; @return $value; }
+        \\  @return 0;
+        \\}
+        \\@function global-base() { @return $base; }
+        \\@function red($color) { @return 7; }
+        \\.before {
+        \\  unresolved: later(2);
+        \\  direct: twice(3);
+        \\  nested: add(twice(2), $b: 3);
+        \\  defaulted: add(2);
+        \\  recursive: count-down(3);
+        \\  loop-return: stop-at-two(3);
+        \\  each-return: first-item((a, b));
+        \\  while-return: while-once();
+        \\}
+        \\@function later($value) { @return $value + 1; }
+        \\$base: 3;
+        \\@function with-base($value) { @return $value + $base; }
+        \\.after {
+        \\  $base: 10;
+        \\  later: later(2);
+        \\  base: with-base(1);
+        \\  trailing: add(1,);
+        \\  captured: global-base();
+        \\  override: red(#fff);
+        \\}
+        \\@function with-base($value) { @return $value + $base + 1; }
+        \\.redefined { value: with-base(1); }
+    ;
+    var result = try compile(std.testing.allocator, "user-functions.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".before{unresolved:later(2);direct:6;nested:7;defaulted:5;recursive:3;loop-return:2;each-return:a;while-return:1}.after{later:3;base:4;trailing:3;captured:3;override:7}.redefined{value:5}",
+        result.css(),
+    );
+}
+
+test "native Sass user functions retain lexical definition scope in both syntaxes" {
+    const scss =
+        \\$local: 100;
+        \\.scope {
+        \\  $local: 4;
+        \\  @function local-add($value, $amount: $local) { @return $value + $amount; }
+        \\  first: local-add(1);
+        \\  $local: 5;
+        \\  second: local-add(1);
+        \\  .child { value: local_add(2); }
+        \\}
+        \\.outside { value: local-add(1); }
+    ;
+    var scss_result = try compile(std.testing.allocator, "lexical-functions.scss", scss, .scss, .{});
+    defer scss_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".scope{first:5;second:6}.scope .child{value:7}.outside{value:local-add(1)}",
+        scss_result.css(),
+    );
+
+    const indented =
+        \\@function double($value)
+        \\  @return $value * 2
+        \\@function choose($value)
+        \\  @if $value > 0
+        \\    @return double($value)
+        \\  @return 0
+        \\.sass
+        \\  positive: choose(3)
+        \\  zero: choose(0)
+    ;
+    var sass_result = try compile(std.testing.allocator, "user-functions.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(".sass{positive:6;zero:0}", sass_result.css());
+}
+
+test "native Sass user functions reject invalid declarations calls and placement" {
+    const invalid_syntax = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "function-no-parameters.scss", .input = "@function f { @return 1; }" },
+        .{ .name = "function-no-block.scss", .input = "@function f();" },
+        .{ .name = "function-reserved-name.scss", .input = "@function --f() { @return 1; }" },
+        .{ .name = "function-empty-parameter.scss", .input = "@function f($a,, $b) { @return $a; }" },
+        .{ .name = "function-empty-default.scss", .input = "@function f($a:) { @return $a; }" },
+        .{ .name = "function-duplicate-parameter.scss", .input = "@function f($a_b, $a-b) { @return $a-b; }" },
+        .{ .name = "function-selected-control.scss", .input = "@if true { @function f() { @return 1; } }" },
+        .{ .name = "function-unselected-control.scss", .input = "@if false { @function f() { @return 1; } } .a { value: ok; }" },
+        .{ .name = "function-property.scss", .input = "@function f() { color: red; } .a { value: ok; }" },
+        .{ .name = "function-rule.scss", .input = "@function f() { .x { value: no; } } .a { value: ok; }" },
+        .{ .name = "function-include.scss", .input = "@function f() { @include unavailable; @return 1; } .a { value: ok; }" },
+        .{ .name = "function-extend.scss", .input = "@function f() { @extend .x; @return 1; } .a { value: ok; }" },
+        .{ .name = "return-root.scss", .input = "@return 1;" },
+        .{ .name = "return-rule.scss", .input = ".a { @return 1; }" },
+        .{ .name = "function-missing-return.scss", .input = "@function f() { $x: 1; } .a { value: f(); }" },
+    };
+    for (invalid_syntax) |case| {
+        try std.testing.expectError(
+            error.InvalidSassSyntax,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    const invalid_calls = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "function-missing-argument.scss", .input = "@function f($a) { @return $a; } .a { value: f(); }" },
+        .{ .name = "function-unknown-keyword.scss", .input = "@function f($a) { @return $a; } .a { value: f($b: 1); }" },
+        .{ .name = "function-duplicate-argument.scss", .input = "@function f($a) { @return $a; } .a { value: f(1, $a: 2); }" },
+        .{ .name = "function-positional-after-keyword.scss", .input = "@function f($a, $b) { @return $a; } .a { value: f($a: 1, 2); }" },
+        .{ .name = "function-too-many-arguments.scss", .input = "@function f() { @return 1; } .a { value: f(1); }" },
+    };
+    for (invalid_calls) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "function-rest-parameter.scss",
+            "@function f($args...) { @return 1; }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "function-splat-call.scss",
+            "@function f($a) { @return $a; } $args: 1; .a { value: f($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
+test "native Sass user functions enforce callable parameter and transaction limits" {
+    var semantic_limits = sass_evaluator.Limits{};
+    semantic_limits.max_callables = 1;
+    try std.testing.expectError(
+        error.CallableLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "function-count-limit.scss",
+            "@function a() { @return 1; } @function b() { @return 2; }",
+            .scss,
+            semantic_limits,
+        ),
+    );
+    semantic_limits = .{};
+    semantic_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "function-parameter-limit.scss",
+            "@function f($a, $b) { @return $a; }",
+            .scss,
+            semantic_limits,
+        ),
+    );
+    semantic_limits = .{};
+    semantic_limits.max_callables = 0;
+    try std.testing.expectError(
+        error.InvalidLimits,
+        compile(
+            std.testing.allocator,
+            "invalid-callable-limits.scss",
+            ".a { value: yes; }",
+            .scss,
+            semantic_limits,
+        ),
+    );
+
+    var transaction_limits = evaluator.Limits{};
+    transaction_limits.budget.max_call_depth = 2;
+    try std.testing.expectError(
+        error.CallDepthExceeded,
+        compileWithTransactionLimits(
+            std.testing.allocator,
+            "function-depth-limit.scss",
+            "@function recurse($n) { @if $n <= 0 { @return 0; } @return recurse($n - 1); } .a { value: recurse(3); }",
+            .scss,
+            .{},
+            transaction_limits,
+        ),
+    );
+    transaction_limits = .{};
+    transaction_limits.budget.max_calls = 1;
+    try std.testing.expectError(
+        error.CallCountExceeded,
+        compileWithTransactionLimits(
+            std.testing.allocator,
+            "function-call-limit.scss",
+            "@function f() { @return 1; } .a { first: f(); second: f(); }",
+            .scss,
+            .{},
+            transaction_limits,
+        ),
+    );
+}
+
 test "native Sass conditionals reject malformed chains" {
     const invalid = [_]struct {
         name: []const u8,
@@ -1978,6 +2203,7 @@ fn exerciseAllocationFailures(
         \\$theme: (tone: blue, spaces: $spaces);
         \\$enabled: not false;
         \\$inch: 1in;
+        \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
         \\.#{$name} {
         \\  $flow: 1px;
         \\  $loop-total: 0;
@@ -1985,6 +2211,7 @@ fn exerciseAllocationFailures(
         \\  color: map-get($theme, tone);
         \\  gap: nth(map-get($theme, spaces), 2);
         \\  enabled: $enabled and true;
+        \\  function-value: allocation_value(2);
         \\  @if $enabled { $flow: 2px; $ephemeral: yes; conditional: $flow; ephemeral: $ephemeral; }
         \\  @for $iteration from 1 through 1 { $loop-total: $loop-total + $iteration; for-loop: $iteration; }
         \\  @each $entry in only { each-loop: $entry; }
@@ -2034,7 +2261,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

@@ -55,6 +55,12 @@ test "native Sass arguments bind canonical names and optional parameters" {
     try std.testing.expect(arguments.nameEql("start_at", "start-at"));
 }
 
+test "native Sass arguments bind an empty call to an empty parameter list" {
+    var bound = try arguments.bindAlloc(std.testing.allocator, &.{}, &.{}, 0);
+    defer bound.deinit();
+    try std.testing.expectEqual(@as(usize, 0), bound.values.len);
+}
+
 test "native Sass arguments reject ambiguous and unsupported calls" {
     const duplicate_body = "$start-at: 1, $start_at: 2";
     const duplicate_comma = std.mem.indexOfScalar(u8, duplicate_body, ',').?;

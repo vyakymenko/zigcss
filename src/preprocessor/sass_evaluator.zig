@@ -20,6 +20,7 @@ const hard_selector_bytes = 20 * 1024 * 1024;
 const hard_temporary_bytes = 20 * 1024 * 1024;
 const hard_expression_tokens = 1_000_000;
 const hard_function_arguments = 65_536;
+const hard_callables = 65_536;
 const hard_loop_variables = 65_536;
 const hard_evaluation_depth: u16 = 256;
 
@@ -31,6 +32,7 @@ pub const Limits = struct {
     max_temporary_bytes: usize = 10 * 1024 * 1024,
     max_expression_tokens: usize = 200_000,
     max_function_arguments: usize = 4_096,
+    max_callables: usize = 4_096,
     max_loop_variables: usize = 4_096,
     max_evaluation_depth: u16 = 128,
 };
@@ -45,6 +47,7 @@ pub const Error = native_evaluator.Error ||
     native_source.Error ||
     native_value.Error || error{
     EvaluationDepthExceeded,
+    CallableLimitExceeded,
     FunctionArgumentLimitExceeded,
     InvalidExpression,
     InvalidLimits,
@@ -202,6 +205,34 @@ const LoopBodyContext = union(enum) {
         selectors: *const SelectorList,
         declarations: *std.ArrayList(u8),
     },
+    callable: *?*const native_value.Value,
+};
+
+const CallableParameter = struct {
+    name: []u8,
+    default_value: ?[]const u8,
+};
+
+const UserFunction = struct {
+    allocator: std.mem.Allocator,
+    name: []u8,
+    parameters: []CallableParameter,
+    block: native_syntax.NodeId,
+    owner: *ScopeFrame,
+    span: native_source.Span,
+
+    fn deinit(self: *UserFunction) void {
+        self.allocator.free(self.name);
+        for (self.parameters) |parameter| self.allocator.free(parameter.name);
+        if (self.parameters.len > 0) self.allocator.free(self.parameters);
+        self.* = undefined;
+    }
+};
+
+const CallableValidationContext = struct {
+    in_function: bool = false,
+    in_control: bool = false,
+    in_mixin: bool = false,
 };
 
 const ParsedForLoop = struct {
@@ -266,6 +297,7 @@ const Engine = struct {
     values: native_value.Store,
     environment: native_environment.Environment,
     global_scope: native_environment.ScopeId,
+    user_functions: std.ArrayList(UserFunction) = .empty,
     expression_depth: u16 = 0,
     selector_count: usize = 0,
     selector_bytes: usize = 0,
@@ -293,6 +325,8 @@ const Engine = struct {
     }
 
     fn deinit(self: *Engine) void {
+        for (self.user_functions.items) |*function| function.deinit();
+        self.user_functions.deinit(self.allocator);
         self.environment.deinit();
         self.values.deinit();
         self.* = undefined;
@@ -306,6 +340,7 @@ const Engine = struct {
         }
         const children = self.document.children(self.document.root) catch
             return error.InvalidSassSyntax;
+        try self.validateCallableStructure(self.document.root, .{});
         var scope = ScopeFrame{
             .cursor = self.global_scope,
             .kind = .global,
@@ -313,6 +348,84 @@ const Engine = struct {
         };
         try self.executeRootChildren(children, &scope, 1);
         self.global_scope = scope.cursor;
+    }
+
+    fn validateCallableStructure(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+        context: CallableValidationContext,
+    ) Error!void {
+        const node = self.document.get(node_id) catch return error.InvalidSassSyntax;
+        var child_context = context;
+        switch (node.kind) {
+            .function => {
+                if (context.in_function or context.in_control or context.in_mixin) {
+                    try self.report(.syntax, node.span, "native Sass function declaration is not allowed here");
+                    return error.InvalidSassSyntax;
+                }
+                child_context = .{ .in_function = true };
+            },
+            .conditional, .loop => child_context.in_control = true,
+            .mixin => {
+                if (context.in_function) {
+                    try self.report(.syntax, node.span, "Sass functions may not include or declare mixins");
+                    return error.InvalidSassSyntax;
+                }
+                child_context.in_mixin = true;
+            },
+            .return_statement => {
+                if (!context.in_function) {
+                    try self.report(.syntax, node.span, "Sass @return is only valid inside a function");
+                    return error.InvalidSassSyntax;
+                }
+                const return_children = self.document.children(node_id) catch
+                    return error.InvalidSassSyntax;
+                if (return_children.len != 1) {
+                    try self.report(.syntax, node.span, "malformed native Sass @return");
+                    return error.InvalidSassSyntax;
+                }
+                const expression = self.document.get(return_children[0]) catch
+                    return error.InvalidSassSyntax;
+                if (expression.kind != .expression or expression.text == null) {
+                    try self.report(.syntax, node.span, "native Sass @return requires an expression");
+                    return error.InvalidSassSyntax;
+                }
+            },
+            .rule => {
+                if (context.in_function) {
+                    try self.report(.syntax, node.span, "Sass functions may not contain style rules");
+                    return error.InvalidSassSyntax;
+                }
+            },
+            .declaration => {
+                if (context.in_function and !try self.isVariableDeclaration(node_id)) {
+                    try self.report(.syntax, node.span, "Sass functions may not emit declarations");
+                    return error.InvalidSassSyntax;
+                }
+            },
+            .content, .import, .module => {
+                if (context.in_function) {
+                    try self.report(.syntax, node.span, "at-rule is not valid inside a Sass function");
+                    return error.InvalidSassSyntax;
+                }
+            },
+            .at_rule => {
+                if (context.in_function) {
+                    const keyword_span = node.text orelse return error.InvalidSassSyntax;
+                    const keyword = try self.sources.slice(keyword_span);
+                    if (!std.ascii.eqlIgnoreCase(keyword, "@warn") and
+                        !std.ascii.eqlIgnoreCase(keyword, "@error") and
+                        !std.ascii.eqlIgnoreCase(keyword, "@debug"))
+                    {
+                        try self.report(.syntax, node.span, "at-rule is not valid inside a Sass function");
+                        return error.InvalidSassSyntax;
+                    }
+                }
+            },
+            else => {},
+        }
+        const children = self.document.children(node_id) catch return error.InvalidSassSyntax;
+        for (children) |child_id| try self.validateCallableStructure(child_id, child_context);
     }
 
     fn executeRootChildren(
@@ -364,6 +477,11 @@ const Engine = struct {
                     continue;
                 },
                 .loop => try self.executeLoop(child_id, scope, depth, .root),
+                .function => try self.defineUserFunction(child_id, scope),
+                .return_statement => {
+                    try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
+                    return error.InvalidSassSyntax;
+                },
                 else => {
                     try self.report(
                         .unsupported_feature,
@@ -498,6 +616,11 @@ const Engine = struct {
                     .selectors = selectors,
                     .declarations = declarations,
                 } }),
+                .function => try self.defineUserFunction(child_id, scope),
+                .return_statement => {
+                    try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
+                    return error.InvalidSassSyntax;
+                },
                 else => {
                     try self.report(
                         .unsupported_feature,
@@ -521,6 +644,386 @@ const Engine = struct {
             .kind = .flow,
             .parent = parent_scope,
         };
+    }
+
+    fn defineUserFunction(
+        self: *Engine,
+        function_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
+    ) Error!void {
+        const function_node = self.document.get(function_id) catch return error.InvalidSassSyntax;
+        if (scope.kind == .flow) {
+            try self.report(.syntax, function_node.span, "Sass functions may not be declared in control flow");
+            return error.InvalidSassSyntax;
+        }
+        if (self.user_functions.items.len >= self.limits.max_callables or
+            self.user_functions.items.len >= std.math.maxInt(u32))
+        {
+            try self.report(.resource_limit, function_node.span, "native Sass callable limit exceeded");
+            return error.CallableLimitExceeded;
+        }
+
+        var function = try self.parseUserFunction(function_id, scope);
+        errdefer function.deinit();
+        const callable_id: u32 = @intCast(self.user_functions.items.len);
+        const callable = try self.values.own(.{ .callable = .{
+            .kind = .user_function,
+            .id = callable_id,
+        } });
+        const key = try self.callableKey("@function:", function.name);
+        defer self.allocator.free(key);
+        if (scope.kind == .global) {
+            try self.assignGlobalVariable(scope, key, callable);
+        } else {
+            scope.cursor = try self.environment.set(scope.cursor, key, callable);
+        }
+        try self.user_functions.append(self.allocator, function);
+    }
+
+    fn parseUserFunction(
+        self: *Engine,
+        function_id: native_syntax.NodeId,
+        owner: *ScopeFrame,
+    ) Error!UserFunction {
+        const function_node = self.document.get(function_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(function_id) catch return error.InvalidSassSyntax;
+        if (function_node.kind != .function or function_node.text == null or children.len != 2) {
+            try self.report(.syntax, function_node.span, "malformed native Sass function declaration");
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null or block_node.kind != .block) {
+            try self.report(.syntax, function_node.span, "native Sass function requires a signature and block");
+            return error.InvalidSassSyntax;
+        }
+
+        const prelude = trimWhitespace(try self.sources.slice(prelude_node.text.?));
+        const opening = std.mem.indexOfScalar(u8, prelude, '(') orelse {
+            try self.report(.syntax, prelude_node.span, "native Sass function signature requires parentheses");
+            return error.InvalidSassSyntax;
+        };
+        if (!fullyWrapped(prelude[opening..], '(', ')')) {
+            try self.report(.syntax, prelude_node.span, "malformed native Sass function parameter list");
+            return error.InvalidSassSyntax;
+        }
+        const raw_name = trimWhitespace(prelude[0..opening]);
+        if (!isSimpleIdentifier(raw_name) or std.mem.startsWith(u8, raw_name, "--")) {
+            try self.report(.syntax, prelude_node.span, "invalid native Sass function name");
+            return error.InvalidSassSyntax;
+        }
+        const name = try self.normalizeCallableName(raw_name);
+        errdefer self.allocator.free(name);
+
+        const body = prelude[opening + 1 .. prelude.len - 1];
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
+        }
+        if (ranges.items.len > self.limits.max_function_arguments) {
+            try self.report(.resource_limit, prelude_node.span, "native Sass function parameter limit exceeded");
+            return error.FunctionArgumentLimitExceeded;
+        }
+
+        var parameters: std.ArrayList(CallableParameter) = .empty;
+        errdefer {
+            for (parameters.items) |parameter| self.allocator.free(parameter.name);
+            parameters.deinit(self.allocator);
+        }
+        for (ranges.items) |range| {
+            const raw_parameter = trimWhitespace(body[range.start..range.end]);
+            if (raw_parameter.len == 0) {
+                try self.report(.syntax, prelude_node.span, "empty native Sass function parameter");
+                return error.InvalidSassSyntax;
+            }
+            if (std.mem.endsWith(u8, raw_parameter, "...")) {
+                try self.report(
+                    .unsupported_feature,
+                    prelude_node.span,
+                    "Sass rest parameters are not implemented by the native evaluator yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            const colon = findTopLevelByte(raw_parameter, ':');
+            const raw_parameter_name = trimWhitespace(raw_parameter[0 .. colon orelse raw_parameter.len]);
+            if (raw_parameter_name.len < 2 or raw_parameter_name[0] != '$' or
+                !isSimpleIdentifier(raw_parameter_name[1..]))
+            {
+                try self.report(.syntax, prelude_node.span, "invalid native Sass function parameter");
+                return error.InvalidSassSyntax;
+            }
+            const parameter_name = try self.normalizeCallableName(raw_parameter_name[1..]);
+            errdefer self.allocator.free(parameter_name);
+            for (parameters.items) |parameter| {
+                if (std.mem.eql(u8, parameter.name, parameter_name)) {
+                    try self.report(.syntax, prelude_node.span, "duplicate native Sass function parameter");
+                    return error.InvalidSassSyntax;
+                }
+            }
+            const default_value = if (colon) |separator| blk: {
+                const value = trimWhitespace(raw_parameter[separator + 1 ..]);
+                if (value.len == 0) {
+                    try self.report(.syntax, prelude_node.span, "native Sass parameter default is missing");
+                    return error.InvalidSassSyntax;
+                }
+                break :blk value;
+            } else null;
+            try parameters.append(self.allocator, .{
+                .name = parameter_name,
+                .default_value = default_value,
+            });
+        }
+        const owned_parameters = try parameters.toOwnedSlice(self.allocator);
+        return .{
+            .allocator = self.allocator,
+            .name = name,
+            .parameters = owned_parameters,
+            .block = children[1],
+            .owner = owner,
+            .span = function_node.span,
+        };
+    }
+
+    fn tryUserFunctionCall(
+        self: *Engine,
+        raw: []const u8,
+        caller_scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const opening = std.mem.indexOfScalar(u8, raw, '(') orelse return null;
+        if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
+        const raw_name = raw[0..opening];
+        if (!isSimpleIdentifier(raw_name)) return null;
+        const function_id = try self.lookupUserFunction(raw_name, caller_scope) orelse return null;
+        const body = raw[opening + 1 .. raw.len - 1];
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
+        }
+        return try self.callUserFunction(
+            function_id,
+            body,
+            ranges.items,
+            caller_scope,
+            span,
+        );
+    }
+
+    fn lookupUserFunction(
+        self: *Engine,
+        raw_name: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!?u32 {
+        const name = try self.normalizeCallableName(raw_name);
+        defer self.allocator.free(name);
+        const key = try self.callableKey("@function:", name);
+        defer self.allocator.free(key);
+        const item = if (try self.environment.lookupNonGlobal(scope, key)) |local|
+            local
+        else
+            try self.environment.lookup(self.global_scope, key) orelse return null;
+        return switch (item.*) {
+            .callable => |callable| if (callable.kind == .user_function and
+                callable.id < self.user_functions.items.len)
+                callable.id
+            else
+                error.InvalidSassSyntax,
+            else => error.InvalidSassSyntax,
+        };
+    }
+
+    fn callUserFunction(
+        self: *Engine,
+        function_id: u32,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        caller_scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (function_id >= self.user_functions.items.len) return error.InvalidSassSyntax;
+        const function = &self.user_functions.items[function_id];
+        const parameter_specs = try self.allocator.alloc(
+            native_arguments.Parameter,
+            function.parameters.len,
+        );
+        defer if (parameter_specs.len > 0) self.allocator.free(parameter_specs);
+        for (function.parameters, 0..) |parameter, index| {
+            parameter_specs[index] = .{
+                .name = parameter.name,
+                .required = parameter.default_value == null,
+            };
+        }
+
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            parameter_specs,
+            parameter_specs.len,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        const evaluated = try self.allocator.alloc(?*const native_value.Value, function.parameters.len);
+        defer if (evaluated.len > 0) self.allocator.free(evaluated);
+        @memset(evaluated, null);
+        var positional: usize = 0;
+        for (parsed.items) |argument| {
+            const parameter_index = if (argument.name) |argument_name| blk: {
+                for (function.parameters, 0..) |parameter, index| {
+                    if (native_arguments.nameEql(argument_name, parameter.name)) break :blk index;
+                }
+                unreachable;
+            } else blk: {
+                const index = positional;
+                positional += 1;
+                break :blk index;
+            };
+            evaluated[parameter_index] = try self.evaluateExpressionBytes(
+                body[argument.value.start..argument.value.end],
+                caller_scope,
+                span,
+            );
+        }
+
+        try self.transaction.enterCall();
+        var active_call = true;
+        defer if (active_call) self.transaction.leaveCall() catch {};
+        var call_scope = ScopeFrame{
+            .cursor = try self.environment.push(function.owner.cursor),
+            .kind = .lexical,
+            .parent = function.owner,
+        };
+        for (function.parameters, 0..) |parameter, index| {
+            const item = evaluated[index] orelse try self.evaluateExpressionBytes(
+                parameter.default_value orelse return error.InvalidSassSyntax,
+                call_scope.cursor,
+                function.span,
+            );
+            try self.defineOwnedVariable(&call_scope, parameter.name, item);
+        }
+
+        var return_value: ?*const native_value.Value = null;
+        const children = self.document.children(function.block) catch return error.InvalidSassSyntax;
+        try self.executeFunctionChildren(children, &call_scope, 1, &return_value);
+        if (return_value == null) {
+            try self.report(.syntax, function.span, "native Sass function finished without @return");
+            return error.InvalidSassSyntax;
+        }
+        active_call = false;
+        try self.transaction.leaveCall();
+        return return_value.?;
+    }
+
+    fn executeFunctionChildren(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+        scope: *ScopeFrame,
+        depth: u16,
+        return_value: *?*const native_value.Value,
+    ) Error!void {
+        if (depth > self.limits.max_evaluation_depth) {
+            const span = if (children.len > 0)
+                (self.document.get(children[0]) catch return error.InvalidSassSyntax).span
+            else
+                (self.document.get(self.document.root) catch return error.InvalidSassSyntax).span;
+            try self.report(.resource_limit, span, "native Sass function evaluation depth exceeded");
+            return error.EvaluationDepthExceeded;
+        }
+        var index: usize = 0;
+        while (index < children.len) {
+            if (return_value.* != null) return;
+            try self.transaction.consumeOperations(1);
+            const child_id = children[index];
+            const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
+            switch (child.kind) {
+                .declaration => {
+                    if (!try self.isVariableDeclaration(child_id)) {
+                        try self.report(.syntax, child.span, "Sass functions may not emit declarations");
+                        return error.InvalidSassSyntax;
+                    }
+                    try self.assignVariable(child_id, scope);
+                },
+                .comment => {},
+                .return_statement => try self.evaluateFunctionReturn(child_id, scope, return_value),
+                .conditional => {
+                    const selection = try self.selectConditionalChain(children, index, scope.cursor);
+                    if (selection.block) |block_id| {
+                        const block_children = self.document.children(block_id) catch
+                            return error.InvalidSassSyntax;
+                        var branch_scope = try self.beginFlowScope(scope);
+                        try self.executeFunctionChildren(
+                            block_children,
+                            &branch_scope,
+                            depth + 1,
+                            return_value,
+                        );
+                    }
+                    index += selection.consumed;
+                    continue;
+                },
+                .loop => try self.executeLoop(child_id, scope, depth, .{ .callable = return_value }),
+                else => {
+                    try self.report(.syntax, child.span, "statement is not valid inside a native Sass function");
+                    return error.InvalidSassSyntax;
+                },
+            }
+            index += 1;
+        }
+    }
+
+    fn evaluateFunctionReturn(
+        self: *Engine,
+        return_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
+        return_value: *?*const native_value.Value,
+    ) Error!void {
+        const return_node = self.document.get(return_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(return_id) catch return error.InvalidSassSyntax;
+        if (return_node.kind != .return_statement or children.len != 1) {
+            try self.report(.syntax, return_node.span, "malformed native Sass @return");
+            return error.InvalidSassSyntax;
+        }
+        const expression = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        if (expression.kind != .expression or expression.text == null) {
+            try self.report(.syntax, return_node.span, "native Sass @return requires an expression");
+            return error.InvalidSassSyntax;
+        }
+        return_value.* = try self.evaluateExpression(expression.text.?, scope.cursor);
+    }
+
+    fn normalizeCallableName(self: *Engine, raw_name: []const u8) Error![]u8 {
+        if (!isSimpleIdentifier(raw_name) or raw_name.len > self.limits.max_temporary_bytes) {
+            return error.InvalidSassSyntax;
+        }
+        const normalized = try self.allocator.dupe(u8, raw_name);
+        for (normalized) |*byte| {
+            if (byte.* == '_') byte.* = '-';
+        }
+        return normalized;
+    }
+
+    fn callableKey(self: *Engine, prefix: []const u8, name: []const u8) Error![]u8 {
+        const length = std.math.add(usize, prefix.len, name.len) catch
+            return error.TemporaryLimitExceeded;
+        if (length > self.limits.max_temporary_bytes) return error.TemporaryLimitExceeded;
+        const key = try self.allocator.alloc(u8, length);
+        @memcpy(key[0..prefix.len], prefix);
+        @memcpy(key[prefix.len..], name);
+        return key;
     }
 
     fn executeLoop(
@@ -597,6 +1100,7 @@ const Engine = struct {
             ) });
             try self.assignOwnedVariable(&loop_scope, parsed.name, item);
             try self.executeLoopBody(body, &loop_scope, depth + 1, context);
+            if (loopBodyReturned(context)) return;
             if (parsed.inclusive and ordering == .equal) break;
 
             const step: f64 = if (descending) -1 else 1;
@@ -634,6 +1138,7 @@ const Engine = struct {
                         depth,
                         context,
                     );
+                    if (loopBodyReturned(context)) return;
                 }
             },
             .map => |map| {
@@ -647,6 +1152,7 @@ const Engine = struct {
                         depth,
                         context,
                     );
+                    if (loopBodyReturned(context)) return;
                 }
             },
             else => try self.executeEachIteration(
@@ -724,6 +1230,7 @@ const Engine = struct {
             if (!sassTruthy(condition.*)) break;
             try self.transaction.consumeLoopIterations(1);
             try self.executeLoopBody(body, &loop_scope, depth + 1, context);
+            if (loopBodyReturned(context)) return;
         }
     }
 
@@ -743,6 +1250,12 @@ const Engine = struct {
                 scope,
                 rule.declarations,
                 depth,
+            ),
+            .callable => |return_value| try self.executeFunctionChildren(
+                body,
+                scope,
+                depth,
+                return_value,
             ),
         }
     }
@@ -1663,6 +2176,7 @@ const Engine = struct {
             defer self.allocator.free(rendered);
             return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = true } });
         }
+        if (try self.tryUserFunctionCall(trimmed, scope, diagnostic_span)) |item| return item;
         if (try self.tryBuiltinCall(trimmed, scope, diagnostic_span)) |item| return item;
         if (native_color.parseLiteral(trimmed)) |color| {
             return self.values.own(.{ .color = color });
@@ -4582,6 +5096,48 @@ const ArithmeticParser = struct {
                     else => error.InvalidExpression,
                 };
             },
+            .identifier => {
+                var opening_index = self.cursor + 1;
+                while (opening_index < self.tokens.len and
+                    isExpressionTrivia(self.tokens[opening_index].kind))
+                {
+                    opening_index += 1;
+                }
+                if (opening_index >= self.tokens.len or
+                    self.tokens[opening_index].kind != .open_paren or
+                    self.tokens[opening_index].span.start != token.span.end)
+                {
+                    return error.InvalidExpression;
+                }
+                var depth: usize = 0;
+                var closing_index: ?usize = null;
+                var index = opening_index;
+                while (index < self.tokens.len) : (index += 1) {
+                    switch (self.tokens[index].kind) {
+                        .open_paren => depth += 1,
+                        .close_paren => {
+                            if (depth == 0) return error.InvalidExpression;
+                            depth -= 1;
+                            if (depth == 0) {
+                                closing_index = index;
+                                break;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+                const closing = closing_index orelse return error.InvalidExpression;
+                const call = self.raw[token.span.start..self.tokens[closing].span.end];
+                _ = try self.engine.lookupUserFunction(token.raw(self.raw), self.scope) orelse
+                    return error.InvalidExpression;
+                self.cursor = closing + 1;
+                const item = (try self.engine.tryUserFunctionCall(call, self.scope, self.span)) orelse
+                    return error.InvalidExpression;
+                return switch (item.*) {
+                    .number => |number| native_numeric.Numeric.fromNumber(number),
+                    else => error.InvalidExpression,
+                };
+            },
             .open_paren => {
                 self.cursor += 1;
                 const result = try self.parseExpression();
@@ -4624,11 +5180,19 @@ fn validateLimits(limits: Limits) Error!void {
         limits.max_expression_tokens > hard_expression_tokens or
         limits.max_function_arguments == 0 or
         limits.max_function_arguments > hard_function_arguments or
+        limits.max_callables == 0 or limits.max_callables > hard_callables or
         limits.max_loop_variables == 0 or limits.max_loop_variables > hard_loop_variables or
         limits.max_evaluation_depth == 0 or limits.max_evaluation_depth > hard_evaluation_depth)
     {
         return error.InvalidLimits;
     }
+}
+
+fn loopBodyReturned(context: LoopBodyContext) bool {
+    return switch (context) {
+        .callable => |return_value| return_value.* != null,
+        .root, .rule => false,
+    };
 }
 
 fn fullyWrapped(input: []const u8, opening: u8, closing: u8) bool {
@@ -5210,7 +5774,7 @@ fn findInterpolationEnd(input: []const u8, start: usize) ?usize {
 
 fn arithmeticStart(token: native_lexer.Token, raw: []const u8) bool {
     return switch (token.kind) {
-        .number, .variable, .open_paren => true,
+        .number, .variable, .identifier, .open_paren => true,
         .operator => blk: {
             const operation = token.raw(raw);
             break :blk std.mem.eql(u8, operation, "+") or std.mem.eql(u8, operation, "-");
