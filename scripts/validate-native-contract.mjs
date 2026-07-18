@@ -156,6 +156,7 @@ const expectedImplementations = Object.freeze([
       'built-in-list-module-aliases',
       'built-in-list-queries',
       'built-in-list-transformations',
+      'built-in-list-join',
       'unicode-string-core',
       'legacy-string-builtins',
       'built-in-string-module-aliases',

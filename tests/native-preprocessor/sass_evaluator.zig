@@ -3154,7 +3154,7 @@ test "native Sass list module rejects unowned calls" {
         },
         .{
             .name = "unsupported-list-member.scss",
-            .input = "@use \"sass:list\"; .a { value: list.join($undefined, b); }",
+            .input = "@use \"sass:list\"; .a { value: list.zip($undefined, b); }",
             .expected = error.InvalidExpression,
         },
         .{
@@ -3461,6 +3461,148 @@ test "native Sass list transformations reject unsafe arguments and limits" {
             std.testing.allocator,
             "list-transform-temporary-limit.scss",
             "@use \"sass:list\"; $value: list.append((a, b), c);",
+            .scss,
+            temporary_limits,
+        ),
+    );
+}
+
+test "native Sass joins lists immutably through module and legacy functions" {
+    const input =
+        \\@use "sass:list";
+        \\@use "sass:list" as seq;
+        \\@use "sass:list" as *;
+        \\@use "sass:map";
+        \\$join-order: 0;
+        \\$join-first: null;
+        \\@function stamp($value) {
+        \\  $join-order: $join-order + 1 !global;
+        \\  @if $join-order == 1 { $join-first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\@function join-rest($args...) { @return list.join($args, z); }
+        \\$left: [a b];
+        \\$slash: list.append(a b, c, $separator: slash);
+        \\$legacy: a/b;
+        \\$map: (x: 1, y: 2);
+        \\$empty-map: map.remove((gone: 1), gone);
+        \\.a {
+        \\  space: list.join(a b, c d);
+        \\  comma: seq.join((a, b), (c, d));
+        \\  first-separator: list.join(a b, (c, d));
+        \\  second-separator: list.join(a, (c, d));
+        \\  bracket-left: list.join($left, c d);
+        \\  original: $left;
+        \\  bracket-right: list.join(a b, [c d]);
+        \\  bracket-defer: list.join([a], (b, c));
+        \\  unbracket: list.join($left, c d, $bracketed: false);
+        \\  force-bracket: list.join(a b, c d, $bracketed: true);
+        \\  truthy-bracket: list.join(a, b, $bracketed: 1);
+        \\  null-unbracket: list.join([a], b, $bracketed: null);
+        \\  quoted-auto: list.join(a b, (c, d), $separator: "auto", $bracketed: "auto");
+        \\  force-comma: list.join(a b, c d, $separator: comma);
+        \\  force-space: list.join((a, b), (c, d), $separator: space);
+        \\  force-slash: list.join(a b, c d, $separator: slash);
+        \\  slash-auto: list.join($slash, (d, e));
+        \\  slash-length: list.length(list.join($slash, (d, e)));
+        \\  slash-separator: list.separator(list.join($slash, (d, e)));
+        \\  legacy: list.join($legacy, (c, d));
+        \\  legacy-length: list.length(list.join($legacy, (c, d)));
+        \\  legacy-first: list.nth(list.join($legacy, (c, d)), 1);
+        \\  map: list.join($map, (z: 3));
+        \\  empty-map-separator: list.separator($empty-map);
+        \\  empty-map-append-separator: list.separator(list.append($empty-map, x));
+        \\  empty-map-join: list.join($empty-map, (b, c));
+        \\  rest: join-rest(a, b);
+        \\  empty-length: list.length(list.join((), ()));
+        \\  empty-separator: list.separator(list.join((), ()));
+        \\  legacy-join: join((a, b), (c, d));
+        \\  source-order: list.join($bracketed: stamp(false), $separator: stamp(comma), $list2: stamp(c d), $list1: stamp(a b));
+        \\  first: $join-first;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "list-join.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{space:a b c d;comma:a,b,c,d;first-separator:a b c d;second-separator:a,c,d;bracket-left:[a b c d];original:[a b];bracket-right:a b c d;bracket-defer:[a,b,c];unbracket:a b c d;force-bracket:[a b c d];truthy-bracket:[a b];null-unbracket:a b;quoted-auto:a b c d;force-comma:a,b,c,d;force-space:a b c d;force-slash:a/b/c/d;slash-auto:a/b/c/d/e;slash-length:5;slash-separator:slash;legacy:a/b,c,d;legacy-length:3;legacy-first:a/b;map:x 1,y 2,z 3;empty-map-separator:space;empty-map-append-separator:space;empty-map-join:b,c;rest:a,b,z;empty-length:0;empty-separator:space;legacy-join:a,b,c,d;source-order:a,b,c,d;first:false}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:list" as l
+        \\$left: [a b]
+        \\.sass
+        \\  value: l.join($left, c d)
+        \\  original: $left
+        \\  comma: l.join(a, (b, c))
+        \\  bracket: l.join(a b, c d, $bracketed: true)
+        \\  legacy: join((a, b), (c, d))
+    ;
+    var sass_result = try compile(std.testing.allocator, "list-join.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{value:[a b c d];original:[a b];comma:a,b,c;bracket:[a b c d];legacy:a,b,c,d}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass list join rejects unsafe arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror = error.InvalidExpression,
+    }{
+        .{
+            .name = "list-join-short.scss",
+            .input = "@use \"sass:list\"; .a { value: list.join(a); }",
+        },
+        .{
+            .name = "list-join-long.scss",
+            .input = "@use \"sass:list\"; .a { value: list.join(a, b, auto, auto, extra); }",
+        },
+        .{
+            .name = "list-join-separator-type.scss",
+            .input = "@use \"sass:list\"; .a { value: list.join(a, b, true); }",
+        },
+        .{
+            .name = "list-join-separator-name.scss",
+            .input = "@use \"sass:list\"; .a { value: list.join(a, b, invalid); }",
+        },
+        .{
+            .name = "list-join-separator-case.scss",
+            .input = "@use \"sass:list\"; .a { value: list.join(a, b, Comma); }",
+        },
+        .{
+            .name = "list-join-unknown-keyword.scss",
+            .input = "@use \"sass:list\"; .a { value: list.join($list1: a, $value: b); }",
+        },
+        .{
+            .name = "list-join-duplicate-keyword.scss",
+            .input = "@use \"sass:list\"; .a { value: list.join($list1: a, $list2: b, $list2: c); }",
+        },
+        .{
+            .name = "list-join-splat.scss",
+            .input = "@use \"sass:list\"; $args: (a, b); .a { value: list.join($args...); }",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 1;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "list-join-temporary-limit.scss",
+            "@use \"sass:list\"; $value: list.join((a, b), (c, d));",
             .scss,
             temporary_limits,
         ),
@@ -3794,6 +3936,7 @@ fn exerciseAllocationFailures(
         \\$list-bracketed: lists.is-bracketed([$spaces]);
         \\$list-appended: lists.append($spaces, 4px, $separator: comma);
         \\$list-replaced: lists.set-nth($list-appended, 2, 5px);
+        \\$list-joined: lists.join($list-appended, (6px, 7px));
         \\$theme: (tone: blue, spaces: $spaces);
         \\$merged-theme: map.merge($theme, (accent: red));
         \\$removed-theme: map.remove($merged-theme, tone);
@@ -3826,6 +3969,7 @@ fn exerciseAllocationFailures(
         \\  enabled: $enabled and $list-bracketed and $list-separator == space;
         \\  list-appended: $list-appended;
         \\  list-replaced: $list-replaced;
+        \\  list-joined: $list-joined;
         \\  function-value: allocation_value(2);
         \\  rest-function: allocation-rest(1, (2, 3)...);
         \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
@@ -3896,7 +4040,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

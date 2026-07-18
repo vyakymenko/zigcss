@@ -119,6 +119,7 @@ const Builtin = enum {
     list_is_bracketed,
     list_append,
     list_set_nth,
+    list_join,
     meta_keywords,
     quote,
     unquote,
@@ -3595,6 +3596,8 @@ const Engine = struct {
             .list_append
         else if (sassNameEql(name, "set-nth"))
             .list_set_nth
+        else if (sassNameEql(name, "join"))
+            .list_join
         else if (sassNameEql(name, "quote"))
             .quote
         else if (sassNameEql(name, "unquote"))
@@ -3735,6 +3738,7 @@ const Engine = struct {
             .list_is_bracketed,
             .list_append,
             .list_set_nth,
+            .list_join,
             .map_keys,
             .map_values,
             .meta_keywords,
@@ -6270,7 +6274,8 @@ const Engine = struct {
             return error.InvalidExpression;
         }
         const separator: []const u8 = switch (arguments[0].*) {
-            .map, .argument_list => "comma",
+            .map => |map| if (map.entries.len == 0) "space" else "comma",
+            .argument_list => "comma",
             .list => |list| switch (list.separator) {
                 .comma => "comma",
                 .slash => "slash",
@@ -6305,8 +6310,8 @@ const Engine = struct {
             try self.report(.invalid_operation, span, "list append() requires two or three arguments");
             return error.InvalidExpression;
         }
-        const separator = try self.resolveListAppendSeparator(
-            arguments[0].*,
+        const separator = try self.resolveListSeparator(
+            canonicalAppendSeparator(sassListSeparator(arguments[0].*)),
             if (arguments.len == 3) arguments[2].* else null,
             span,
         );
@@ -6343,18 +6348,45 @@ const Engine = struct {
         } });
     }
 
-    fn resolveListAppendSeparator(
+    fn callListJoin(
         self: *Engine,
-        source: native_value.Value,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 2 or arguments.len > 4) {
+            try self.report(.invalid_operation, span, "list join() requires two to four arguments");
+            return error.InvalidExpression;
+        }
+        const separator = try self.resolveListSeparator(
+            sassJoinSeparator(arguments[0].*, arguments[1].*),
+            if (arguments.len >= 3) arguments[2].* else null,
+            span,
+        );
+        const bracketed = self.resolveListJoinBracketed(
+            arguments[0].*,
+            if (arguments.len == 4) arguments[3].* else null,
+        );
+        const sources = [_]native_value.Value{ arguments[0].*, arguments[1].* };
+        var list = try self.materializeLists(&sources, 0, span);
+        defer list.deinit(self.allocator);
+        return self.values.own(.{ .list = .{
+            .items = list.items,
+            .separator = separator,
+            .bracketed = bracketed,
+        } });
+    }
+
+    fn resolveListSeparator(
+        self: *Engine,
+        automatic: native_value.Separator,
         requested: ?native_value.Value,
         span: native_source.Span,
     ) Error!native_value.Separator {
-        const automatic = canonicalAppendSeparator(sassListSeparator(source));
         const value = requested orelse return automatic;
         const string = switch (value) {
             .string => |item| item,
             else => {
-                try self.report(.type_mismatch, span, "list append separator must be auto, space, comma, or slash");
+                try self.report(.type_mismatch, span, "list separator must be auto, space, comma, or slash");
                 return error.InvalidExpression;
             },
         };
@@ -6362,8 +6394,27 @@ const Engine = struct {
         if (std.mem.eql(u8, string.bytes, "space")) return .space;
         if (std.mem.eql(u8, string.bytes, "comma")) return .comma;
         if (std.mem.eql(u8, string.bytes, "slash")) return .slash;
-        try self.report(.invalid_operation, span, "unknown list append separator");
+        try self.report(.invalid_operation, span, "unknown list separator");
         return error.InvalidExpression;
+    }
+
+    fn resolveListJoinBracketed(
+        _: *Engine,
+        first: native_value.Value,
+        requested: ?native_value.Value,
+    ) bool {
+        const automatic = switch (first) {
+            .list => |list| list.bracketed,
+            else => false,
+        };
+        const value = requested orelse return automatic;
+        return switch (value) {
+            .string => |string| if (std.mem.eql(u8, string.bytes, "auto"))
+                automatic
+            else
+                true,
+            else => sassTruthy(value),
+        };
     }
 
     fn materializeList(
@@ -6372,14 +6423,31 @@ const Engine = struct {
         extra_items: usize,
         span: native_source.Span,
     ) Error!MaterializedList {
-        const source_length = sassListLength(source);
+        const sources = [_]native_value.Value{source};
+        return self.materializeLists(&sources, extra_items, span);
+    }
+
+    fn materializeLists(
+        self: *Engine,
+        sources: []const native_value.Value,
+        extra_items: usize,
+        span: native_source.Span,
+    ) Error!MaterializedList {
+        std.debug.assert(sources.len > 0);
+        var source_length: usize = 0;
+        var pair_count: usize = 0;
+        for (sources) |source| {
+            source_length = std.math.add(usize, source_length, sassListLength(source)) catch
+                return self.listTemporaryFailure(span);
+            if (source == .map) {
+                const source_pairs = std.math.mul(usize, source.map.entries.len, 2) catch
+                    return self.listTemporaryFailure(span);
+                pair_count = std.math.add(usize, pair_count, source_pairs) catch
+                    return self.listTemporaryFailure(span);
+            }
+        }
         const item_count = std.math.add(usize, source_length, extra_items) catch
             return self.listTemporaryFailure(span);
-        const pair_count = switch (source) {
-            .map => |map| std.math.mul(usize, map.entries.len, 2) catch
-                return self.listTemporaryFailure(span),
-            else => 0,
-        };
         const item_bytes = std.math.mul(usize, item_count, @sizeOf(native_value.Value)) catch
             return self.listTemporaryFailure(span);
         const pair_bytes = std.math.mul(usize, pair_count, @sizeOf(native_value.Value)) catch
@@ -6400,60 +6468,59 @@ const Engine = struct {
         var result = MaterializedList{
             .items = items,
             .pair_items = allocated_pair_items,
-            .separator = sassListSeparator(source),
-            .bracketed = switch (source) {
+            .separator = sassListSeparator(sources[0]),
+            .bracketed = switch (sources[0]) {
                 .list => |list| list.bracketed,
                 else => false,
             },
         };
 
         var output_index: usize = 0;
-        switch (source) {
-            .list => |list| {
-                if (list.separator == .legacy_slash) {
+        var pair_index: usize = 0;
+        for (sources) |source| {
+            switch (source) {
+                .list => |list| if (list.separator == .legacy_slash) {
                     try self.transaction.consumeOperations(1);
-                    result.items[0] = .{ .list = .{
+                    result.items[output_index] = .{ .list = .{
                         .items = list.items,
                         .separator = .legacy_slash,
                     } };
-                    output_index = 1;
+                    output_index += 1;
                 } else {
                     for (list.items) |item| {
                         try self.transaction.consumeOperations(1);
                         result.items[output_index] = item;
                         output_index += 1;
                     }
-                }
-            },
-            .argument_list => |argument_list| {
-                for (argument_list.positional) |item| {
+                },
+                .argument_list => |argument_list| for (argument_list.positional) |item| {
                     try self.transaction.consumeOperations(1);
                     result.items[output_index] = item;
                     output_index += 1;
-                }
-            },
-            .map => |map| {
-                if (map.entries.len > 0) {
+                },
+                .map => |map| if (map.entries.len > 0) {
                     const pair_items = result.pair_items.?;
-                    for (map.entries, 0..) |entry, index| {
+                    for (map.entries) |entry| {
                         try self.transaction.consumeOperations(1);
-                        pair_items[index * 2] = entry.key;
-                        pair_items[index * 2 + 1] = entry.value;
+                        pair_items[pair_index] = entry.key;
+                        pair_items[pair_index + 1] = entry.value;
                         result.items[output_index] = .{ .list = .{
-                            .items = pair_items[index * 2 .. index * 2 + 2],
+                            .items = pair_items[pair_index .. pair_index + 2],
                             .separator = .space,
                         } };
+                        pair_index += 2;
                         output_index += 1;
                     }
-                }
-            },
-            else => {
-                try self.transaction.consumeOperations(1);
-                result.items[0] = source;
-                output_index = 1;
-            },
+                },
+                else => {
+                    try self.transaction.consumeOperations(1);
+                    result.items[output_index] = source;
+                    output_index += 1;
+                },
+            }
         }
         std.debug.assert(output_index == source_length);
+        std.debug.assert(pair_index == pair_count);
         return result;
     }
 
@@ -6748,6 +6815,12 @@ const Engine = struct {
                 .{ .name = "n" },
                 .{ .name = "value" },
             },
+            .list_join => &.{
+                .{ .name = "list1" },
+                .{ .name = "list2" },
+                .{ .name = "separator", .required = false },
+                .{ .name = "bracketed", .required = false },
+            },
             .map_keys, .map_values => &.{.{ .name = "map" }},
             .meta_keywords => &.{.{ .name = "args" }},
             .red,
@@ -6814,7 +6887,7 @@ const Engine = struct {
         ) catch |err| return self.argumentsFailure(err, span);
         defer bound.deinit();
 
-        var evaluated: [3]*const native_value.Value = undefined;
+        var evaluated: [4]*const native_value.Value = undefined;
         for (parsed.items, 0..) |argument, index| {
             evaluated[index] = try self.evaluateExpressionBytes(
                 body[argument.value.start..argument.value.end],
@@ -6823,7 +6896,15 @@ const Engine = struct {
             );
         }
 
-        var ordered: [3]*const native_value.Value = undefined;
+        const automatic_list_option = native_value.Value{ .string = .{ .bytes = "auto" } };
+        var ordered: [4]*const native_value.Value = undefined;
+        if (builtin == .list_join) {
+            // `$bracketed` may be supplied by name while `$separator` is omitted.
+            // Keep the bound argument slice dense so an omitted optional slot can
+            // never expose undefined stack memory to the evaluator.
+            ordered[2] = &automatic_list_option;
+            ordered[3] = &automatic_list_option;
+        }
         var count: usize = 0;
         for (bound.values, 0..) |value_range, parameter_index| {
             const range = value_range orelse continue;
@@ -6853,6 +6934,7 @@ const Engine = struct {
             .list_is_bracketed => self.callListIsBracketed(arguments, span),
             .list_append => self.callListAppend(arguments, span),
             .list_set_nth => self.callListSetNth(arguments, span),
+            .list_join => self.callListJoin(arguments, span),
             .map_keys, .map_values => self.callMapEntries(builtin, arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
@@ -7977,6 +8059,7 @@ fn listModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "is-bracketed")) return .list_is_bracketed;
     if (sassNameEql(name, "append")) return .list_append;
     if (sassNameEql(name, "set-nth")) return .list_set_nth;
+    if (sassNameEql(name, "join")) return .list_join;
     return null;
 }
 
@@ -8214,9 +8297,31 @@ fn nativeMapView(item: native_value.Value) ?native_value.Map {
 fn sassListSeparator(item: native_value.Value) native_value.Separator {
     return switch (item) {
         .list => |list| if (list.separator == .legacy_slash) .space else list.separator,
-        .map, .argument_list => .comma,
+        .map => |map| if (map.entries.len == 0) .undecided else .comma,
+        .argument_list => .comma,
         else => .space,
     };
+}
+
+fn sassKnownListSeparator(item: native_value.Value) ?native_value.Separator {
+    return switch (item) {
+        .list => |list| switch (list.separator) {
+            .undecided, .legacy_slash => null,
+            .space, .comma, .slash => list.separator,
+        },
+        .map => |map| if (map.entries.len == 0) null else .comma,
+        .argument_list => .comma,
+        else => null,
+    };
+}
+
+fn sassJoinSeparator(
+    first: native_value.Value,
+    second: native_value.Value,
+) native_value.Separator {
+    return sassKnownListSeparator(first) orelse
+        sassKnownListSeparator(second) orelse
+        .space;
 }
 
 fn canonicalAppendSeparator(separator: native_value.Separator) native_value.Separator {
