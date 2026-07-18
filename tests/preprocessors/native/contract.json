@@ -141,6 +141,7 @@
         "built-in-list-zip",
         "built-in-list-slash",
         "built-in-math-division",
+        "built-in-math-extrema-hypotenuse",
         "built-in-math-powers-roots-logarithms",
         "built-in-math-trigonometry",
         "built-in-math-unit-predicates",

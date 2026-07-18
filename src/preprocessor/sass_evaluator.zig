@@ -132,8 +132,11 @@ const Builtin = enum {
     math_cos,
     math_div,
     math_floor,
+    math_hypot,
     math_is_unitless,
     math_log,
+    math_max,
+    math_min,
     math_percentage,
     math_pow,
     math_round,
@@ -141,6 +144,7 @@ const Builtin = enum {
     math_sqrt,
     math_tan,
     math_unit,
+    math_clamp,
     meta_keywords,
     quote,
     unquote,
@@ -495,8 +499,19 @@ const QualifiedName = struct {
 };
 
 const CalculationArgument = union(enum) {
-    number: native_value.Number,
-    deferred,
+    number: *const native_value.Value,
+    deferred: *const native_value.Value,
+};
+
+const CalculationDimension = enum {
+    number,
+    percentage,
+    length,
+    angle,
+    time,
+    frequency,
+    resolution,
+    unknown,
 };
 
 const MapMutationScratch = struct {
@@ -3590,6 +3605,118 @@ const Engine = struct {
         return self.values.own(.{ .boolean = result });
     }
 
+    fn callMathExtremum(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len == 0) {
+            try self.report(.invalid_operation, span, "math min() and max() require at least one number");
+            return error.InvalidExpression;
+        }
+        try self.transaction.consumeOperations(arguments.len);
+
+        var selected = arguments[0];
+        var selected_number = try self.mathNumericArgument(selected.*, span);
+        for (arguments[1..]) |argument| {
+            const number = try self.mathNumericArgument(argument.*, span);
+            const ordering = native_numeric.compare(selected_number, number) catch |err| {
+                try self.report(.invalid_operation, span, "native Sass extremum arguments have incompatible units");
+                return err;
+            };
+            const replace = switch (builtin) {
+                .math_min => ordering == .greater,
+                .math_max => ordering == .less,
+                else => unreachable,
+            };
+            if (replace) {
+                selected = argument;
+                selected_number = number;
+            }
+        }
+        return selected;
+    }
+
+    fn callMathClamp(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 3) {
+            try self.report(.invalid_operation, span, "math clamp() requires exactly three numbers");
+            return error.InvalidExpression;
+        }
+        try self.transaction.consumeOperations(3);
+
+        const minimum = try self.mathNumericArgument(arguments[0].*, span);
+        const number = try self.mathNumericArgument(arguments[1].*, span);
+        const maximum = try self.mathNumericArgument(arguments[2].*, span);
+        _ = native_numeric.convertValueToMatch(number, minimum) catch |err| {
+            try self.report(.invalid_operation, span, "native Sass clamp() arguments have incompatible units");
+            return err;
+        };
+        _ = native_numeric.convertValueToMatch(maximum, minimum) catch |err| {
+            try self.report(.invalid_operation, span, "native Sass clamp() arguments have incompatible units");
+            return err;
+        };
+
+        const number_maximum = native_numeric.compare(number, maximum) catch |err| {
+            try self.report(.invalid_operation, span, "native Sass clamp() arguments have incompatible units");
+            return err;
+        };
+        const bounded_index: usize = if (number_maximum == .greater) 2 else 1;
+        const bounded = if (bounded_index == 2) maximum else number;
+        const minimum_bounded = native_numeric.compare(minimum, bounded) catch |err| {
+            try self.report(.invalid_operation, span, "native Sass clamp() arguments have incompatible units");
+            return err;
+        };
+        return if (minimum_bounded == .less)
+            arguments[bounded_index]
+        else
+            arguments[0];
+    }
+
+    fn callMathHypot(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len == 0) {
+            try self.report(.invalid_operation, span, "math hypot() requires at least one number");
+            return error.InvalidExpression;
+        }
+        try self.transaction.consumeOperations(arguments.len);
+
+        const first_number = try self.mathNumberArgument(arguments[0].*, span);
+        const target = native_numeric.Numeric.fromNumber(first_number) catch |err| {
+            try self.report(
+                if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
+                span,
+                "invalid native Sass hypot() argument",
+            );
+            return err;
+        };
+        var result: f64 = 0;
+        for (arguments) |argument| {
+            const numeric = try self.mathNumericArgument(argument.*, span);
+            const converted = native_numeric.convertValueToMatch(numeric, target) catch |err| {
+                try self.report(.invalid_operation, span, "native Sass hypot() arguments have incompatible units");
+                return err;
+            };
+            result = std.math.hypot(result, converted);
+            if (!std.math.isFinite(result)) {
+                try self.report(.invalid_operation, span, "non-finite native Sass hypot() result");
+                return error.InvalidNumber;
+            }
+        }
+        return self.values.own(.{ .number = .{
+            .value = result,
+            .numerator_units = first_number.numerator_units,
+            .denominator_units = first_number.denominator_units,
+        } });
+    }
+
     fn callMathUnary(
         self: *Engine,
         builtin: Builtin,
@@ -4243,6 +4370,8 @@ const Engine = struct {
             .maximum
         else if (sassNameEql(name, "clamp"))
             .clamp
+        else if (sassNameEql(name, "hypot"))
+            .math_hypot
         else
             return null;
 
@@ -4294,6 +4423,15 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .math_min, .math_max, .math_hypot => return try self.callMathVariadicRaw(
+                builtin,
+                module_builtin != null,
+                raw,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
             .nth,
             .length,
             .list_index,
@@ -4312,6 +4450,7 @@ const Engine = struct {
             .math_ceil,
             .math_compatible,
             .math_cos,
+            .math_clamp,
             .math_div,
             .math_floor,
             .math_is_unitless,
@@ -5896,20 +6035,24 @@ const Engine = struct {
             return error.InvalidExpression;
         }
 
-        var arguments: std.ArrayList(native_value.Number) = .empty;
+        var arguments: std.ArrayList(*const native_value.Value) = .empty;
         defer arguments.deinit(self.allocator);
         var deferred = false;
         for (ranges) |range| {
             const argument_raw = trimWhitespace(body[range.start..range.end]);
             switch (try self.evaluateCalculationArgument(argument_raw, builtin, scope, span)) {
                 .number => |number| try arguments.append(self.allocator, number),
-                .deferred => deferred = true,
+                .deferred => |value| {
+                    try arguments.append(self.allocator, value);
+                    deferred = true;
+                },
             }
         }
         if (builtin == .clamp) {
             var dimensionless: ?bool = null;
-            for (arguments.items) |number| {
-                const current = (try native_numeric.Numeric.fromNumber(number)).isDimensionless();
+            for (arguments.items) |argument| {
+                if (argument.* != .number) continue;
+                const current = (try native_numeric.Numeric.fromNumber(argument.number)).isDimensionless();
                 if (dimensionless) |expected| {
                     if (current != expected) {
                         try self.report(
@@ -5924,10 +6067,10 @@ const Engine = struct {
                 }
             }
         }
-        if (deferred) return self.preserveCalculation(raw, scope, span);
+        if (deferred) return self.preserveEvaluatedFunction(raw, arguments.items, span);
 
         if (builtin == .calculation) {
-            return self.values.own(.{ .number = arguments.items[0] });
+            return arguments.items[0];
         }
 
         var selected: usize = if (builtin == .clamp) 1 else 0;
@@ -5938,14 +6081,14 @@ const Engine = struct {
                 2,
                 .minimum,
                 span,
-            ) orelse return self.preserveCalculation(raw, scope, span);
+            ) orelse return self.preserveEvaluatedFunction(raw, arguments.items, span);
             selected = try self.selectCalculationNumber(
                 arguments.items,
                 0,
                 selected,
                 .maximum,
                 span,
-            ) orelse return self.preserveCalculation(raw, scope, span);
+            ) orelse return self.preserveEvaluatedFunction(raw, arguments.items, span);
         } else {
             for (arguments.items[1..], 1..) |_, index| {
                 selected = try self.selectCalculationNumber(
@@ -5954,10 +6097,10 @@ const Engine = struct {
                     index,
                     builtin,
                     span,
-                ) orelse return self.preserveCalculation(raw, scope, span);
+                ) orelse return self.preserveEvaluatedFunction(raw, arguments.items, span);
             }
         }
-        return self.values.own(.{ .number = arguments.items[selected] });
+        return arguments.items[selected];
     }
 
     fn evaluateCalculationArgument(
@@ -5974,7 +6117,13 @@ const Engine = struct {
         switch (try self.probeArithmetic(raw, scope, span, context)) {
             .numeric => |numeric| {
                 if (!numeric.isCssNumber()) {
-                    if (builtin == .calculation) return .deferred;
+                    if (builtin == .calculation) {
+                        const rendered = try self.renderBytes(raw, scope, span, true);
+                        defer self.allocator.free(rendered);
+                        return .{ .deferred = try self.values.own(.{
+                            .string = .{ .bytes = rendered },
+                        }) };
+                    }
                     try self.report(
                         .invalid_operation,
                         span,
@@ -5987,13 +6136,23 @@ const Engine = struct {
                 const owned = try self.values.own(.{
                     .number = try numeric.toNumber(&numerator, &denominator),
                 });
-                return .{ .number = owned.number };
+                return .{ .number = owned };
             },
-            .incompatible => return .deferred,
+            .incompatible => {
+                const rendered = try self.renderBytes(raw, scope, span, true);
+                defer self.allocator.free(rendered);
+                return .{ .deferred = try self.values.own(.{
+                    .string = .{ .bytes = rendered },
+                }) };
+            },
             .invalid => {
                 const rendered = try self.renderBytes(raw, scope, span, true);
                 defer self.allocator.free(rendered);
-                if (containsDeferredCssCalculation(rendered)) return .deferred;
+                if (containsDeferredCssCalculation(rendered)) {
+                    return .{ .deferred = try self.values.own(.{
+                        .string = .{ .bytes = rendered },
+                    }) };
+                }
                 try self.report(.invalid_operation, span, "invalid native Sass calculation expression");
                 return error.InvalidExpression;
             },
@@ -6002,10 +6161,10 @@ const Engine = struct {
 
         const item = try self.evaluateExpressionBytes(raw, scope, span);
         return switch (item.*) {
-            .number => |number| .{ .number = number },
+            .number => .{ .number = item },
             .string, .selector => |string| if (!string.quoted and
-                containsDeferredCssCalculation(string.bytes))
-                .deferred
+                (containsDeferredCssCalculation(string.bytes) or builtin != .calculation))
+                .{ .deferred = item }
             else blk: {
                 try self.report(.type_mismatch, span, "native Sass calculation requires numbers");
                 break :blk error.InvalidExpression;
@@ -6019,15 +6178,15 @@ const Engine = struct {
 
     fn selectCalculationNumber(
         self: *Engine,
-        arguments: []const native_value.Number,
+        arguments: []const *const native_value.Value,
         left: usize,
         right: usize,
         builtin: Builtin,
         span: native_source.Span,
     ) Error!?usize {
         const ordering = native_numeric.compare(
-            try native_numeric.Numeric.fromNumber(arguments[left]),
-            try native_numeric.Numeric.fromNumber(arguments[right]),
+            try native_numeric.Numeric.fromNumber(arguments[left].number),
+            try native_numeric.Numeric.fromNumber(arguments[right].number),
         ) catch |err| switch (err) {
             error.IncompatibleUnits => return null,
             else => {
@@ -6040,19 +6199,6 @@ const Engine = struct {
             .maximum => if (ordering == .less) right else left,
             else => unreachable,
         };
-    }
-
-    fn preserveCalculation(
-        self: *Engine,
-        raw: []const u8,
-        scope: native_environment.ScopeId,
-        span: native_source.Span,
-    ) Error!*const native_value.Value {
-        const rendered = try self.renderBytes(raw, scope, span, true);
-        defer self.allocator.free(rendered);
-        return self.values.own(.{
-            .string = .{ .bytes = minifyCalculationArgumentCommas(rendered) },
-        });
     }
 
     fn callMapGet(
@@ -7565,6 +7711,108 @@ const Engine = struct {
         return self.callStringBuiltin(builtin, arguments[0..count], span);
     }
 
+    fn callMathVariadicRaw(
+        self: *Engine,
+        builtin: Builtin,
+        module_owned: bool,
+        raw: []const u8,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        if (evaluated.keywords.items.len != 0) {
+            try self.report(.invalid_operation, span, "variadic native Sass math functions do not accept keyword arguments");
+            return error.InvalidExpression;
+        }
+        const arguments = evaluated.positional.items;
+        if (arguments.len == 0) {
+            try self.report(.invalid_operation, span, "variadic native Sass math function requires an argument");
+            return error.InvalidExpression;
+        }
+
+        if (!module_owned) {
+            var preserve_css = false;
+            var valid_css_calculation = true;
+            for (arguments) |argument| {
+                switch (argument.*) {
+                    .number => {},
+                    .string, .selector => |string| {
+                        if (string.quoted) {
+                            valid_css_calculation = false;
+                        } else {
+                            preserve_css = true;
+                        }
+                    },
+                    else => valid_css_calculation = false,
+                }
+            }
+            if (valid_css_calculation) {
+                if (try self.preserveGlobalHypotIfNeeded(raw, arguments, span)) |value| {
+                    return value;
+                }
+                if (preserve_css) return self.preserveEvaluatedFunction(raw, arguments, span);
+            }
+        }
+
+        return switch (builtin) {
+            .math_min, .math_max => self.callMathExtremum(builtin, arguments, span),
+            .math_hypot => self.callMathHypot(arguments, span),
+            else => unreachable,
+        };
+    }
+
+    fn preserveGlobalHypotIfNeeded(
+        self: *Engine,
+        raw: []const u8,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        var target_number: ?native_value.Number = null;
+        var target_numeric: ?Numeric = null;
+        var preserve = false;
+        for (arguments) |argument| {
+            const number = switch (argument.*) {
+                .number => |value| value,
+                else => continue,
+            };
+            const numeric = native_numeric.Numeric.fromNumber(number) catch |err| {
+                try self.report(
+                    if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
+                    span,
+                    "invalid global Sass hypot() argument",
+                );
+                return err;
+            };
+            if (target_numeric) |target| {
+                _ = native_numeric.convertValueToMatch(numeric, target) catch |err| switch (err) {
+                    error.IncompatibleUnits => {
+                        if (calculationDimensionsProvablyIncompatible(target_number.?, number)) {
+                            try self.report(
+                                .invalid_operation,
+                                span,
+                                "global Sass hypot() arguments have incompatible units",
+                            );
+                            return err;
+                        }
+                        preserve = true;
+                    },
+                    else => {
+                        try self.report(.invalid_operation, span, "invalid global Sass hypot() argument");
+                        return err;
+                    },
+                };
+            } else {
+                target_number = number;
+                target_numeric = numeric;
+            }
+        }
+        if (!preserve) return null;
+        return try self.preserveEvaluatedFunction(raw, arguments, span);
+    }
+
     fn callFixedBuiltinRaw(
         self: *Engine,
         builtin: Builtin,
@@ -7618,6 +7866,11 @@ const Engine = struct {
             .math_atan2 => &.{
                 .{ .name = "y" },
                 .{ .name = "x" },
+            },
+            .math_clamp => &.{
+                .{ .name = "min" },
+                .{ .name = "number" },
+                .{ .name = "max" },
             },
             .math_div => &.{
                 .{ .name = "number1" },
@@ -7721,6 +7974,7 @@ const Engine = struct {
                 .math_atan,
                 .math_atan2,
                 .math_ceil,
+                .math_clamp,
                 .math_compatible,
                 .math_cos,
                 .math_div,
@@ -7838,6 +8092,7 @@ const Engine = struct {
             .math_sin,
             .math_tan,
             => self.callMathTrigonometric(builtin, arguments, span),
+            .math_clamp => self.callMathClamp(arguments, span),
             .math_compatible, .math_is_unitless => self.callMathUnitPredicate(
                 builtin,
                 arguments,
@@ -8994,11 +9249,15 @@ fn mathModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "atan2")) return .math_atan2;
     if (sassNameEql(name, "ceil")) return .math_ceil;
     if (sassNameEql(name, "compatible")) return .math_compatible;
+    if (sassNameEql(name, "clamp")) return .math_clamp;
     if (sassNameEql(name, "cos")) return .math_cos;
     if (sassNameEql(name, "div")) return .math_div;
     if (sassNameEql(name, "floor")) return .math_floor;
+    if (sassNameEql(name, "hypot")) return .math_hypot;
     if (sassNameEql(name, "is-unitless")) return .math_is_unitless;
     if (sassNameEql(name, "log")) return .math_log;
+    if (sassNameEql(name, "max")) return .math_max;
+    if (sassNameEql(name, "min")) return .math_min;
     if (sassNameEql(name, "percentage")) return .math_percentage;
     if (sassNameEql(name, "pow")) return .math_pow;
     if (sassNameEql(name, "round")) return .math_round;
@@ -9037,6 +9296,46 @@ fn stringModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "to-upper-case")) return .to_upper_case;
     if (sassNameEql(name, "to-lower-case")) return .to_lower_case;
     return null;
+}
+
+fn calculationDimensionsProvablyIncompatible(
+    left: native_value.Number,
+    right: native_value.Number,
+) bool {
+    const left_dimension = calculationDimension(left);
+    const right_dimension = calculationDimension(right);
+    if (left_dimension == .unknown or right_dimension == .unknown) return false;
+    if (left_dimension == right_dimension) return false;
+    return !((left_dimension == .percentage and right_dimension == .length) or
+        (left_dimension == .length and right_dimension == .percentage));
+}
+
+fn calculationDimension(number: native_value.Number) CalculationDimension {
+    if (number.denominator_units.len != 0 or number.numerator_units.len > 1) return .unknown;
+    if (number.numerator_units.len == 0) return .number;
+    const unit = number.numerator_units[0];
+    if (std.mem.eql(u8, unit, "%")) return .percentage;
+    if (calculationUnitIn(unit, &.{
+        "px",    "cm",    "mm",    "q",    "in",  "pc",    "pt",
+        "em",    "rem",   "ex",    "rex",  "cap", "rcap",  "ch",
+        "rch",   "ic",    "ric",   "lh",   "rlh", "vw",    "vh",
+        "vi",    "vb",    "vmin",  "vmax", "svw", "svh",   "svi",
+        "svb",   "svmin", "svmax", "lvw",  "lvh", "lvi",   "lvb",
+        "lvmin", "lvmax", "dvw",   "dvh",  "dvi", "dvb",   "dvmin",
+        "dvmax", "cqw",   "cqh",   "cqi",  "cqb", "cqmin", "cqmax",
+    })) return .length;
+    if (calculationUnitIn(unit, &.{ "deg", "grad", "rad", "turn" })) return .angle;
+    if (calculationUnitIn(unit, &.{ "s", "ms" })) return .time;
+    if (calculationUnitIn(unit, &.{ "Hz", "kHz" })) return .frequency;
+    if (calculationUnitIn(unit, &.{ "dpi", "dpcm", "dppx" })) return .resolution;
+    return .unknown;
+}
+
+fn calculationUnitIn(unit: []const u8, candidates: []const []const u8) bool {
+    for (candidates) |candidate| {
+        if (std.mem.eql(u8, unit, candidate)) return true;
+    }
+    return false;
 }
 
 fn containsDeferredCssCalculation(input: []const u8) bool {

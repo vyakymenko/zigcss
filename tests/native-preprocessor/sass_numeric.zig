@@ -21,7 +21,7 @@ test "native Sass numeric algebra converts every absolute unit family" {
         .{ .left = try unitNumber(1, "in"), .right = try unitNumber(96, "px"), .expected = 2 },
         .{ .left = try unitNumber(1, "s"), .right = try unitNumber(500, "ms"), .expected = 1.5 },
         .{ .left = try unitNumber(1, "turn"), .right = try unitNumber(180, "deg"), .expected = 1.5 },
-        .{ .left = try unitNumber(1, "khz"), .right = try unitNumber(500, "hz"), .expected = 1.5 },
+        .{ .left = try unitNumber(1, "kHz"), .right = try unitNumber(500, "Hz"), .expected = 1.5 },
         .{ .left = try unitNumber(1, "dppx"), .right = try unitNumber(96, "dpi"), .expected = 2 },
     };
     for (cases) |case| {
@@ -110,6 +110,14 @@ test "native Sass numeric compatibility matches unit addition domains" {
         try unitNumber(1, "PX"),
         pixels,
     ));
+    try std.testing.expect(!numeric.compatible(
+        try unitNumber(1, "Hz"),
+        try unitNumber(1, "hz"),
+    ));
+    try std.testing.expectError(
+        error.IncompatibleUnits,
+        numeric.add(try unitNumber(1, "hz"), try unitNumber(1, "khz"), '+'),
+    );
     try std.testing.expectError(
         error.IncompatibleUnits,
         numeric.add(try unitNumber(1, "PX"), pixels, '+'),

@@ -2399,6 +2399,277 @@ test "native Sass trigonometric functions reject unsafe arguments" {
     }
 }
 
+test "native Sass evaluates extrema clamping and hypotenuse without a provider" {
+    const input =
+        \\@use "sass:math";
+        \\@use "sass:math" as ext;
+        \\@use "sass:math" as *;
+        \\$evaluations: 0;
+        \\@function stamp($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\$minimums: (3px, 1px, 2px);
+        \\$legs: (5foo, 12foo);
+        \\.a {
+        \\  min: math.min(3px, 1px, 2px);
+        \\  min-converted: math.min(1in, 95px);
+        \\  min-unitless: math.min(1px, 2);
+        \\  min-negative: math.min(-1px, -2px);
+        \\  max: math.max(3px, 1px, 2px);
+        \\  max-converted: math.max(1in, 97px);
+        \\  max-unitless: math.max(1px, 2);
+        \\  max-negative: math.max(-1px, -2px);
+        \\  clamp: math.clamp(1px, 2px, 3px);
+        \\  clamp-low: math.clamp(1px, -2px, 3px);
+        \\  clamp-high: math.clamp(1px, 4px, 3px);
+        \\  clamp-equal: math.clamp(96px, 1in, 2in);
+        \\  hypot: math.hypot(3px, 4px);
+        \\  hypot-converted: math.hypot(1in, 96px);
+        \\  hypot-frequency: math.hypot(1Hz, 2kHz);
+        \\  hypot-percent: math.hypot(3%, 4%);
+        \\  hypot-custom: math.hypot($legs...);
+        \\  hypot-one: math.hypot(-3px);
+        \\  hypot-compound-unit: math.unit(math.hypot(math.div(3px, 1s), math.div(4px, 1s)));
+        \\  alias: ext.min(5s, 3s);
+        \\  star: max(1em, 2em);
+        \\  splat: math.min($minimums...);
+        \\  named-clamp: math.clamp($max: stamp(3px), $number: stamp(2px), $min: stamp(1px));
+        \\  evaluations: $evaluations;
+        \\  min-zero-angle: math.atan2(0, math.min(0, -0));
+        \\  max-zero-angle: math.atan2(0, math.max(-0, 0));
+        \\  clamp-zero-angle: math.atan2(0, math.clamp(-0, -0, 0));
+        \\  hypot-zero-angle: math.atan2(0, math.hypot(-0, -0));
+        \\  global-min: min(3ms, 2ms);
+        \\  global-max: max(3deg, 4deg);
+        \\  global-clamp: clamp(1foo, 2foo, 3foo);
+        \\  global-hypot: hypot(8px, 15px);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "math-extrema.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{min:1px;min-converted:95px;min-unitless:1px;min-negative:-2px;max:3px;max-converted:97px;max-unitless:2;max-negative:-1px;clamp:2px;clamp-low:1px;clamp-high:3px;clamp-equal:96px;hypot:5px;hypot-converted:1.4142135624in;hypot-frequency:2000.00025Hz;hypot-percent:5%;hypot-custom:13foo;hypot-one:3px;hypot-compound-unit:\"px/s\";alias:3s;star:2em;splat:1px;named-clamp:2px;evaluations:3;min-zero-angle:0deg;max-zero-angle:180deg;clamp-zero-angle:180deg;hypot-zero-angle:0deg;global-min:2ms;global-max:4deg;global-clamp:2foo;global-hypot:17px}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:math" as m
+        \\.sass
+        \\  min: m.min(3px, 1px, 2px)
+        \\  max: m.max(1s, 2s)
+        \\  clamp: m.clamp(1em, 2em, 3em)
+        \\  hypot: m.hypot(3foo, 4foo)
+        \\  globals: min(3px, 1px) max(1s, 2s) clamp(1em, 2em, 3em) hypot(3foo, 4foo)
+    ;
+    var sass_result = try compile(std.testing.allocator, "math-extrema.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{min:1px;max:2s;clamp:2em;hypot:5foo;globals:1px 2s 2em 5foo}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var global_result = try compile(
+        std.testing.allocator,
+        "math-extrema-global.scss",
+        ".plain { static-min: min(3px, 1px); static-max: max(1s, 2s); static-clamp: clamp(1em, 2em, 3em); static-hypot: hypot(3foo, 4foo); relative-hypot: hypot(1em, 2px); min: min(var(--x), 1px); min-name: min(foo, 1px); max: max(var(--x), 2px); max-name: max(foo, 2px); clamp: clamp(1px, var(--x), 3px); clamp-name: clamp(1px, foo, 3px); hypot: hypot(var(--x), 4px); hypot-name: hypot(foo, 4px); }",
+        .scss,
+        .{},
+    );
+    defer global_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{static-min:1px;static-max:2s;static-clamp:2em;static-hypot:5foo;relative-hypot:hypot(1em,2px);min:min(var(--x),1px);min-name:min(foo,1px);max:max(var(--x),2px);max-name:max(foo,2px);clamp:clamp(1px,var(--x),3px);clamp-name:clamp(1px,foo,3px);hypot:hypot(var(--x),4px);hypot-name:hypot(foo,4px)}",
+        global_result.css(),
+    );
+
+    const deferred_input =
+        \\$evaluations: 0;
+        \\@function dynamic($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.dynamic {
+        \\  min: min(#{dynamic(var(--a))}, 1px);
+        \\  max: max(#{dynamic(var(--b))}, 2px);
+        \\  clamp: clamp(1px, #{dynamic(var(--c))}, 3px);
+        \\  hypot: hypot(#{dynamic(var(--d))}, 4px);
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var deferred_result = try compile(
+        std.testing.allocator,
+        "math-extrema-deferred.scss",
+        deferred_input,
+        .scss,
+        .{},
+    );
+    defer deferred_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".dynamic{min:min(var(--a),1px);max:max(var(--b),2px);clamp:clamp(1px,var(--c),3px);hypot:hypot(var(--d),4px);evaluations:4}",
+        deferred_result.css(),
+    );
+}
+
+test "native Sass extrema clamping and hypotenuse reject unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-math-min-module.scss",
+            .input = ".a { value: math.min(1px, 2px); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-math-min-namespace.scss",
+            .input = "@use \"sass:math\" as Math; .a { value: math.min(1px, 2px); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-min-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.min();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-max-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.max();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-hypot-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.hypot();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-clamp-short.scss",
+            .input = "@use \"sass:math\"; $value: math.clamp(1px, 2px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-clamp-long.scss",
+            .input = "@use \"sass:math\"; $value: math.clamp(1px, 2px, 3px, 4px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-min-incompatible.scss",
+            .input = "@use \"sass:math\"; $value: math.min(1px, 1s);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-max-cased-custom.scss",
+            .input = "@use \"sass:math\"; $value: math.max(1Foo, 2foo);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-clamp-mixed.scss",
+            .input = "@use \"sass:math\"; $value: math.clamp(1px, 2, 3px);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-clamp-incompatible.scss",
+            .input = "@use \"sass:math\"; $value: math.clamp(1px, 2s, 3px);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-hypot-mixed.scss",
+            .input = "@use \"sass:math\"; $value: math.hypot(3px, 4);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-hypot-incompatible.scss",
+            .input = "@use \"sass:math\"; $value: math.hypot(3px, 4s);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-hypot-cased-frequency.scss",
+            .input = "@use \"sass:math\"; $value: math.hypot(1hz, 2khz);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "global-hypot-incompatible.scss",
+            .input = "$value: hypot(1px, 2s);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-min-color.scss",
+            .input = "@use \"sass:math\"; $value: math.min(red, 1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-max-quoted.scss",
+            .input = "@use \"sass:math\"; $value: math.max(\"foo\", 1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-clamp-string.scss",
+            .input = "@use \"sass:math\"; $value: math.clamp(1px, foo, 3px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-hypot-list.scss",
+            .input = "@use \"sass:math\"; $value: math.hypot((3px, 4px));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-min-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.min($other: 1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-clamp-unknown-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.clamp($min: 1px, $number: 2px, $other: 3px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-clamp-duplicate-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.clamp($min: 1px, $min: 2px, $number: 2px, $max: 3px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "module-math-min-dynamic.scss",
+            .input = "@use \"sass:math\"; $value: math.min(var(--x), 1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "module-math-hypot-dynamic.scss",
+            .input = "@use \"sass:math\"; $value: math.hypot(var(--x), 1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unprefixed-math-max-string.scss",
+            .input = "@use \"sass:math\" as *; $value: max(foo, 1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-hypot-nonfinite.scss",
+            .input = "@use \"sass:math\"; $value: math.hypot(1e308, 1e308, 1e308, 1e308);",
+            .expected = error.InvalidNumber,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "math-extrema-argument-limit.scss",
+            "@use \"sass:math\"; $value: math.min(1px, 2px, 3px);",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass inspects callable keywords through the built-in meta module" {
     const input =
         \\@use "sass:meta";
@@ -5538,6 +5809,15 @@ fn exerciseAllocationFailures(
         \\$math-asin: math.asin(.5);
         \\$math-atan2: math.atan2(1in, 96px);
         \\$math-sin-css: sin(var(--angle));
+        \\$math-min: math.min(3px, 1px, 2px);
+        \\$math-max: math.max(3px, 1px, 2px);
+        \\$math-clamp: math.clamp(1px, 2px, 3px);
+        \\$math-hypot: math.hypot(3px, 4px);
+        \\$math-hypot-frequency: math.hypot(1Hz, 2kHz);
+        \\$math-min-css: min(var(--minimum), 2px);
+        \\$math-max-css: max(var(--maximum), 2px);
+        \\$math-clamp-css: clamp(1px, var(--number), 3px);
+        \\$math-hypot-css: hypot(var(--leg), 4px);
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
         \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
         \\@function allocation-target($left, $right: 0) { @return $left + $right; }
@@ -5593,6 +5873,15 @@ fn exerciseAllocationFailures(
         \\  math-asin: $math-asin;
         \\  math-atan2: $math-atan2;
         \\  math-sin-css: $math-sin-css;
+        \\  math-min: $math-min;
+        \\  math-max: $math-max;
+        \\  math-clamp: $math-clamp;
+        \\  math-hypot: $math-hypot;
+        \\  math-hypot-frequency: $math-hypot-frequency;
+        \\  math-min-css: $math-min-css;
+        \\  math-max-css: $math-max-css;
+        \\  math-clamp-css: $math-clamp-css;
+        \\  math-hypot-css: $math-hypot-css;
         \\  reduced-calc: calc($size + 2px);
         \\  deferred-calc: calc(100% - $size);
         \\  color: rgba(hsl(.5turn, 100%, 50%), .4);
@@ -5647,7 +5936,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;math-pow:8;math-sqrt:9;math-log:3;math-pow-css:pow(var(--base),2);math-sin:.5;math-asin:30deg;math-atan2:45deg;math-sin-css:sin(var(--angle));reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;math-pow:8;math-sqrt:9;math-log:3;math-pow-css:pow(var(--base),2);math-sin:.5;math-asin:30deg;math-atan2:45deg;math-sin-css:sin(var(--angle));math-min:1px;math-max:3px;math-clamp:2px;math-hypot:5px;math-hypot-frequency:2000.00025Hz;math-min-css:min(var(--minimum),2px);math-max-css:max(var(--maximum),2px);math-clamp-css:clamp(1px,var(--number),3px);math-hypot-css:hypot(var(--leg),4px);reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
