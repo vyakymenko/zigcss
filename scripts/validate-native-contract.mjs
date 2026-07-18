@@ -154,6 +154,7 @@ const expectedImplementations = Object.freeze([
       'shallow-map-mutations',
       'nested-deep-map-mutations',
       'built-in-list-module-aliases',
+      'built-in-list-queries',
       'unicode-string-core',
       'legacy-string-builtins',
       'built-in-string-module-aliases',

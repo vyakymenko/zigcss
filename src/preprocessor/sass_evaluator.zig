@@ -114,6 +114,9 @@ const Builtin = enum {
     map_deep_remove,
     nth,
     length,
+    list_index,
+    list_separator,
+    list_is_bracketed,
     meta_keywords,
     quote,
     unquote,
@@ -3567,6 +3570,12 @@ const Engine = struct {
             .nth
         else if (sassNameEql(name, "length"))
             .length
+        else if (sassNameEql(name, "index"))
+            .list_index
+        else if (sassNameEql(name, "list-separator"))
+            .list_separator
+        else if (sassNameEql(name, "is-bracketed"))
+            .list_is_bracketed
         else if (sassNameEql(name, "quote"))
             .quote
         else if (sassNameEql(name, "unquote"))
@@ -3702,6 +3711,9 @@ const Engine = struct {
             ),
             .nth,
             .length,
+            .list_index,
+            .list_separator,
+            .list_is_bracketed,
             .map_keys,
             .map_values,
             .meta_keywords,
@@ -6127,15 +6139,10 @@ const Engine = struct {
             try self.report(.invalid_operation, span, "nth() requires exactly two arguments");
             return error.InvalidExpression;
         }
-        const length: usize = switch (arguments[0].*) {
-            .list => |list| list.items.len,
-            .map => |map| map.entries.len,
-            .argument_list => |argument_list| argument_list.positional.len,
-            else => 1,
-        };
+        const length = sassListLength(arguments[0].*);
         const index = try self.resolveListIndex(arguments[1].*, length, span);
         return switch (arguments[0].*) {
-            .list => |list| &list.items[index],
+            .list => |list| if (list.separator == .slash) arguments[0] else &list.items[index],
             .argument_list => |argument_list| &argument_list.positional[index],
             .map => |map| blk: {
                 const pair = [_]native_value.Value{
@@ -6160,13 +6167,98 @@ const Engine = struct {
             try self.report(.invalid_operation, span, "length() requires exactly one argument");
             return error.InvalidExpression;
         }
-        const length: usize = switch (arguments[0].*) {
-            .list => |list| list.items.len,
-            .map => |map| map.entries.len,
-            .argument_list => |argument_list| argument_list.positional.len,
-            else => 1,
-        };
+        const length = sassListLength(arguments[0].*);
         return self.values.own(.{ .number = .{ .value = @floatFromInt(length) } });
+    }
+
+    fn callListIndex(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(.invalid_operation, span, "list index() requires exactly two arguments");
+            return error.InvalidExpression;
+        }
+        const target = arguments[1].*;
+        switch (arguments[0].*) {
+            .list => |list| {
+                if (list.separator == .slash) {
+                    try self.transaction.consumeOperations(1);
+                    return self.listIndexResult(sassValuesEqual(arguments[0].*, target), 0);
+                }
+                for (list.items, 0..) |item, index| {
+                    try self.transaction.consumeOperations(1);
+                    if (sassValuesEqual(item, target)) return self.listIndexResult(true, index);
+                }
+            },
+            .argument_list => |argument_list| {
+                for (argument_list.positional, 0..) |item, index| {
+                    try self.transaction.consumeOperations(1);
+                    if (sassValuesEqual(item, target)) return self.listIndexResult(true, index);
+                }
+            },
+            .map => |map| {
+                for (map.entries, 0..) |entry, index| {
+                    try self.transaction.consumeOperations(1);
+                    const pair = [_]native_value.Value{ entry.key, entry.value };
+                    const item = native_value.Value{ .list = .{
+                        .items = &pair,
+                        .separator = .space,
+                    } };
+                    if (sassValuesEqual(item, target)) return self.listIndexResult(true, index);
+                }
+            },
+            else => {
+                try self.transaction.consumeOperations(1);
+                if (sassValuesEqual(arguments[0].*, target)) return self.listIndexResult(true, 0);
+            },
+        }
+        return self.listIndexResult(false, 0);
+    }
+
+    fn listIndexResult(
+        self: *Engine,
+        found: bool,
+        index: usize,
+    ) Error!*const native_value.Value {
+        if (!found) return self.values.own(.{ .null_value = {} });
+        return self.values.own(.{ .number = .{ .value = @floatFromInt(index + 1) } });
+    }
+
+    fn callListSeparator(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "list separator() requires exactly one argument");
+            return error.InvalidExpression;
+        }
+        const separator: []const u8 = switch (arguments[0].*) {
+            .map, .argument_list => "comma",
+            .list => |list| switch (list.separator) {
+                .comma => "comma",
+                .space, .slash, .undecided => "space",
+            },
+            else => "space",
+        };
+        return self.values.own(.{ .string = .{ .bytes = separator } });
+    }
+
+    fn callListIsBracketed(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "list is-bracketed() requires exactly one argument");
+            return error.InvalidExpression;
+        }
+        return self.values.own(.{ .boolean = switch (arguments[0].*) {
+            .list => |list| list.bracketed,
+            else => false,
+        } });
     }
 
     fn callMetaKeywords(
@@ -6437,6 +6529,11 @@ const Engine = struct {
                 .{ .name = "n" },
             },
             .length => &.{.{ .name = "list" }},
+            .list_index => &.{
+                .{ .name = "list" },
+                .{ .name = "value" },
+            },
+            .list_separator, .list_is_bracketed => &.{.{ .name = "list" }},
             .map_keys, .map_values => &.{.{ .name = "map" }},
             .meta_keywords => &.{.{ .name = "args" }},
             .red,
@@ -6537,6 +6634,9 @@ const Engine = struct {
         return switch (builtin) {
             .nth => self.callNth(arguments, span),
             .length => self.callLength(arguments, span),
+            .list_index => self.callListIndex(arguments, span),
+            .list_separator => self.callListSeparator(arguments, span),
+            .list_is_bracketed => self.callListIsBracketed(arguments, span),
             .map_keys, .map_values => self.callMapEntries(builtin, arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
@@ -7656,6 +7756,9 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
 fn listModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "nth")) return .nth;
     if (sassNameEql(name, "length")) return .length;
+    if (sassNameEql(name, "index")) return .list_index;
+    if (sassNameEql(name, "separator")) return .list_separator;
+    if (sassNameEql(name, "is-bracketed")) return .list_is_bracketed;
     return null;
 }
 
@@ -7887,6 +7990,15 @@ fn nativeMapView(item: native_value.Value) ?native_value.Map {
         else
             null,
         else => null,
+    };
+}
+
+fn sassListLength(item: native_value.Value) usize {
+    return switch (item) {
+        .list => |list| if (list.separator == .slash) 1 else list.items.len,
+        .map => |map| map.entries.len,
+        .argument_list => |argument_list| argument_list.positional.len,
+        else => 1,
     };
 }
 

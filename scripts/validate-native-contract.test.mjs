@@ -63,6 +63,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('shallow-map-mutations'), true)
   assert.equal(sassCore.capabilities.includes('nested-deep-map-mutations'), true)
   assert.equal(sassCore.capabilities.includes('built-in-list-module-aliases'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-list-queries'), true)
   assert.equal(sassCore.capabilities.includes('unicode-string-core'), true)
   assert.equal(sassCore.capabilities.includes('legacy-string-builtins'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-aliases'), true)

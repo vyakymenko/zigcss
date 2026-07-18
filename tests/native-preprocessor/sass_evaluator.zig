@@ -3186,6 +3186,113 @@ test "native Sass list module rejects unowned calls" {
     }
 }
 
+test "native Sass queries lists through module and legacy functions" {
+    const input =
+        \\@use "sass:list";
+        \\@use "sass:list" as seq;
+        \\@use "sass:list" as *;
+        \\$order: 0;
+        \\$first: null;
+        \\@function stamp($value) {
+        \\  $order: $order + 1 !global;
+        \\  @if $order == 1 { $first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\.a {
+        \\  index: list.index((a, b, a), a);
+        \\  missing: list.index((a, b), z) == null;
+        \\  map-index: list.index((a: 1, b: 2), b 2);
+        \\  separator-space: list.separator(a b);
+        \\  separator-comma: seq.separator((a, b));
+        \\  separator-undecided: list.separator(solo);
+        \\  bracketed: is-bracketed([a b]);
+        \\  unbracketed: list.is-bracketed(a b);
+        \\  global-index: index((a, b), b);
+        \\  global-separator: list-separator((a, b));
+        \\  global-bracketed: is-bracketed([a]);
+        \\  slash-length: list.length(a/b);
+        \\  slash-separator: list.separator(a/b);
+        \\  slash-index: list.index(a/b, a/b);
+        \\  slash-nth: list.nth(a/b, 1);
+        \\  source-order: list.index($value: stamp(b), $list: stamp((a, b)));
+        \\  first: $first;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "list-queries.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{index:1;missing:true;map-index:2;separator-space:space;separator-comma:comma;separator-undecided:space;bracketed:true;unbracketed:false;global-index:2;global-separator:comma;global-bracketed:true;slash-length:1;slash-separator:space;slash-index:1;slash-nth:a/b;source-order:2;first:b}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:list" as l
+        \\.sass
+        \\  index: l.index((a, b), b)
+        \\  missing: l.index((a, b), z) == null
+        \\  separator: l.separator(a b)
+        \\  bracketed: l.is-bracketed([a b])
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "list-queries.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{index:2;missing:true;separator:space;bracketed:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass list queries reject unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror = error.InvalidExpression,
+    }{
+        .{
+            .name = "list-index-short.scss",
+            .input = "@use \"sass:list\"; .a { value: list.index((a, b)); }",
+        },
+        .{
+            .name = "list-index-long.scss",
+            .input = "@use \"sass:list\"; .a { value: list.index((a, b), b, c); }",
+        },
+        .{
+            .name = "list-separator-arity.scss",
+            .input = "@use \"sass:list\"; .a { value: list.separator(a, b); }",
+        },
+        .{
+            .name = "list-bracketed-arity.scss",
+            .input = "@use \"sass:list\"; .a { value: list.is-bracketed(); }",
+        },
+        .{
+            .name = "list-query-unknown-keyword.scss",
+            .input = "@use \"sass:list\"; .a { value: list.index($list: (a, b), $needle: b); }",
+        },
+        .{
+            .name = "list-query-duplicate-keyword.scss",
+            .input = "@use \"sass:list\"; .a { value: list.index($list: (a, b), $list: (c, d)); }",
+        },
+        .{
+            .name = "list-query-splat.scss",
+            .input = "@use \"sass:list\"; $args: ((a, b), b); .a { value: list.index($args...); }",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass string functions reject unsafe arity types indexes and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -3508,6 +3615,9 @@ fn exerciseAllocationFailures(
         \\$spaces: 1px 2px 3px;
         \\$list-length: lists.length($spaces);
         \\$list-nth: lists.nth($spaces, 2);
+        \\$list-index: lists.index($spaces, 2px);
+        \\$list-separator: lists.separator($spaces);
+        \\$list-bracketed: lists.is-bracketed([$spaces]);
         \\$theme: (tone: blue, spaces: $spaces);
         \\$merged-theme: map.merge($theme, (accent: red));
         \\$removed-theme: map.remove($merged-theme, tone);
@@ -3536,8 +3646,8 @@ fn exerciseAllocationFailures(
         \\  $loop-total: 0;
         \\  width: $size * $list-length;
         \\  color: map-get($theme, tone);
-        \\  gap: $list-nth;
-        \\  enabled: $enabled and true;
+        \\  gap: lists.nth($spaces, $list-index);
+        \\  enabled: $enabled and $list-bracketed and $list-separator == space;
         \\  function-value: allocation_value(2);
         \\  rest-function: allocation-rest(1, (2, 3)...);
         \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
