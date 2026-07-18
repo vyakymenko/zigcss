@@ -119,6 +119,7 @@
         "color-space-equality",
         "color-channel-accessors",
         "legacy-color-manipulation",
+        "keyword-argument-binding",
         "unicode-string-core",
         "legacy-string-builtins",
         "typed-collections",
@@ -132,12 +133,14 @@
       ],
       "nativeSources": [
         "src/preprocessor/sass_evaluator.zig",
+        "src/preprocessor/sass_arguments.zig",
         "src/preprocessor/sass_numeric.zig",
         "src/preprocessor/sass_color.zig",
         "src/preprocessor/sass_string.zig"
       ],
       "testSources": [
         "tests/native-preprocessor/sass_evaluator.zig",
+        "tests/native-preprocessor/sass_arguments.zig",
         "tests/native-preprocessor/sass_numeric.zig",
         "tests/native-preprocessor/sass_color.zig",
         "tests/native-preprocessor/sass_string.zig"

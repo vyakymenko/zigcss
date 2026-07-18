@@ -7,6 +7,7 @@ const native_diagnostics = @import("diagnostics.zig");
 const native_environment = @import("environment.zig");
 const native_evaluator = @import("evaluator.zig");
 const native_lexer = @import("lexer.zig");
+const native_arguments = @import("sass_arguments.zig");
 const native_color = @import("sass_color.zig");
 const native_numeric = @import("sass_numeric.zig");
 const native_string = @import("sass_string.zig");
@@ -35,6 +36,7 @@ pub const Limits = struct {
 pub const Error = native_evaluator.Error ||
     native_environment.Error ||
     native_lexer.Error ||
+    native_arguments.Error ||
     native_color.Error ||
     native_numeric.Error ||
     native_string.Error ||
@@ -82,10 +84,7 @@ const VariableAssignment = struct {
     global: bool = false,
 };
 
-const ExpressionRange = struct {
-    start: usize,
-    end: usize,
-};
+const ExpressionRange = native_arguments.Range;
 
 const SplitSeparator = enum {
     comma,
@@ -1106,6 +1105,21 @@ const Engine = struct {
         }
 
         switch (builtin) {
+            .quote,
+            .unquote,
+            .str_length,
+            .str_index,
+            .str_slice,
+            .str_insert,
+            .to_upper_case,
+            .to_lower_case,
+            => return try self.callStringBuiltinRaw(
+                builtin,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
             .calculation, .minimum, .maximum, .clamp => return try self.callCalculation(
                 builtin,
                 raw,
@@ -2016,6 +2030,94 @@ const Engine = struct {
             },
             else => unreachable,
         }
+    }
+
+    fn callStringBuiltinRaw(
+        self: *Engine,
+        builtin: Builtin,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const parameters: []const native_arguments.Parameter = switch (builtin) {
+            .quote, .unquote, .str_length, .to_upper_case, .to_lower_case => &.{
+                .{ .name = "string" },
+            },
+            .str_index => &.{
+                .{ .name = "string" },
+                .{ .name = "substring" },
+            },
+            .str_slice => &.{
+                .{ .name = "string" },
+                .{ .name = "start-at" },
+                .{ .name = "end-at", .required = false },
+            },
+            .str_insert => &.{
+                .{ .name = "string" },
+                .{ .name = "insert" },
+                .{ .name = "index" },
+            },
+            else => unreachable,
+        };
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            parameters,
+            parameters.len,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        var evaluated: [3]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values) |value_range| {
+            const range = value_range orelse continue;
+            evaluated[count] = try self.evaluateExpressionBytes(
+                body[range.start..range.end],
+                scope,
+                span,
+            );
+            count += 1;
+        }
+        return self.callStringBuiltin(builtin, evaluated[0..count], span);
+    }
+
+    fn argumentsFailure(
+        self: *Engine,
+        failure: native_arguments.Error,
+        span: native_source.Span,
+    ) Error {
+        const message: []const u8 = switch (failure) {
+            error.ArgumentLimitExceeded => "native Sass function argument limit exceeded",
+            error.DuplicateArgument => "duplicate native Sass keyword argument",
+            error.InvalidArgument => "invalid native Sass function argument",
+            error.InvalidLimits => "invalid native Sass argument binding limits",
+            error.MissingArgument => "required native Sass function argument is missing",
+            error.PositionalAfterKeyword => "positional Sass argument cannot follow a keyword argument",
+            error.PositionalLimitExceeded => "native Sass function received too many positional arguments",
+            error.SplatUnsupported => "Sass argument-list expansion is not implemented by the native evaluator yet",
+            error.UnknownArgument => "unknown native Sass keyword argument",
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        const kind: native_diagnostics.Code = switch (failure) {
+            error.ArgumentLimitExceeded => .resource_limit,
+            error.SplatUnsupported => .unsupported_feature,
+            else => .invalid_operation,
+        };
+        self.report(kind, span, message) catch |err| return err;
+        return switch (failure) {
+            error.ArgumentLimitExceeded => error.FunctionArgumentLimitExceeded,
+            error.InvalidLimits => error.InvalidLimits,
+            error.SplatUnsupported => error.UnsupportedFeature,
+            else => error.InvalidExpression,
+        };
     }
 
     fn stringArgument(

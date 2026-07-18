@@ -590,12 +590,16 @@ test "native Sass evaluates bounded Unicode string functions without a provider"
         \\  insert: str-insert("a💚b", "🌍", -1);
         \\  upper: to-upper-case("Abc-é-ß-ı-i");
         \\  lower: to-lower-case("AbC-É-ẞ-I");
+        \\  keyword-length: str-length($string: "💚a");
+        \\  keyword-index: str-index($substring: "💚", $string: "a💚b");
+        \\  keyword-slice: str-slice($end_at: 2, $string: "a💚b", $start-at: 2);
+        \\  keyword-insert: str-insert($index: 2, $insert: "X", $string: "ab");
         \\}
     ;
     var result = try compile(std.testing.allocator, "strings.scss", input, .scss, .{});
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".a{quote:\"foo\";quote-escape:\"foo\\\\ bar\";unquote:foo bar;unquote-escape:foo bar;length:2;escaped-length:3;unquoted-escaped-length:8;index:2;slice:\"💚\";slice-negative:\"lo\";insert:\"a💚b🌍\";upper:\"ABC-é-ß-ı-I\";lower:\"abc-É-ẞ-i\"}",
+        ".a{quote:\"foo\";quote-escape:\"foo\\\\ bar\";unquote:foo bar;unquote-escape:foo bar;length:2;escaped-length:3;unquoted-escaped-length:8;index:2;slice:\"💚\";slice-negative:\"lo\";insert:\"a💚b🌍\";upper:\"ABC-é-ß-ı-I\";lower:\"abc-É-ẞ-i\";keyword-length:2;keyword-index:2;keyword-slice:\"💚\";keyword-insert:\"aXb\"}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
@@ -615,6 +619,22 @@ test "native Sass string functions reject unsafe arity types indexes and limits"
         .{ .name = "case-type.scss", .input = ".a { value: to-upper-case(false); }" },
         .{ .name = "short-index.scss", .input = ".a { value: str-index(abc); }" },
         .{ .name = "long-slice.scss", .input = ".a { value: str-slice(abc, 1, 2, 3); }" },
+        .{
+            .name = "duplicate-string-keyword.scss",
+            .input = ".a { value: str-length($string: foo, $string: bar); }",
+        },
+        .{
+            .name = "unknown-string-keyword.scss",
+            .input = ".a { value: str-length($unknown: foo); }",
+        },
+        .{
+            .name = "ordered-string-keyword.scss",
+            .input = ".a { value: str-slice($string: abc, 1); }",
+        },
+        .{
+            .name = "missing-string-keyword.scss",
+            .input = ".a { value: str-index($substring: b); }",
+        },
     };
     for (invalid) |case| {
         try std.testing.expectError(
@@ -622,6 +642,17 @@ test "native Sass string functions reject unsafe arity types indexes and limits"
             compile(std.testing.allocator, case.name, case.input, .scss, .{}),
         );
     }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "string-splat.scss",
+            ".a { value: str-length($args...); }",
+            .scss,
+            .{},
+        ),
+    );
 
     var limits = sass_evaluator.Limits{};
     limits.max_temporary_bytes = 3;
@@ -837,7 +868,7 @@ fn exerciseAllocationFailures(
         \\  red-channel: red(#123456);
         \\  mixed-color: mix(red, blue, 25%);
         \\  adjusted-color: lighten(#123456, 10%);
-        \\  string-length: str-length("💚a");
+        \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
         \\  string-quote: quote(foo);
         \\  string-unquote: unquote("foo bar");
