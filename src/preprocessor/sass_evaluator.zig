@@ -123,8 +123,13 @@ const Builtin = enum {
     list_zip,
     list_slash,
     math_abs,
+    math_acos,
+    math_asin,
+    math_atan,
+    math_atan2,
     math_ceil,
     math_compatible,
+    math_cos,
     math_div,
     math_floor,
     math_is_unitless,
@@ -132,7 +137,9 @@ const Builtin = enum {
     math_percentage,
     math_pow,
     math_round,
+    math_sin,
     math_sqrt,
+    math_tan,
     math_unit,
     meta_keywords,
     quote,
@@ -3795,6 +3802,111 @@ const Engine = struct {
         return self.values.own(.{ .number = .{ .value = result } });
     }
 
+    fn mathAngleRadians(
+        self: *Engine,
+        number: native_value.Number,
+        span: native_source.Span,
+    ) Error!f64 {
+        if (number.numerator_units.len == 0 and number.denominator_units.len == 0) {
+            return number.value;
+        }
+        if (number.numerator_units.len != 1 or number.denominator_units.len != 0) {
+            try self.report(.invalid_operation, span, "native Sass trigonometric input requires an angle");
+            return error.InvalidExpression;
+        }
+        const unit = number.numerator_units[0];
+        const radians = if (std.mem.eql(u8, unit, "deg"))
+            number.value * std.math.pi / 180
+        else if (std.mem.eql(u8, unit, "grad"))
+            number.value * std.math.pi / 200
+        else if (std.mem.eql(u8, unit, "rad"))
+            number.value
+        else if (std.mem.eql(u8, unit, "turn"))
+            number.value * 2 * std.math.pi
+        else {
+            try self.report(.invalid_operation, span, "native Sass trigonometric input requires an angle");
+            return error.InvalidExpression;
+        };
+        if (!std.math.isFinite(radians)) {
+            try self.report(.invalid_operation, span, "non-finite native Sass angle");
+            return error.InvalidNumber;
+        }
+        return radians;
+    }
+
+    fn callMathTrigonometric(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const valid_arity = if (builtin == .math_atan2)
+            arguments.len == 2
+        else
+            arguments.len == 1;
+        if (!valid_arity) {
+            try self.report(.invalid_operation, span, "invalid trigonometric function arity");
+            return error.InvalidExpression;
+        }
+        try self.transaction.consumeOperations(@intCast(arguments.len));
+
+        var degrees = false;
+        const result = switch (builtin) {
+            .math_sin, .math_cos, .math_tan => blk: {
+                const number = try self.mathNumberArgument(arguments[0].*, span);
+                const radians = try self.mathAngleRadians(number, span);
+                break :blk switch (builtin) {
+                    .math_sin => @sin(radians),
+                    .math_cos => @cos(radians),
+                    .math_tan => @tan(radians),
+                    else => unreachable,
+                };
+            },
+            .math_asin, .math_acos, .math_atan => blk: {
+                const number = try self.mathNumberArgument(arguments[0].*, span);
+                if (number.numerator_units.len != 0 or number.denominator_units.len != 0) {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "native Sass inverse trigonometric input must be unitless",
+                    );
+                    return error.InvalidExpression;
+                }
+                degrees = true;
+                const radians = switch (builtin) {
+                    .math_asin => std.math.asin(number.value),
+                    .math_acos => std.math.acos(number.value),
+                    .math_atan => std.math.atan(number.value),
+                    else => unreachable,
+                };
+                break :blk radians * 180 / std.math.pi;
+            },
+            .math_atan2 => blk: {
+                const y = try self.mathNumericArgument(arguments[0].*, span);
+                const x = try self.mathNumericArgument(arguments[1].*, span);
+                const converted_x = native_numeric.convertValueToMatch(x, y) catch |err| {
+                    try self.report(
+                        if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
+                        span,
+                        "native Sass atan2() arguments have incompatible units",
+                    );
+                    return err;
+                };
+                degrees = true;
+                break :blk std.math.atan2(y.value, converted_x) * 180 / std.math.pi;
+            },
+            else => unreachable,
+        };
+        if (!std.math.isFinite(result)) {
+            try self.report(.invalid_operation, span, "non-finite native Sass trigonometric result");
+            return error.InvalidNumber;
+        }
+        return self.values.own(.{ .number = .{
+            .value = result,
+            .numerator_units = if (degrees) &.{"deg"} else &.{},
+        } });
+    }
+
     fn mathNumericArgument(
         self: *Engine,
         item: native_value.Value,
@@ -4003,10 +4115,20 @@ const Engine = struct {
             .list_zip
         else if (sassNameEql(name, "abs"))
             .math_abs
+        else if (sassNameEql(name, "acos"))
+            .math_acos
+        else if (sassNameEql(name, "asin"))
+            .math_asin
+        else if (sassNameEql(name, "atan"))
+            .math_atan
+        else if (sassNameEql(name, "atan2"))
+            .math_atan2
         else if (sassNameEql(name, "ceil"))
             .math_ceil
         else if (sassNameEql(name, "comparable"))
             .math_compatible
+        else if (sassNameEql(name, "cos"))
+            .math_cos
         else if (sassNameEql(name, "floor"))
             .math_floor
         else if (sassNameEql(name, "unitless"))
@@ -4019,8 +4141,12 @@ const Engine = struct {
             .math_pow
         else if (sassNameEql(name, "round"))
             .math_round
+        else if (sassNameEql(name, "sin"))
+            .math_sin
         else if (sassNameEql(name, "sqrt"))
             .math_sqrt
+        else if (sassNameEql(name, "tan"))
+            .math_tan
         else if (sassNameEql(name, "unit"))
             .math_unit
         else if (sassNameEql(name, "quote"))
@@ -4179,8 +4305,13 @@ const Engine = struct {
             .map_keys,
             .map_values,
             .math_abs,
+            .math_acos,
+            .math_asin,
+            .math_atan,
+            .math_atan2,
             .math_ceil,
             .math_compatible,
+            .math_cos,
             .math_div,
             .math_floor,
             .math_is_unitless,
@@ -4188,7 +4319,9 @@ const Engine = struct {
             .math_percentage,
             .math_pow,
             .math_round,
+            .math_sin,
             .math_sqrt,
+            .math_tan,
             .math_unit,
             .meta_keywords,
             .red,
@@ -7471,11 +7604,21 @@ const Engine = struct {
             },
             .map_keys, .map_values => &.{.{ .name = "map" }},
             .math_abs,
+            .math_acos,
+            .math_asin,
+            .math_atan,
             .math_ceil,
+            .math_cos,
             .math_floor,
             .math_percentage,
             .math_round,
+            .math_sin,
+            .math_tan,
             => &.{.{ .name = "number" }},
+            .math_atan2 => &.{
+                .{ .name = "y" },
+                .{ .name = "x" },
+            },
             .math_div => &.{
                 .{ .name = "number1" },
                 .{ .name = "number2" },
@@ -7573,8 +7716,13 @@ const Engine = struct {
             const argument_raw = body[argument.value.start..argument.value.end];
             evaluated[index] = switch (builtin) {
                 .math_abs,
+                .math_acos,
+                .math_asin,
+                .math_atan,
+                .math_atan2,
                 .math_ceil,
                 .math_compatible,
+                .math_cos,
                 .math_div,
                 .math_floor,
                 .math_is_unitless,
@@ -7582,7 +7730,9 @@ const Engine = struct {
                 .math_percentage,
                 .math_pow,
                 .math_round,
+                .math_sin,
                 .math_sqrt,
+                .math_tan,
                 .math_unit,
                 => try self.evaluateMathNumericArgument(
                     argument_raw,
@@ -7623,7 +7773,11 @@ const Engine = struct {
             return self.preserveEvaluatedFunction(raw, arguments, span);
         }
         if (!module_owned and !has_keyword and
-            (builtin == .math_log or builtin == .math_pow or builtin == .math_sqrt))
+            (builtin == .math_acos or builtin == .math_asin or
+                builtin == .math_atan or builtin == .math_atan2 or
+                builtin == .math_cos or builtin == .math_log or
+                builtin == .math_pow or builtin == .math_sin or
+                builtin == .math_sqrt or builtin == .math_tan))
         {
             var preserve_css = false;
             var valid_css_calculation = true;
@@ -7676,6 +7830,14 @@ const Engine = struct {
                 arguments,
                 span,
             ),
+            .math_acos,
+            .math_asin,
+            .math_atan,
+            .math_atan2,
+            .math_cos,
+            .math_sin,
+            .math_tan,
+            => self.callMathTrigonometric(builtin, arguments, span),
             .math_compatible, .math_is_unitless => self.callMathUnitPredicate(
                 builtin,
                 arguments,
@@ -8826,8 +8988,13 @@ fn mapModuleBuiltin(name: []const u8) ?Builtin {
 
 fn mathModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "abs")) return .math_abs;
+    if (sassNameEql(name, "acos")) return .math_acos;
+    if (sassNameEql(name, "asin")) return .math_asin;
+    if (sassNameEql(name, "atan")) return .math_atan;
+    if (sassNameEql(name, "atan2")) return .math_atan2;
     if (sassNameEql(name, "ceil")) return .math_ceil;
     if (sassNameEql(name, "compatible")) return .math_compatible;
+    if (sassNameEql(name, "cos")) return .math_cos;
     if (sassNameEql(name, "div")) return .math_div;
     if (sassNameEql(name, "floor")) return .math_floor;
     if (sassNameEql(name, "is-unitless")) return .math_is_unitless;
@@ -8835,7 +9002,9 @@ fn mathModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "percentage")) return .math_percentage;
     if (sassNameEql(name, "pow")) return .math_pow;
     if (sassNameEql(name, "round")) return .math_round;
+    if (sassNameEql(name, "sin")) return .math_sin;
     if (sassNameEql(name, "sqrt")) return .math_sqrt;
+    if (sassNameEql(name, "tan")) return .math_tan;
     if (sassNameEql(name, "unit")) return .math_unit;
     return null;
 }

@@ -71,7 +71,7 @@ pub const Numeric = struct {
 
     pub fn init(value: f64, unit: ?[]const u8) Error!Numeric {
         if (!std.math.isFinite(value)) return error.InvalidNumber;
-        var result = Numeric{ .value = canonicalZero(value) };
+        var result = Numeric{ .value = canonicalArithmetic(value) };
         if (unit) |name| try result.mergeTerm(name, 1);
         return result;
     }
@@ -107,7 +107,7 @@ pub const Numeric = struct {
             }
         }
         return .{
-            .value = canonicalZero(self.value),
+            .value = canonicalArithmetic(self.value),
             .numerator_units = numerator[0..numerator_len],
             .denominator_units = denominator[0..denominator_len],
         };
@@ -174,7 +174,7 @@ pub fn add(left: Numeric, right: Numeric, operation: u8) Error!Numeric {
         result.value = base / unitScale(result);
     }
     if (!std.math.isFinite(result.value)) return error.InvalidNumber;
-    result.value = canonicalZero(result.value);
+    result.value = canonicalArithmetic(result.value);
     return result;
 }
 
@@ -187,7 +187,7 @@ pub fn multiply(left: Numeric, right: Numeric, operation: u8) Error!Numeric {
         try result.mergeTerm(term.unit, if (operation == '*') term.power else -term.power);
     }
     try simplifyUnits(&result);
-    result.value = canonicalZero(result.value);
+    result.value = canonicalArithmetic(result.value);
     return result;
 }
 
@@ -201,7 +201,7 @@ pub fn modulo(left: Numeric, right: Numeric) Error!Numeric {
     }
     result.value = @mod(left.value, right_value);
     if (!std.math.isFinite(result.value)) return error.InvalidNumber;
-    result.value = canonicalZero(result.value);
+    result.value = canonicalArithmetic(result.value);
     return result;
 }
 
@@ -228,6 +228,17 @@ pub fn compare(left: Numeric, right: Numeric) Error!Ordering {
 pub fn compatible(left: Numeric, right: Numeric) bool {
     if (left.isDimensionless() or right.isDimensionless()) return true;
     return dimensionsEqual(left, right);
+}
+
+pub fn convertValueToMatch(value: Numeric, target: Numeric) Error!f64 {
+    if (value.isDimensionless() != target.isDimensionless() or
+        !dimensionsEqual(value, target))
+    {
+        return error.IncompatibleUnits;
+    }
+    const converted = baseValue(value) / unitScale(target);
+    if (!std.math.isFinite(converted)) return error.InvalidNumber;
+    return canonicalArithmetic(converted);
 }
 
 pub fn unitStringLength(number: native_value.Number) Error!usize {
@@ -444,4 +455,9 @@ fn canonicalZero(value: f64) f64 {
     const integer = @round(value);
     if (approximatelyEqual(value, integer)) return integer;
     return value;
+}
+
+fn canonicalArithmetic(value: f64) f64 {
+    if (value == 0) return value;
+    return canonicalZero(value);
 }

@@ -135,6 +135,25 @@ test "native Sass numeric compatibility matches unit addition domains" {
         '*',
     );
     try std.testing.expect(numeric.compatible(left, right));
+
+    try std.testing.expectApproxEqRel(
+        @as(f64, 1),
+        try numeric.convertValueToMatch(try unitNumber(96, "px"), try unitNumber(2, "in")),
+        1e-12,
+    );
+    try std.testing.expectApproxEqRel(
+        @as(f64, 2),
+        try numeric.convertValueToMatch(try unitNumber(2, "custom"), try unitNumber(1, "custom")),
+        1e-12,
+    );
+    try std.testing.expectError(
+        error.IncompatibleUnits,
+        numeric.convertValueToMatch(unitless, pixels),
+    );
+    try std.testing.expectError(
+        error.IncompatibleUnits,
+        numeric.convertValueToMatch(try unitNumber(1, "custom"), try unitNumber(1, "CUSTOM")),
+    );
 }
 
 test "native Sass numeric algebra rejects incompatible unsafe and oversized units" {
@@ -159,6 +178,11 @@ test "native Sass numeric algebra rejects incompatible unsafe and oversized unit
 }
 
 test "native Sass number serialization matches the ten-place contract" {
+    const signed_zero = try numeric.Numeric.init(-0.0, null);
+    try std.testing.expect(std.math.signbit(signed_zero.value));
+    const owned_signed_zero = try valueNumber(signed_zero);
+    try std.testing.expect(std.math.signbit(owned_signed_zero.value));
+
     const cases = [_]struct {
         value: f64,
         expected: []const u8,

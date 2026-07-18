@@ -2126,6 +2126,279 @@ test "native Sass powers roots and logarithms reject unsafe arguments" {
     }
 }
 
+test "native Sass evaluates trigonometric functions without a provider" {
+    const input =
+        \\@use "sass:math";
+        \\@use "sass:math" as trig;
+        \\@use "sass:math" as *;
+        \\$evaluations: 0;
+        \\@function stamp($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.a {
+        \\  sin-zero: math.sin(0);
+        \\  sin-deg: math.sin(30deg);
+        \\  sin-grad: math.sin(100grad);
+        \\  sin-turn: math.sin(.25turn);
+        \\  sin-rad: math.sin(1rad);
+        \\  cos-zero: math.cos(0);
+        \\  cos-deg: math.cos(60deg);
+        \\  tan: math.tan(45deg);
+        \\  asin: math.asin(.5);
+        \\  acos: math.acos(.5);
+        \\  atan: math.atan(1);
+        \\  atan-negative: math.atan(-1);
+        \\  atan2: math.atan2(1, 1);
+        \\  atan2-units: math.atan2(1in, 96px);
+        \\  atan2-percent: math.atan2(1%, 2%);
+        \\  atan2-compound: math.atan2(math.div(1px, 1s), math.div(96in, 1s));
+        \\  atan2-custom: math.atan2(2foo, 1foo);
+        \\  atan2-zero: math.atan2(0, 0);
+        \\  atan2-negative-x-zero: math.atan2(0, -0);
+        \\  atan2-negative-zero-pair: math.atan2(-0, -0);
+        \\  atan2-negative-y-zero: math.atan2(-0, 0);
+        \\  atan2-negative: math.atan2(-1, -1);
+        \\  alias: trig.sin(90deg);
+        \\  star: cos(180deg);
+        \\  named: math.atan2($x: stamp(1), $y: stamp(1));
+        \\  evaluations: $evaluations;
+        \\  global-sin: sin(30deg);
+        \\  global-cos: cos(60deg);
+        \\  global-tan: tan(45deg);
+        \\  global-asin: asin(.5);
+        \\  global-acos: acos(.5);
+        \\  global-atan: atan(1);
+        \\  global-atan2: atan2(1, 1);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "math-trig.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{sin-zero:0;sin-deg:.5;sin-grad:1;sin-turn:1;sin-rad:.8414709848;cos-zero:1;cos-deg:.5;tan:1;asin:30deg;acos:60deg;atan:45deg;atan-negative:-45deg;atan2:45deg;atan2-units:45deg;atan2-percent:26.5650511771deg;atan2-compound:.0062169899deg;atan2-custom:63.4349488229deg;atan2-zero:0deg;atan2-negative-x-zero:180deg;atan2-negative-zero-pair:-180deg;atan2-negative-y-zero:0deg;atan2-negative:-135deg;alias:1;star:-1;named:45deg;evaluations:2;global-sin:.5;global-cos:.5;global-tan:1;global-asin:30deg;global-acos:60deg;global-atan:45deg;global-atan2:45deg}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:math" as m
+        \\.sass
+        \\  sin: m.sin(30deg)
+        \\  cos: m.cos(60deg)
+        \\  tan: m.tan(45deg)
+        \\  asin: m.asin(.5)
+        \\  acos: m.acos(.5)
+        \\  atan: m.atan(1)
+        \\  atan2: m.atan2(1in, 96px)
+        \\  globals: sin(30deg) cos(60deg) tan(45deg) asin(.5) acos(.5) atan(1) atan2(1, 1)
+    ;
+    var sass_result = try compile(std.testing.allocator, "math-trig.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{sin:.5;cos:.5;tan:1;asin:30deg;acos:60deg;atan:45deg;atan2:45deg;globals:.5 .5 1 30deg 60deg 45deg 45deg}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var css_result = try compile(
+        std.testing.allocator,
+        "math-trig-global.scss",
+        ".plain { sin: sin(var(--number)); sin-name: sin(foo); cos: cos(var(--number)); cos-name: cos(foo); tan: tan(var(--number)); tan-name: tan(foo); asin: asin(var(--number)); asin-name: asin(foo); acos: acos(var(--number)); acos-name: acos(foo); atan: atan(var(--number)); atan-name: atan(foo); atan2: atan2(var(--y), 1); atan2-name: atan2(foo, bar); }",
+        .scss,
+        .{},
+    );
+    defer css_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{sin:sin(var(--number));sin-name:sin(foo);cos:cos(var(--number));cos-name:cos(foo);tan:tan(var(--number));tan-name:tan(foo);asin:asin(var(--number));asin-name:asin(foo);acos:acos(var(--number));acos-name:acos(foo);atan:atan(var(--number));atan-name:atan(foo);atan2:atan2(var(--y),1);atan2-name:atan2(foo,bar)}",
+        css_result.css(),
+    );
+
+    const deferred_input =
+        \\$evaluations: 0;
+        \\@function dynamic($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.dynamic {
+        \\  sin: sin(#{dynamic(foo)});
+        \\  atan2: atan2(#{dynamic(bar)}, 1);
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var deferred_result = try compile(
+        std.testing.allocator,
+        "math-trig-deferred.scss",
+        deferred_input,
+        .scss,
+        .{},
+    );
+    defer deferred_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".dynamic{sin:sin(foo);atan2:atan2(bar,1);evaluations:2}",
+        deferred_result.css(),
+    );
+}
+
+test "native Sass trigonometric functions reject unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-math-sin-module.scss",
+            .input = ".a { value: math.sin(30deg); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-math-sin-namespace.scss",
+            .input = "@use \"sass:math\" as Math; .a { value: math.sin(30deg); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sin-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.sin();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sin-long.scss",
+            .input = "@use \"sass:math\"; $value: math.sin(0, 1);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-atan2-short.scss",
+            .input = "@use \"sass:math\"; $value: math.atan2(1);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-atan2-long.scss",
+            .input = "@use \"sass:math\"; $value: math.atan2(1, 2, 3);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sin-length.scss",
+            .input = "@use \"sass:math\"; $value: math.sin(1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sin-custom-unit.scss",
+            .input = "@use \"sass:math\"; $value: math.sin(1foo);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sin-cased-angle.scss",
+            .input = "@use \"sass:math\"; $value: math.sin(30DEG);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sin-compound-unit.scss",
+            .input = "@use \"sass:math\"; $value: math.sin(1px / 1s);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-asin-unit.scss",
+            .input = "@use \"sass:math\"; $value: math.asin(1deg);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-acos-percentage.scss",
+            .input = "@use \"sass:math\"; $value: math.acos(50%);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-atan-unit.scss",
+            .input = "@use \"sass:math\"; $value: math.atan(1deg);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-asin-nan.scss",
+            .input = "@use \"sass:math\"; $value: math.asin(2);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "math-acos-nan.scss",
+            .input = "@use \"sass:math\"; $value: math.acos(-2);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "math-atan2-mixed-units.scss",
+            .input = "@use \"sass:math\"; $value: math.atan2(1px, 1);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-atan2-incompatible-units.scss",
+            .input = "@use \"sass:math\"; $value: math.atan2(1px, 1s);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-atan2-cased-custom-unit.scss",
+            .input = "@use \"sass:math\"; $value: math.atan2(1Foo, 1foo);",
+            .expected = error.IncompatibleUnits,
+        },
+        .{
+            .name = "math-sin-string.scss",
+            .input = "@use \"sass:math\"; $value: math.sin(foo);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-atan2-color.scss",
+            .input = "@use \"sass:math\"; $value: math.atan2(red, 1);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-cos-unknown-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.cos($other: $undefined);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-atan2-duplicate-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.atan2($y: 1, $y: 2, $x: 1);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-tan-splat.scss",
+            .input = "@use \"sass:math\"; $args: (45deg,); $value: math.tan($args...);",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "unprefixed-math-sin-string.scss",
+            .input = "@use \"sass:math\" as *; $value: sin(foo);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "module-math-sin-dynamic.scss",
+            .input = "@use \"sass:math\"; $value: math.sin(var(--number));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "global-math-sin-named-dynamic.scss",
+            .input = "$value: sin($number: var(--number));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "global-math-sin-quoted.scss",
+            .input = "$value: sin(\"foo\");",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "global-math-atan-list.scss",
+            .input = "$value: atan((1, 2));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "global-math-atan2-color.scss",
+            .input = "$value: atan2(red, blue);",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass inspects callable keywords through the built-in meta module" {
     const input =
         \\@use "sass:meta";
@@ -5261,6 +5534,10 @@ fn exerciseAllocationFailures(
         \\$math-sqrt: math.sqrt(81);
         \\$math-log: math.log(8, 2);
         \\$math-pow-css: pow(var(--base), 2);
+        \\$math-sin: math.sin(30deg);
+        \\$math-asin: math.asin(.5);
+        \\$math-atan2: math.atan2(1in, 96px);
+        \\$math-sin-css: sin(var(--angle));
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
         \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
         \\@function allocation-target($left, $right: 0) { @return $left + $right; }
@@ -5312,6 +5589,10 @@ fn exerciseAllocationFailures(
         \\  math-sqrt: $math-sqrt;
         \\  math-log: $math-log;
         \\  math-pow-css: $math-pow-css;
+        \\  math-sin: $math-sin;
+        \\  math-asin: $math-asin;
+        \\  math-atan2: $math-atan2;
+        \\  math-sin-css: $math-sin-css;
         \\  reduced-calc: calc($size + 2px);
         \\  deferred-calc: calc(100% - $size);
         \\  color: rgba(hsl(.5turn, 100%, 50%), .4);
@@ -5366,7 +5647,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;math-pow:8;math-sqrt:9;math-log:3;math-pow-css:pow(var(--base),2);reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;math-pow:8;math-sqrt:9;math-log:3;math-pow-css:pow(var(--base),2);math-sin:.5;math-asin:30deg;math-atan2:45deg;math-sin-css:sin(var(--angle));reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

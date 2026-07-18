@@ -154,6 +154,9 @@ test "typed values are deeply owned immutable and structurally comparable" {
         .bracketed = false,
     } }));
     try std.testing.expect(!value.eql(owned.*, input));
+
+    const signed_zero = try store.own(.{ .number = .{ .value = -0.0 } });
+    try std.testing.expect(std.math.signbit(signed_zero.number.value));
 }
 
 test "typed Sass argument lists deeply own positional keyword and usage state" {

@@ -161,6 +161,7 @@ const expectedImplementations = Object.freeze([
       'built-in-list-slash',
       'built-in-math-division',
       'built-in-math-powers-roots-logarithms',
+      'built-in-math-trigonometry',
       'built-in-math-unit-predicates',
       'built-in-math-unit-serialization',
       'built-in-math-unary-numeric',

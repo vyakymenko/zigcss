@@ -160,7 +160,7 @@ pub const Store = struct {
     fn cloneNumber(self: *Store, input: Number) Error!Number {
         if (!std.math.isFinite(input.value)) return error.InvalidValue;
         return .{
-            .value = if (input.value == 0) 0 else input.value,
+            .value = input.value,
             .numerator_units = try self.cloneUnits(input.numerator_units),
             .denominator_units = try self.cloneUnits(input.denominator_units),
         };
