@@ -2967,6 +2967,114 @@ test "native Sass evaluates bounded Unicode string functions without a provider"
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Sass loads the admitted built-in string module without a provider" {
+    const input =
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$order: 0;
+        \\$first: null;
+        \\@function stamp($value) {
+        \\  $order: $order + 1 !global;
+        \\  @if $order == 1 { $first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\.a {
+        \\  quote: string.quote(foo);
+        \\  unquote: text.unquote("foo bar");
+        \\  length: length("💚a");
+        \\  index: string.index("a💚b", "💚");
+        \\  missing: string.index("abc", "z");
+        \\  slice: text.slice("a💚b", 2, 2);
+        \\  insert: string.insert("ab", "X", 2);
+        \\  upper: to-upper-case("Abc-é");
+        \\  lower: string.to-lower-case("AbC-É");
+        \\  source-order: string.index($substring: stamp(b), $string: stamp(abc));
+        \\  first: $first;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "string-module.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{quote:\"foo\";unquote:foo bar;length:2;index:2;slice:\"💚\";insert:\"aXb\";upper:\"ABC-é\";lower:\"abc-É\";source-order:2;first:b}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:string" as s
+        \\.sass
+        \\  length: s.length("💚a")
+        \\  index: s.index("abc", "b")
+        \\  slice: s.slice("hello", -2)
+        \\  insert: s.insert("ab", "X", 2)
+        \\  upper: s.to-upper-case("Abc-é")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "string-module.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{length:2;index:2;slice:\"lo\";insert:\"aXb\";upper:\"ABC-é\"}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass string module rejects unowned calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-string-module.scss",
+            .input = ".a { value: string.length(abc); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-string-member.scss",
+            .input = "@use \"sass:string\"; .a { value: string.nope($undefined); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-string-namespace.scss",
+            .input = "@use \"sass:string\" as String; .a { value: string.length(abc); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "duplicate-string-namespace.scss",
+            .input = "@use \"sass:map\" as tools; @use \"sass:string\" as tools;",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "unsupported-string-member.scss",
+            .input = "@use \"sass:string\"; .a { value: string.unique-id(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "string-module-type.scss",
+            .input = "@use \"sass:string\"; .a { value: string.length(red); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "string-module-splat.scss",
+            .input = "@use \"sass:string\"; $args: (abc,); .a { value: string.length($args...); }",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass string functions reject unsafe arity types indexes and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -3282,6 +3390,7 @@ fn exerciseAllocationFailures(
         \\@use "sass:color";
         \\@use "sass:map";
         \\@use "sass:meta";
+        \\@use "sass:string" as strings;
         \\$size: 2px;
         \\$name: card;
         \\$spaces: 1px 2px 3px;
@@ -3358,13 +3467,13 @@ fn exerciseAllocationFailures(
         \\  map-nested-set: map.get($nested-set, a, b, z);
         \\  map-deep-merged: map.get($deep-merged, a, b, q);
         \\  map-deep-removed: map.has-key(map.get($deep-removed, a, b), x);
-        \\  string-length: str-length($string: "💚a");
-        \\  string-slice: str-slice("hello", -2);
-        \\  string-quote: quote(foo);
-        \\  string-unquote: unquote("foo bar");
-        \\  string-index: str-index("a💚b", "💚");
-        \\  string-insert: str-insert("ab", "X", 2);
-        \\  string-upper: to-upper-case("Abc-é");
+        \\  string-length: strings.length($string: "💚a");
+        \\  string-slice: strings.slice("hello", -2);
+        \\  string-quote: strings.quote(foo);
+        \\  string-unquote: strings.unquote("foo bar");
+        \\  string-index: strings.index("a💚b", "💚");
+        \\  string-insert: strings.insert("ab", "X", 2);
+        \\  string-upper: strings.to-upper-case("Abc-é");
         \\  &:hover { margin: $size + 1px; }
         \\}
     ;

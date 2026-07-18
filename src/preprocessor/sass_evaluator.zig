@@ -445,6 +445,7 @@ const BuiltinModule = enum {
     color,
     map,
     meta,
+    string,
 };
 
 const ModuleBinding = struct {
@@ -823,6 +824,8 @@ const Engine = struct {
             .map
         else if (std.mem.eql(u8, parsed.url, "sass:meta"))
             .meta
+        else if (std.mem.eql(u8, parsed.url, "sass:string"))
+            .string
         else {
             try self.report(
                 .unsupported_feature,
@@ -843,6 +846,7 @@ const Engine = struct {
                 .color => "color",
                 .map => "map",
                 .meta => "meta",
+                .string => "string",
             };
         if (namespace) |candidate| {
             for (self.modules.items) |binding| {
@@ -3495,6 +3499,7 @@ const Engine = struct {
                     .color => colorModuleBuiltin(name),
                     .map => mapModuleBuiltin(name),
                     .meta => metaModuleBuiltin(name),
+                    .string => stringModuleBuiltin(name),
                 };
                 if (builtin) |resolved| return resolved;
             }
@@ -3518,6 +3523,7 @@ const Engine = struct {
             .color => colorModuleBuiltin(qualified.member),
             .map => mapModuleBuiltin(qualified.member),
             .meta => metaModuleBuiltin(qualified.member),
+            .string => stringModuleBuiltin(qualified.member),
         };
         return builtin orelse {
             try self.report(.invalid_operation, span, "undefined native Sass module function");
@@ -6388,17 +6394,26 @@ const Engine = struct {
         defer bound.deinit();
 
         var evaluated: [3]*const native_value.Value = undefined;
-        var count: usize = 0;
-        for (bound.values) |value_range| {
-            const range = value_range orelse continue;
-            evaluated[count] = try self.evaluateExpressionBytes(
-                body[range.start..range.end],
+        for (parsed.items, 0..) |argument, index| {
+            evaluated[index] = try self.evaluateExpressionBytes(
+                body[argument.value.start..argument.value.end],
                 scope,
                 span,
             );
-            count += 1;
         }
-        return self.callStringBuiltin(builtin, evaluated[0..count], span);
+
+        var arguments: [3]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values, 0..) |value_range, parameter_index| {
+            const range = value_range orelse continue;
+            for (parsed.items, 0..) |argument, argument_index| {
+                if (argument.value.start != range.start or argument.value.end != range.end) continue;
+                arguments[parameter_index] = evaluated[argument_index];
+                count = parameter_index + 1;
+                break;
+            }
+        }
+        return self.callStringBuiltin(builtin, arguments[0..count], span);
     }
 
     fn callFixedBuiltinRaw(
@@ -7638,6 +7653,18 @@ fn mapModuleBuiltin(name: []const u8) ?Builtin {
 
 fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "keywords")) return .meta_keywords;
+    return null;
+}
+
+fn stringModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "quote")) return .quote;
+    if (sassNameEql(name, "unquote")) return .unquote;
+    if (sassNameEql(name, "length")) return .str_length;
+    if (sassNameEql(name, "index")) return .str_index;
+    if (sassNameEql(name, "slice")) return .str_slice;
+    if (sassNameEql(name, "insert")) return .str_insert;
+    if (sassNameEql(name, "to-upper-case")) return .to_upper_case;
+    if (sassNameEql(name, "to-lower-case")) return .to_lower_case;
     return null;
 }
 

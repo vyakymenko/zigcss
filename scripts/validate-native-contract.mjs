@@ -155,6 +155,7 @@ const expectedImplementations = Object.freeze([
       'nested-deep-map-mutations',
       'unicode-string-core',
       'legacy-string-builtins',
+      'built-in-string-module-aliases',
       'typed-collections',
       'collection-accessors',
       'logical-comparison',
