@@ -107,6 +107,9 @@ const Builtin = enum {
     map_has_key,
     map_keys,
     map_values,
+    map_merge,
+    map_remove,
+    map_set,
     nth,
     length,
     meta_keywords,
@@ -3537,6 +3540,10 @@ const Engine = struct {
             .map_keys
         else if (sassNameEql(name, "map-values"))
             .map_values
+        else if (sassNameEql(name, "map-merge"))
+            .map_merge
+        else if (sassNameEql(name, "map-remove"))
+            .map_remove
         else if (sassNameEql(name, "nth"))
             .nth
         else if (sassNameEql(name, "length"))
@@ -3656,6 +3663,13 @@ const Engine = struct {
 
         switch (builtin) {
             .map_get, .map_has_key => return try self.callMapQueryRaw(
+                builtin,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
+            .map_merge, .map_remove, .map_set => return try self.callMapMutationRaw(
                 builtin,
                 body,
                 ranges.items,
@@ -5536,6 +5550,223 @@ const Engine = struct {
         } });
     }
 
+    fn callMapMutationRaw(
+        self: *Engine,
+        builtin: Builtin,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+
+        var positional_count: usize = 0;
+        var has_keyword = false;
+        for (parsed.items) |argument| {
+            if (argument.splat) return self.argumentsFailure(error.SplatUnsupported, span);
+            if (argument.name == null) {
+                positional_count += 1;
+            } else {
+                has_keyword = true;
+            }
+        }
+
+        const shallow_positional_limit: usize = switch (builtin) {
+            .map_merge => 2,
+            .map_set => 3,
+            .map_remove => std.math.maxInt(usize),
+            else => unreachable,
+        };
+        if (positional_count > shallow_positional_limit) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "nested native Sass map mutation is not supported yet",
+            );
+            return error.UnsupportedFeature;
+        }
+
+        if (builtin == .map_remove and !has_keyword) {
+            var arguments: std.ArrayList(*const native_value.Value) = .empty;
+            defer arguments.deinit(self.allocator);
+            for (parsed.items) |argument| {
+                try arguments.append(
+                    self.allocator,
+                    try self.evaluateExpressionBytes(
+                        body[argument.value.start..argument.value.end],
+                        scope,
+                        span,
+                    ),
+                );
+            }
+            return self.callMapRemove(arguments.items, span);
+        }
+
+        const parameters: []const native_arguments.Parameter = switch (builtin) {
+            .map_merge => &.{
+                .{ .name = "map1" },
+                .{ .name = "map2" },
+            },
+            .map_remove => &.{.{ .name = "map" }},
+            .map_set => &.{
+                .{ .name = "map" },
+                .{ .name = "key" },
+                .{ .name = "value" },
+            },
+            else => unreachable,
+        };
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            parameters,
+            parameters.len,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        var evaluated: [3]*const native_value.Value = undefined;
+        for (parsed.items, 0..) |argument, index| {
+            evaluated[index] = try self.evaluateExpressionBytes(
+                body[argument.value.start..argument.value.end],
+                scope,
+                span,
+            );
+        }
+
+        var arguments: [3]*const native_value.Value = undefined;
+        for (bound.values, 0..) |value_range, parameter_index| {
+            const range = value_range.?;
+            for (parsed.items, 0..) |argument, argument_index| {
+                if (argument.value.start != range.start or argument.value.end != range.end) continue;
+                arguments[parameter_index] = evaluated[argument_index];
+                break;
+            }
+        }
+        return switch (builtin) {
+            .map_merge => self.callMapMerge(arguments[0..2], span),
+            .map_remove => self.callMapRemove(arguments[0..1], span),
+            .map_set => self.callMapSet(arguments[0..3], span),
+            else => unreachable,
+        };
+    }
+
+    fn callMapMerge(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(.invalid_operation, span, "map-merge() requires exactly two maps");
+            return error.InvalidExpression;
+        }
+        const left = nativeMapView(arguments[0].*) orelse {
+            try self.report(.type_mismatch, span, "map-merge() requires a map as its first value");
+            return error.InvalidExpression;
+        };
+        const right = nativeMapView(arguments[1].*) orelse {
+            try self.report(.type_mismatch, span, "map-merge() requires a map as its second value");
+            return error.InvalidExpression;
+        };
+
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        for (left.entries) |entry| {
+            try self.transaction.consumeOperations(1);
+            try entries.append(self.allocator, entry);
+        }
+        for (right.entries) |right_entry| {
+            var replaced = false;
+            for (entries.items) |*entry| {
+                try self.transaction.consumeOperations(1);
+                if (!sassValuesEqual(entry.key, right_entry.key)) continue;
+                entry.value = right_entry.value;
+                replaced = true;
+                break;
+            }
+            if (!replaced) {
+                try self.transaction.consumeOperations(1);
+                try entries.append(self.allocator, right_entry);
+            }
+        }
+        return self.values.own(.{ .map = .{ .entries = entries.items } });
+    }
+
+    fn callMapRemove(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len == 0) {
+            try self.report(.invalid_operation, span, "map-remove() requires a map");
+            return error.InvalidExpression;
+        }
+        const map = nativeMapView(arguments[0].*) orelse {
+            try self.report(.type_mismatch, span, "map-remove() requires a map value");
+            return error.InvalidExpression;
+        };
+
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        for (map.entries) |entry| {
+            var removed = false;
+            for (arguments[1..]) |key| {
+                try self.transaction.consumeOperations(1);
+                if (!sassValuesEqual(entry.key, key.*)) continue;
+                removed = true;
+                break;
+            }
+            if (!removed) {
+                try self.transaction.consumeOperations(1);
+                try entries.append(self.allocator, entry);
+            }
+        }
+        return self.values.own(.{ .map = .{ .entries = entries.items } });
+    }
+
+    fn callMapSet(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 3) {
+            try self.report(.invalid_operation, span, "map.set() requires a map, key, and value");
+            return error.InvalidExpression;
+        }
+        const map = nativeMapView(arguments[0].*) orelse {
+            try self.report(.type_mismatch, span, "map.set() requires a map value");
+            return error.InvalidExpression;
+        };
+
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        var replaced = false;
+        for (map.entries) |entry| {
+            try self.transaction.consumeOperations(1);
+            const next = if (!replaced and sassValuesEqual(entry.key, arguments[1].*)) blk: {
+                replaced = true;
+                break :blk native_value.Entry{
+                    .key = entry.key,
+                    .value = arguments[2].*,
+                };
+            } else entry;
+            try self.transaction.consumeOperations(1);
+            try entries.append(self.allocator, next);
+        }
+        if (!replaced) {
+            try self.transaction.consumeOperations(1);
+            try entries.append(self.allocator, .{
+                .key = arguments[1].*,
+                .value = arguments[2].*,
+            });
+        }
+        return self.values.own(.{ .map = .{ .entries = entries.items } });
+    }
+
     fn callNth(
         self: *Engine,
         arguments: []const *const native_value.Value,
@@ -7058,6 +7289,9 @@ fn mapModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "has-key")) return .map_has_key;
     if (sassNameEql(name, "keys")) return .map_keys;
     if (sassNameEql(name, "values")) return .map_values;
+    if (sassNameEql(name, "merge")) return .map_merge;
+    if (sassNameEql(name, "remove")) return .map_remove;
+    if (sassNameEql(name, "set")) return .map_set;
     return null;
 }
 

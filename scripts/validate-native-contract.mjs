@@ -151,6 +151,7 @@ const expectedImplementations = Object.freeze([
       'built-in-color-transform-aliases',
       'built-in-meta-keywords',
       'built-in-map-queries',
+      'shallow-map-mutations',
       'unicode-string-core',
       'legacy-string-builtins',
       'typed-collections',

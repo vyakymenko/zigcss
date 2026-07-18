@@ -60,6 +60,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-color-transform-aliases'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-keywords'), true)
   assert.equal(sassCore.capabilities.includes('built-in-map-queries'), true)
+  assert.equal(sassCore.capabilities.includes('shallow-map-mutations'), true)
   assert.equal(sassCore.capabilities.includes('unicode-string-core'), true)
   assert.equal(sassCore.capabilities.includes('legacy-string-builtins'), true)
   assert.equal(sassCore.capabilities.includes('lazy-conditional-emission'), true)
