@@ -33,6 +33,13 @@ pub const HslTransform = struct {
     alpha: ?f64 = null,
 };
 
+pub const HwbTransform = struct {
+    hue: ?f64 = null,
+    whiteness: ?f64 = null,
+    blackness: ?f64 = null,
+    alpha: ?f64 = null,
+};
+
 const NamedColor = struct {
     name: []const u8,
     red: u8,
@@ -278,6 +285,21 @@ pub fn toHsl(input: native_value.Color) Error![4]f64 {
     return .{ normalizeHue(hue), saturation * 100, lightness * 100, channels[3] };
 }
 
+pub fn toHwb(input: native_value.Color) Error![4]f64 {
+    if (input.space == .hwb) return input.channels;
+    const channels = try toRgb(input);
+    const red = channels[0] / 255;
+    const green = channels[1] / 255;
+    const blue = channels[2] / 255;
+    const hsl_channels = try toHsl(input);
+    return .{
+        hsl_channels[0],
+        @min(red, @min(green, blue)) * 100,
+        (1 - @max(red, @max(green, blue))) * 100,
+        channels[3],
+    };
+}
+
 pub fn equal(left: native_value.Color, right: native_value.Color) bool {
     const left_rgb = toRgb(left) catch return false;
     const right_rgb = toRgb(right) catch return false;
@@ -429,6 +451,50 @@ pub fn transformHsl(
     return result;
 }
 
+pub fn transformHwb(
+    input: native_value.Color,
+    kind: TransformKind,
+    transform: HwbTransform,
+) Error!native_value.Color {
+    try validateOptionalChannels(.{
+        transform.hue,
+        transform.whiteness,
+        transform.blackness,
+        transform.alpha,
+    });
+    if (kind == .scale and transform.hue != null) return error.InvalidColor;
+    const has_color_channel = transform.hue != null or
+        transform.whiteness != null or transform.blackness != null;
+    if (!has_color_channel and transform.alpha == null) return input;
+
+    var result = input;
+    if (has_color_channel) {
+        var channels = try toHwb(input);
+        if (transform.hue) |value| {
+            channels[0] = normalizeHue(switch (kind) {
+                .adjust => channels[0] + value,
+                .change => value,
+                .scale => unreachable,
+            });
+        }
+        channels[1] = try transformUnboundedChannel(
+            channels[1],
+            transform.whiteness,
+            kind,
+            100,
+        );
+        channels[2] = try transformUnboundedChannel(
+            channels[2],
+            transform.blackness,
+            kind,
+            100,
+        );
+        result = .{ .space = .hwb, .channels = channels };
+    }
+    result.channels[3] = try transformAlpha(result.channels[3], transform.alpha, kind);
+    return result;
+}
+
 pub fn serialize(
     input: native_value.Color,
     buffer: *[max_serialized_bytes]u8,
@@ -488,7 +554,7 @@ pub fn serialize(
         minified,
         true,
     );
-    const may_use_hsl = input.space == .hsl or
+    const may_use_hsl = input.space == .hsl or input.space == .hwb or
         (input.space == .rgb and simpleHsl(hsl_channels));
     const selected = if (may_use_hsl and hsl_candidate.len < rgb_candidate.len)
         hsl_candidate
@@ -580,8 +646,13 @@ fn hslToRgb(channels: [4]f64) [4]f64 {
 
 fn hwbToRgb(channels: [4]f64) [4]f64 {
     const base = hslToRgb(.{ channels[0], 100, 50, channels[3] });
-    const white = channels[1] / 100;
-    const black = channels[2] / 100;
+    var white = channels[1] / 100;
+    var black = channels[2] / 100;
+    const total = white + black;
+    if (total > 1) {
+        white /= total;
+        black /= total;
+    }
     const factor = 1 - white - black;
     return .{
         (base[0] / 255 * factor + white) * 255,

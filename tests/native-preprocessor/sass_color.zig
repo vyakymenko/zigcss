@@ -170,3 +170,54 @@ test "native Sass keyword color transforms own bounded RGB and HSL semantics" {
         color.transformHsl(base, .scale, .{ .saturation = -101 }),
     );
 }
+
+test "native Sass keyword color transforms own bounded HWB semantics" {
+    const base = color.parseLiteral("#123456").?;
+    const channels = try color.toHwb(base);
+    try std.testing.expectApproxEqAbs(@as(f64, 210), channels[0], 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 7.0588235294117645), channels[1], 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 66.27450980392157), channels[2], 1e-10);
+
+    const hwb_base = try color.hwb(210, 10, 20, 1);
+    const cases = [_]struct {
+        value: preprocessor.value.Color,
+        expected: []const u8,
+    }{
+        .{
+            .value = try color.transformHwb(base, .adjust, .{ .whiteness = 10 }),
+            .expected = "rgb(43.5,64.75,86)",
+        },
+        .{
+            .value = try color.transformHwb(base, .change, .{ .blackness = 20 }),
+            .expected = "#126fcc",
+        },
+        .{
+            .value = try color.transformHwb(base, .change, .{ .hue = 180 }),
+            .expected = "#125656",
+        },
+        .{
+            .value = try color.transformHwb(base, .scale, .{ .whiteness = 50 }),
+            .expected = "hsl(0,0%,44.6808510638%)",
+        },
+        .{
+            .value = try color.transformHwb(base, .scale, .{ .blackness = -50 }),
+            .expected = "rgb(18,94.25,170.5)",
+        },
+        .{
+            .value = try color.transformHwb(hwb_base, .scale, .{ .whiteness = 100 }),
+            .expected = "rgb(212.5,212.5,212.5)",
+        },
+        .{
+            .value = try color.transformHwb(hwb_base, .adjust, .{ .blackness = -101 }),
+            .expected = "hsl(210,1900%,95.5%)",
+        },
+    };
+    for (cases) |case| {
+        var buffer: [color.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(case.expected, try color.serialize(case.value, &buffer, true));
+    }
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.transformHwb(base, .scale, .{ .blackness = 101 }),
+    );
+}

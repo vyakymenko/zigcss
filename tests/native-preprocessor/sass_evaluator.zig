@@ -661,6 +661,51 @@ test "native Sass keyword color transforms reject unsafe and unimplemented calls
     );
 }
 
+test "native Sass evaluates HWB keyword color transforms without a provider" {
+    const input =
+        \\.a {
+        \\  adjust-white: adjust-color(#123456, $whiteness: 10%);
+        \\  adjust-black: adjust-color(#123456, $blackness: 10%, $space: hwb);
+        \\  adjust-hue: adjust-color(hwb(210 10% 20%), $hue: 30deg);
+        \\  adjust-white-input: adjust-color(hwb(210 10% 20%), $whiteness: 20%);
+        \\  change-white: change-color(#123456, $whiteness: 10%, $space: hwb);
+        \\  change-black: change-color(#123456, $blackness: 20%, $space: hwb);
+        \\  change-hue: change-color(#123456, $hue: .5turn, $space: hwb);
+        \\  scale-white: scale-color(#123456, $whiteness: 50%, $space: hwb);
+        \\  scale-black: scale-color(#123456, $blackness: -50%, $space: hwb);
+        \\  normalized-scale: scale-color(hwb(210 10% 20%), $whiteness: 100%);
+        \\  reordered: change-color($blackness: 20%, $color: #123456, $space: hwb);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "hwb-keyword-colors.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{adjust-white:rgb(43.5,64.75,86);adjust-black:rgb(18,39.25,60.5);adjust-hue:rgb(25.5,25.5,204);adjust-white-input:rgb(76.5,140.25,204);change-white:rgb(25.5,55.75,86);change-black:#126fcc;change-hue:#125656;scale-white:hsl(0,0%,44.6808510638%);scale-black:rgb(18,94.25,170.5);normalized-scale:rgb(212.5,212.5,212.5);reordered:#126fcc}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass HWB keyword color transforms reject unsafe calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "hwb-hsl-mix.scss", .input = ".a { color: adjust-color(#123456, $whiteness: 1%, $lightness: 1%); }" },
+        .{ .name = "hwb-rgb-mix.scss", .input = ".a { color: adjust-color(#123456, $whiteness: 1%, $red: 1); }" },
+        .{ .name = "hwb-wrong-space.scss", .input = ".a { color: adjust-color(#123456, $whiteness: 1%, $space: hsl); }" },
+        .{ .name = "hwb-unitless-scale.scss", .input = ".a { color: scale-color(#123456, $whiteness: 50); }" },
+        .{ .name = "hwb-unit.scss", .input = ".a { color: change-color(#123456, $blackness: 1px); }" },
+        .{ .name = "hwb-scale-range.scss", .input = ".a { color: scale-color(#123456, $blackness: -101%); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass evaluates bounded Unicode string functions without a provider" {
     const input =
         \\.a {
@@ -957,6 +1002,7 @@ fn exerciseAllocationFailures(
         \\  mixed-color: mix(red, blue, 25%);
         \\  adjusted-color: lighten(#123456, 10%);
         \\  keyword-color: adjust-color($red: 10, $color: #123456);
+        \\  hwb-keyword: change-color($blackness: 20%, $color: #123456, $space: hwb);
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
         \\  string-quote: quote(foo);
@@ -984,7 +1030,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

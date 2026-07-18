@@ -144,6 +144,7 @@ const Builtin = enum {
 const ColorTransformSpace = enum {
     rgb,
     hsl,
+    hwb,
 };
 
 const ArithmeticProbe = union(enum) {
@@ -1527,7 +1528,18 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        const parameters = [_]native_arguments.Parameter{
+        const color_index = 0;
+        const red_index = 1;
+        const green_index = 2;
+        const blue_index = 3;
+        const hue_index = 4;
+        const saturation_index = 5;
+        const lightness_index = 6;
+        const whiteness_index = 7;
+        const blackness_index = 8;
+        const alpha_index = 9;
+        const space_index = 10;
+        const parameters = [11]native_arguments.Parameter{
             .{ .name = "color" },
             .{ .name = "red", .required = false },
             .{ .name = "green", .required = false },
@@ -1535,6 +1547,8 @@ const Engine = struct {
             .{ .name = "hue", .required = false },
             .{ .name = "saturation", .required = false },
             .{ .name = "lightness", .required = false },
+            .{ .name = "whiteness", .required = false },
+            .{ .name = "blackness", .required = false },
             .{ .name = "alpha", .required = false },
             .{ .name = "space", .required = false },
         };
@@ -1562,26 +1576,34 @@ const Engine = struct {
                 span,
             );
         }
-        const color = try self.colorArgument(values[0].?.*, span);
+        const color = try self.colorArgument(values[color_index].?.*, span);
         const kind: native_color.TransformKind = switch (builtin) {
             .adjust_color => .adjust,
             .change_color => .change,
             .scale_color => .scale,
             else => unreachable,
         };
-        if (kind == .scale and values[4] != null) {
+        if (kind == .scale and values[hue_index] != null) {
             try self.report(.invalid_operation, span, "scale-color() cannot scale a hue channel");
             return error.InvalidExpression;
         }
 
-        const has_rgb = values[1] != null or values[2] != null or values[3] != null;
-        const has_hsl = values[4] != null or values[5] != null or values[6] != null;
-        const explicit_space = if (values[8]) |item|
+        const has_rgb = values[red_index] != null or values[green_index] != null or
+            values[blue_index] != null;
+        const has_hue = values[hue_index] != null;
+        const has_hsl = values[saturation_index] != null or values[lightness_index] != null;
+        const has_hwb = values[whiteness_index] != null or values[blackness_index] != null;
+        const explicit_space = if (values[space_index]) |item|
             try self.colorTransformSpace(item.*, span)
         else
             null;
         const selected_space: ?ColorTransformSpace = if (explicit_space) |space| blk: {
-            if ((space == .rgb and has_hsl) or (space == .hsl and has_rgb)) {
+            const mismatched = switch (space) {
+                .rgb => has_hue or has_hsl or has_hwb,
+                .hsl => has_rgb or has_hwb,
+                .hwb => has_rgb or has_hsl,
+            };
+            if (mismatched) {
                 try self.report(
                     .invalid_operation,
                     span,
@@ -1591,50 +1613,71 @@ const Engine = struct {
             }
             break :blk space;
         } else blk: {
-            if (has_rgb and has_hsl) {
+            if ((has_rgb and (has_hue or has_hsl or has_hwb)) or (has_hsl and has_hwb)) {
                 try self.report(
                     .invalid_operation,
                     span,
-                    "native Sass color transform cannot mix RGB and HSL channels",
+                    "native Sass color transform cannot mix channels from different spaces",
                 );
                 return error.InvalidExpression;
             }
-            break :blk if (has_rgb) .rgb else if (has_hsl) .hsl else null;
+            break :blk if (has_rgb)
+                .rgb
+            else if (has_hwb)
+                .hwb
+            else if (has_hsl)
+                .hsl
+            else if (has_hue)
+                if (color.space == .hwb) .hwb else .hsl
+            else
+                null;
         };
-        const alpha = if (values[7]) |item|
+        const alpha = if (values[alpha_index]) |item|
             try self.colorTransformAlpha(item.*, kind, span)
         else
             null;
 
-        const result = if (selected_space == .hsl)
-            native_color.transformHsl(color, kind, .{
-                .hue = if (values[4]) |item| try self.colorHue(item.*, span) else null,
-                .saturation = if (values[5]) |item|
-                    try self.colorTransformPercentage(item.*, kind, span)
-                else
-                    null,
-                .lightness = if (values[6]) |item|
-                    try self.colorTransformPercentage(item.*, kind, span)
-                else
-                    null,
-                .alpha = alpha,
-            }) catch |err| return self.colorTransformFailure(err, span)
-        else
-            native_color.transformRgb(color, kind, .{
-                .red = if (values[1]) |item|
+        const result = switch (selected_space orelse .rgb) {
+            .rgb => native_color.transformRgb(color, kind, .{
+                .red = if (values[red_index]) |item|
                     try self.colorTransformRgbChannel(item.*, kind, span)
                 else
                     null,
-                .green = if (values[2]) |item|
+                .green = if (values[green_index]) |item|
                     try self.colorTransformRgbChannel(item.*, kind, span)
                 else
                     null,
-                .blue = if (values[3]) |item|
+                .blue = if (values[blue_index]) |item|
                     try self.colorTransformRgbChannel(item.*, kind, span)
                 else
                     null,
                 .alpha = alpha,
-            }) catch |err| return self.colorTransformFailure(err, span);
+            }),
+            .hsl => native_color.transformHsl(color, kind, .{
+                .hue = if (values[hue_index]) |item| try self.colorHue(item.*, span) else null,
+                .saturation = if (values[saturation_index]) |item|
+                    try self.colorTransformPercentage(item.*, kind, span)
+                else
+                    null,
+                .lightness = if (values[lightness_index]) |item|
+                    try self.colorTransformPercentage(item.*, kind, span)
+                else
+                    null,
+                .alpha = alpha,
+            }),
+            .hwb => native_color.transformHwb(color, kind, .{
+                .hue = if (values[hue_index]) |item| try self.colorHue(item.*, span) else null,
+                .whiteness = if (values[whiteness_index]) |item|
+                    try self.colorTransformPercentage(item.*, kind, span)
+                else
+                    null,
+                .blackness = if (values[blackness_index]) |item|
+                    try self.colorTransformPercentage(item.*, kind, span)
+                else
+                    null,
+                .alpha = alpha,
+            }),
+        } catch |err| return self.colorTransformFailure(err, span);
         return self.values.own(.{ .color = result });
     }
 
@@ -1642,7 +1685,7 @@ const Engine = struct {
         self: *Engine,
         item: native_value.Value,
         span: native_source.Span,
-    ) Error!?ColorTransformSpace {
+    ) Error!ColorTransformSpace {
         const string = switch (item) {
             .string => |value| value,
             else => {
@@ -1656,8 +1699,9 @@ const Engine = struct {
         }
         if (std.mem.eql(u8, string.bytes, "rgb")) return .rgb;
         if (std.mem.eql(u8, string.bytes, "hsl")) return .hsl;
+        if (std.mem.eql(u8, string.bytes, "hwb")) return .hwb;
         const known_modern = [_][]const u8{
-            "hwb", "lab", "lch", "oklab", "oklch", "xyz", "xyz-d50", "xyz-d65",
+            "lab", "lch", "oklab", "oklch", "xyz", "xyz-d50", "xyz-d65",
         };
         for (known_modern) |name| {
             if (std.mem.eql(u8, string.bytes, name)) {
