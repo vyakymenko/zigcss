@@ -1478,6 +1478,74 @@ const AllocationContext = struct {
     root: []const u8,
 };
 
+// Heap-layout-dependent in-place remaps make allocation counts unstable across
+// hosts. Force growth through explicit allocations so every OOM point is tested.
+const DeterministicAllocationBacking = struct {
+    child: std.mem.Allocator,
+
+    fn allocator(self: *DeterministicAllocationBacking) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(
+        context: *anyopaque,
+        length: usize,
+        alignment: std.mem.Alignment,
+        return_address: usize,
+    ) ?[*]u8 {
+        const self: *DeterministicAllocationBacking = @ptrCast(@alignCast(context));
+        return self.child.rawAlloc(length, alignment, return_address);
+    }
+
+    fn resize(
+        context: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        new_length: usize,
+        return_address: usize,
+    ) bool {
+        _ = context;
+        _ = memory;
+        _ = alignment;
+        _ = new_length;
+        _ = return_address;
+        return false;
+    }
+
+    fn remap(
+        context: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        new_length: usize,
+        return_address: usize,
+    ) ?[*]u8 {
+        _ = context;
+        _ = memory;
+        _ = alignment;
+        _ = new_length;
+        _ = return_address;
+        return null;
+    }
+
+    fn free(
+        context: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        return_address: usize,
+    ) void {
+        const self: *DeterministicAllocationBacking = @ptrCast(@alignCast(context));
+        self.child.rawFree(memory, alignment, return_address);
+    }
+};
+
 fn exerciseAllocationFailures(
     allocator: std.mem.Allocator,
     context: *const AllocationContext,
@@ -1558,8 +1626,9 @@ test "native Sass semantic core handles every allocation failure" {
     const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
     defer std.testing.allocator.free(root);
     const context = AllocationContext{ .root = root };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
     try std.testing.checkAllAllocationFailures(
-        std.testing.allocator,
+        backing.allocator(),
         exerciseAllocationFailures,
         .{&context},
     );
