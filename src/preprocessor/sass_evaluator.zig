@@ -1182,7 +1182,7 @@ const Engine = struct {
                 scope,
                 span,
             ),
-            .rgb, .rgba, .hsl, .hsla, .hwb => return try self.callColorConstructor(
+            .rgb, .rgba, .hsl, .hsla, .hwb => return try self.callColorConstructorRaw(
                 builtin,
                 raw,
                 body,
@@ -1253,6 +1253,116 @@ const Engine = struct {
         };
     }
 
+    fn callColorConstructorRaw(
+        self: *Engine,
+        builtin: Builtin,
+        raw: []const u8,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        comma_separated: bool,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+
+        var has_keyword = false;
+        var has_channels = false;
+        var has_color = false;
+        for (parsed.items) |argument| {
+            const name = argument.name orelse continue;
+            has_keyword = true;
+            has_channels = has_channels or native_arguments.nameEql(name, "channels");
+            has_color = has_color or native_arguments.nameEql(name, "color");
+        }
+        if (!has_keyword) {
+            return self.callColorConstructor(
+                builtin,
+                raw,
+                body,
+                ranges,
+                comma_separated,
+                true,
+                scope,
+                span,
+            );
+        }
+
+        const channels_parameters = [_]native_arguments.Parameter{
+            .{ .name = "channels" },
+        };
+        const color_parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "alpha" },
+        };
+        const rgb_parameters = [_]native_arguments.Parameter{
+            .{ .name = "red" },
+            .{ .name = "green" },
+            .{ .name = "blue" },
+            .{ .name = "alpha", .required = false },
+        };
+        const hsl_parameters = [_]native_arguments.Parameter{
+            .{ .name = "hue" },
+            .{ .name = "saturation" },
+            .{ .name = "lightness" },
+            .{ .name = "alpha", .required = false },
+        };
+        const parameters: []const native_arguments.Parameter = if (has_channels)
+            &channels_parameters
+        else if (has_color and (builtin == .rgb or builtin == .rgba))
+            &color_parameters
+        else switch (builtin) {
+            .rgb, .rgba => &rgb_parameters,
+            .hsl, .hsla => &hsl_parameters,
+            .hwb => &channels_parameters,
+            else => unreachable,
+        };
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            parameters,
+            parameters.len,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        if (has_channels) {
+            const channel_range = bound.values[0].?;
+            return self.callColorConstructor(
+                builtin,
+                raw,
+                body[channel_range.start..channel_range.end],
+                &.{},
+                false,
+                false,
+                scope,
+                span,
+            );
+        }
+
+        var ordered_ranges: [4]ExpressionRange = undefined;
+        var ordered_count: usize = 0;
+        for (bound.values) |value_range| {
+            const range = value_range orelse continue;
+            ordered_ranges[ordered_count] = range;
+            ordered_count += 1;
+        }
+        return self.callColorConstructor(
+            builtin,
+            raw,
+            body,
+            ordered_ranges[0..ordered_count],
+            true,
+            false,
+            scope,
+            span,
+        );
+    }
+
     fn callColorConstructor(
         self: *Engine,
         builtin: Builtin,
@@ -1260,6 +1370,7 @@ const Engine = struct {
         body: []const u8,
         comma_ranges: []const ExpressionRange,
         comma_separated: bool,
+        allow_deferred: bool,
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
@@ -1309,18 +1420,33 @@ const Engine = struct {
             }
         }
         if (containsDeferredCssCalculation(body)) {
-            return self.preserveColorFunction(raw, scope, span);
+            if (allow_deferred) return self.preserveColorFunction(raw, scope, span);
+            try self.report(
+                .unsupported_feature,
+                span,
+                "deferred Sass keyword color constructors are not implemented by the native evaluator yet",
+            );
+            return error.UnsupportedFeature;
         }
 
         var arguments: std.ArrayList(*const native_value.Value) = .empty;
         defer arguments.deinit(self.allocator);
         for (ranges.items) |range| {
             const item = try self.evaluateExpressionBytes(body[range.start..range.end], scope, span);
-            if (isDeferredColorValue(item.*)) return self.preserveColorFunction(raw, scope, span);
+            if (isDeferredColorValue(item.*)) {
+                if (allow_deferred) return self.preserveColorFunction(raw, scope, span);
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "deferred Sass keyword color constructors are not implemented by the native evaluator yet",
+                );
+                return error.UnsupportedFeature;
+            }
             try arguments.append(self.allocator, item);
         }
 
-        if (builtin == .rgba and comma_separated and arguments.items.len == 2 and
+        if ((builtin == .rgb or builtin == .rgba) and comma_separated and
+            arguments.items.len == 2 and
             arguments.items[0].* == .color)
         {
             const alpha = try self.colorAlpha(arguments.items[1].*, span);

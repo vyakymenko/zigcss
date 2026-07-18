@@ -780,6 +780,75 @@ test "native Sass fixed built-in keyword arguments reject ambiguous calls" {
     );
 }
 
+test "native Sass color constructors accept bounded keyword overloads" {
+    const input =
+        \\.a {
+        \\  rgb-legacy: rgb($green: 0, $red: 255, $blue: 0);
+        \\  rgb-alpha: rgb($alpha: .5, $blue: 0, $red: 255, $green: 0);
+        \\  rgba-legacy: rgba($blue: 0, $alpha: .5, $red: 255, $green: 0);
+        \\  rgb-color: rgb($alpha: .5, $color: red);
+        \\  rgba-color: rgba($alpha: .5, $color: red);
+        \\  hsl-legacy: hsl($lightness: 50%, $hue: 120, $saturation: 40%);
+        \\  hsl-alpha: hsl($alpha: .5, $lightness: 50%, $hue: 120, $saturation: 40%);
+        \\  hsla-legacy: hsla($alpha: .5, $lightness: 50%, $hue: 120, $saturation: 40%);
+        \\  rgb-channels: rgb($channels: 255 0 0 / .5);
+        \\  rgba-channels: rgba($channels: 255 0 0 / .5);
+        \\  hsl-channels: hsl($channels: 120 40% 50% / .5);
+        \\  hsla-channels: hsla($channels: 120 40% 50% / .5);
+        \\  hwb-channels: hwb($channels: 120 10% 20% / .5);
+        \\  mixed-positional: rgb(255, $green: 0, $blue: 0);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "constructor-keywords.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{rgb-legacy:red;rgb-alpha:rgba(255,0,0,.5);rgba-legacy:rgba(255,0,0,.5);rgb-color:rgba(255,0,0,.5);rgba-color:rgba(255,0,0,.5);hsl-legacy:hsl(120,40%,50%);hsl-alpha:hsla(120,40%,50%,.5);hsla-legacy:hsla(120,40%,50%,.5);rgb-channels:rgba(255,0,0,.5);rgba-channels:rgba(255,0,0,.5);hsl-channels:hsla(120,40%,50%,.5);hsla-channels:hsla(120,40%,50%,.5);hwb-channels:rgba(25.5,204,25.5,.5);mixed-positional:red}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass color constructor keyword overloads reject ambiguous calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "constructor-missing.scss", .input = ".a { color: rgb($red: 255, $green: 0); }" },
+        .{ .name = "constructor-mixed-overload.scss", .input = ".a { color: rgb($channels: 255 0 0, $red: 255); }" },
+        .{ .name = "constructor-unknown.scss", .input = ".a { color: hsl($unknown: 1); }" },
+        .{ .name = "constructor-duplicate.scss", .input = ".a { color: rgb($red: 1, $red: 2, $green: 3, $blue: 4); }" },
+        .{ .name = "constructor-order.scss", .input = ".a { color: rgb($red: 255, 0, 0); }" },
+        .{ .name = "constructor-hwb-legacy.scss", .input = ".a { color: hwb($hue: 120, $whiteness: 10%, $blackness: 20%); }" },
+        .{ .name = "constructor-bad-channels.scss", .input = ".a { color: rgb($channels: 255 0); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "constructor-splat.scss",
+            ".a { color: rgb($channels...); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "constructor-deferred.scss",
+            ".a { color: rgb($channels: var(--channels)); }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass evaluates bounded Unicode string functions without a provider" {
     const input =
         \\.a {
@@ -1079,6 +1148,7 @@ fn exerciseAllocationFailures(
         \\  hwb-keyword: change-color($blackness: 20%, $color: #123456, $space: hwb);
         \\  fixed-keyword: mix($weight: 25%, $color2: blue, $color1: red);
         \\  nth-keyword: nth($n: 2, $list: (a, b));
+        \\  constructor-keyword: rgb($channels: 255 0 0 / .5);
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
         \\  string-quote: quote(foo);
@@ -1106,7 +1176,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
