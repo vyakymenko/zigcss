@@ -9,6 +9,7 @@ const native_evaluator = @import("evaluator.zig");
 const native_lexer = @import("lexer.zig");
 const native_color = @import("sass_color.zig");
 const native_numeric = @import("sass_numeric.zig");
+const native_string = @import("sass_string.zig");
 const native_source = @import("source.zig");
 const native_syntax = @import("syntax.zig");
 const native_value = @import("value.zig");
@@ -36,6 +37,7 @@ pub const Error = native_evaluator.Error ||
     native_lexer.Error ||
     native_color.Error ||
     native_numeric.Error ||
+    native_string.Error ||
     native_source.Error ||
     native_value.Error || error{
     EvaluationDepthExceeded,
@@ -96,6 +98,14 @@ const Builtin = enum {
     map_get,
     nth,
     length,
+    quote,
+    unquote,
+    str_length,
+    str_index,
+    str_slice,
+    str_insert,
+    to_upper_case,
+    to_lower_case,
     rgb,
     rgba,
     hsl,
@@ -998,6 +1008,22 @@ const Engine = struct {
             .nth
         else if (sassNameEql(name, "length"))
             .length
+        else if (sassNameEql(name, "quote"))
+            .quote
+        else if (sassNameEql(name, "unquote"))
+            .unquote
+        else if (sassNameEql(name, "str-length"))
+            .str_length
+        else if (sassNameEql(name, "str-index"))
+            .str_index
+        else if (sassNameEql(name, "str-slice"))
+            .str_slice
+        else if (sassNameEql(name, "str-insert"))
+            .str_insert
+        else if (sassNameEql(name, "to-upper-case"))
+            .to_upper_case
+        else if (sassNameEql(name, "to-lower-case"))
+            .to_lower_case
         else if (sassNameEql(name, "rgb"))
             .rgb
         else if (sassNameEql(name, "rgba"))
@@ -1113,6 +1139,15 @@ const Engine = struct {
             .map_get => try self.callMapGet(arguments.items, span),
             .nth => try self.callNth(arguments.items, span),
             .length => try self.callLength(arguments.items, span),
+            .quote,
+            .unquote,
+            .str_length,
+            .str_index,
+            .str_slice,
+            .str_insert,
+            .to_upper_case,
+            .to_lower_case,
+            => try self.callStringBuiltin(builtin, arguments.items, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => try self.callColorChannel(
                 builtin,
                 arguments.items,
@@ -1849,6 +1884,196 @@ const Engine = struct {
             else => 1,
         };
         return self.values.own(.{ .number = .{ .value = @floatFromInt(length) } });
+    }
+
+    fn callStringBuiltin(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        switch (builtin) {
+            .quote, .unquote => {
+                if (arguments.len != 1) {
+                    try self.report(.invalid_operation, span, "quote functions require exactly one string");
+                    return error.InvalidExpression;
+                }
+                const string = try self.stringArgument(arguments[0].*, span);
+                const quoted = builtin == .quote;
+                const bytes = native_string.reencodeAlloc(
+                    self.allocator,
+                    string.bytes,
+                    string.quoted,
+                    quoted,
+                    self.limits.max_temporary_bytes,
+                ) catch |err| return self.stringFailure(err, span);
+                defer self.allocator.free(bytes);
+                return self.values.own(.{ .string = .{
+                    .bytes = bytes,
+                    .quoted = quoted,
+                } });
+            },
+            .str_length => {
+                if (arguments.len != 1) {
+                    try self.report(.invalid_operation, span, "str-length() requires exactly one string");
+                    return error.InvalidExpression;
+                }
+                const string = try self.stringArgument(arguments[0].*, span);
+                const count = native_string.length(
+                    self.allocator,
+                    string.bytes,
+                    string.quoted,
+                    self.limits.max_temporary_bytes,
+                ) catch |err| return self.stringFailure(err, span);
+                return self.values.own(.{ .number = .{ .value = @floatFromInt(count) } });
+            },
+            .str_index => {
+                if (arguments.len != 2) {
+                    try self.report(.invalid_operation, span, "str-index() requires two strings");
+                    return error.InvalidExpression;
+                }
+                const string = try self.stringArgument(arguments[0].*, span);
+                const needle = try self.stringArgument(arguments[1].*, span);
+                const index = native_string.indexOf(
+                    self.allocator,
+                    string.bytes,
+                    string.quoted,
+                    needle.bytes,
+                    needle.quoted,
+                    self.limits.max_temporary_bytes,
+                ) catch |err| return self.stringFailure(err, span);
+                return if (index) |found|
+                    self.values.own(.{ .number = .{ .value = @floatFromInt(found) } })
+                else
+                    self.values.own(.{ .null_value = {} });
+            },
+            .str_slice => {
+                if (arguments.len != 2 and arguments.len != 3) {
+                    try self.report(.invalid_operation, span, "str-slice() requires a string and one or two indexes");
+                    return error.InvalidExpression;
+                }
+                const string = try self.stringArgument(arguments[0].*, span);
+                const start = try self.stringIndex(arguments[1].*, span);
+                const end = if (arguments.len == 3)
+                    try self.stringIndex(arguments[2].*, span)
+                else
+                    null;
+                const bytes = native_string.sliceAlloc(
+                    self.allocator,
+                    string.bytes,
+                    string.quoted,
+                    start,
+                    end,
+                    self.limits.max_temporary_bytes,
+                ) catch |err| return self.stringFailure(err, span);
+                defer self.allocator.free(bytes);
+                return self.values.own(.{ .string = .{
+                    .bytes = bytes,
+                    .quoted = string.quoted,
+                } });
+            },
+            .str_insert => {
+                if (arguments.len != 3) {
+                    try self.report(.invalid_operation, span, "str-insert() requires two strings and an index");
+                    return error.InvalidExpression;
+                }
+                const string = try self.stringArgument(arguments[0].*, span);
+                const inserted = try self.stringArgument(arguments[1].*, span);
+                const index = try self.stringIndex(arguments[2].*, span);
+                const bytes = native_string.insertAlloc(
+                    self.allocator,
+                    string.bytes,
+                    string.quoted,
+                    inserted.bytes,
+                    inserted.quoted,
+                    index,
+                    self.limits.max_temporary_bytes,
+                ) catch |err| return self.stringFailure(err, span);
+                defer self.allocator.free(bytes);
+                return self.values.own(.{ .string = .{
+                    .bytes = bytes,
+                    .quoted = string.quoted,
+                } });
+            },
+            .to_upper_case, .to_lower_case => {
+                if (arguments.len != 1) {
+                    try self.report(.invalid_operation, span, "case conversion requires exactly one string");
+                    return error.InvalidExpression;
+                }
+                const string = try self.stringArgument(arguments[0].*, span);
+                const bytes = native_string.changeCaseAlloc(
+                    self.allocator,
+                    string.bytes,
+                    string.quoted,
+                    if (builtin == .to_upper_case) .upper else .lower,
+                    self.limits.max_temporary_bytes,
+                ) catch |err| return self.stringFailure(err, span);
+                defer self.allocator.free(bytes);
+                return self.values.own(.{ .string = .{
+                    .bytes = bytes,
+                    .quoted = string.quoted,
+                } });
+            },
+            else => unreachable,
+        }
+    }
+
+    fn stringArgument(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.String {
+        return switch (item) {
+            .string => |string| string,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass string function requires a string");
+                return error.InvalidExpression;
+            },
+        };
+    }
+
+    fn stringIndex(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!i64 {
+        const number = switch (item) {
+            .number => |number| number,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass string index must be a unitless integer");
+                return error.InvalidExpression;
+            },
+        };
+        if (number.numerator_units.len != 0 or number.denominator_units.len != 0 or
+            !std.math.isFinite(number.value) or @floor(number.value) != number.value)
+        {
+            try self.report(.invalid_operation, span, "native Sass string index must be a unitless integer");
+            return error.InvalidExpression;
+        }
+        // Native strings are bounded far below this threshold. Saturating larger
+        // exact Sass integers preserves their required clamping behavior without
+        // relying on an overflowing float-to-integer conversion.
+        if (number.value > 2_147_483_647) return std.math.maxInt(i64);
+        if (number.value < -2_147_483_647) return std.math.minInt(i64);
+        return @intFromFloat(number.value);
+    }
+
+    fn stringFailure(
+        self: *Engine,
+        failure: native_string.Error,
+        span: native_source.Span,
+    ) Error {
+        return switch (failure) {
+            error.InvalidString => blk: {
+                self.report(.syntax, span, "native Sass string contains an invalid escape or code point") catch |err| return err;
+                break :blk error.InvalidExpression;
+            },
+            error.OutputLimitExceeded => blk: {
+                self.report(.resource_limit, span, "native Sass string temporary limit exceeded") catch |err| return err;
+                break :blk error.TemporaryLimitExceeded;
+            },
+            error.OutOfMemory => error.OutOfMemory,
+        };
     }
 
     fn resolveListIndex(

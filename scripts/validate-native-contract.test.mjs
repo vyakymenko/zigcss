@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import {
   contractPath,
   loadContract,
+  loadProductionSources,
   validateContract,
   validateReleaseTag,
 } from './validate-native-contract.mjs'
@@ -46,8 +47,12 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('color-space-equality'), true)
   assert.equal(sassCore.capabilities.includes('color-channel-accessors'), true)
   assert.equal(sassCore.capabilities.includes('legacy-color-manipulation'), true)
+  assert.equal(sassCore.capabilities.includes('unicode-string-core'), true)
+  assert.equal(sassCore.capabilities.includes('legacy-string-builtins'), true)
   assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_color.zig'), true)
+  assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_string.zig'), true)
   assert.equal(sassCore.testSources.includes('tests/native-preprocessor/sass_color.zig'), true)
+  assert.equal(sassCore.testSources.includes('tests/native-preprocessor/sass_string.zig'), true)
   assert.equal(fs.realpathSync(contractPath).startsWith(`${repositoryRoot}${path.sep}`), true)
 })
 
@@ -64,6 +69,22 @@ test('rejects any widened production runtime boundary', () => {
     const changed = clone(loadContract())
     changed.productionBoundary[field] = value
     assert.throws(() => validateContract(changed), /production boundary drifted/)
+  }
+})
+
+test('rejects external modules and escaped files in the native Zig import closure', () => {
+  for (const injected of [
+    '@import("sass-runtime")',
+    '@import("../../outside.zig")',
+  ]) {
+    const productionSources = loadProductionSources().map(([relativePath, source]) => [
+      relativePath,
+      relativePath === 'src/preprocessor/sass_string.zig' ? `${source}\nconst drift = ${injected};\n` : source,
+    ])
+    assert.throws(
+      () => validateContract(loadContract(), { productionSources }),
+      /imports external module|import escapes the owned Zig source closure/,
+    )
   }
 })
 

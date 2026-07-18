@@ -138,6 +138,8 @@ const expectedImplementations = Object.freeze([
       'color-space-equality',
       'color-channel-accessors',
       'legacy-color-manipulation',
+      'unicode-string-core',
+      'legacy-string-builtins',
       'typed-collections',
       'collection-accessors',
       'logical-comparison',
@@ -151,11 +153,13 @@ const expectedImplementations = Object.freeze([
       'src/preprocessor/sass_evaluator.zig',
       'src/preprocessor/sass_numeric.zig',
       'src/preprocessor/sass_color.zig',
+      'src/preprocessor/sass_string.zig',
     ]),
     testSources: Object.freeze([
       'tests/native-preprocessor/sass_evaluator.zig',
       'tests/native-preprocessor/sass_numeric.zig',
       'tests/native-preprocessor/sass_color.zig',
+      'tests/native-preprocessor/sass_string.zig',
     ]),
     testStep: 'test-native-preprocessor',
     publicAvailable: false,
@@ -207,7 +211,7 @@ function loadJson(relativePath) {
   return JSON.parse(fs.readFileSync(repositoryFile(relativePath), 'utf8'))
 }
 
-function loadProductionSources(relativeDirectory = 'src') {
+export function loadProductionSources(relativeDirectory = 'src') {
   const files = []
   const visit = directory => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -348,6 +352,37 @@ function validateInternalReachability(implementations, buildFile, productionSour
   }
 }
 
+function validateNativeImportClosure(contract, productionSources) {
+  const nativeSources = new Set([
+    ...contract.foundations.flatMap(foundation => foundation.nativeSources),
+    ...contract.implementations.flatMap(implementation => implementation.nativeSources),
+  ])
+  const sourceByPath = new Map(productionSources)
+  const allowedBuiltinModules = new Set(['std', 'builtin'])
+  for (const relativePath of nativeSources) {
+    const source = sourceByPath.get(relativePath)
+    if (source === undefined) fail(`native import closure is missing ${relativePath}`)
+    const calls = [...source.matchAll(/@import\s*\(/g)]
+    const imports = [...source.matchAll(/@import\s*\(\s*"([^"]+)"\s*\)/g)]
+    if (calls.length !== imports.length) {
+      fail(`${relativePath} contains a non-literal or malformed native import`)
+    }
+    for (const match of imports) {
+      const specifier = match[1]
+      if (allowedBuiltinModules.has(specifier)) continue
+      if (!specifier.endsWith('.zig') || path.isAbsolute(specifier)) {
+        fail(`${relativePath} imports external module ${JSON.stringify(specifier)}`)
+      }
+      const resolved = path.resolve(repositoryRoot, path.dirname(relativePath), specifier)
+      const relative = path.relative(repositoryRoot, resolved).split(path.sep).join('/')
+      if (!relative.startsWith('src/') || !sourceByPath.has(relative)) {
+        fail(`${relativePath} import escapes the owned Zig source closure: ${specifier}`)
+      }
+      repositoryFile(relative)
+    }
+  }
+}
+
 export function validateContract(
   contract,
   {
@@ -424,6 +459,7 @@ export function validateContract(
     validateImplementation(implementation, index, contract, plan)
   }
   validateInternalReachability(contract.implementations, buildFile, productionSources)
+  validateNativeImportClosure(contract, productionSources)
 
   requireText(plan, 'Plan version: 1.2', 'DEVELOPMENT_PLAN.md')
   requireText(plan, '## Milestone 10: Self-contained native stylesheet frontends', 'DEVELOPMENT_PLAN.md')

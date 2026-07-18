@@ -16,6 +16,7 @@ pub const evaluator = @import("preprocessor/evaluator.zig");
 pub const sass = @import("preprocessor/sass.zig");
 pub const sass_numeric = @import("preprocessor/sass_numeric.zig");
 pub const sass_color = @import("preprocessor/sass_color.zig");
+pub const sass_string = @import("preprocessor/sass_string.zig");
 pub const sass_evaluator = @import("preprocessor/sass_evaluator.zig");
 
 test {
@@ -32,5 +33,6 @@ test {
     _ = sass;
     _ = sass_numeric;
     _ = sass_color;
+    _ = sass_string;
     _ = sass_evaluator;
 }

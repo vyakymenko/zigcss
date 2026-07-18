@@ -573,6 +573,70 @@ test "native Sass legacy color manipulation rejects unsafe arguments" {
     }
 }
 
+test "native Sass evaluates bounded Unicode string functions without a provider" {
+    const input =
+        \\.a {
+        \\  quote: quote(foo);
+        \\  quote-escape: quote(foo\ bar);
+        \\  unquote: unquote("foo bar");
+        \\  unquote-escape: unquote("foo\ bar");
+        \\  length: str-length("💚a");
+        \\  escaped-length: str-length("a\62 c");
+        \\  unquoted-escaped-length: str-length(foo\ bar);
+        \\  index: str-index("a💚b", "💚");
+        \\  missing: str-index("abc", "z");
+        \\  slice: str-slice("a💚b", 2, 2);
+        \\  slice-negative: str-slice("hello", -2);
+        \\  insert: str-insert("a💚b", "🌍", -1);
+        \\  upper: to-upper-case("Abc-é-ß-ı-i");
+        \\  lower: to-lower-case("AbC-É-ẞ-I");
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "strings.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{quote:\"foo\";quote-escape:\"foo\\\\ bar\";unquote:foo bar;unquote-escape:foo bar;length:2;escaped-length:3;unquoted-escaped-length:8;index:2;slice:\"💚\";slice-negative:\"lo\";insert:\"a💚b🌍\";upper:\"ABC-é-ß-ı-I\";lower:\"abc-É-ẞ-i\"}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass string functions reject unsafe arity types indexes and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "quote-number.scss", .input = ".a { value: quote(12); }" },
+        .{ .name = "length-color.scss", .input = ".a { value: str-length(red); }" },
+        .{ .name = "index-type.scss", .input = ".a { value: str-index(12, x); }" },
+        .{ .name = "slice-fraction.scss", .input = ".a { value: str-slice(abc, 1.2); }" },
+        .{ .name = "slice-unit.scss", .input = ".a { value: str-slice(abc, 1px); }" },
+        .{ .name = "insert-type.scss", .input = ".a { value: str-insert(abc, 12, 2); }" },
+        .{ .name = "case-type.scss", .input = ".a { value: to-upper-case(false); }" },
+        .{ .name = "short-index.scss", .input = ".a { value: str-index(abc); }" },
+        .{ .name = "long-slice.scss", .input = ".a { value: str-slice(abc, 1, 2, 3); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_temporary_bytes = 3;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-limit.scss",
+            ".a { value: str-insert(abc, def, 2); }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass calculations reject invalid arity types syntax and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -773,6 +837,8 @@ fn exerciseAllocationFailures(
         \\  red-channel: red(#123456);
         \\  mixed-color: mix(red, blue, 25%);
         \\  adjusted-color: lighten(#123456, 10%);
+        \\  string-length: str-length("💚a");
+        \\  string-slice: str-slice("hello", -2);
         \\  &:hover { margin: $size + 1px; }
         \\}
     ;
@@ -793,7 +859,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231)}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);string-length:2;string-slice:\"lo\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
