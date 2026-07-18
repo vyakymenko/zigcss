@@ -128,8 +128,11 @@ const Builtin = enum {
     math_div,
     math_floor,
     math_is_unitless,
+    math_log,
     math_percentage,
+    math_pow,
     math_round,
+    math_sqrt,
     math_unit,
     meta_keywords,
     quote,
@@ -3745,6 +3748,53 @@ const Engine = struct {
         }
     }
 
+    fn callMathPower(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const valid_arity = switch (builtin) {
+            .math_pow => arguments.len == 2,
+            .math_sqrt => arguments.len == 1,
+            .math_log => arguments.len == 1 or arguments.len == 2,
+            else => unreachable,
+        };
+        if (!valid_arity) {
+            try self.report(.invalid_operation, span, "invalid math power function arity");
+            return error.InvalidExpression;
+        }
+
+        var numbers: [2]f64 = undefined;
+        for (arguments, 0..) |argument, index| {
+            const number = try self.mathNumberArgument(argument.*, span);
+            if (number.numerator_units.len != 0 or number.denominator_units.len != 0) {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass power function requires unitless numbers",
+                );
+                return error.InvalidExpression;
+            }
+            numbers[index] = number.value;
+        }
+        try self.transaction.consumeOperations(@intCast(arguments.len));
+        const result = switch (builtin) {
+            .math_pow => std.math.pow(f64, numbers[0], numbers[1]),
+            .math_sqrt => @sqrt(numbers[0]),
+            .math_log => if (arguments.len == 1)
+                @log(numbers[0])
+            else
+                @log(numbers[0]) / @log(numbers[1]),
+            else => unreachable,
+        };
+        if (!std.math.isFinite(result)) {
+            try self.report(.invalid_operation, span, "non-finite native Sass power result");
+            return error.InvalidNumber;
+        }
+        return self.values.own(.{ .number = .{ .value = result } });
+    }
+
     fn mathNumericArgument(
         self: *Engine,
         item: native_value.Value,
@@ -3961,10 +4011,16 @@ const Engine = struct {
             .math_floor
         else if (sassNameEql(name, "unitless"))
             .math_is_unitless
+        else if (sassNameEql(name, "log"))
+            .math_log
         else if (sassNameEql(name, "percentage"))
             .math_percentage
+        else if (sassNameEql(name, "pow"))
+            .math_pow
         else if (sassNameEql(name, "round"))
             .math_round
+        else if (sassNameEql(name, "sqrt"))
+            .math_sqrt
         else if (sassNameEql(name, "unit"))
             .math_unit
         else if (sassNameEql(name, "quote"))
@@ -4128,8 +4184,11 @@ const Engine = struct {
             .math_div,
             .math_floor,
             .math_is_unitless,
+            .math_log,
             .math_percentage,
+            .math_pow,
             .math_round,
+            .math_sqrt,
             .math_unit,
             .meta_keywords,
             .red,
@@ -5648,6 +5707,34 @@ const Engine = struct {
         return self.values.own(.{
             .string = .{ .bytes = minifyCalculationArgumentCommas(rendered) },
         });
+    }
+
+    fn preserveEvaluatedFunction(
+        self: *Engine,
+        raw: []const u8,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const opening = std.mem.indexOfScalar(u8, raw, '(') orelse {
+            try self.report(.invalid_operation, span, "malformed deferred CSS function");
+            return error.InvalidExpression;
+        };
+        const name = trimWhitespace(raw[0..opening]);
+        if (name.len == 0) {
+            try self.report(.invalid_operation, span, "malformed deferred CSS function");
+            return error.InvalidExpression;
+        }
+
+        var rendered: std.ArrayList(u8) = .empty;
+        defer rendered.deinit(self.allocator);
+        try self.appendTemporary(&rendered, name);
+        try self.appendTemporary(&rendered, "(");
+        for (arguments, 0..) |argument, index| {
+            if (index != 0) try self.appendTemporary(&rendered, ",");
+            try self.appendValue(&rendered, argument.*, false);
+        }
+        try self.appendTemporary(&rendered, ")");
+        return self.values.own(.{ .string = .{ .bytes = rendered.items } });
     }
 
     fn callCalculation(
@@ -7393,6 +7480,15 @@ const Engine = struct {
                 .{ .name = "number1" },
                 .{ .name = "number2" },
             },
+            .math_log => &.{
+                .{ .name = "number" },
+                .{ .name = "base", .required = false },
+            },
+            .math_pow => &.{
+                .{ .name = "base" },
+                .{ .name = "exponent" },
+            },
+            .math_sqrt => &.{.{ .name = "number" }},
             .math_compatible => &.{
                 .{ .name = "number1" },
                 .{ .name = "number2" },
@@ -7482,8 +7578,11 @@ const Engine = struct {
                 .math_div,
                 .math_floor,
                 .math_is_unitless,
+                .math_log,
                 .math_percentage,
+                .math_pow,
                 .math_round,
+                .math_sqrt,
                 .math_unit,
                 => try self.evaluateMathNumericArgument(
                     argument_raw,
@@ -7521,7 +7620,29 @@ const Engine = struct {
             arguments.len == 1 and arguments[0].* == .string and
             !arguments[0].string.quoted)
         {
-            return self.preserveColorFunction(raw, scope, span);
+            return self.preserveEvaluatedFunction(raw, arguments, span);
+        }
+        if (!module_owned and !has_keyword and
+            (builtin == .math_log or builtin == .math_pow or builtin == .math_sqrt))
+        {
+            var preserve_css = false;
+            var valid_css_calculation = true;
+            for (arguments) |argument| {
+                switch (argument.*) {
+                    .number => {},
+                    .string => |string| {
+                        if (string.quoted) {
+                            valid_css_calculation = false;
+                        } else {
+                            preserve_css = true;
+                        }
+                    },
+                    else => valid_css_calculation = false,
+                }
+            }
+            if (preserve_css and valid_css_calculation) {
+                return self.preserveEvaluatedFunction(raw, arguments, span);
+            }
         }
         const filter_conflict = builtin == .saturate or builtin == .grayscale or
             builtin == .invert or builtin == .opacity;
@@ -7550,6 +7671,11 @@ const Engine = struct {
             .math_round,
             => self.callMathUnary(builtin, arguments, span),
             .math_div => self.callMathDiv(arguments, span),
+            .math_log, .math_pow, .math_sqrt => self.callMathPower(
+                builtin,
+                arguments,
+                span,
+            ),
             .math_compatible, .math_is_unitless => self.callMathUnitPredicate(
                 builtin,
                 arguments,
@@ -8705,8 +8831,11 @@ fn mathModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "div")) return .math_div;
     if (sassNameEql(name, "floor")) return .math_floor;
     if (sassNameEql(name, "is-unitless")) return .math_is_unitless;
+    if (sassNameEql(name, "log")) return .math_log;
     if (sassNameEql(name, "percentage")) return .math_percentage;
+    if (sassNameEql(name, "pow")) return .math_pow;
     if (sassNameEql(name, "round")) return .math_round;
+    if (sassNameEql(name, "sqrt")) return .math_sqrt;
     if (sassNameEql(name, "unit")) return .math_unit;
     return null;
 }

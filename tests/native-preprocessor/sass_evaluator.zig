@@ -1249,12 +1249,12 @@ test "native Sass math unit predicates reject unowned calls and unsafe arguments
         },
         .{
             .name = "unsupported-math-member.scss",
-            .input = "@use \"sass:math\"; .a { value: math.pow($undefined, 2); }",
+            .input = "@use \"sass:math\"; .a { value: math.random($undefined); }",
             .expected = error.InvalidExpression,
         },
         .{
             .name = "unsupported-unprefixed-math-member.scss",
-            .input = "@use \"sass:math\" as *; .a { value: pow(2, 3); }",
+            .input = "@use \"sass:math\" as *; .a { value: random($undefined); }",
             .expected = error.InvalidExpression,
         },
         .{
@@ -1565,6 +1565,31 @@ test "native Sass evaluates unary math functions without a provider" {
         ".plain{abs:abs(var(--size));abs-name:abs(foo);round:round(var(--size),1px);round-name:round(foo)}",
         css_result.css(),
     );
+
+    const deferred_input =
+        \\$evaluations: 0;
+        \\@function dynamic($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.dynamic {
+        \\  abs: abs(#{dynamic(foo)});
+        \\  round: round(#{dynamic(bar)});
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var deferred_result = try compile(
+        std.testing.allocator,
+        "math-unary-deferred.scss",
+        deferred_input,
+        .scss,
+        .{},
+    );
+    defer deferred_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".dynamic{abs:abs(foo);round:round(bar);evaluations:2}",
+        deferred_result.css(),
+    );
 }
 
 test "native Sass unary math functions reject unsafe arguments" {
@@ -1840,6 +1865,265 @@ test "native Sass math division rejects unsafe arguments" {
             temporary_limits,
         ),
     );
+}
+
+test "native Sass evaluates powers roots and logarithms without a provider" {
+    const input =
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$evaluations: 0;
+        \\@function stamp($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.a {
+        \\  pow: math.pow(2, 3);
+        \\  pow-negative: math.pow(2, -3);
+        \\  pow-fraction: math.pow(9, .5);
+        \\  sqrt: math.sqrt(2);
+        \\  sqrt-perfect: math.sqrt(81);
+        \\  log: math.log(10);
+        \\  log-base: math.log(8, 2);
+        \\  log-half: math.log(.25, .5);
+        \\  log-zero-base: math.log(8, 0);
+        \\  alias: numbers.pow(3, 2);
+        \\  star: sqrt(16);
+        \\  named-pow: math.pow($exponent: stamp(3), $base: stamp(2));
+        \\  named-log: math.log($base: stamp(2), $number: stamp(8));
+        \\  evaluations: $evaluations;
+        \\  legacy-pow: pow(2, 4);
+        \\  legacy-sqrt: sqrt(25);
+        \\  legacy-log: log(100, 10);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "math-powers.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{pow:8;pow-negative:.125;pow-fraction:3;sqrt:1.4142135624;sqrt-perfect:9;log:2.302585093;log-base:3;log-half:2;log-zero-base:0;alias:9;star:4;named-pow:8;named-log:3;evaluations:4;legacy-pow:16;legacy-sqrt:5;legacy-log:2}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:math" as m
+        \\.sass
+        \\  pow: m.pow(2, 5)
+        \\  sqrt: m.sqrt(49)
+        \\  log: m.log(27, 3)
+        \\  globals: pow(2, 3) sqrt(4) log(8, 2)
+    ;
+    var sass_result = try compile(std.testing.allocator, "math-powers.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{pow:32;sqrt:7;log:3;globals:8 2 3}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var css_result = try compile(
+        std.testing.allocator,
+        "math-powers-global.scss",
+        ".plain { pow: pow(var(--base), 2); pow-name: pow(foo, 2); sqrt: sqrt(var(--number)); sqrt-name: sqrt(foo); log: log(var(--number), 2); log-name: log(foo); }",
+        .scss,
+        .{},
+    );
+    defer css_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{pow:pow(var(--base),2);pow-name:pow(foo,2);sqrt:sqrt(var(--number));sqrt-name:sqrt(foo);log:log(var(--number),2);log-name:log(foo)}",
+        css_result.css(),
+    );
+
+    const deferred_input =
+        \\$evaluations: 0;
+        \\@function dynamic($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.dynamic {
+        \\  pow: pow(#{dynamic(foo)}, 2);
+        \\  sqrt: sqrt(#{dynamic(bar)});
+        \\  log: log(#{dynamic(baz)}, 2);
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var deferred_result = try compile(
+        std.testing.allocator,
+        "math-powers-deferred.scss",
+        deferred_input,
+        .scss,
+        .{},
+    );
+    defer deferred_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".dynamic{pow:pow(foo,2);sqrt:sqrt(bar);log:log(baz,2);evaluations:3}",
+        deferred_result.css(),
+    );
+}
+
+test "native Sass powers roots and logarithms reject unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-math-pow-module.scss",
+            .input = ".a { value: math.pow(2, 3); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-math-pow-namespace.scss",
+            .input = "@use \"sass:math\" as Math; .a { value: math.pow(2, 3); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-pow-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.pow();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-pow-short.scss",
+            .input = "@use \"sass:math\"; $value: math.pow(2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-pow-long.scss",
+            .input = "@use \"sass:math\"; $value: math.pow(2, 3, 4);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sqrt-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.sqrt();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sqrt-long.scss",
+            .input = "@use \"sass:math\"; $value: math.sqrt(4, 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-log-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.log();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-log-long.scss",
+            .input = "@use \"sass:math\"; $value: math.log(8, 2, 1);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-pow-unit-base.scss",
+            .input = "@use \"sass:math\"; $value: math.pow(2px, 3);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-pow-unit-exponent.scss",
+            .input = "@use \"sass:math\"; $value: math.pow(2, 3px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sqrt-unit.scss",
+            .input = "@use \"sass:math\"; $value: math.sqrt(4px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-log-unit.scss",
+            .input = "@use \"sass:math\"; $value: math.log(8px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-log-unit-base.scss",
+            .input = "@use \"sass:math\"; $value: math.log(8, 2px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-pow-string.scss",
+            .input = "@use \"sass:math\"; $value: math.pow(foo, 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sqrt-string.scss",
+            .input = "@use \"sass:math\"; $value: math.sqrt(foo);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-log-string.scss",
+            .input = "@use \"sass:math\"; $value: math.log(foo);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sqrt-negative.scss",
+            .input = "@use \"sass:math\"; $value: math.sqrt(-1);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "math-log-zero.scss",
+            .input = "@use \"sass:math\"; $value: math.log(0);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "math-log-negative.scss",
+            .input = "@use \"sass:math\"; $value: math.log(-1);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "math-log-base-one.scss",
+            .input = "@use \"sass:math\"; $value: math.log(8, 1);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "math-pow-infinite.scss",
+            .input = "@use \"sass:math\"; $value: math.pow(0, -1);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "math-pow-nan.scss",
+            .input = "@use \"sass:math\"; $value: math.pow(-1, .5);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "math-pow-unknown-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.pow($other: $undefined, $exponent: 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-log-duplicate-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.log($number: 8, $number: 4);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-sqrt-splat.scss",
+            .input = "@use \"sass:math\"; $args: (4,); $value: math.sqrt($args...);",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "global-pow-named-dynamic.scss",
+            .input = "$value: pow($base: var(--base), $exponent: 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "global-pow-quoted.scss",
+            .input = "$value: pow(\"foo\", 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "global-sqrt-list.scss",
+            .input = "$value: sqrt((1, 2));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "global-log-color.scss",
+            .input = "$value: log(red, 2);",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
 }
 
 test "native Sass inspects callable keywords through the built-in meta module" {
@@ -4973,6 +5257,10 @@ fn exerciseAllocationFailures(
         \\$math-percentage: math.percentage(.125);
         \\$math-div: math.div($inch, 96px);
         \\$math-div-string: math.div(foo, bar);
+        \\$math-pow: math.pow(2, 3);
+        \\$math-sqrt: math.sqrt(81);
+        \\$math-log: math.log(8, 2);
+        \\$math-pow-css: pow(var(--base), 2);
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
         \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
         \\@function allocation-target($left, $right: 0) { @return $left + $right; }
@@ -5020,6 +5308,10 @@ fn exerciseAllocationFailures(
         \\  math-percentage: $math-percentage;
         \\  math-div: $math-div;
         \\  math-div-string: $math-div-string;
+        \\  math-pow: $math-pow;
+        \\  math-sqrt: $math-sqrt;
+        \\  math-log: $math-log;
+        \\  math-pow-css: $math-pow-css;
         \\  reduced-calc: calc($size + 2px);
         \\  deferred-calc: calc(100% - $size);
         \\  color: rgba(hsl(.5turn, 100%, 50%), .4);
@@ -5074,7 +5366,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;math-pow:8;math-sqrt:9;math-log:3;math-pow-css:pow(var(--base),2);reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
