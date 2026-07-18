@@ -67,6 +67,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-list-transformations'), true)
   assert.equal(sassCore.capabilities.includes('built-in-list-join'), true)
   assert.equal(sassCore.capabilities.includes('built-in-list-zip'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-list-slash'), true)
   assert.equal(sassCore.capabilities.includes('unicode-string-core'), true)
   assert.equal(sassCore.capabilities.includes('legacy-string-builtins'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-aliases'), true)

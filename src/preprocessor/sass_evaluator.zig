@@ -121,6 +121,7 @@ const Builtin = enum {
     list_set_nth,
     list_join,
     list_zip,
+    list_slash,
     meta_keywords,
     quote,
     unquote,
@@ -3757,6 +3758,12 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .list_slash => return try self.callListSlashRaw(
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
             .nth,
             .length,
             .list_index,
@@ -6342,6 +6349,24 @@ const Engine = struct {
         return self.callListZip(arguments.positional.items, span);
     }
 
+    fn callListSlashRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var arguments = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer arguments.deinit();
+        if (arguments.positional.items.len < 2) {
+            return self.callListSlash(arguments.positional.items, span);
+        }
+        if (arguments.keywords.items.len != 0) {
+            return self.argumentsFailure(error.UnknownArgument, span);
+        }
+        return self.callListSlash(arguments.positional.items, span);
+    }
+
     fn callListAppend(
         self: *Engine,
         arguments: []const *const native_value.Value,
@@ -6518,6 +6543,38 @@ const Engine = struct {
             .separator = .comma,
         } });
         materialized.deinit(self.allocator);
+        return result;
+    }
+
+    fn callListSlash(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 2) {
+            try self.report(.invalid_operation, span, "list slash() requires at least two elements");
+            return error.InvalidExpression;
+        }
+        const temporary_bytes = std.math.mul(
+            usize,
+            arguments.len,
+            @sizeOf(native_value.Value),
+        ) catch return self.listTemporaryFailure(span);
+        if (temporary_bytes > self.limits.max_temporary_bytes) {
+            return self.listTemporaryFailure(span);
+        }
+
+        const items = try self.allocator.alloc(native_value.Value, arguments.len);
+        errdefer self.allocator.free(items);
+        for (arguments, 0..) |argument, index| {
+            try self.transaction.consumeOperations(1);
+            items[index] = argument.*;
+        }
+        const result = try self.values.own(.{ .list = .{
+            .items = items,
+            .separator = .slash,
+        } });
+        self.allocator.free(items);
         return result;
     }
 
@@ -8206,6 +8263,7 @@ fn listModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "set-nth")) return .list_set_nth;
     if (sassNameEql(name, "join")) return .list_join;
     if (sassNameEql(name, "zip")) return .list_zip;
+    if (sassNameEql(name, "slash")) return .list_slash;
     return null;
 }
 

@@ -3154,7 +3154,7 @@ test "native Sass list module rejects unowned calls" {
         },
         .{
             .name = "unsupported-list-member.scss",
-            .input = "@use \"sass:list\"; .a { value: list.slash($undefined, b); }",
+            .input = "@use \"sass:list\"; .a { value: list.unknown($undefined, b); }",
             .expected = error.InvalidExpression,
         },
         .{
@@ -3753,6 +3753,174 @@ test "native Sass list zip rejects keywords and enforces expansion and temporary
     );
 }
 
+test "native Sass constructs slash lists immutably through module and splat calls" {
+    const input =
+        \\@use "sass:list";
+        \\@use "sass:list" as seq;
+        \\@use "sass:list" as *;
+        \\@use "sass:map";
+        \\$slash-order: 0;
+        \\$slash-first: null;
+        \\@function stamp($value) {
+        \\  $slash-order: $slash-order + 1 !global;
+        \\  @if $slash-order == 1 { $slash-first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\@function slash-rest($args...) { @return list.slash($args, x); }
+        \\@function slash-forward($args...) { @return list.slash($args...); }
+        \\$legacy: a/b;
+        \\$spread: (a b, c d, e);
+        \\$empty-map: map.remove((gone: 1), gone);
+        \\.a {
+        \\  basic: list.slash(a, b, c);
+        \\  custom: seq.slash(a, b);
+        \\  star: slash(a, b);
+        \\  groups: list.slash(a b, c d);
+        \\  commas: list.slash((a, b), (c, d));
+        \\  bracket-input: list.slash([a b], [c d]);
+        \\  nested: list.slash(list.slash(a, b), list.slash(c, d));
+        \\  nested-length: list.length(list.slash(list.slash(a, b), list.slash(c, d)));
+        \\  nested-first-length: list.length(list.nth(list.slash(list.slash(a, b), list.slash(c, d)), 1));
+        \\  nulls: list.slash(null, a, null, b);
+        \\  all-null-length: list.length(list.slash(null, null));
+        \\  map-length: list.length(list.slash((a: 1, b: 2), (c: 3)));
+        \\  map-first: map.get(list.nth(list.slash((a: 1, b: 2), (c: 3)), 1), a);
+        \\  empty-map-length: list.length(list.slash($empty-map, a));
+        \\  empty-map-first-length: list.length(list.nth(list.slash($empty-map, a), 1));
+        \\  spread: list.slash($spread...);
+        \\  legacy: list.slash($legacy, c);
+        \\  rest-list: slash-rest(a, b);
+        \\  forwarded: slash-forward(a b, c d);
+        \\  separator: list.separator(list.slash(a, b));
+        \\  length: list.length(list.slash(a, b));
+        \\  first-item: list.nth(list.slash(a b, c d), 1);
+        \\  bracketed: list.is-bracketed(list.slash(a, b));
+        \\  source-order: list.slash(stamp(a), stamp(b));
+        \\  first-evaluated: $slash-first;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "list-slash.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{basic:a/b/c;custom:a/b;star:a/b;groups:a b/c d;commas:a,b/c,d;bracket-input:[a b]/[c d];nested:a/b/c/d;nested-length:2;nested-first-length:2;nulls:a/b;all-null-length:2;map-length:2;map-first:1;empty-map-length:2;empty-map-first-length:0;spread:a b/c d/e;legacy:a/b/c;rest-list:a,b/x;forwarded:a b/c d;separator:slash;length:2;first-item:a b;bracketed:false;source-order:a/b;first-evaluated:a}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:list" as l
+        \\$legacy: a/b
+        \\$spread: (a b, c d, e)
+        \\.sass
+        \\  value: l.slash(a, b, c)
+        \\  groups: l.slash(a b, c d)
+        \\  spread: l.slash($spread...)
+        \\  legacy: l.slash($legacy, c)
+        \\  separator: l.separator(l.slash(a, b))
+    ;
+    var sass_result = try compile(std.testing.allocator, "list-slash.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{value:a/b/c;groups:a b/c d;spread:a b/c d/e;legacy:a/b/c;separator:slash}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var css_function = try compile(
+        std.testing.allocator,
+        "list-slash-global.scss",
+        "@use \"sass:list\"; .plain { value: slash(a, b); }",
+        .scss,
+        .{},
+    );
+    defer css_function.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{value:slash(a, b)}",
+        css_function.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), css_function.nativeDiagnostics().len);
+}
+
+test "native Sass list slash rejects unsafe arguments and enforces expansion and temporary limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "list-slash-empty.scss",
+            .input = "@use \"sass:list\"; $value: list.slash();",
+        },
+        .{
+            .name = "list-slash-single.scss",
+            .input = "@use \"sass:list\"; $value: list.slash(a);",
+        },
+        .{
+            .name = "list-slash-keyword.scss",
+            .input = "@use \"sass:list\"; $value: list.slash(a, b, $foo: c);",
+        },
+        .{
+            .name = "list-slash-named-only.scss",
+            .input = "@use \"sass:list\"; $value: list.slash($foo: a, $bar: b);",
+        },
+        .{
+            .name = "list-slash-keyword-splat.scss",
+            .input = "@use \"sass:list\"; $args: (foo: a, bar: b); $value: list.slash($args...);",
+        },
+        .{
+            .name = "list-slash-invalid-keyword-splat.scss",
+            .input = "@use \"sass:list\"; $args: (1: a, 2: b); $value: list.slash($args...);",
+        },
+        .{
+            .name = "list-slash-legacy-splat.scss",
+            .input = "@use \"sass:list\"; $legacy: a/b; $value: list.slash($legacy...);",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "list-slash-argument-limit.scss",
+            "@use \"sass:list\"; $value: list.slash(a, b);",
+            .scss,
+            argument_limits,
+        ),
+    );
+    argument_limits = .{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "list-slash-expanded-limit.scss",
+            "@use \"sass:list\"; $args: (a, b, c); $value: list.slash($args...);",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 1;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "list-slash-temporary-limit.scss",
+            "@use \"sass:list\"; $value: list.slash(a, b);",
+            .scss,
+            temporary_limits,
+        ),
+    );
+}
+
 test "native Sass string functions reject unsafe arity types indexes and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -4082,6 +4250,7 @@ fn exerciseAllocationFailures(
         \\$list-replaced: lists.set-nth($list-appended, 2, 5px);
         \\$list-joined: lists.join($list-appended, (6px, 7px));
         \\$list-zipped: lists.zip($spaces, a b c);
+        \\$list-slashed: lists.slash($spaces, a b c);
         \\$theme: (tone: blue, spaces: $spaces);
         \\$merged-theme: map.merge($theme, (accent: red));
         \\$removed-theme: map.remove($merged-theme, tone);
@@ -4116,6 +4285,7 @@ fn exerciseAllocationFailures(
         \\  list-replaced: $list-replaced;
         \\  list-joined: $list-joined;
         \\  list-zipped: $list-zipped;
+        \\  list-slashed: $list-slashed;
         \\  function-value: allocation_value(2);
         \\  rest-function: allocation-rest(1, (2, 3)...);
         \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
@@ -4186,7 +4356,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
