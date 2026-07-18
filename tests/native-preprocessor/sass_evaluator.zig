@@ -637,6 +637,133 @@ test "native Sass legacy color manipulation rejects unsafe arguments" {
     }
 }
 
+test "native Sass loads the built-in color module without a provider" {
+    const input =
+        \\$seed: 1;
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\.a {
+        \\  default: color.adjust(#123456, $red: 10);
+        \\  alias: palette.change(lab(50% 10 20), $a: 5, $space: lab);
+        \\  star: scale(color(display-p3 .2 .3 .4), $red: 50%);
+        \\  seed: $seed;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "color-module.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{default:#1c3456;alias:lab(50 5 20);star:color(display-p3 .6 .3 .4);seed:1}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:color" as c
+        \\.a
+        \\  adjusted: c.adjust(lab(50% 10 20), $a: 5, $space: lab)
+        \\  changed: c.change(#123456, $blue: 100)
+        \\  scaled: c.scale(#123456, $red: -50%)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "color-module.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{adjusted:lab(50 15 20);changed:#123464;scaled:#093456}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass color module rejects unresolved ambiguous or unsupported use" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-color-module.scss",
+            .input = ".a { color: color.adjust(#123456, $red: 10); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-color-member.scss",
+            .input = "@use \"sass:color\"; .a { color: color.nope(red); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-color-namespace.scss",
+            .input = "@use \"sass:color\" as Color; .a { color: color.adjust(red, $blue: 1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "duplicate-color-namespace.scss",
+            .input = "@use \"sass:color\"; @use \"sass:color\";",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "late-color-module.scss",
+            .input = ".a { color: red; } @use \"sass:color\";",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "nested-color-module.scss",
+            .input = ".a { @use \"sass:color\"; color: red; }",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "malformed-color-alias.scss",
+            .input = "@use \"sass:color\" as two words;",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "unsupported-builtin-module.scss",
+            .input = "@use \"sass:math\";",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "unsupported-forward.scss",
+            .input = "@forward \"sass:color\";",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var module_limits = sass_evaluator.Limits{};
+    module_limits.max_modules = 1;
+    try std.testing.expectError(
+        error.ModuleLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "color-module-limit.scss",
+            "@use \"sass:color\" as first; @use \"sass:color\" as second;",
+            .scss,
+            module_limits,
+        ),
+    );
+    module_limits.max_modules = 0;
+    try std.testing.expectError(
+        error.InvalidLimits,
+        compile(
+            std.testing.allocator,
+            "invalid-color-module-limit.scss",
+            "@use \"sass:color\";",
+            .scss,
+            module_limits,
+        ),
+    );
+}
+
 test "native Sass evaluates keyword color transforms without a provider" {
     const input =
         \\.a {
@@ -2461,6 +2588,7 @@ fn exerciseAllocationFailures(
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
     const input =
+        \\@use "sass:color";
         \\$size: 2px;
         \\$name: card;
         \\$spaces: 1px 2px 3px;
@@ -2495,6 +2623,7 @@ fn exerciseAllocationFailures(
         \\  keyword-color: adjust-color($red: 10, $color: #123456);
         \\  hwb-keyword: change-color($blackness: 20%, $color: #123456, $space: hwb);
         \\  modern-transform: adjust-color(lab(50% 10 20), $a: 5, $space: lab);
+        \\  module-transform: color.adjust(lab(50% 10 20), $a: 5, $space: lab);
         \\  fixed-keyword: mix($weight: 25%, $color2: blue, $color1: red);
         \\  nth-keyword: nth($n: 2, $list: (a, b));
         \\  constructor-keyword: rgb($channels: 255 0 0 / .5);
@@ -2528,7 +2657,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;mixin-value:3;mixin-content:yes;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;mixin-value:3;mixin-content:yes;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

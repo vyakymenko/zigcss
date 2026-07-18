@@ -21,6 +21,7 @@ const hard_temporary_bytes = 20 * 1024 * 1024;
 const hard_expression_tokens = 1_000_000;
 const hard_function_arguments = 65_536;
 const hard_callables = 65_536;
+const hard_modules = 65_536;
 const hard_loop_variables = 65_536;
 const hard_evaluation_depth: u16 = 256;
 
@@ -33,6 +34,7 @@ pub const Limits = struct {
     max_expression_tokens: usize = 200_000,
     max_function_arguments: usize = 4_096,
     max_callables: usize = 4_096,
+    max_modules: usize = 4_096,
     max_loop_variables: usize = 4_096,
     max_evaluation_depth: u16 = 128,
 };
@@ -53,6 +55,7 @@ pub const Error = native_evaluator.Error ||
     InvalidLimits,
     InvalidSassSyntax,
     LoopVariableLimitExceeded,
+    ModuleLimitExceeded,
     SelectorLimitExceeded,
     TemporaryLimitExceeded,
     UndefinedVariable,
@@ -391,6 +394,26 @@ const ArithmeticContext = enum {
     calculation,
 };
 
+const BuiltinModule = enum {
+    color,
+};
+
+const ModuleBinding = struct {
+    kind: BuiltinModule,
+    namespace: ?[]const u8,
+};
+
+const ParsedUse = struct {
+    url: []const u8,
+    namespace: ?[]const u8 = null,
+    unprefixed: bool = false,
+};
+
+const QualifiedName = struct {
+    namespace: []const u8,
+    member: []const u8,
+};
+
 const CalculationArgument = union(enum) {
     number: native_value.Number,
     deferred,
@@ -424,6 +447,7 @@ const Engine = struct {
     global_scope: native_environment.ScopeId,
     user_functions: std.ArrayList(UserFunction) = .empty,
     user_mixins: std.ArrayList(UserMixin) = .empty,
+    modules: std.ArrayList(ModuleBinding) = .empty,
     active_content: ?*const ContentInvocation = null,
     expression_depth: u16 = 0,
     selector_count: usize = 0,
@@ -456,6 +480,7 @@ const Engine = struct {
         self.user_functions.deinit(self.allocator);
         for (self.user_mixins.items) |*mixin| mixin.deinit();
         self.user_mixins.deinit(self.allocator);
+        self.modules.deinit(self.allocator);
         self.environment.deinit();
         self.values.deinit();
         self.* = undefined;
@@ -469,6 +494,7 @@ const Engine = struct {
         }
         const children = self.document.children(self.document.root) catch
             return error.InvalidSassSyntax;
+        try self.validateModulePlacement(children);
         try self.validateCallableStructure(self.document.root, .{});
         var scope = ScopeFrame{
             .cursor = self.global_scope,
@@ -477,6 +503,42 @@ const Engine = struct {
         };
         try self.executeRootChildren(children, &scope, 1);
         self.global_scope = scope.cursor;
+    }
+
+    fn validateModulePlacement(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+    ) Error!void {
+        var saw_rule = false;
+        for (children) |child_id| {
+            const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
+            if (child.kind == .module) {
+                if (saw_rule) {
+                    try self.report(.syntax, child.span, "Sass module directives must precede all rules");
+                    return error.InvalidSassSyntax;
+                }
+                continue;
+            }
+            const is_variable = child.kind == .declaration and
+                try self.isVariableDeclaration(child_id);
+            if (child.kind != .comment and !is_variable) saw_rule = true;
+            try self.rejectNestedModuleDirectives(child_id);
+        }
+    }
+
+    fn rejectNestedModuleDirectives(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+    ) Error!void {
+        const children = self.document.children(node_id) catch return error.InvalidSassSyntax;
+        for (children) |child_id| {
+            const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
+            if (child.kind == .module) {
+                try self.report(.syntax, child.span, "Sass module directives are only valid at the stylesheet root");
+                return error.InvalidSassSyntax;
+            }
+            try self.rejectNestedModuleDirectives(child_id);
+        }
     }
 
     fn validateCallableStructure(
@@ -639,6 +701,7 @@ const Engine = struct {
                 .mixin => try self.executeMixinDirective(child_id, scope, depth, .root),
                 .content => try self.executeContentDirective(child_id, depth, .root),
                 .function => try self.defineUserFunction(child_id, scope),
+                .module => try self.executeModuleDirective(child_id),
                 .return_statement => {
                     try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
                     return error.InvalidSassSyntax;
@@ -654,6 +717,74 @@ const Engine = struct {
             }
             index += 1;
         }
+    }
+
+    fn executeModuleDirective(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+    ) Error!void {
+        const node = self.document.get(node_id) catch return error.InvalidSassSyntax;
+        const keyword_span = node.text orelse return error.InvalidSassSyntax;
+        const keyword = try self.sources.slice(keyword_span);
+        if (std.ascii.eqlIgnoreCase(keyword, "@forward")) {
+            try self.report(
+                .unsupported_feature,
+                node.span,
+                "native Sass @forward is not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        if (!std.ascii.eqlIgnoreCase(keyword, "@use")) {
+            try self.report(.syntax, node.span, "unknown native Sass module directive");
+            return error.InvalidSassSyntax;
+        }
+
+        const children = self.document.children(node_id) catch return error.InvalidSassSyntax;
+        if (children.len != 1) {
+            try self.report(.syntax, node.span, "native Sass @use requires one module URL and no block");
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null) {
+            try self.report(.syntax, node.span, "native Sass @use requires a module URL");
+            return error.InvalidSassSyntax;
+        }
+        const prelude = try self.sources.slice(prelude_node.text.?);
+        const parsed = parseUseDirective(prelude) orelse {
+            try self.report(.syntax, node.span, "malformed native Sass @use directive");
+            return error.InvalidSassSyntax;
+        };
+        if (!std.mem.eql(u8, parsed.url, "sass:color")) {
+            try self.report(
+                .unsupported_feature,
+                node.span,
+                "native Sass module is not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        if (self.modules.items.len >= self.limits.max_modules) {
+            try self.report(.resource_limit, node.span, "native Sass module limit exceeded");
+            return error.ModuleLimitExceeded;
+        }
+
+        const namespace: ?[]const u8 = if (parsed.unprefixed)
+            null
+        else
+            parsed.namespace orelse "color";
+        if (namespace) |candidate| {
+            for (self.modules.items) |binding| {
+                if (binding.namespace) |existing| {
+                    if (std.mem.eql(u8, candidate, existing)) {
+                        try self.report(.syntax, node.span, "Sass module namespace is already in use");
+                        return error.InvalidSassSyntax;
+                    }
+                }
+            }
+        }
+        try self.modules.append(self.allocator, .{
+            .kind = .color,
+            .namespace = namespace,
+        });
     }
 
     fn emitRootComment(self: *Engine, node: *const native_syntax.Node) Error!void {
@@ -3027,6 +3158,44 @@ const Engine = struct {
         };
     }
 
+    fn tryModuleBuiltin(
+        self: *Engine,
+        name: []const u8,
+        span: native_source.Span,
+    ) Error!?Builtin {
+        if (isSimpleIdentifier(name)) {
+            for (self.modules.items) |binding| {
+                if (binding.namespace != null) continue;
+                const builtin = switch (binding.kind) {
+                    .color => colorModuleBuiltin(name),
+                };
+                if (builtin) |resolved| return resolved;
+            }
+            return null;
+        }
+
+        const qualified = parseQualifiedName(name) orelse return null;
+        var matched: ?BuiltinModule = null;
+        for (self.modules.items) |binding| {
+            const namespace = binding.namespace orelse continue;
+            if (std.mem.eql(u8, namespace, qualified.namespace)) {
+                matched = binding.kind;
+                break;
+            }
+        }
+        const module = matched orelse {
+            try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
+            return error.InvalidExpression;
+        };
+        const builtin = switch (module) {
+            .color => colorModuleBuiltin(qualified.member),
+        };
+        return builtin orelse {
+            try self.report(.invalid_operation, span, "undefined native Sass module function");
+            return error.InvalidExpression;
+        };
+    }
+
     fn tryBuiltinCall(
         self: *Engine,
         raw: []const u8,
@@ -3036,8 +3205,12 @@ const Engine = struct {
         const opening = std.mem.indexOfScalar(u8, raw, '(') orelse return null;
         if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
         const name = raw[0..opening];
-        if (!isSimpleIdentifier(name)) return null;
-        const builtin: Builtin = if (sassNameEql(name, "map-get"))
+        const module_builtin = try self.tryModuleBuiltin(name, span);
+        const builtin: Builtin = if (module_builtin) |resolved|
+            resolved
+        else if (!isSimpleIdentifier(name))
+            return null
+        else if (sassNameEql(name, "map-get"))
             .map_get
         else if (sassNameEql(name, "nth"))
             .nth
@@ -6080,6 +6253,7 @@ fn validateLimits(limits: Limits) Error!void {
         limits.max_function_arguments == 0 or
         limits.max_function_arguments > hard_function_arguments or
         limits.max_callables == 0 or limits.max_callables > hard_callables or
+        limits.max_modules == 0 or limits.max_modules > hard_modules or
         limits.max_loop_variables == 0 or limits.max_loop_variables > hard_loop_variables or
         limits.max_evaluation_depth == 0 or limits.max_evaluation_depth > hard_evaluation_depth)
     {
@@ -6391,6 +6565,13 @@ fn sassNameEql(left: []const u8, right: []const u8) bool {
         if (normalized != right_byte) return false;
     }
     return true;
+}
+
+fn colorModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "adjust")) return .adjust_color;
+    if (sassNameEql(name, "change")) return .change_color;
+    if (sassNameEql(name, "scale")) return .scale_color;
+    return null;
 }
 
 fn containsDeferredCssCalculation(input: []const u8) bool {
@@ -6765,6 +6946,47 @@ fn isExpressionTrivia(kind: native_lexer.Kind) bool {
 
 fn trimWhitespace(input: []const u8) []const u8 {
     return std.mem.trim(u8, input, " \t\r\n\x0c");
+}
+
+fn parseUseDirective(input: []const u8) ?ParsedUse {
+    const raw = trimWhitespace(input);
+    if (raw.len < 3 or (raw[0] != '\'' and raw[0] != '"')) return null;
+    const quote = raw[0];
+    var closing: ?usize = null;
+    var index: usize = 1;
+    while (index < raw.len) : (index += 1) {
+        if (raw[index] == '\\') return null;
+        if (raw[index] == quote) {
+            closing = index;
+            break;
+        }
+    }
+    const end = closing orelse return null;
+    const url = raw[1..end];
+    if (url.len == 0 or std.mem.indexOf(u8, url, "#{") != null) return null;
+
+    const tail = trimWhitespace(raw[end + 1 ..]);
+    if (tail.len == 0) return .{ .url = url };
+    if (tail.len < 3 or !std.mem.startsWith(u8, tail, "as") or
+        std.mem.indexOfScalar(u8, " \t\r\n\x0c", tail[2]) == null)
+    {
+        return null;
+    }
+    const alias = trimWhitespace(tail[2..]);
+    if (std.mem.eql(u8, alias, "*")) {
+        return .{ .url = url, .unprefixed = true };
+    }
+    if (!isSimpleIdentifier(alias)) return null;
+    return .{ .url = url, .namespace = alias };
+}
+
+fn parseQualifiedName(input: []const u8) ?QualifiedName {
+    const dot = std.mem.indexOfScalar(u8, input, '.') orelse return null;
+    if (std.mem.indexOfScalar(u8, input[dot + 1 ..], '.') != null) return null;
+    const namespace = input[0..dot];
+    const member = input[dot + 1 ..];
+    if (!isSimpleIdentifier(namespace) or !isSimpleIdentifier(member)) return null;
+    return .{ .namespace = namespace, .member = member };
 }
 
 fn variableEnd(input: []const u8, start: usize) usize {
