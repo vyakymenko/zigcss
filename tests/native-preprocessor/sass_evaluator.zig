@@ -706,6 +706,80 @@ test "native Sass HWB keyword color transforms reject unsafe calls" {
     }
 }
 
+test "native Sass fixed built-ins accept bounded keyword arguments" {
+    const input =
+        \\.a {
+        \\  nth: nth($n: 2, $list: (a, b, c));
+        \\  length: length($list: (a, b, c));
+        \\  red: red($color: #123456);
+        \\  green: green($color: #123456);
+        \\  blue: blue($color: #123456);
+        \\  alpha: alpha($color: rgba(1, 2, 3, .4));
+        \\  opacity: opacity($color: rgba(1, 2, 3, .4));
+        \\  hue: hue($color: #123456);
+        \\  saturation: saturation($color: #123456);
+        \\  lightness: lightness($color: #123456);
+        \\  mix: mix($color2: blue, $color1: red);
+        \\  mix-weighted: mix($weight: 25%, $color2: blue, $color1: red);
+        \\  lighten: lighten($amount: 10%, $color: #123456);
+        \\  darken: darken($color: #123456, $amount: 10%);
+        \\  saturate: saturate($amount: 20%, $color: #669966);
+        \\  desaturate: desaturate($color: #669966, $amount: 20%);
+        \\  adjust-hue: adjust-hue($degrees: 30deg, $color: #123456);
+        \\  complement: complement($color: #123456);
+        \\  grayscale: grayscale($color: #123456);
+        \\  invert: invert($weight: 25%, $color: #123456);
+        \\  opacify: opacify($amount: .2, $color: rgba(1, 2, 3, .4));
+        \\  fade-in: fade-in($color: rgba(1, 2, 3, .4), $amount: .2);
+        \\  transparentize: transparentize($amount: .2, $color: rgba(1, 2, 3, .4));
+        \\  fade-out: fade-out($color: rgba(1, 2, 3, .4), $amount: .2);
+        \\  ie-hex: ie-hex-str($color: rgba(1, 2, 3, .4));
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "fixed-keywords.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{nth:b;length:3;red:18;green:52;blue:86;alpha:.4;opacity:.4;hue:210deg;saturation:65.3846153846%;lightness:20.3921568627%;mix:hsl(300,100%,25%);mix-weighted:rgb(63.75,0,191.25);lighten:rgb(26.8269230769,77.5,128.1730769231);darken:rgb(9.1730769231,26.5,43.8269230769);saturate:hsl(120,40%,50%);desaturate:hsl(0,0%,50%);adjust-hue:#121256;complement:#563412;grayscale:#343434;invert:rgb(72.75,89.75,106.75);opacify:rgba(1,2,3,.6);fade-in:rgba(1,2,3,.6);transparentize:rgba(1,2,3,.2);fade-out:rgba(1,2,3,.2);ie-hex:#66010203}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass fixed built-in keyword arguments reject ambiguous calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "fixed-duplicate.scss", .input = ".a { value: length($list: a, $list: b); }" },
+        .{ .name = "fixed-unknown.scss", .input = ".a { color: complement($unknown: red); }" },
+        .{ .name = "fixed-missing.scss", .input = ".a { color: mix($color1: red); }" },
+        .{ .name = "fixed-order.scss", .input = ".a { color: mix($color1: red, blue); }" },
+        .{ .name = "fixed-positional.scss", .input = ".a { value: length(a, b); }" },
+        .{ .name = "fixed-method.scss", .input = ".a { color: mix(red, blue, $method: rgb); }" },
+        .{ .name = "fixed-filter-keyword.scss", .input = ".a { filter: opacity($amount: 20%); }" },
+        .{ .name = "fixed-named-saturate.scss", .input = ".a { filter: saturate($color: 20%); }" },
+        .{ .name = "fixed-named-grayscale.scss", .input = ".a { filter: grayscale($color: 20%); }" },
+        .{ .name = "fixed-named-invert.scss", .input = ".a { filter: invert($color: 20%); }" },
+        .{ .name = "fixed-named-opacity.scss", .input = ".a { filter: opacity($color: 20%); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "fixed-splat.scss",
+            ".a { color: complement($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass evaluates bounded Unicode string functions without a provider" {
     const input =
         \\.a {
@@ -1003,6 +1077,8 @@ fn exerciseAllocationFailures(
         \\  adjusted-color: lighten(#123456, 10%);
         \\  keyword-color: adjust-color($red: 10, $color: #123456);
         \\  hwb-keyword: change-color($blackness: 20%, $color: #123456, $space: hwb);
+        \\  fixed-keyword: mix($weight: 25%, $color2: blue, $color1: red);
+        \\  nth-keyword: nth($n: 2, $list: (a, b));
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
         \\  string-quote: quote(foo);
@@ -1030,7 +1106,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

@@ -1120,6 +1120,38 @@ const Engine = struct {
         }
 
         switch (builtin) {
+            .nth,
+            .length,
+            .red,
+            .green,
+            .blue,
+            .alpha,
+            .opacity,
+            .hue,
+            .saturation,
+            .lightness,
+            .mix,
+            .lighten,
+            .darken,
+            .saturate,
+            .desaturate,
+            .adjust_hue,
+            .complement,
+            .grayscale,
+            .invert,
+            .opacify,
+            .fade_in,
+            .transparentize,
+            .fade_out,
+            .ie_hex_str,
+            => return try self.callFixedBuiltinRaw(
+                builtin,
+                raw,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
             .quote,
             .unquote,
             .str_length,
@@ -2382,6 +2414,135 @@ const Engine = struct {
             count += 1;
         }
         return self.callStringBuiltin(builtin, evaluated[0..count], span);
+    }
+
+    fn callFixedBuiltinRaw(
+        self: *Engine,
+        builtin: Builtin,
+        raw: []const u8,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const parameters: []const native_arguments.Parameter = switch (builtin) {
+            .nth => &.{
+                .{ .name = "list" },
+                .{ .name = "n" },
+            },
+            .length => &.{.{ .name = "list" }},
+            .red,
+            .green,
+            .blue,
+            .alpha,
+            .opacity,
+            .hue,
+            .saturation,
+            .lightness,
+            .complement,
+            .grayscale,
+            .ie_hex_str,
+            => &.{.{ .name = "color" }},
+            .mix => &.{
+                .{ .name = "color1" },
+                .{ .name = "color2" },
+                .{ .name = "weight", .required = false },
+            },
+            .saturate => &.{
+                .{ .name = "color" },
+                .{ .name = "amount", .required = false },
+            },
+            .lighten,
+            .darken,
+            .desaturate,
+            .opacify,
+            .fade_in,
+            .transparentize,
+            .fade_out,
+            => &.{
+                .{ .name = "color" },
+                .{ .name = "amount" },
+            },
+            .adjust_hue => &.{
+                .{ .name = "color" },
+                .{ .name = "degrees" },
+            },
+            .invert => &.{
+                .{ .name = "color" },
+                .{ .name = "weight", .required = false },
+            },
+            else => unreachable,
+        };
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        var has_keyword = false;
+        for (parsed.items) |argument| {
+            if (argument.name != null) {
+                has_keyword = true;
+                break;
+            }
+        }
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            parameters,
+            parameters.len,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        var evaluated: [3]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values) |value_range| {
+            const range = value_range orelse continue;
+            evaluated[count] = try self.evaluateExpressionBytes(
+                body[range.start..range.end],
+                scope,
+                span,
+            );
+            count += 1;
+        }
+        const arguments = evaluated[0..count];
+        const filter_conflict = builtin == .saturate or builtin == .grayscale or
+            builtin == .invert or builtin == .opacity;
+        if (has_keyword and filter_conflict and arguments.len == 1 and arguments[0].* != .color) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "named Sass color-filter function requires a color",
+            );
+            return error.InvalidExpression;
+        }
+        return switch (builtin) {
+            .nth => self.callNth(arguments, span),
+            .length => self.callLength(arguments, span),
+            .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
+                builtin,
+                arguments,
+                span,
+            ),
+            .opacity => self.callColorOpacity(raw, arguments, scope, span),
+            .ie_hex_str => self.callIeHexStr(arguments, span),
+            .mix,
+            .lighten,
+            .darken,
+            .saturate,
+            .desaturate,
+            .adjust_hue,
+            .complement,
+            .grayscale,
+            .invert,
+            .opacify,
+            .fade_in,
+            .transparentize,
+            .fade_out,
+            => self.callColorManipulation(builtin, raw, arguments, scope, span),
+            else => unreachable,
+        };
     }
 
     fn argumentsFailure(
