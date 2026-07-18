@@ -3154,7 +3154,7 @@ test "native Sass list module rejects unowned calls" {
         },
         .{
             .name = "unsupported-list-member.scss",
-            .input = "@use \"sass:list\"; .a { value: list.zip($undefined, b); }",
+            .input = "@use \"sass:list\"; .a { value: list.slash($undefined, b); }",
             .expected = error.InvalidExpression,
         },
         .{
@@ -3609,6 +3609,150 @@ test "native Sass list join rejects unsafe arguments and limits" {
     );
 }
 
+test "native Sass zips lists immutably through module legacy and splat calls" {
+    const input =
+        \\@use "sass:list";
+        \\@use "sass:list" as seq;
+        \\@use "sass:list" as *;
+        \\@use "sass:map";
+        \\$zip-order: 0;
+        \\$zip-first: null;
+        \\@function stamp($value) {
+        \\  $zip-order: $zip-order + 1 !global;
+        \\  @if $zip-order == 1 { $zip-first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\@function zip-rest($args...) { @return list.zip($args, x y z); }
+        \\@function zip-forward($args...) { @return list.zip($args...); }
+        \\$slash: list.append(a b, c, $separator: slash);
+        \\$legacy: a/b;
+        \\$map1: (a: 1, b: 2);
+        \\$map2: (c: 3, d: 4);
+        \\$empty-map: map.remove((gone: 1), gone);
+        \\$spread: (a b, c d);
+        \\.a {
+        \\  basic: list.zip(a b c, 1 2 3);
+        \\  shortest: seq.zip(a b c, 1 2);
+        \\  comma-input: list.zip((a, b), (1, 2));
+        \\  bracket-input: list.zip([a b], [1 2]);
+        \\  slash-input: list.zip($slash, list.append(1, 2, $separator: slash));
+        \\  scalar: list.zip(a, b);
+        \\  single: list.zip(a b);
+        \\  map: list.zip($map1, $map2);
+        \\  empty-map-length: list.length(list.zip($empty-map, a b));
+        \\  zero-length: list.length(list.zip());
+        \\  zero-separator: list.separator(list.zip());
+        \\  outer-separator: list.separator(list.zip(a b, 1 2));
+        \\  outer-bracketed: list.is-bracketed(list.zip(a b, 1 2));
+        \\  inner-separator: list.separator(list.nth(list.zip(a b, 1 2), 1));
+        \\  inner-bracketed: list.is-bracketed(list.nth(list.zip(a b, 1 2), 1));
+        \\  null-value: list.zip(null, a b);
+        \\  legacy: list.zip($legacy, c d);
+        \\  legacy-length: list.length(list.zip($legacy, c d));
+        \\  legacy-first: list.nth(list.nth(list.zip($legacy, c d), 1), 1);
+        \\  spread: list.zip($spread...);
+        \\  legacy-splat: list.zip($legacy...);
+        \\  rest-list: zip-rest(a, b);
+        \\  forwarded: zip-forward(a b, c d);
+        \\  legacy-zip: zip(a b, c d);
+        \\  source-order: list.zip(stamp(a b), stamp(c d));
+        \\  first: $zip-first;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "list-zip.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{basic:a 1,b 2,c 3;shortest:a 1,b 2;comma-input:a 1,b 2;bracket-input:a 1,b 2;slash-input:a 1,b 2;scalar:a b;single:a,b;map:a 1 c 3,b 2 d 4;empty-map-length:0;zero-length:0;zero-separator:comma;outer-separator:comma;outer-bracketed:false;inner-separator:space;inner-bracketed:false;null-value:a;legacy:a/b c;legacy-length:1;legacy-first:a/b;spread:a c,b d;legacy-splat:a/b;rest-list:a x,b y;forwarded:a c,b d;legacy-zip:a c,b d;source-order:a c,b d;first:a b}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:list" as l
+        \\$spread: (a b, c d)
+        \\$legacy: a/b
+        \\.sass
+        \\  value: l.zip(a b, 1 2)
+        \\  shortest: l.zip(a b, 1)
+        \\  spread: l.zip($spread...)
+        \\  legacy: l.zip($legacy, c d)
+        \\  global: zip(a b, c d)
+    ;
+    var sass_result = try compile(std.testing.allocator, "list-zip.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{value:a 1,b 2;shortest:a 1;spread:a c,b d;legacy:a/b c;global:a c,b d}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass list zip rejects keywords and enforces expansion and temporary limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "list-zip-keyword.scss",
+            .input = "@use \"sass:list\"; .a { value: list.zip($foo: a b); }",
+        },
+        .{
+            .name = "list-zip-rest-name.scss",
+            .input = "@use \"sass:list\"; .a { value: list.zip($lists: a b); }",
+        },
+        .{
+            .name = "list-zip-keyword-splat.scss",
+            .input = "@use \"sass:list\"; $args: (foo: a b); .a { value: list.zip($args...); }",
+        },
+        .{
+            .name = "list-zip-invalid-keyword-splat.scss",
+            .input = "@use \"sass:list\"; $args: (1: a b); .a { value: list.zip($args...); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "list-zip-argument-limit.scss",
+            "@use \"sass:list\"; $value: list.zip(a b, c d);",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "list-zip-expanded-limit.scss",
+            "@use \"sass:list\"; $args: (a b, c d); $value: list.zip($args...);",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 1;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "list-zip-temporary-limit.scss",
+            "@use \"sass:list\"; $value: list.zip(a b, c d);",
+            .scss,
+            temporary_limits,
+        ),
+    );
+}
+
 test "native Sass string functions reject unsafe arity types indexes and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -3937,6 +4081,7 @@ fn exerciseAllocationFailures(
         \\$list-appended: lists.append($spaces, 4px, $separator: comma);
         \\$list-replaced: lists.set-nth($list-appended, 2, 5px);
         \\$list-joined: lists.join($list-appended, (6px, 7px));
+        \\$list-zipped: lists.zip($spaces, a b c);
         \\$theme: (tone: blue, spaces: $spaces);
         \\$merged-theme: map.merge($theme, (accent: red));
         \\$removed-theme: map.remove($merged-theme, tone);
@@ -3970,6 +4115,7 @@ fn exerciseAllocationFailures(
         \\  list-appended: $list-appended;
         \\  list-replaced: $list-replaced;
         \\  list-joined: $list-joined;
+        \\  list-zipped: $list-zipped;
         \\  function-value: allocation_value(2);
         \\  rest-function: allocation-rest(1, (2, 3)...);
         \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
@@ -4040,7 +4186,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

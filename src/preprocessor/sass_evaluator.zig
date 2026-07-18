@@ -120,6 +120,7 @@ const Builtin = enum {
     list_append,
     list_set_nth,
     list_join,
+    list_zip,
     meta_keywords,
     quote,
     unquote,
@@ -490,6 +491,19 @@ const MaterializedList = struct {
     fn deinit(self: *MaterializedList, allocator: std.mem.Allocator) void {
         if (self.pair_items) |items| allocator.free(items);
         allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
+const MaterializedZip = struct {
+    rows: []native_value.Value,
+    row_items: []native_value.Value,
+    pair_items: ?[]native_value.Value = null,
+
+    fn deinit(self: *MaterializedZip, allocator: std.mem.Allocator) void {
+        if (self.pair_items) |items| allocator.free(items);
+        allocator.free(self.row_items);
+        allocator.free(self.rows);
         self.* = undefined;
     }
 };
@@ -1468,6 +1482,10 @@ const Engine = struct {
     ) Error!void {
         switch (item.*) {
             .list => |list| {
+                if (list.separator == .legacy_slash) {
+                    try self.appendEvaluatedPositional(output, item, span);
+                    return;
+                }
                 for (list.items) |*value| {
                     try self.appendEvaluatedPositional(output, value, span);
                 }
@@ -3598,6 +3616,8 @@ const Engine = struct {
             .list_set_nth
         else if (sassNameEql(name, "join"))
             .list_join
+        else if (sassNameEql(name, "zip"))
+            .list_zip
         else if (sassNameEql(name, "quote"))
             .quote
         else if (sassNameEql(name, "unquote"))
@@ -3726,6 +3746,12 @@ const Engine = struct {
             .map_deep_remove,
             => return try self.callMapMutationRaw(
                 builtin,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
+            .list_zip => return try self.callListZipRaw(
                 body,
                 ranges.items,
                 scope,
@@ -6301,6 +6327,21 @@ const Engine = struct {
         } });
     }
 
+    fn callListZipRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var arguments = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer arguments.deinit();
+        if (arguments.keywords.items.len != 0) {
+            return self.argumentsFailure(error.UnknownArgument, span);
+        }
+        return self.callListZip(arguments.positional.items, span);
+    }
+
     fn callListAppend(
         self: *Engine,
         arguments: []const *const native_value.Value,
@@ -6374,6 +6415,110 @@ const Engine = struct {
             .separator = separator,
             .bracketed = bracketed,
         } });
+    }
+
+    fn callListZip(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len == 0) {
+            return self.values.own(.{ .list = .{
+                .items = &.{},
+                .separator = .comma,
+            } });
+        }
+
+        var row_count = sassListLength(arguments[0].*);
+        for (arguments[1..]) |argument| {
+            row_count = @min(row_count, sassListLength(argument.*));
+        }
+        if (row_count == 0) {
+            return self.values.own(.{ .list = .{
+                .items = &.{},
+                .separator = .comma,
+            } });
+        }
+
+        const row_item_count = std.math.mul(usize, row_count, arguments.len) catch
+            return self.listTemporaryFailure(span);
+        var pair_count: usize = 0;
+        for (arguments) |argument| {
+            if (argument.* != .map) continue;
+            const source_pairs = std.math.mul(usize, row_count, 2) catch
+                return self.listTemporaryFailure(span);
+            pair_count = std.math.add(usize, pair_count, source_pairs) catch
+                return self.listTemporaryFailure(span);
+        }
+        const primary_count = std.math.add(usize, row_count, row_item_count) catch
+            return self.listTemporaryFailure(span);
+        const temporary_count = std.math.add(usize, primary_count, pair_count) catch
+            return self.listTemporaryFailure(span);
+        const temporary_bytes = std.math.mul(
+            usize,
+            temporary_count,
+            @sizeOf(native_value.Value),
+        ) catch return self.listTemporaryFailure(span);
+        if (temporary_bytes > self.limits.max_temporary_bytes) {
+            return self.listTemporaryFailure(span);
+        }
+
+        const rows = try self.allocator.alloc(native_value.Value, row_count);
+        errdefer self.allocator.free(rows);
+        const row_items = try self.allocator.alloc(native_value.Value, row_item_count);
+        errdefer self.allocator.free(row_items);
+        const allocated_pair_items = if (pair_count > 0)
+            try self.allocator.alloc(native_value.Value, pair_count)
+        else
+            null;
+        errdefer if (allocated_pair_items) |items| self.allocator.free(items);
+        var materialized = MaterializedZip{
+            .rows = rows,
+            .row_items = row_items,
+            .pair_items = allocated_pair_items,
+        };
+
+        var pair_index: usize = 0;
+        for (0..row_count) |row_index| {
+            const row_start = row_index * arguments.len;
+            for (arguments, 0..) |argument, argument_index| {
+                try self.transaction.consumeOperations(1);
+                materialized.row_items[row_start + argument_index] = switch (argument.*) {
+                    .list => |list| if (list.separator == .legacy_slash)
+                        .{ .list = .{
+                            .items = list.items,
+                            .separator = .legacy_slash,
+                        } }
+                    else
+                        list.items[row_index],
+                    .argument_list => |argument_list| argument_list.positional[row_index],
+                    .map => |map| blk: {
+                        const pair_items = materialized.pair_items.?;
+                        const entry = map.entries[row_index];
+                        pair_items[pair_index] = entry.key;
+                        pair_items[pair_index + 1] = entry.value;
+                        const pair = native_value.Value{ .list = .{
+                            .items = pair_items[pair_index .. pair_index + 2],
+                            .separator = .space,
+                        } };
+                        pair_index += 2;
+                        break :blk pair;
+                    },
+                    else => argument.*,
+                };
+            }
+            materialized.rows[row_index] = .{ .list = .{
+                .items = materialized.row_items[row_start .. row_start + arguments.len],
+                .separator = .space,
+            } };
+        }
+        std.debug.assert(pair_index == pair_count);
+        const result = try self.values.own(.{ .list = .{
+            .items = materialized.rows,
+            .separator = .comma,
+        } });
+        materialized.deinit(self.allocator);
+        return result;
     }
 
     fn resolveListSeparator(
@@ -8060,6 +8205,7 @@ fn listModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "append")) return .list_append;
     if (sassNameEql(name, "set-nth")) return .list_set_nth;
     if (sassNameEql(name, "join")) return .list_join;
+    if (sassNameEql(name, "zip")) return .list_zip;
     return null;
 }
 
