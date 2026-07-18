@@ -40,6 +40,11 @@ pub const HwbTransform = struct {
     alpha: ?f64 = null,
 };
 
+pub const ModernTransform = struct {
+    channels: [3]?f64 = .{ null, null, null },
+    alpha: ?f64 = null,
+};
+
 const Vec3 = [3]f64;
 const Matrix3 = [3][3]f64;
 
@@ -484,11 +489,16 @@ pub fn transformRgb(
 
     var result = input;
     if (has_color_channel) {
-        var channels = try toRgb(input);
+        const preserve_typed_space = isTypedColorSpace(input.space);
+        var channels = if (preserve_typed_space)
+            (try convert(input, .rgb)).channels
+        else
+            try toRgb(input);
         channels[0] = try transformBoundedChannel(channels[0], transform.red, kind, 255);
         channels[1] = try transformBoundedChannel(channels[1], transform.green, kind, 255);
         channels[2] = try transformBoundedChannel(channels[2], transform.blue, kind, 255);
-        result = .{ .space = .rgb, .channels = channels };
+        const working = native_value.Color{ .space = .rgb, .channels = channels };
+        result = if (preserve_typed_space) try convert(working, input.space) else working;
     }
     result.channels[3] = try transformAlpha(result.channels[3], transform.alpha, kind);
     return result;
@@ -512,7 +522,11 @@ pub fn transformHsl(
 
     var result = input;
     if (has_color_channel) {
-        var channels = try toHsl(input);
+        const preserve_typed_space = isTypedColorSpace(input.space);
+        var channels = if (preserve_typed_space)
+            (try convert(input, .hsl)).channels
+        else
+            try toHsl(input);
         if (transform.hue) |value| {
             channels[0] = normalizeHue(switch (kind) {
                 .adjust => channels[0] + value,
@@ -532,7 +546,8 @@ pub fn transformHsl(
             kind,
             100,
         );
-        result = .{ .space = .hsl, .channels = channels };
+        const working = native_value.Color{ .space = .hsl, .channels = channels };
+        result = if (preserve_typed_space) try convert(working, input.space) else working;
     }
     result.channels[3] = try transformAlpha(result.channels[3], transform.alpha, kind);
     return result;
@@ -556,7 +571,11 @@ pub fn transformHwb(
 
     var result = input;
     if (has_color_channel) {
-        var channels = try toHwb(input);
+        const preserve_typed_space = isTypedColorSpace(input.space);
+        var channels = if (preserve_typed_space)
+            (try convert(input, .hwb)).channels
+        else
+            try toHwb(input);
         if (transform.hue) |value| {
             channels[0] = normalizeHue(switch (kind) {
                 .adjust => channels[0] + value,
@@ -576,9 +595,145 @@ pub fn transformHwb(
             kind,
             100,
         );
-        result = .{ .space = .hwb, .channels = channels };
+        const working = native_value.Color{ .space = .hwb, .channels = channels };
+        result = if (preserve_typed_space) try convert(working, input.space) else working;
     }
     result.channels[3] = try transformAlpha(result.channels[3], transform.alpha, kind);
+    return result;
+}
+
+pub fn transformModern(
+    input: native_value.Color,
+    selected_space: native_value.ColorSpace,
+    kind: TransformKind,
+    transform: ModernTransform,
+) Error!native_value.Color {
+    if (!isTypedColorSpace(selected_space)) return error.InvalidColor;
+    try validateOptionalChannels(.{
+        transform.channels[0],
+        transform.channels[1],
+        transform.channels[2],
+        transform.alpha,
+    });
+    const has_color_channel = transform.channels[0] != null or
+        transform.channels[1] != null or transform.channels[2] != null;
+    if (!has_color_channel and transform.alpha == null) return input;
+
+    var result = input;
+    if (has_color_channel) {
+        if (input.missing_mask != 0) return error.InvalidColor;
+        var working = try convert(input, selected_space);
+        if (working.missing_mask != 0) return error.InvalidColor;
+        switch (selected_space) {
+            .lab => {
+                working.channels[0] = try transformLightness(
+                    working.channels[0],
+                    transform.channels[0],
+                    kind,
+                    100,
+                );
+                working.channels[1] = try transformSignedChannel(
+                    working.channels[1],
+                    transform.channels[1],
+                    kind,
+                    -125,
+                    125,
+                );
+                working.channels[2] = try transformSignedChannel(
+                    working.channels[2],
+                    transform.channels[2],
+                    kind,
+                    -125,
+                    125,
+                );
+            },
+            .lch => {
+                working.channels[0] = try transformLightness(
+                    working.channels[0],
+                    transform.channels[0],
+                    kind,
+                    100,
+                );
+                working.channels[1] = try transformChroma(
+                    working.channels[1],
+                    transform.channels[1],
+                    kind,
+                    150,
+                );
+                working.channels[2] = try transformHueChannel(
+                    working.channels[2],
+                    transform.channels[2],
+                    kind,
+                );
+                normalizeNegativePolarChroma(&working.channels);
+            },
+            .oklab => {
+                working.channels[0] = try transformLightness(
+                    working.channels[0],
+                    transform.channels[0],
+                    kind,
+                    1,
+                );
+                working.channels[1] = try transformSignedChannel(
+                    working.channels[1],
+                    transform.channels[1],
+                    kind,
+                    -0.4,
+                    0.4,
+                );
+                working.channels[2] = try transformSignedChannel(
+                    working.channels[2],
+                    transform.channels[2],
+                    kind,
+                    -0.4,
+                    0.4,
+                );
+            },
+            .oklch => {
+                working.channels[0] = try transformLightness(
+                    working.channels[0],
+                    transform.channels[0],
+                    kind,
+                    1,
+                );
+                working.channels[1] = try transformChroma(
+                    working.channels[1],
+                    transform.channels[1],
+                    kind,
+                    0.4,
+                );
+                working.channels[2] = try transformHueChannel(
+                    working.channels[2],
+                    transform.channels[2],
+                    kind,
+                );
+                normalizeNegativePolarChroma(&working.channels);
+            },
+            .srgb,
+            .srgb_linear,
+            .display_p3,
+            .a98_rgb,
+            .prophoto_rgb,
+            .rec2020,
+            .xyz_d50,
+            .xyz,
+            => for (transform.channels, 0..) |change, index| {
+                working.channels[index] = try transformUnboundedOrScale(
+                    working.channels[index],
+                    change,
+                    kind,
+                    0,
+                    1,
+                );
+            },
+            .rgb, .hsl, .hwb => unreachable,
+        }
+        result = if (input.space == selected_space)
+            working
+        else
+            try convert(working, input.space);
+    }
+    result.channels[3] = try transformAlpha(input.channels[3], transform.alpha, kind);
     return result;
 }
 
@@ -659,6 +814,16 @@ fn serializeModern(
     buffer: *[max_serialized_bytes]u8,
     minified: bool,
 ) Error![]const u8 {
+    if (!channelMissing(input.missing_mask, 0)) {
+        const maximum: f64 = switch (input.space) {
+            .lab, .lch => 100,
+            .oklab, .oklch => 1,
+            else => unreachable,
+        };
+        if (input.channels[0] < 0 or input.channels[0] > maximum) {
+            return serializeOutOfRangeModern(input, buffer, minified);
+        }
+    }
     const normalized = try modern(input.space, input.channels, input.missing_mask);
     const name: []const u8 = switch (normalized.space) {
         .lab => "lab",
@@ -695,6 +860,67 @@ fn serializeModern(
                 minified,
             );
         }
+    }
+    try append(buffer, &cursor, ")");
+    return buffer[0..cursor];
+}
+
+fn serializeOutOfRangeModern(
+    input: native_value.Color,
+    buffer: *[max_serialized_bytes]u8,
+    minified: bool,
+) Error![]const u8 {
+    if (input.missing_mask != 0 or !allFinite(input.channels)) return error.InvalidColor;
+    const space_name: []const u8 = switch (input.space) {
+        .lab => "lab",
+        .lch => "lch",
+        .oklab => "oklab",
+        .oklch => "oklch",
+        else => unreachable,
+    };
+    const xyz = colorToXyzD65(input);
+    var xyz_buffer: [max_serialized_bytes]u8 = undefined;
+    const serialized_xyz = try serializeColorMixXyz(
+        xyz,
+        input.channels[3],
+        &xyz_buffer,
+        minified,
+    );
+
+    var cursor: usize = 0;
+    try append(buffer, &cursor, "color-mix(in ");
+    try append(buffer, &cursor, space_name);
+    try append(buffer, &cursor, if (minified) "," else ", ");
+    try append(buffer, &cursor, serialized_xyz);
+    try append(buffer, &cursor, if (minified) "100%,red)" else " 100%, black)");
+    return buffer[0..cursor];
+}
+
+fn serializeColorMixXyz(
+    xyz: Vec3,
+    alpha: f64,
+    buffer: *[max_serialized_bytes]u8,
+    minified: bool,
+) Error![]const u8 {
+    var cursor: usize = 0;
+    try append(buffer, &cursor, "color(xyz");
+    for (xyz) |channel| {
+        var number_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        try append(buffer, &cursor, " ");
+        try append(
+            buffer,
+            &cursor,
+            try native_numeric.serialize(channel, &number_buffer, minified),
+        );
+    }
+    if (!approximatelyEqual(alpha, 1)) {
+        var alpha_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        try append(buffer, &cursor, if (minified) "/" else " / ");
+        try append(
+            buffer,
+            &cursor,
+            try native_numeric.serialize(alpha, &alpha_buffer, minified),
+        );
     }
     try append(buffer, &cursor, ")");
     return buffer[0..cursor];
@@ -1477,15 +1703,99 @@ fn transformAlpha(current: f64, change: ?f64, kind: TransformKind) Error!f64 {
     };
 }
 
+fn transformLightness(
+    current: f64,
+    change: ?f64,
+    kind: TransformKind,
+    maximum: f64,
+) Error!f64 {
+    const value = change orelse return current;
+    return switch (kind) {
+        .adjust => clamp(current + value, 0, maximum),
+        .change => value,
+        .scale => try scaleChannelBetween(current, value, 0, maximum),
+    };
+}
+
+fn transformSignedChannel(
+    current: f64,
+    change: ?f64,
+    kind: TransformKind,
+    minimum: f64,
+    maximum: f64,
+) Error!f64 {
+    const value = change orelse return current;
+    return switch (kind) {
+        .adjust => current + value,
+        .change => value,
+        .scale => try scaleChannelBetween(current, value, minimum, maximum),
+    };
+}
+
+fn transformChroma(
+    current: f64,
+    change: ?f64,
+    kind: TransformKind,
+    maximum: f64,
+) Error!f64 {
+    const value = change orelse return current;
+    return switch (kind) {
+        .adjust => @max(0, current + value),
+        .change => value,
+        .scale => try scaleChannelBetween(current, value, 0, maximum),
+    };
+}
+
+fn normalizeNegativePolarChroma(channels: *[4]f64) void {
+    if (channels[1] >= 0) return;
+    channels[1] = -channels[1];
+    channels[2] = normalizeHue(channels[2] + 180);
+}
+
+fn transformHueChannel(current: f64, change: ?f64, kind: TransformKind) Error!f64 {
+    const value = change orelse return current;
+    return switch (kind) {
+        .adjust => normalizeHue(current + value),
+        .change => normalizeHue(value),
+        .scale => error.InvalidColor,
+    };
+}
+
+fn transformUnboundedOrScale(
+    current: f64,
+    change: ?f64,
+    kind: TransformKind,
+    minimum: f64,
+    maximum: f64,
+) Error!f64 {
+    const value = change orelse return current;
+    return switch (kind) {
+        .adjust => current + value,
+        .change => value,
+        .scale => try scaleChannelBetween(current, value, minimum, maximum),
+    };
+}
+
 fn scaleChannel(current: f64, percentage: f64, maximum: f64) Error!f64 {
+    return scaleChannelBetween(current, percentage, 0, maximum);
+}
+
+fn scaleChannelBetween(
+    current: f64,
+    percentage: f64,
+    minimum: f64,
+    maximum: f64,
+) Error!f64 {
     if (!std.math.isFinite(percentage) or percentage < -100 or percentage > 100) {
         return error.InvalidColor;
     }
     const proportion = percentage / 100;
-    return if (proportion > 0)
+    return if (proportion > 0 and current < maximum)
         current + (maximum - current) * proportion
+    else if (proportion < 0 and current > minimum)
+        current + (current - minimum) * proportion
     else
-        current + current * proportion;
+        current;
 }
 
 fn validateOptionalChannels(channels: [4]?f64) Error!void {

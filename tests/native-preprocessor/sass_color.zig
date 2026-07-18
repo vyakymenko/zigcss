@@ -397,3 +397,189 @@ test "native Sass keyword color transforms own bounded HWB semantics" {
         color.transformHwb(base, .scale, .{ .blackness = 101 }),
     );
 }
+
+test "native Sass modern color transforms operate in a selected native space" {
+    const cases = [_]struct {
+        value: preprocessor.value.Color,
+        expected: []const u8,
+    }{
+        .{
+            .value = try color.transformModern(
+                try color.modern(.lab, .{ 50, 10, 20, 1 }, 0),
+                .lab,
+                .adjust,
+                .{ .channels = .{ 10, 5, null } },
+            ),
+            .expected = "lab(60 15 20)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.oklab, .{ 0.5, 0.1, 0.2, 1 }, 0),
+                .oklab,
+                .scale,
+                .{ .channels = .{ null, 50, null } },
+            ),
+            .expected = "oklab(.5 .25 .2)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.lab, .{ 50, 10, 20, 1 }, 0),
+                .lab,
+                .scale,
+                .{ .channels = .{ null, -50, null } },
+            ),
+            .expected = "lab(50 -57.5 20)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.lch, .{ 50, 20, 350, 1 }, 0),
+                .lch,
+                .adjust,
+                .{ .channels = .{ null, null, 20 } },
+            ),
+            .expected = "lch(50 20 10)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.lch, .{ 50, 5, 30, 1 }, 0),
+                .lch,
+                .change,
+                .{ .channels = .{ null, -10, null } },
+            ),
+            .expected = "lch(50 10 210)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.lab, .{ 50, 200, 20, 1 }, 0),
+                .lab,
+                .scale,
+                .{ .channels = .{ null, 50, null } },
+            ),
+            .expected = "lab(50 200 20)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.predefined(.display_p3, .{ -0.5, 0.3, 0.4, 1 }, 0),
+                .display_p3,
+                .scale,
+                .{ .channels = .{ -50, null, null } },
+            ),
+            .expected = "color(display-p3 -0.5 .3 .4)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.lab, .{ 50, 10, 20, 1 }, 0),
+                .lab,
+                .change,
+                .{ .channels = .{ 120, null, null } },
+            ),
+            .expected = "color-mix(in lab,color(xyz 1.5892547003 1.6026853084 1.3409230175)100%,red)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.lch, .{ 50, 20, 30, 1 }, 0),
+                .lch,
+                .change,
+                .{ .channels = .{ 120, null, null } },
+            ),
+            .expected = "color-mix(in lch,color(xyz 1.6569354424 1.6040925936 1.5400032443)100%,red)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.oklab, .{ 0.5, 0.1, 0.2, 1 }, 0),
+                .oklab,
+                .change,
+                .{ .channels = .{ -0.1, null, null } },
+            ),
+            .expected = "color-mix(in oklab,color(xyz -.0128972668 .0014656971 -.0778095634)100%,red)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.oklch, .{ 0.5, 0.1, 30, 1 }, 0),
+                .oklch,
+                .change,
+                .{ .channels = .{ 1.2, null, null } },
+            ),
+            .expected = "color-mix(in oklch,color(xyz 1.8372934791 1.6822116005 1.4221356295)100%,red)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.oklch, .{ 0.5, 0.1, 30, 1 }, 0),
+                .oklch,
+                .change,
+                .{ .channels = .{ null, -0.2, null } },
+            ),
+            .expected = "oklch(.5 .2 210)",
+        },
+        .{
+            .value = try color.transformRgb(
+                try color.predefined(.display_p3, .{ 0.2, 0.3, 0.4, 1 }, 0),
+                .adjust,
+                .{ .red = 10 },
+            ),
+            .expected = "color(display-p3 .227974604 .3007646632 .400278314)",
+        },
+        .{
+            .value = try color.transformModern(
+                color.parseLiteral("red").?,
+                .lab,
+                .adjust,
+                .{ .channels = .{ 10, null, null } },
+            ),
+            .expected = "hsl(7.3040012065,135.5651909831%,62.7601597049%)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.predefined(.display_p3, .{ 1, 0, 0, 1 }, 0),
+                .lab,
+                .adjust,
+                .{ .channels = .{ 10, null, null } },
+            ),
+            .expected = "color(display-p3 1.1297177442 .2553231029 .0951073704)",
+        },
+        .{
+            .value = try color.transformModern(
+                try color.modern(.oklab, .{ 0.5, 0.1, 0.2, 0.4 }, 0),
+                .oklab,
+                .scale,
+                .{ .alpha = 50 },
+            ),
+            .expected = "oklab(.5 .1 .2/.7)",
+        },
+    };
+    for (cases) |case| {
+        var buffer: [color.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(case.expected, try color.serialize(case.value, &buffer, true));
+    }
+
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.transformModern(
+            try color.modern(.lab, .{ 50, 10, 20, 1 }, 0b0001),
+            .lab,
+            .adjust,
+            .{ .channels = .{ null, 1, null } },
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.transformModern(
+            try color.modern(.lch, .{ 50, 20, 30, 1 }, 0),
+            .lch,
+            .scale,
+            .{ .channels = .{ null, null, 10 } },
+        ),
+    );
+
+    const out_of_range_alpha = try color.transformModern(
+        try color.modern(.lab, .{ 50, 10, 20, 0.4 }, 0),
+        .lab,
+        .change,
+        .{ .channels = .{ 120, null, null } },
+    );
+    var pretty_buffer: [color.max_serialized_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "color-mix(in lab, color(xyz 1.5892547003 1.6026853084 1.3409230175 / 0.4) 100%, black)",
+        try color.serialize(out_of_range_alpha, &pretty_buffer, false),
+    );
+}

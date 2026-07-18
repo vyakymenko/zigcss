@@ -679,7 +679,7 @@ test "native Sass evaluates keyword color transforms without a provider" {
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
-test "native Sass keyword color transforms reject unsafe and unimplemented calls" {
+test "native Sass keyword color transforms reject unsafe calls" {
     const invalid = [_]struct {
         name: []const u8,
         input: []const u8,
@@ -707,18 +707,101 @@ test "native Sass keyword color transforms reject unsafe and unimplemented calls
         error.UnsupportedFeature,
         compile(
             std.testing.allocator,
-            "modern-space.scss",
-            ".a { color: adjust-color(#123456, $lightness: 10%, $space: lab); }",
+            "transform-splat.scss",
+            ".a { color: adjust-color($args...); }",
             .scss,
             .{},
         ),
     );
+}
+
+test "native Sass evaluates modern cross-space color transforms without a provider" {
+    const input =
+        \\.a {
+        \\  inferred-lab-lightness: adjust-color(lab(50% 10 20), $lightness: 10%);
+        \\  lab-axis: adjust-color(lab(50% 10 20), $a: 5, $space: lab);
+        \\  lch-chroma: adjust-color(lch(50% 20 30deg), $chroma: 5, $space: lch);
+        \\  lch-hue: change-color(lch(50% 20 30deg), $hue: .5turn, $space: lch);
+        \\  oklab-axis: adjust-color(oklab(50% .1 .2), $a: .01, $space: oklab);
+        \\  oklch-scale: scale-color(oklch(50% .1 30deg), $chroma: 50%, $space: oklch);
+        \\  lab-negative-scale: scale-color(lab(50% 10 20), $a: -50%, $space: lab);
+        \\  lab-percent-adjust: adjust-color(lab(50% 10 20), $a: 10%, $space: lab);
+        \\  oklab-light-scale: scale-color(oklab(50% .1 .2), $lightness: -50%, $space: oklab);
+        \\  lch-hue-wrap: adjust-color(lch(50% 20 350deg), $hue: 20deg, $space: lch);
+        \\  lch-negative-change: change-color(lch(50% 5 30deg), $chroma: -10, $space: lch);
+        \\  lab-outward-scale: scale-color(lab(50% 200 20), $a: 50%, $space: lab);
+        \\  lab-out-of-range: change-color(lab(50% 10 20), $lightness: 120%, $space: lab);
+        \\  p3-red: adjust-color(color(display-p3 .2 .3 .4), $red: .1);
+        \\  linear-green: change-color(color(srgb-linear .2 .3 .4), $green: .5, $space: srgb-linear);
+        \\  a98-blue: scale-color(color(a98-rgb .2 .3 .4), $blue: 50%, $space: a98-rgb);
+        \\  prophoto-green: adjust-color(color(prophoto-rgb .2 .3 .4), $green: .1, $space: prophoto-rgb);
+        \\  rec-blue: scale-color(color(rec2020 .2 .3 .4), $blue: 50%, $space: rec2020);
+        \\  xyz-x: adjust-color(color(xyz .2 .3 .4), $x: .1);
+        \\  xyz50-y: change-color(color(xyz-d50 .2 .3 .4), $y: .5, $space: xyz-d50);
+        \\  xyz65-z: change-color(color(xyz-d65 .2 .3 .4), $z: .6, $space: xyz-d65);
+        \\  p3-negative-scale: scale-color(color(display-p3 .2 .3 .4), $red: -50%, $space: display-p3);
+        \\  legacy-through-lab: adjust-color(red, $lightness: 10%, $space: lab);
+        \\  p3-through-lab: adjust-color(color(display-p3 1 0 0), $lightness: 10%, $space: lab);
+        \\  lab-through-p3: adjust-color(lab(50% 10 20), $red: .1, $space: display-p3);
+        \\  modern-through-rgb: adjust-color(color(display-p3 .2 .3 .4), $red: 10, $space: rgb);
+        \\  modern-through-hsl: adjust-color(lab(50% 10 20), $hue: 30deg, $space: hsl);
+        \\  modern-through-hwb: adjust-color(oklab(.5 .1 .2), $whiteness: 10%, $space: hwb);
+        \\  modern-alpha: scale-color(oklab(50% .1 .2 / .4), $alpha: 50%);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "modern-transform.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{inferred-lab-lightness:lab(60 10 20);lab-axis:lab(50 15 20);lch-chroma:lch(50 25 30);lch-hue:lch(50 20 180);oklab-axis:oklab(.5 .11 .2);oklch-scale:oklch(.5 .25 30);lab-negative-scale:lab(50 -57.5 20);lab-percent-adjust:lab(50 22.5 20);oklab-light-scale:oklab(.25 .1 .2);lch-hue-wrap:lch(50 20 10);lch-negative-change:lch(50 10 210);lab-outward-scale:lab(50 200 20);lab-out-of-range:color-mix(in lab,color(xyz 1.5892547003 1.6026853084 1.3409230175)100%,red);p3-red:color(display-p3 .3 .3 .4);linear-green:color(srgb-linear .2 .5 .4);a98-blue:color(a98-rgb .2 .3 .7);prophoto-green:color(prophoto-rgb .2 .4 .4);rec-blue:color(rec2020 .2 .3 .7);xyz-x:color(xyz .3 .3 .4);xyz50-y:color(xyz-d50 .2 .5 .4);xyz65-z:color(xyz .2 .3 .6);p3-negative-scale:color(display-p3 .1 .3 .4);legacy-through-lab:hsl(7.3040012065,135.5651909831%,62.7601597049%);p3-through-lab:color(display-p3 1.1297177442 .2553231029 .0951073704);lab-through-p3:lab(53.1692982441 23.3919676168 25.5088400346);modern-through-rgb:color(display-p3 .227974604 .3007646632 .400278314);modern-through-hsl:lab(58.0168993346 -5.5681261381 30.2024872988);modern-through-hwb:oklab(.5191187943 .1155788696 .1325347996);modern-alpha:oklab(.5 .1 .2/.7)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\.a
+        \\  lab-axis: adjust-color(lab(50% 10 20), $a: 5, $space: lab)
+        \\  p3-through-lab: adjust-color(color(display-p3 1 0 0), $lightness: 10%, $space: lab)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "modern-transform.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{lab-axis:lab(50 15 20);p3-through-lab:color(display-p3 1.1297177442 .2553231029 .0951073704)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass modern color transforms reject ambiguous or unsafe calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "modern-mismatched-inferred.scss", .input = ".a { color: adjust-color(lab(50% 10 20), $red: .1); }" },
+        .{ .name = "modern-needs-space.scss", .input = ".a { color: adjust-color(red, $a: 1); }" },
+        .{ .name = "modern-wrong-space.scss", .input = ".a { color: adjust-color(lab(50% 10 20), $x: .1, $space: lab); }" },
+        .{ .name = "modern-mixed-space.scss", .input = ".a { color: adjust-color(lab(50% 10 20), $a: 1, $chroma: 1, $space: lab); }" },
+        .{ .name = "modern-channel-unit.scss", .input = ".a { color: adjust-color(lab(50% 10 20), $a: 1px, $space: lab); }" },
+        .{ .name = "modern-scale-hue.scss", .input = ".a { color: scale-color(lch(50% 20 30deg), $hue: 10%, $space: lch); }" },
+        .{ .name = "modern-missing-source.scss", .input = ".a { color: adjust-color(lab(none 10 20), $a: 1, $space: lab); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
     try std.testing.expectError(
         error.UnsupportedFeature,
         compile(
             std.testing.allocator,
-            "transform-splat.scss",
-            ".a { color: adjust-color($args...); }",
+            "modern-missing-transform.scss",
+            ".a { color: adjust-color(lab(50% 10 20), $a: none, $space: lab); }",
             .scss,
             .{},
         ),
@@ -2411,6 +2494,7 @@ fn exerciseAllocationFailures(
         \\  adjusted-color: lighten(#123456, 10%);
         \\  keyword-color: adjust-color($red: 10, $color: #123456);
         \\  hwb-keyword: change-color($blackness: 20%, $color: #123456, $space: hwb);
+        \\  modern-transform: adjust-color(lab(50% 10 20), $a: 5, $space: lab);
         \\  fixed-keyword: mix($weight: 25%, $color2: blue, $color1: red);
         \\  nth-keyword: nth($n: 2, $list: (a, b));
         \\  constructor-keyword: rgb($channels: 255 0 0 / .5);
@@ -2444,7 +2528,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;mixin-value:3;mixin-content:yes;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;mixin-value:3;mixin-content:yes;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

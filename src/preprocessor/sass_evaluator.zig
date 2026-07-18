@@ -156,7 +156,108 @@ const ColorTransformSpace = enum {
     rgb,
     hsl,
     hwb,
+    lab,
+    lch,
+    oklab,
+    oklch,
+    srgb,
+    srgb_linear,
+    display_p3,
+    a98_rgb,
+    prophoto_rgb,
+    rec2020,
+    xyz_d50,
+    xyz,
 };
+
+const ColorTransformChannel = enum {
+    red,
+    green,
+    blue,
+    hue,
+    saturation,
+    lightness,
+    whiteness,
+    blackness,
+    lab_a,
+    lab_b,
+    chroma,
+    x,
+    y,
+    z,
+};
+
+fn transformSpaceForColorSpace(space: native_value.ColorSpace) ColorTransformSpace {
+    return switch (space) {
+        .rgb => .rgb,
+        .hsl => .hsl,
+        .hwb => .hwb,
+        .lab => .lab,
+        .lch => .lch,
+        .oklab => .oklab,
+        .oklch => .oklch,
+        .srgb => .srgb,
+        .srgb_linear => .srgb_linear,
+        .display_p3 => .display_p3,
+        .a98_rgb => .a98_rgb,
+        .prophoto_rgb => .prophoto_rgb,
+        .rec2020 => .rec2020,
+        .xyz_d50 => .xyz_d50,
+        .xyz => .xyz,
+    };
+}
+
+fn nativeColorTransformSpace(space: ColorTransformSpace) native_value.ColorSpace {
+    return switch (space) {
+        .rgb => .rgb,
+        .hsl => .hsl,
+        .hwb => .hwb,
+        .lab => .lab,
+        .lch => .lch,
+        .oklab => .oklab,
+        .oklch => .oklch,
+        .srgb => .srgb,
+        .srgb_linear => .srgb_linear,
+        .display_p3 => .display_p3,
+        .a98_rgb => .a98_rgb,
+        .prophoto_rgb => .prophoto_rgb,
+        .rec2020 => .rec2020,
+        .xyz_d50 => .xyz_d50,
+        .xyz => .xyz,
+    };
+}
+
+fn colorTransformSpaceSupports(
+    space: ColorTransformSpace,
+    channel: ColorTransformChannel,
+) bool {
+    return switch (channel) {
+        .red, .green, .blue => switch (space) {
+            .rgb,
+            .srgb,
+            .srgb_linear,
+            .display_p3,
+            .a98_rgb,
+            .prophoto_rgb,
+            .rec2020,
+            => true,
+            else => false,
+        },
+        .hue => switch (space) {
+            .hsl, .hwb, .lch, .oklch => true,
+            else => false,
+        },
+        .saturation => space == .hsl,
+        .lightness => switch (space) {
+            .hsl, .lab, .lch, .oklab, .oklch => true,
+            else => false,
+        },
+        .whiteness, .blackness => space == .hwb,
+        .lab_a, .lab_b => space == .lab or space == .oklab,
+        .chroma => space == .lch or space == .oklch,
+        .x, .y, .z => space == .xyz_d50 or space == .xyz,
+    };
+}
 
 const ModernColorChannelKind = enum {
     lab_lightness,
@@ -3881,7 +3982,13 @@ const Engine = struct {
         const blackness_index = 8;
         const alpha_index = 9;
         const space_index = 10;
-        const parameters = [11]native_arguments.Parameter{
+        const a_index = 11;
+        const b_index = 12;
+        const chroma_index = 13;
+        const x_index = 14;
+        const y_index = 15;
+        const z_index = 16;
+        const parameters = [17]native_arguments.Parameter{
             .{ .name = "color" },
             .{ .name = "red", .required = false },
             .{ .name = "green", .required = false },
@@ -3893,6 +4000,12 @@ const Engine = struct {
             .{ .name = "blackness", .required = false },
             .{ .name = "alpha", .required = false },
             .{ .name = "space", .required = false },
+            .{ .name = "a", .required = false },
+            .{ .name = "b", .required = false },
+            .{ .name = "chroma", .required = false },
+            .{ .name = "x", .required = false },
+            .{ .name = "y", .required = false },
+            .{ .name = "z", .required = false },
         };
         var parsed = native_arguments.parseAlloc(
             self.allocator,
@@ -3935,31 +4048,50 @@ const Engine = struct {
         const has_hue = values[hue_index] != null;
         const has_hsl = values[saturation_index] != null or values[lightness_index] != null;
         const has_hwb = values[whiteness_index] != null or values[blackness_index] != null;
+        const has_modern_only = values[a_index] != null or values[b_index] != null or
+            values[chroma_index] != null or values[x_index] != null or
+            values[y_index] != null or values[z_index] != null;
+        const channel_bindings = [_]struct {
+            index: usize,
+            channel: ColorTransformChannel,
+        }{
+            .{ .index = red_index, .channel = .red },
+            .{ .index = green_index, .channel = .green },
+            .{ .index = blue_index, .channel = .blue },
+            .{ .index = hue_index, .channel = .hue },
+            .{ .index = saturation_index, .channel = .saturation },
+            .{ .index = lightness_index, .channel = .lightness },
+            .{ .index = whiteness_index, .channel = .whiteness },
+            .{ .index = blackness_index, .channel = .blackness },
+            .{ .index = a_index, .channel = .lab_a },
+            .{ .index = b_index, .channel = .lab_b },
+            .{ .index = chroma_index, .channel = .chroma },
+            .{ .index = x_index, .channel = .x },
+            .{ .index = y_index, .channel = .y },
+            .{ .index = z_index, .channel = .z },
+        };
+        var has_color_channel = false;
+        for (channel_bindings) |binding| {
+            if (values[binding.index] != null) has_color_channel = true;
+        }
         const explicit_space = if (values[space_index]) |item|
             try self.colorTransformSpace(item.*, span)
         else
             null;
-        const selected_space: ?ColorTransformSpace = if (explicit_space) |space| blk: {
-            const mismatched = switch (space) {
-                .rgb => has_hue or has_hsl or has_hwb,
-                .hsl => has_rgb or has_hwb,
-                .hwb => has_rgb or has_hsl,
-            };
-            if (mismatched) {
+        const input_is_modern = switch (color.space) {
+            .rgb, .hsl, .hwb => false,
+            else => true,
+        };
+        const selected_space: ?ColorTransformSpace = if (explicit_space) |space|
+            space
+        else if (has_color_channel and input_is_modern)
+            transformSpaceForColorSpace(color.space)
+        else blk: {
+            if (has_modern_only) {
                 try self.report(
                     .invalid_operation,
                     span,
-                    "native Sass color channel does not belong to the selected color space",
-                );
-                return error.InvalidExpression;
-            }
-            break :blk space;
-        } else blk: {
-            if ((has_rgb and (has_hue or has_hsl or has_hwb)) or (has_hsl and has_hwb)) {
-                try self.report(
-                    .invalid_operation,
-                    span,
-                    "native Sass color transform cannot mix channels from different spaces",
+                    "native Sass modern color channel requires an inferable or explicit color space",
                 );
                 return error.InvalidExpression;
             }
@@ -3974,12 +4106,27 @@ const Engine = struct {
             else
                 null;
         };
+        if (selected_space) |space| {
+            for (channel_bindings) |binding| {
+                if (values[binding.index] != null and
+                    !colorTransformSpaceSupports(space, binding.channel))
+                {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "native Sass color channel does not belong to the selected color space",
+                    );
+                    return error.InvalidExpression;
+                }
+            }
+        }
         const alpha = if (values[alpha_index]) |item|
             try self.colorTransformAlpha(item.*, kind, span)
         else
             null;
 
-        const result = switch (selected_space orelse .rgb) {
+        const effective_space = selected_space orelse .rgb;
+        const result = switch (effective_space) {
             .rgb => native_color.transformRgb(color, kind, .{
                 .red = if (values[red_index]) |item|
                     try self.colorTransformRgbChannel(item.*, kind, span)
@@ -4019,6 +4166,180 @@ const Engine = struct {
                     null,
                 .alpha = alpha,
             }),
+            .lab => native_color.transformModern(
+                color,
+                nativeColorTransformSpace(.lab),
+                kind,
+                .{
+                    .channels = .{
+                        try self.colorTransformModernChannel(
+                            values[lightness_index],
+                            kind,
+                            .lab_lightness,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[a_index],
+                            kind,
+                            .lab_axis,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[b_index],
+                            kind,
+                            .lab_axis,
+                            span,
+                        ),
+                    },
+                    .alpha = alpha,
+                },
+            ),
+            .lch => native_color.transformModern(
+                color,
+                nativeColorTransformSpace(.lch),
+                kind,
+                .{
+                    .channels = .{
+                        try self.colorTransformModernChannel(
+                            values[lightness_index],
+                            kind,
+                            .lab_lightness,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[chroma_index],
+                            kind,
+                            .lch_chroma,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[hue_index],
+                            kind,
+                            .hue,
+                            span,
+                        ),
+                    },
+                    .alpha = alpha,
+                },
+            ),
+            .oklab => native_color.transformModern(
+                color,
+                nativeColorTransformSpace(.oklab),
+                kind,
+                .{
+                    .channels = .{
+                        try self.colorTransformModernChannel(
+                            values[lightness_index],
+                            kind,
+                            .oklab_lightness,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[a_index],
+                            kind,
+                            .oklab_axis,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[b_index],
+                            kind,
+                            .oklab_axis,
+                            span,
+                        ),
+                    },
+                    .alpha = alpha,
+                },
+            ),
+            .oklch => native_color.transformModern(
+                color,
+                nativeColorTransformSpace(.oklch),
+                kind,
+                .{
+                    .channels = .{
+                        try self.colorTransformModernChannel(
+                            values[lightness_index],
+                            kind,
+                            .oklab_lightness,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[chroma_index],
+                            kind,
+                            .oklch_chroma,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[hue_index],
+                            kind,
+                            .hue,
+                            span,
+                        ),
+                    },
+                    .alpha = alpha,
+                },
+            ),
+            .srgb,
+            .srgb_linear,
+            .display_p3,
+            .a98_rgb,
+            .prophoto_rgb,
+            .rec2020,
+            => native_color.transformModern(
+                color,
+                nativeColorTransformSpace(effective_space),
+                kind,
+                .{
+                    .channels = .{
+                        try self.colorTransformModernChannel(
+                            values[red_index],
+                            kind,
+                            .predefined,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[green_index],
+                            kind,
+                            .predefined,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[blue_index],
+                            kind,
+                            .predefined,
+                            span,
+                        ),
+                    },
+                    .alpha = alpha,
+                },
+            ),
+            .xyz_d50, .xyz => native_color.transformModern(
+                color,
+                nativeColorTransformSpace(effective_space),
+                kind,
+                .{
+                    .channels = .{
+                        try self.colorTransformModernChannel(
+                            values[x_index],
+                            kind,
+                            .predefined,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[y_index],
+                            kind,
+                            .predefined,
+                            span,
+                        ),
+                        try self.colorTransformModernChannel(
+                            values[z_index],
+                            kind,
+                            .predefined,
+                            span,
+                        ),
+                    },
+                    .alpha = alpha,
+                },
+            ),
         } catch |err| return self.colorTransformFailure(err, span);
         return self.values.own(.{ .color = result });
     }
@@ -4042,19 +4363,19 @@ const Engine = struct {
         if (std.mem.eql(u8, string.bytes, "rgb")) return .rgb;
         if (std.mem.eql(u8, string.bytes, "hsl")) return .hsl;
         if (std.mem.eql(u8, string.bytes, "hwb")) return .hwb;
-        const known_modern = [_][]const u8{
-            "lab", "lch", "oklab", "oklch", "xyz", "xyz-d50", "xyz-d65",
-        };
-        for (known_modern) |name| {
-            if (std.mem.eql(u8, string.bytes, name)) {
-                try self.report(
-                    .unsupported_feature,
-                    span,
-                    "native Sass modern color transforms are not implemented yet",
-                );
-                return error.UnsupportedFeature;
-            }
-        }
+        if (std.mem.eql(u8, string.bytes, "lab")) return .lab;
+        if (std.mem.eql(u8, string.bytes, "lch")) return .lch;
+        if (std.mem.eql(u8, string.bytes, "oklab")) return .oklab;
+        if (std.mem.eql(u8, string.bytes, "oklch")) return .oklch;
+        if (std.mem.eql(u8, string.bytes, "srgb")) return .srgb;
+        if (std.mem.eql(u8, string.bytes, "srgb-linear")) return .srgb_linear;
+        if (std.mem.eql(u8, string.bytes, "display-p3")) return .display_p3;
+        if (std.mem.eql(u8, string.bytes, "a98-rgb")) return .a98_rgb;
+        if (std.mem.eql(u8, string.bytes, "prophoto-rgb")) return .prophoto_rgb;
+        if (std.mem.eql(u8, string.bytes, "rec2020")) return .rec2020;
+        if (std.mem.eql(u8, string.bytes, "xyz-d50")) return .xyz_d50;
+        if (std.mem.eql(u8, string.bytes, "xyz") or
+            std.mem.eql(u8, string.bytes, "xyz-d65")) return .xyz;
         try self.report(.invalid_operation, span, "unknown native Sass color space");
         return error.InvalidExpression;
     }
@@ -4081,6 +4402,27 @@ const Engine = struct {
             self.colorScalePercentage(item, span)
         else
             self.colorPercentage(item, span);
+    }
+
+    fn colorTransformModernChannel(
+        self: *Engine,
+        item: ?*const native_value.Value,
+        kind: native_color.TransformKind,
+        channel_kind: ModernColorChannelKind,
+        span: native_source.Span,
+    ) Error!?f64 {
+        const present = item orelse return null;
+        if (kind == .scale) return try self.colorScalePercentage(present.*, span);
+        const channel = try self.modernColorChannel(present.*, channel_kind, span);
+        if (channel.missing) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass transformed missing color channels are not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        return channel.value;
     }
 
     fn colorTransformAlpha(
