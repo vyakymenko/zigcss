@@ -5,6 +5,7 @@ pub const Separator = enum {
     space,
     comma,
     slash,
+    legacy_slash,
 };
 
 pub const ColorSpace = enum {

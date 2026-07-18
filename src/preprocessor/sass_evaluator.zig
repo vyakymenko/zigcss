@@ -117,6 +117,8 @@ const Builtin = enum {
     list_index,
     list_separator,
     list_is_bracketed,
+    list_append,
+    list_set_nth,
     meta_keywords,
     quote,
     unquote,
@@ -476,6 +478,19 @@ const CalculationArgument = union(enum) {
 const MapMutationScratch = struct {
     allocator: std.mem.Allocator,
     reserved_bytes: usize = 0,
+};
+
+const MaterializedList = struct {
+    items: []native_value.Value,
+    pair_items: ?[]native_value.Value = null,
+    separator: native_value.Separator,
+    bracketed: bool,
+
+    fn deinit(self: *MaterializedList, allocator: std.mem.Allocator) void {
+        if (self.pair_items) |items| allocator.free(items);
+        allocator.free(self.items);
+        self.* = undefined;
+    }
 };
 
 const LogicalOperator = enum {
@@ -3576,6 +3591,10 @@ const Engine = struct {
             .list_separator
         else if (sassNameEql(name, "is-bracketed"))
             .list_is_bracketed
+        else if (sassNameEql(name, "append"))
+            .list_append
+        else if (sassNameEql(name, "set-nth"))
+            .list_set_nth
         else if (sassNameEql(name, "quote"))
             .quote
         else if (sassNameEql(name, "unquote"))
@@ -3714,6 +3733,8 @@ const Engine = struct {
             .list_index,
             .list_separator,
             .list_is_bracketed,
+            .list_append,
+            .list_set_nth,
             .map_keys,
             .map_values,
             .meta_keywords,
@@ -6142,7 +6163,13 @@ const Engine = struct {
         const length = sassListLength(arguments[0].*);
         const index = try self.resolveListIndex(arguments[1].*, length, span);
         return switch (arguments[0].*) {
-            .list => |list| if (list.separator == .slash) arguments[0] else &list.items[index],
+            .list => |list| if (list.separator == .legacy_slash) blk: {
+                if (!list.bracketed) break :blk arguments[0];
+                break :blk try self.values.own(.{ .list = .{
+                    .items = list.items,
+                    .separator = .legacy_slash,
+                } });
+            } else &list.items[index],
             .argument_list => |argument_list| &argument_list.positional[index],
             .map => |map| blk: {
                 const pair = [_]native_value.Value{
@@ -6183,9 +6210,16 @@ const Engine = struct {
         const target = arguments[1].*;
         switch (arguments[0].*) {
             .list => |list| {
-                if (list.separator == .slash) {
+                if (list.separator == .legacy_slash) {
                     try self.transaction.consumeOperations(1);
-                    return self.listIndexResult(sassValuesEqual(arguments[0].*, target), 0);
+                    const candidate = if (list.bracketed)
+                        native_value.Value{ .list = .{
+                            .items = list.items,
+                            .separator = .legacy_slash,
+                        } }
+                    else
+                        arguments[0].*;
+                    return self.listIndexResult(sassValuesEqual(candidate, target), 0);
                 }
                 for (list.items, 0..) |item, index| {
                     try self.transaction.consumeOperations(1);
@@ -6239,7 +6273,8 @@ const Engine = struct {
             .map, .argument_list => "comma",
             .list => |list| switch (list.separator) {
                 .comma => "comma",
-                .space, .slash, .undecided => "space",
+                .slash => "slash",
+                .space, .legacy_slash, .undecided => "space",
             },
             else => "space",
         };
@@ -6259,6 +6294,175 @@ const Engine = struct {
             .list => |list| list.bracketed,
             else => false,
         } });
+    }
+
+    fn callListAppend(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 2 or arguments.len > 3) {
+            try self.report(.invalid_operation, span, "list append() requires two or three arguments");
+            return error.InvalidExpression;
+        }
+        const separator = try self.resolveListAppendSeparator(
+            arguments[0].*,
+            if (arguments.len == 3) arguments[2].* else null,
+            span,
+        );
+        var list = try self.materializeList(arguments[0].*, 1, span);
+        defer list.deinit(self.allocator);
+        try self.transaction.consumeOperations(1);
+        list.items[list.items.len - 1] = arguments[1].*;
+        return self.values.own(.{ .list = .{
+            .items = list.items,
+            .separator = separator,
+            .bracketed = list.bracketed,
+        } });
+    }
+
+    fn callListSetNth(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 3) {
+            try self.report(.invalid_operation, span, "list set-nth() requires exactly three arguments");
+            return error.InvalidExpression;
+        }
+        const length = sassListLength(arguments[0].*);
+        const index = try self.resolveListIndex(arguments[1].*, length, span);
+        var list = try self.materializeList(arguments[0].*, 0, span);
+        defer list.deinit(self.allocator);
+        try self.transaction.consumeOperations(1);
+        list.items[index] = arguments[2].*;
+        return self.values.own(.{ .list = .{
+            .items = list.items,
+            .separator = list.separator,
+            .bracketed = list.bracketed,
+        } });
+    }
+
+    fn resolveListAppendSeparator(
+        self: *Engine,
+        source: native_value.Value,
+        requested: ?native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Separator {
+        const automatic = canonicalAppendSeparator(sassListSeparator(source));
+        const value = requested orelse return automatic;
+        const string = switch (value) {
+            .string => |item| item,
+            else => {
+                try self.report(.type_mismatch, span, "list append separator must be auto, space, comma, or slash");
+                return error.InvalidExpression;
+            },
+        };
+        if (std.mem.eql(u8, string.bytes, "auto")) return automatic;
+        if (std.mem.eql(u8, string.bytes, "space")) return .space;
+        if (std.mem.eql(u8, string.bytes, "comma")) return .comma;
+        if (std.mem.eql(u8, string.bytes, "slash")) return .slash;
+        try self.report(.invalid_operation, span, "unknown list append separator");
+        return error.InvalidExpression;
+    }
+
+    fn materializeList(
+        self: *Engine,
+        source: native_value.Value,
+        extra_items: usize,
+        span: native_source.Span,
+    ) Error!MaterializedList {
+        const source_length = sassListLength(source);
+        const item_count = std.math.add(usize, source_length, extra_items) catch
+            return self.listTemporaryFailure(span);
+        const pair_count = switch (source) {
+            .map => |map| std.math.mul(usize, map.entries.len, 2) catch
+                return self.listTemporaryFailure(span),
+            else => 0,
+        };
+        const item_bytes = std.math.mul(usize, item_count, @sizeOf(native_value.Value)) catch
+            return self.listTemporaryFailure(span);
+        const pair_bytes = std.math.mul(usize, pair_count, @sizeOf(native_value.Value)) catch
+            return self.listTemporaryFailure(span);
+        const temporary_bytes = std.math.add(usize, item_bytes, pair_bytes) catch
+            return self.listTemporaryFailure(span);
+        if (temporary_bytes > self.limits.max_temporary_bytes) {
+            return self.listTemporaryFailure(span);
+        }
+
+        const items = try self.allocator.alloc(native_value.Value, item_count);
+        errdefer self.allocator.free(items);
+        const allocated_pair_items = if (pair_count > 0)
+            try self.allocator.alloc(native_value.Value, pair_count)
+        else
+            null;
+        errdefer if (allocated_pair_items) |owned| self.allocator.free(owned);
+        var result = MaterializedList{
+            .items = items,
+            .pair_items = allocated_pair_items,
+            .separator = sassListSeparator(source),
+            .bracketed = switch (source) {
+                .list => |list| list.bracketed,
+                else => false,
+            },
+        };
+
+        var output_index: usize = 0;
+        switch (source) {
+            .list => |list| {
+                if (list.separator == .legacy_slash) {
+                    try self.transaction.consumeOperations(1);
+                    result.items[0] = .{ .list = .{
+                        .items = list.items,
+                        .separator = .legacy_slash,
+                    } };
+                    output_index = 1;
+                } else {
+                    for (list.items) |item| {
+                        try self.transaction.consumeOperations(1);
+                        result.items[output_index] = item;
+                        output_index += 1;
+                    }
+                }
+            },
+            .argument_list => |argument_list| {
+                for (argument_list.positional) |item| {
+                    try self.transaction.consumeOperations(1);
+                    result.items[output_index] = item;
+                    output_index += 1;
+                }
+            },
+            .map => |map| {
+                if (map.entries.len > 0) {
+                    const pair_items = result.pair_items.?;
+                    for (map.entries, 0..) |entry, index| {
+                        try self.transaction.consumeOperations(1);
+                        pair_items[index * 2] = entry.key;
+                        pair_items[index * 2 + 1] = entry.value;
+                        result.items[output_index] = .{ .list = .{
+                            .items = pair_items[index * 2 .. index * 2 + 2],
+                            .separator = .space,
+                        } };
+                        output_index += 1;
+                    }
+                }
+            },
+            else => {
+                try self.transaction.consumeOperations(1);
+                result.items[0] = source;
+                output_index = 1;
+            },
+        }
+        std.debug.assert(output_index == source_length);
+        return result;
+    }
+
+    fn listTemporaryFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(.resource_limit, span, "native Sass list temporary limit exceeded") catch |err| return err;
+        return error.TemporaryLimitExceeded;
     }
 
     fn callMetaKeywords(
@@ -6534,6 +6738,16 @@ const Engine = struct {
                 .{ .name = "value" },
             },
             .list_separator, .list_is_bracketed => &.{.{ .name = "list" }},
+            .list_append => &.{
+                .{ .name = "list" },
+                .{ .name = "val" },
+                .{ .name = "separator", .required = false },
+            },
+            .list_set_nth => &.{
+                .{ .name = "list" },
+                .{ .name = "n" },
+                .{ .name = "value" },
+            },
             .map_keys, .map_values => &.{.{ .name = "map" }},
             .meta_keywords => &.{.{ .name = "args" }},
             .red,
@@ -6637,6 +6851,8 @@ const Engine = struct {
             .list_index => self.callListIndex(arguments, span),
             .list_separator => self.callListSeparator(arguments, span),
             .list_is_bracketed => self.callListIsBracketed(arguments, span),
+            .list_append => self.callListAppend(arguments, span),
+            .list_set_nth => self.callListSetNth(arguments, span),
             .map_keys, .map_values => self.callMapEntries(builtin, arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
@@ -6813,7 +7029,7 @@ const Engine = struct {
             value: native_value.Separator,
         }{
             .{ .split = .comma, .value = .comma },
-            .{ .split = .slash, .value = .slash },
+            .{ .split = .slash, .value = .legacy_slash },
             .{ .split = .whitespace, .value = .space },
         };
         for (separators) |separator| {
@@ -7172,7 +7388,7 @@ const Engine = struct {
                     if (child == .null_value) continue;
                     if (emitted > 0) try self.appendTemporary(output, switch (list.separator) {
                         .comma => ",",
-                        .slash => "/",
+                        .slash, .legacy_slash => "/",
                         .undecided, .space => " ",
                     });
                     try self.appendValue(output, child, interpolation);
@@ -7759,6 +7975,8 @@ fn listModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "index")) return .list_index;
     if (sassNameEql(name, "separator")) return .list_separator;
     if (sassNameEql(name, "is-bracketed")) return .list_is_bracketed;
+    if (sassNameEql(name, "append")) return .list_append;
+    if (sassNameEql(name, "set-nth")) return .list_set_nth;
     return null;
 }
 
@@ -7993,9 +8211,24 @@ fn nativeMapView(item: native_value.Value) ?native_value.Map {
     };
 }
 
+fn sassListSeparator(item: native_value.Value) native_value.Separator {
+    return switch (item) {
+        .list => |list| if (list.separator == .legacy_slash) .space else list.separator,
+        .map, .argument_list => .comma,
+        else => .space,
+    };
+}
+
+fn canonicalAppendSeparator(separator: native_value.Separator) native_value.Separator {
+    return switch (separator) {
+        .undecided, .legacy_slash => .space,
+        .space, .comma, .slash => separator,
+    };
+}
+
 fn sassListLength(item: native_value.Value) usize {
     return switch (item) {
-        .list => |list| if (list.separator == .slash) 1 else list.items.len,
+        .list => |list| if (list.separator == .legacy_slash) 1 else list.items.len,
         .map => |map| map.entries.len,
         .argument_list => |argument_list| argument_list.positional.len,
         else => 1,

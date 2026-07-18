@@ -3154,7 +3154,7 @@ test "native Sass list module rejects unowned calls" {
         },
         .{
             .name = "unsupported-list-member.scss",
-            .input = "@use \"sass:list\"; .a { value: list.append($undefined, b); }",
+            .input = "@use \"sass:list\"; .a { value: list.join($undefined, b); }",
             .expected = error.InvalidExpression,
         },
         .{
@@ -3291,6 +3291,180 @@ test "native Sass list queries reject unsafe arguments" {
             compile(std.testing.allocator, case.name, case.input, .scss, .{}),
         );
     }
+}
+
+test "native Sass transforms lists immutably through module and legacy functions" {
+    const input =
+        \\@use "sass:list";
+        \\@use "sass:list" as seq;
+        \\@use "sass:list" as *;
+        \\$append-order: 0;
+        \\$append-first: null;
+        \\$set-order: 0;
+        \\$set-first: null;
+        \\@function stamp-append($value) {
+        \\  $append-order: $append-order + 1 !global;
+        \\  @if $append-order == 1 { $append-first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\@function stamp-set($value) {
+        \\  $set-order: $set-order + 1 !global;
+        \\  @if $set-order == 1 { $set-first: $value !global; }
+        \\  @return $value;
+        \\}
+        \\@function grow-rest($args...) { @return list.append($args, z); }
+        \\@function replace-rest($args...) { @return list.set-nth($args, 2, x); }
+        \\$original: [a b];
+        \\$map: (a: 1, b: 2);
+        \\$slash: list.append(a b, c, $separator: slash);
+        \\$legacy: a/b;
+        \\$legacy-bracketed: [a/b];
+        \\.a {
+        \\  scalar-auto: list.append(solo, next);
+        \\  space-auto: list.append(a b, c);
+        \\  comma-auto: seq.append((a, b), c);
+        \\  explicit-auto: list.append((a, b), c, $separator: auto);
+        \\  quoted-comma: list.append(a b, c, $separator: "comma");
+        \\  comma-override: list.append(a b, c, $separator: comma);
+        \\  space-override: list.append((a, b), c, $separator: space);
+        \\  slash: $slash;
+        \\  slash-length: list.length($slash);
+        \\  slash-separator: list.separator($slash);
+        \\  slash-index: list.index($slash, b);
+        \\  bracketed: list.append($original, c);
+        \\  original: $original;
+        \\  map: list.append($map, c);
+        \\  empty: list.append((), x);
+        \\  rest: grow-rest(a, b);
+        \\  legacy-append: append((a, b), c);
+        \\  set-space: list.set-nth(a b c, -2, x);
+        \\  set-comma: seq.set-nth((a, b, c), 1, x);
+        \\  set-bracket: list.set-nth([a b c], 3, x);
+        \\  set-map: list.set-nth($map, 2, x);
+        \\  set-scalar: list.set-nth(solo, 1, x);
+        \\  set-slash: list.set-nth($slash, -2, x);
+        \\  set-rest: replace-rest(a, b, c);
+        \\  legacy-set: set-nth(a b c, 2, x);
+        \\  legacy-auto: list.append($legacy, c);
+        \\  legacy-auto-length: list.length(list.append($legacy, c));
+        \\  legacy-slash-length: list.length(list.append($legacy, c, $separator: slash));
+        \\  legacy-set-single: list.set-nth($legacy, 1, x);
+        \\  legacy-bracket-append: list.append($legacy-bracketed, c);
+        \\  legacy-bracket-length: list.length($legacy-bracketed);
+        \\  legacy-bracket-nth: list.nth($legacy-bracketed, 1);
+        \\  legacy-bracket-index: list.index($legacy-bracketed, a/b);
+        \\  legacy-bracket-set: list.set-nth($legacy-bracketed, 1, x);
+        \\  source-append: list.append($val: stamp-append(c), $list: stamp-append(a b), $separator: space);
+        \\  append-first: $append-first;
+        \\  source-set: list.set-nth($value: stamp-set(x), $n: stamp-set(2), $list: stamp-set(a b c));
+        \\  set-first: $set-first;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "list-transformations.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{scalar-auto:solo next;space-auto:a b c;comma-auto:a,b,c;explicit-auto:a,b,c;quoted-comma:a,b,c;comma-override:a,b,c;space-override:a b c;slash:a/b/c;slash-length:3;slash-separator:slash;slash-index:2;bracketed:[a b c];original:[a b];map:a 1,b 2,c;empty:x;rest:a,b,z;legacy-append:a,b,c;set-space:a x c;set-comma:x,b,c;set-bracket:[a b x];set-map:a 1,x;set-scalar:x;set-slash:a/x/c;set-rest:a,x,c;legacy-set:a x c;legacy-auto:a/b c;legacy-auto-length:2;legacy-slash-length:2;legacy-set-single:x;legacy-bracket-append:[a/b c];legacy-bracket-length:1;legacy-bracket-nth:a/b;legacy-bracket-index:1;legacy-bracket-set:[x];source-append:a b c;append-first:c;source-set:a x c;set-first:x}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:list" as l
+        \\$original: [a b]
+        \\.sass
+        \\  append: l.append($original, c)
+        \\  set: l.set-nth(a b c, -1, x)
+        \\  legacy-append: append((a, b), c)
+        \\  legacy-set: set-nth(a b c, 2, x)
+        \\  slash: l.append(a b, c, $separator: slash)
+        \\  original: $original
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "list-transformations.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{append:[a b c];set:a b x;legacy-append:a,b,c;legacy-set:a x c;slash:a/b/c;original:[a b]}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass list transformations reject unsafe arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror = error.InvalidExpression,
+    }{
+        .{
+            .name = "list-append-short.scss",
+            .input = "@use \"sass:list\"; .a { value: list.append((a, b)); }",
+        },
+        .{
+            .name = "list-append-long.scss",
+            .input = "@use \"sass:list\"; .a { value: list.append((a, b), c, comma, extra); }",
+        },
+        .{
+            .name = "list-append-non-string-separator.scss",
+            .input = "@use \"sass:list\"; .a { value: list.append((a, b), c, true); }",
+        },
+        .{
+            .name = "list-append-unknown-separator.scss",
+            .input = "@use \"sass:list\"; .a { value: list.append((a, b), c, invalid); }",
+        },
+        .{
+            .name = "list-set-nth-short.scss",
+            .input = "@use \"sass:list\"; .a { value: list.set-nth((a, b), 1); }",
+        },
+        .{
+            .name = "list-set-nth-type.scss",
+            .input = "@use \"sass:list\"; .a { value: list.set-nth((a, b), nope, x); }",
+        },
+        .{
+            .name = "list-set-nth-zero.scss",
+            .input = "@use \"sass:list\"; .a { value: list.set-nth((a, b), 0, x); }",
+        },
+        .{
+            .name = "list-set-nth-bounds.scss",
+            .input = "@use \"sass:list\"; .a { value: list.set-nth((a, b), 3, x); }",
+        },
+        .{
+            .name = "list-transform-unknown-keyword.scss",
+            .input = "@use \"sass:list\"; .a { value: list.append($list: (a, b), $value: c); }",
+        },
+        .{
+            .name = "list-transform-duplicate-keyword.scss",
+            .input = "@use \"sass:list\"; .a { value: list.set-nth($list: (a, b), $n: 1, $n: 2, $value: x); }",
+        },
+        .{
+            .name = "list-transform-splat.scss",
+            .input = "@use \"sass:list\"; $args: ((a, b), c); .a { value: list.append($args...); }",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 1;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "list-transform-temporary-limit.scss",
+            "@use \"sass:list\"; $value: list.append((a, b), c);",
+            .scss,
+            temporary_limits,
+        ),
+    );
 }
 
 test "native Sass string functions reject unsafe arity types indexes and limits" {
@@ -3618,6 +3792,8 @@ fn exerciseAllocationFailures(
         \\$list-index: lists.index($spaces, 2px);
         \\$list-separator: lists.separator($spaces);
         \\$list-bracketed: lists.is-bracketed([$spaces]);
+        \\$list-appended: lists.append($spaces, 4px, $separator: comma);
+        \\$list-replaced: lists.set-nth($list-appended, 2, 5px);
         \\$theme: (tone: blue, spaces: $spaces);
         \\$merged-theme: map.merge($theme, (accent: red));
         \\$removed-theme: map.remove($merged-theme, tone);
@@ -3648,6 +3824,8 @@ fn exerciseAllocationFailures(
         \\  color: map-get($theme, tone);
         \\  gap: lists.nth($spaces, $list-index);
         \\  enabled: $enabled and $list-bracketed and $list-separator == space;
+        \\  list-appended: $list-appended;
+        \\  list-replaced: $list-replaced;
         \\  function-value: allocation_value(2);
         \\  rest-function: allocation-rest(1, (2, 3)...);
         \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
@@ -3718,7 +3896,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
