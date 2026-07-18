@@ -105,9 +105,24 @@ const Builtin = enum {
     green,
     blue,
     alpha,
+    opacity,
     hue,
     saturation,
     lightness,
+    mix,
+    lighten,
+    darken,
+    saturate,
+    desaturate,
+    adjust_hue,
+    complement,
+    grayscale,
+    invert,
+    opacify,
+    fade_in,
+    transparentize,
+    fade_out,
+    ie_hex_str,
     calculation,
     minimum,
     maximum,
@@ -1001,12 +1016,42 @@ const Engine = struct {
             .blue
         else if (sassNameEql(name, "alpha"))
             .alpha
+        else if (sassNameEql(name, "opacity"))
+            .opacity
         else if (sassNameEql(name, "hue"))
             .hue
         else if (sassNameEql(name, "saturation"))
             .saturation
         else if (sassNameEql(name, "lightness"))
             .lightness
+        else if (sassNameEql(name, "mix"))
+            .mix
+        else if (sassNameEql(name, "lighten"))
+            .lighten
+        else if (sassNameEql(name, "darken"))
+            .darken
+        else if (sassNameEql(name, "saturate"))
+            .saturate
+        else if (sassNameEql(name, "desaturate"))
+            .desaturate
+        else if (sassNameEql(name, "adjust-hue"))
+            .adjust_hue
+        else if (sassNameEql(name, "complement"))
+            .complement
+        else if (sassNameEql(name, "grayscale"))
+            .grayscale
+        else if (sassNameEql(name, "invert"))
+            .invert
+        else if (sassNameEql(name, "opacify"))
+            .opacify
+        else if (sassNameEql(name, "fade-in"))
+            .fade_in
+        else if (sassNameEql(name, "transparentize"))
+            .transparentize
+        else if (sassNameEql(name, "fade-out"))
+            .fade_out
+        else if (sassNameEql(name, "ie-hex-str"))
+            .ie_hex_str
         else if (sassNameEql(name, "calc"))
             .calculation
         else if (sassNameEql(name, "min"))
@@ -1073,6 +1118,22 @@ const Engine = struct {
                 arguments.items,
                 span,
             ),
+            .opacity => try self.callColorOpacity(raw, arguments.items, scope, span),
+            .ie_hex_str => try self.callIeHexStr(arguments.items, span),
+            .mix,
+            .lighten,
+            .darken,
+            .saturate,
+            .desaturate,
+            .adjust_hue,
+            .complement,
+            .grayscale,
+            .invert,
+            .opacify,
+            .fade_in,
+            .transparentize,
+            .fade_out,
+            => try self.callColorManipulation(builtin, raw, arguments.items, scope, span),
             .rgb,
             .rgba,
             .hsl,
@@ -1236,6 +1297,195 @@ const Engine = struct {
             } });
         }
         return self.values.own(.{ .number = .{ .value = value } });
+    }
+
+    fn callColorOpacity(
+        self: *Engine,
+        raw: []const u8,
+        arguments: []const *const native_value.Value,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "opacity() requires exactly one argument");
+            return error.InvalidExpression;
+        }
+        return switch (arguments[0].*) {
+            .color => |color| self.values.own(.{
+                .number = .{ .value = (try native_color.toRgb(color))[3] },
+            }),
+            .number => self.preserveColorFunction(raw, scope, span),
+            else => if (isDeferredColorValue(arguments[0].*))
+                self.preserveColorFunction(raw, scope, span)
+            else blk: {
+                try self.report(.type_mismatch, span, "opacity() requires a color or CSS filter amount");
+                break :blk error.InvalidExpression;
+            },
+        };
+    }
+
+    fn callIeHexStr(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1 or arguments[0].* != .color) {
+            try self.report(.type_mismatch, span, "ie-hex-str() requires exactly one color");
+            return error.InvalidExpression;
+        }
+        var buffer: [9]u8 = undefined;
+        return self.values.own(.{ .string = .{
+            .bytes = try native_color.serializeIeHex(arguments[0].color, &buffer),
+        } });
+    }
+
+    fn callColorManipulation(
+        self: *Engine,
+        builtin: Builtin,
+        raw: []const u8,
+        arguments: []const *const native_value.Value,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if ((builtin == .saturate or builtin == .grayscale or builtin == .invert) and
+            arguments.len == 1 and arguments[0].* != .color)
+        {
+            const css_filter = switch (arguments[0].*) {
+                .number => true,
+                else => isDeferredColorValue(arguments[0].*),
+            };
+            if (css_filter) return self.preserveColorFunction(raw, scope, span);
+        }
+
+        const result = switch (builtin) {
+            .mix => blk: {
+                if (arguments.len != 2 and arguments.len != 3) {
+                    try self.report(.invalid_operation, span, "mix() requires two colors and optional weight");
+                    return error.InvalidExpression;
+                }
+                const weight = if (arguments.len == 3)
+                    try self.legacyColorAmount(arguments[2].*, 0, 100, span)
+                else
+                    50;
+                break :blk try native_color.mix(
+                    try self.colorArgument(arguments[0].*, span),
+                    try self.colorArgument(arguments[1].*, span),
+                    weight,
+                );
+            },
+            .lighten, .darken, .saturate, .desaturate => blk: {
+                if (arguments.len != 2) {
+                    try self.report(.invalid_operation, span, "legacy Sass color adjustment requires two arguments");
+                    return error.InvalidExpression;
+                }
+                const color = try self.colorArgument(arguments[0].*, span);
+                var amount = try self.legacyColorAmount(arguments[1].*, 0, 100, span);
+                if (builtin == .darken or builtin == .desaturate) amount = -amount;
+                break :blk if (builtin == .lighten or builtin == .darken)
+                    try native_color.adjustLightness(color, amount)
+                else
+                    try native_color.adjustSaturation(color, amount);
+            },
+            .adjust_hue => blk: {
+                if (arguments.len != 2) {
+                    try self.report(.invalid_operation, span, "adjust-hue() requires a color and angle");
+                    return error.InvalidExpression;
+                }
+                break :blk try native_color.adjustHue(
+                    try self.colorArgument(arguments[0].*, span),
+                    try self.colorHue(arguments[1].*, span),
+                );
+            },
+            .complement => blk: {
+                if (arguments.len != 1) {
+                    try self.report(.invalid_operation, span, "complement() requires exactly one color");
+                    return error.InvalidExpression;
+                }
+                break :blk try native_color.adjustHue(
+                    try self.colorArgument(arguments[0].*, span),
+                    180,
+                );
+            },
+            .grayscale => blk: {
+                if (arguments.len != 1) {
+                    try self.report(.invalid_operation, span, "grayscale() requires exactly one color");
+                    return error.InvalidExpression;
+                }
+                break :blk try native_color.grayscale(
+                    try self.colorArgument(arguments[0].*, span),
+                );
+            },
+            .invert => blk: {
+                if (arguments.len != 1 and arguments.len != 2) {
+                    try self.report(.invalid_operation, span, "invert() requires a color and optional weight");
+                    return error.InvalidExpression;
+                }
+                const weight = if (arguments.len == 2)
+                    try self.legacyColorAmount(arguments[1].*, 0, 100, span)
+                else
+                    100;
+                break :blk try native_color.invert(
+                    try self.colorArgument(arguments[0].*, span),
+                    weight,
+                );
+            },
+            .opacify, .fade_in, .transparentize, .fade_out => blk: {
+                if (arguments.len != 2) {
+                    try self.report(.invalid_operation, span, "alpha adjustment requires a color and amount");
+                    return error.InvalidExpression;
+                }
+                var amount = try self.alphaAdjustmentAmount(arguments[1].*, span);
+                if (builtin == .transparentize or builtin == .fade_out) amount = -amount;
+                break :blk try native_color.adjustAlpha(
+                    try self.colorArgument(arguments[0].*, span),
+                    amount,
+                );
+            },
+            else => unreachable,
+        };
+        return self.values.own(.{ .color = result });
+    }
+
+    fn colorArgument(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        return switch (item) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "legacy Sass color function requires a color");
+                return error.InvalidExpression;
+            },
+        };
+    }
+
+    fn legacyColorAmount(
+        self: *Engine,
+        item: native_value.Value,
+        minimum: f64,
+        maximum: f64,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.value < minimum or number.value > maximum) {
+            try self.report(.invalid_operation, span, "legacy Sass color amount is outside its range");
+            return error.InvalidExpression;
+        }
+        return number.value;
+    }
+
+    fn alphaAdjustmentAmount(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.numerator_units.len != 0 or number.value < 0 or number.value > 1) {
+            try self.report(.invalid_operation, span, "legacy Sass alpha amount must be unitless from zero to one");
+            return error.InvalidExpression;
+        }
+        return number.value;
     }
 
     fn rgbChannel(

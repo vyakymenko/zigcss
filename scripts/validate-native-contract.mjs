@@ -137,6 +137,7 @@ const expectedImplementations = Object.freeze([
       'closed-named-colors',
       'color-space-equality',
       'color-channel-accessors',
+      'legacy-color-manipulation',
       'typed-collections',
       'collection-accessors',
       'logical-comparison',

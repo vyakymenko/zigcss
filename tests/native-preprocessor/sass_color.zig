@@ -65,3 +65,54 @@ test "native Sass legacy colors compare and expose channels across spaces" {
     try std.testing.expectApproxEqAbs(@as(f64, 40), channels[2], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 0.4), channels[3], 1e-10);
 }
+
+test "native Sass legacy color manipulation matches closed conversion rules" {
+    const base = color.parseLiteral("#123456").?;
+    const cases = [_]struct {
+        value: preprocessor.value.Color,
+        expected: []const u8,
+    }{
+        .{
+            .value = try color.adjustLightness(base, 10),
+            .expected = "rgb(26.8269230769,77.5,128.1730769231)",
+        },
+        .{
+            .value = try color.adjustLightness(base, -10),
+            .expected = "rgb(9.1730769231,26.5,43.8269230769)",
+        },
+        .{ .value = try color.adjustHue(base, 30), .expected = "#121256" },
+        .{ .value = try color.adjustHue(base, 180), .expected = "#563412" },
+        .{ .value = try color.grayscale(base), .expected = "#343434" },
+        .{ .value = try color.invert(base, 100), .expected = "#edcba9" },
+        .{ .value = try color.invert(base, 25), .expected = "rgb(72.75,89.75,106.75)" },
+        .{
+            .value = try color.invert(color.parseLiteral("red").?, 0.25),
+            .expected = "hsl(0,99.5%,50%)",
+        },
+        .{
+            .value = try color.mix(color.parseLiteral("red").?, color.parseLiteral("blue").?, 50),
+            .expected = "hsl(300,100%,25%)",
+        },
+        .{
+            .value = try color.mix(color.parseLiteral("red").?, color.parseLiteral("blue").?, 25),
+            .expected = "rgb(63.75,0,191.25)",
+        },
+        .{
+            .value = try color.adjustAlpha(try color.rgb(1, 2, 3, 0.4), 0.2),
+            .expected = "rgba(1,2,3,.6)",
+        },
+    };
+    for (cases) |case| {
+        var buffer: [color.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(case.expected, try color.serialize(case.value, &buffer, true));
+    }
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.mix(color.parseLiteral("red").?, color.parseLiteral("blue").?, 101),
+    );
+    var ie_buffer: [9]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "#66123456",
+        try color.serializeIeHex(try color.rgb(18, 52, 86, 0.4), &ie_buffer),
+    );
+}

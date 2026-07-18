@@ -267,6 +267,77 @@ pub fn equal(left: native_value.Color, right: native_value.Color) bool {
     return true;
 }
 
+pub fn mix(
+    first: native_value.Color,
+    second: native_value.Color,
+    weight: f64,
+) Error!native_value.Color {
+    if (!std.math.isFinite(weight) or weight < 0 or weight > 100) return error.InvalidColor;
+    const first_rgb = try toRgb(first);
+    const second_rgb = try toRgb(second);
+    const proportion = weight / 100;
+    const balance = proportion * 2 - 1;
+    const alpha_delta = first_rgb[3] - second_rgb[3];
+    const denominator = 1 + balance * alpha_delta;
+    const combined = if (approximatelyEqual(denominator, 0))
+        balance
+    else
+        (balance + alpha_delta) / denominator;
+    const first_weight = (combined + 1) / 2;
+    const second_weight = 1 - first_weight;
+    return rgb(
+        first_rgb[0] * first_weight + second_rgb[0] * second_weight,
+        first_rgb[1] * first_weight + second_rgb[1] * second_weight,
+        first_rgb[2] * first_weight + second_rgb[2] * second_weight,
+        first_rgb[3] * proportion + second_rgb[3] * (1 - proportion),
+    );
+}
+
+pub fn adjustLightness(input: native_value.Color, amount: f64) Error!native_value.Color {
+    if (!std.math.isFinite(amount)) return error.InvalidColor;
+    var channels = try toHsl(input);
+    channels[2] = clamp(channels[2] + amount, 0, 100);
+    return rgbFromChannels(hslToRgb(channels));
+}
+
+pub fn adjustSaturation(input: native_value.Color, amount: f64) Error!native_value.Color {
+    if (!std.math.isFinite(amount)) return error.InvalidColor;
+    var channels = try toHsl(input);
+    channels[1] = clamp(channels[1] + amount, 0, 100);
+    return rgbFromChannels(hslToRgb(channels));
+}
+
+pub fn adjustHue(input: native_value.Color, amount: f64) Error!native_value.Color {
+    if (!std.math.isFinite(amount)) return error.InvalidColor;
+    var channels = try toHsl(input);
+    channels[0] = normalizeHue(channels[0] + amount);
+    return rgbFromChannels(hslToRgb(channels));
+}
+
+pub fn grayscale(input: native_value.Color) Error!native_value.Color {
+    var channels = try toHsl(input);
+    channels[1] = 0;
+    return rgbFromChannels(hslToRgb(channels));
+}
+
+pub fn invert(input: native_value.Color, weight: f64) Error!native_value.Color {
+    const channels = try toRgb(input);
+    const inverted = try rgb(
+        255 - channels[0],
+        255 - channels[1],
+        255 - channels[2],
+        channels[3],
+    );
+    return mix(inverted, input, weight);
+}
+
+pub fn adjustAlpha(input: native_value.Color, amount: f64) Error!native_value.Color {
+    if (!std.math.isFinite(amount)) return error.InvalidColor;
+    var result = input;
+    result.channels[3] = clamp(result.channels[3] + amount, 0, 1);
+    return result;
+}
+
 pub fn serialize(
     input: native_value.Color,
     buffer: *[max_serialized_bytes]u8,
@@ -284,13 +355,13 @@ pub fn serialize(
         if (exactRgb(channels)) |exact| return serializeExact(exact, buffer);
     }
     if (input.space == .hwb and approximatelyEqual(input.channels[1] + input.channels[2], 100)) {
-        const grayscale = [4]f64{
+        const grayscale_channels = [4]f64{
             input.channels[0],
             0,
             input.channels[1],
             input.channels[3],
         };
-        return serializeFunctional(grayscale, "hsl", "hsla", buffer, minified, true);
+        return serializeFunctional(grayscale_channels, "hsl", "hsla", buffer, minified, true);
     }
 
     var rgb_buffer: [max_serialized_bytes]u8 = undefined;
@@ -312,13 +383,29 @@ pub fn serialize(
         minified,
         true,
     );
-    const selected = if (hsl_candidate.len < rgb_candidate.len)
+    const may_use_hsl = input.space == .hsl or
+        (input.space == .rgb and simpleHsl(hsl_channels));
+    const selected = if (may_use_hsl and hsl_candidate.len < rgb_candidate.len)
         hsl_candidate
     else
         rgb_candidate;
     var cursor: usize = 0;
     try append(buffer, &cursor, selected);
     return buffer[0..cursor];
+}
+
+pub fn serializeIeHex(input: native_value.Color, buffer: *[9]u8) Error![]const u8 {
+    const channels = try toRgb(input);
+    if (!allFinite(channels)) return error.InvalidColor;
+    const bytes = [4]u8{
+        @intFromFloat(@round(clamp(channels[3], 0, 1) * 255)),
+        @intFromFloat(@round(clamp(channels[0], 0, 255))),
+        @intFromFloat(@round(clamp(channels[1], 0, 255))),
+        @intFromFloat(@round(clamp(channels[2], 0, 255))),
+    };
+    buffer[0] = '#';
+    for (bytes, 0..) |byte, index| writeUpperHexByte(buffer[1 + index * 2 ..], byte);
+    return buffer;
 }
 
 fn parseHex(input: []const u8) ?native_value.Color {
@@ -352,6 +439,10 @@ fn parseHex(input: []const u8) ?native_value.Color {
 
 fn rgbUnchecked(red: f64, green: f64, blue: f64, alpha: f64) native_value.Color {
     return .{ .space = .rgb, .channels = .{ red, green, blue, alpha } };
+}
+
+fn rgbFromChannels(channels: [4]f64) Error!native_value.Color {
+    return rgb(channels[0], channels[1], channels[2], channels[3]);
 }
 
 fn hslToRgb(channels: [4]f64) [4]f64 {
@@ -448,6 +539,14 @@ fn exactRgb(channels: [4]f64) ?[3]u8 {
     return result;
 }
 
+fn simpleHsl(channels: [4]f64) bool {
+    for (channels[0..3]) |channel| {
+        const scaled = channel * 10_000;
+        if (!std.math.isFinite(scaled) or @abs(scaled - @round(scaled)) > 1e-7) return false;
+    }
+    return true;
+}
+
 fn shortestName(channels: [3]u8, hex_length: usize) ?[]const u8 {
     var result: ?[]const u8 = null;
     for (named_colors) |entry| {
@@ -493,6 +592,11 @@ fn compressible(value: u8) bool {
 fn writeHexByte(buffer: []u8, value: u8) void {
     buffer[0] = hexDigit(value >> 4);
     buffer[1] = hexDigit(value & 0x0f);
+}
+
+fn writeUpperHexByte(buffer: []u8, value: u8) void {
+    buffer[0] = "0123456789ABCDEF"[value >> 4];
+    buffer[1] = "0123456789ABCDEF"[value & 0x0f];
 }
 
 fn hexByte(high: u8, low: u8) u8 {

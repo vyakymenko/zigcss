@@ -513,6 +513,66 @@ test "native Sass preserves dynamic colors and rejects invalid static colors" {
     );
 }
 
+test "native Sass evaluates legacy color manipulation without a provider" {
+    const input =
+        \\.a {
+        \\  lighten: lighten(#123456, 10%);
+        \\  darken: darken(#123456, 10%);
+        \\  saturate: saturate(#669966, 20%);
+        \\  desaturate: desaturate(#669966, 20%);
+        \\  adjust-hue: adjust-hue(#123456, 30deg);
+        \\  complement: complement(#123456);
+        \\  grayscale-red: grayscale(red);
+        \\  grayscale-base: grayscale(#123456);
+        \\  invert: invert(#123456);
+        \\  invert-weighted: invert(#123456, 25%);
+        \\  mix: mix(red, blue);
+        \\  mix-weighted: mix(red, blue, 25%);
+        \\  mix-alpha: mix(rgba(255, 0, 0, .5), blue);
+        \\  opacify: opacify(rgba(1, 2, 3, .4), .2);
+        \\  fade-in: fade-in(rgba(1, 2, 3, .4), .2);
+        \\  transparentize: transparentize(rgba(1, 2, 3, .4), .2);
+        \\  fade-out: fade-out(rgba(1, 2, 3, .4), .2);
+        \\  opacity-channel: opacity(rgba(1, 2, 3, .4));
+        \\  filter-saturate: saturate(20%);
+        \\  filter-grayscale: grayscale(20%);
+        \\  filter-invert: invert(var(--amount));
+        \\  filter-opacity: opacity(20%);
+        \\  ie-hex: ie-hex-str(rgba(1, 2, 3, .4));
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "color-manipulation.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{lighten:rgb(26.8269230769,77.5,128.1730769231);darken:rgb(9.1730769231,26.5,43.8269230769);saturate:hsl(120,40%,50%);desaturate:hsl(0,0%,50%);adjust-hue:#121256;complement:#563412;grayscale-red:hsl(0,0%,50%);grayscale-base:#343434;invert:#edcba9;invert-weighted:rgb(72.75,89.75,106.75);mix:hsl(300,100%,25%);mix-weighted:rgb(63.75,0,191.25);mix-alpha:rgba(63.75,0,191.25,.75);opacify:rgba(1,2,3,.6);fade-in:rgba(1,2,3,.6);transparentize:rgba(1,2,3,.2);fade-out:rgba(1,2,3,.2);opacity-channel:.4;filter-saturate:saturate(20%);filter-grayscale:grayscale(20%);filter-invert:invert(var(--amount));filter-opacity:opacity(20%);ie-hex:#66010203}",
+        result.css(),
+    );
+}
+
+test "native Sass legacy color manipulation rejects unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "short-mix.scss", .input = ".a { color: mix(red); }" },
+        .{ .name = "mix-range.scss", .input = ".a { color: mix(red, blue, 101%); }" },
+        .{ .name = "lighten-range.scss", .input = ".a { color: lighten(red, 101%); }" },
+        .{ .name = "lighten-type.scss", .input = ".a { color: lighten(1, 10%); }" },
+        .{ .name = "hue-unit.scss", .input = ".a { color: adjust-hue(red, 1px); }" },
+        .{ .name = "complement-type.scss", .input = ".a { color: complement(1); }" },
+        .{ .name = "opacify-unit.scss", .input = ".a { color: opacify(red, 20%); }" },
+        .{ .name = "opacify-range.scss", .input = ".a { color: opacify(red, 2); }" },
+        .{ .name = "transparentize-type.scss", .input = ".a { color: transparentize(1, .2); }" },
+        .{ .name = "ie-hex-type.scss", .input = ".a { color: ie-hex-str(1); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass calculations reject invalid arity types syntax and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -711,6 +771,8 @@ fn exerciseAllocationFailures(
         \\  deferred-calc: calc(100% - $size);
         \\  color: rgba(hsl(.5turn, 100%, 50%), .4);
         \\  red-channel: red(#123456);
+        \\  mixed-color: mix(red, blue, 25%);
+        \\  adjusted-color: lighten(#123456, 10%);
         \\  &:hover { margin: $size + 1px; }
         \\}
     ;
@@ -731,7 +793,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231)}.card:hover{margin:3px}",
         result.css(),
     );
 }
