@@ -122,8 +122,13 @@ const Builtin = enum {
     list_join,
     list_zip,
     list_slash,
+    math_abs,
+    math_ceil,
     math_compatible,
+    math_floor,
     math_is_unitless,
+    math_percentage,
+    math_round,
     math_unit,
     meta_keywords,
     quote,
@@ -3574,6 +3579,45 @@ const Engine = struct {
         return self.values.own(.{ .boolean = result });
     }
 
+    fn callMathUnary(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "unary math function requires exactly one number");
+            return error.InvalidExpression;
+        }
+        var number = try self.mathNumberArgument(arguments[0].*, span);
+        try self.transaction.consumeOperations(1);
+        number.value = switch (builtin) {
+            .math_abs => @abs(number.value),
+            .math_ceil => @ceil(number.value),
+            .math_floor => @floor(number.value),
+            .math_round => @round(number.value),
+            .math_percentage => blk: {
+                if (number.numerator_units.len != 0 or number.denominator_units.len != 0) {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "math percentage() requires a unitless number",
+                    );
+                    return error.InvalidExpression;
+                }
+                const percentage = number.value * 100;
+                if (!std.math.isFinite(percentage)) {
+                    try self.report(.invalid_operation, span, "invalid math percentage() result");
+                    return error.InvalidNumber;
+                }
+                number.numerator_units = &.{"%"};
+                break :blk percentage;
+            },
+            else => unreachable,
+        };
+        return self.values.own(.{ .number = number });
+    }
+
     fn mathNumericArgument(
         self: *Engine,
         item: native_value.Value,
@@ -3780,10 +3824,20 @@ const Engine = struct {
             .list_join
         else if (sassNameEql(name, "zip"))
             .list_zip
+        else if (sassNameEql(name, "abs"))
+            .math_abs
+        else if (sassNameEql(name, "ceil"))
+            .math_ceil
         else if (sassNameEql(name, "comparable"))
             .math_compatible
+        else if (sassNameEql(name, "floor"))
+            .math_floor
         else if (sassNameEql(name, "unitless"))
             .math_is_unitless
+        else if (sassNameEql(name, "percentage"))
+            .math_percentage
+        else if (sassNameEql(name, "round"))
+            .math_round
         else if (sassNameEql(name, "unit"))
             .math_unit
         else if (sassNameEql(name, "quote"))
@@ -3941,8 +3995,13 @@ const Engine = struct {
             .list_join,
             .map_keys,
             .map_values,
+            .math_abs,
+            .math_ceil,
             .math_compatible,
+            .math_floor,
             .math_is_unitless,
+            .math_percentage,
+            .math_round,
             .math_unit,
             .meta_keywords,
             .red,
@@ -3969,6 +4028,7 @@ const Engine = struct {
             .ie_hex_str,
             => return try self.callFixedBuiltinRaw(
                 builtin,
+                module_builtin != null,
                 raw,
                 body,
                 ranges.items,
@@ -7160,6 +7220,7 @@ const Engine = struct {
     fn callFixedBuiltinRaw(
         self: *Engine,
         builtin: Builtin,
+        module_owned: bool,
         raw: []const u8,
         body: []const u8,
         ranges: []const ExpressionRange,
@@ -7194,6 +7255,12 @@ const Engine = struct {
                 .{ .name = "bracketed", .required = false },
             },
             .map_keys, .map_values => &.{.{ .name = "map" }},
+            .math_abs,
+            .math_ceil,
+            .math_floor,
+            .math_percentage,
+            .math_round,
+            => &.{.{ .name = "number" }},
             .math_compatible => &.{
                 .{ .name = "number1" },
                 .{ .name = "number2" },
@@ -7257,6 +7324,14 @@ const Engine = struct {
                 break;
             }
         }
+        // The global name also owns CSS round() calculations with a step and
+        // optional strategy. Preserve that existing deferred surface; the
+        // sass:math function and its unprefixed import remain strictly unary.
+        if (builtin == .math_round and !module_owned and !has_keyword and
+            (parsed.items.len == 2 or parsed.items.len == 3))
+        {
+            return self.preserveColorFunction(raw, scope, span);
+        }
         var bound = native_arguments.bindAlloc(
             self.allocator,
             parsed.items,
@@ -7269,7 +7344,15 @@ const Engine = struct {
         for (parsed.items, 0..) |argument, index| {
             const argument_raw = body[argument.value.start..argument.value.end];
             evaluated[index] = switch (builtin) {
-                .math_compatible, .math_is_unitless, .math_unit => try self.evaluateMathNumericArgument(
+                .math_abs,
+                .math_ceil,
+                .math_compatible,
+                .math_floor,
+                .math_is_unitless,
+                .math_percentage,
+                .math_round,
+                .math_unit,
+                => try self.evaluateMathNumericArgument(
                     argument_raw,
                     scope,
                     span,
@@ -7298,6 +7381,15 @@ const Engine = struct {
             }
         }
         const arguments = ordered[0..count];
+        // Global abs()/round() may defer an unquoted CSS calculation. Module
+        // calls are always Sass numeric functions and reject the same value.
+        if (!module_owned and !has_keyword and
+            (builtin == .math_abs or builtin == .math_round) and
+            arguments.len == 1 and arguments[0].* == .string and
+            !arguments[0].string.quoted)
+        {
+            return self.preserveColorFunction(raw, scope, span);
+        }
         const filter_conflict = builtin == .saturate or builtin == .grayscale or
             builtin == .invert or builtin == .opacity;
         if (has_keyword and filter_conflict and arguments.len == 1 and arguments[0].* != .color) {
@@ -7318,6 +7410,12 @@ const Engine = struct {
             .list_set_nth => self.callListSetNth(arguments, span),
             .list_join => self.callListJoin(arguments, span),
             .map_keys, .map_values => self.callMapEntries(builtin, arguments, span),
+            .math_abs,
+            .math_ceil,
+            .math_floor,
+            .math_percentage,
+            .math_round,
+            => self.callMathUnary(builtin, arguments, span),
             .math_compatible, .math_is_unitless => self.callMathUnitPredicate(
                 builtin,
                 arguments,
@@ -8467,8 +8565,13 @@ fn mapModuleBuiltin(name: []const u8) ?Builtin {
 }
 
 fn mathModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "abs")) return .math_abs;
+    if (sassNameEql(name, "ceil")) return .math_ceil;
     if (sassNameEql(name, "compatible")) return .math_compatible;
+    if (sassNameEql(name, "floor")) return .math_floor;
     if (sassNameEql(name, "is-unitless")) return .math_is_unitless;
+    if (sassNameEql(name, "percentage")) return .math_percentage;
+    if (sassNameEql(name, "round")) return .math_round;
     if (sassNameEql(name, "unit")) return .math_unit;
     return null;
 }

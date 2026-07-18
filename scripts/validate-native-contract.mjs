@@ -161,6 +161,7 @@ const expectedImplementations = Object.freeze([
       'built-in-list-slash',
       'built-in-math-unit-predicates',
       'built-in-math-unit-serialization',
+      'built-in-math-unary-numeric',
       'unicode-string-core',
       'legacy-string-builtins',
       'built-in-string-module-aliases',

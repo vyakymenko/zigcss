@@ -1484,6 +1484,194 @@ test "native Sass math unit serialization rejects unsafe arguments" {
     }
 }
 
+test "native Sass evaluates unary math functions without a provider" {
+    const input =
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$evaluations: 0;
+        \\@function stamp($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.a {
+        \\  abs: math.abs(-1.5px);
+        \\  abs-percent: math.abs(-2%);
+        \\  abs-compound-unit: math.unit(math.abs(-1px * 1s / 1foo));
+        \\  ceil: math.ceil(1.2px);
+        \\  ceil-negative: math.ceil(-1.8px);
+        \\  ceil-zero: math.ceil(-.1px);
+        \\  floor: math.floor(1.8s);
+        \\  floor-negative: math.floor(-1.2s);
+        \\  floor-zero: math.floor(.1s);
+        \\  round-low: math.round(1.49em);
+        \\  round-half: math.round(1.5em);
+        \\  round-negative-half: math.round(-1.5em);
+        \\  round-zero: math.round(-.49em);
+        \\  round-case: math.round(1.5PX);
+        \\  percentage: math.percentage(.125);
+        \\  percentage-negative: math.percentage(-.125);
+        \\  percentage-cancelled: math.percentage(1px / 1in);
+        \\  alias: numbers.ceil(2.1ms);
+        \\  star: floor(-2.1deg);
+        \\  named: math.round($number: stamp(2.5foo));
+        \\  evaluations: $evaluations;
+        \\  legacy-abs: abs(-2px);
+        \\  legacy-ceil: ceil(1.2px);
+        \\  legacy-floor: floor(1.8px);
+        \\  legacy-round: round(1.5px);
+        \\  legacy-percentage: percentage(.125);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "math-unary.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{abs:1.5px;abs-percent:2%;abs-compound-unit:\"px*s/foo\";ceil:2px;ceil-negative:-1px;ceil-zero:0px;floor:1s;floor-negative:-2s;floor-zero:0s;round-low:1em;round-half:2em;round-negative-half:-2em;round-zero:0em;round-case:2PX;percentage:12.5%;percentage-negative:-12.5%;percentage-cancelled:1.0416666667%;alias:3ms;star:-3deg;named:3foo;evaluations:1;legacy-abs:2px;legacy-ceil:2px;legacy-floor:1px;legacy-round:2px;legacy-percentage:12.5%}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:math" as m
+        \\.sass
+        \\  abs: m.abs(-1.5px)
+        \\  ceil: m.ceil(-1.2s)
+        \\  floor: m.floor(1.8em)
+        \\  round: m.round(-1.5deg)
+        \\  percentage: m.percentage(.25)
+        \\  global-abs: abs(-2foo)
+        \\  global-ceil: ceil(1.2foo)
+        \\  global-floor: floor(1.8foo)
+        \\  global-round: round(1.5foo)
+        \\  global-percentage: percentage(.25)
+    ;
+    var sass_result = try compile(std.testing.allocator, "math-unary.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{abs:1.5px;ceil:-1s;floor:1em;round:-2deg;percentage:25%;global-abs:2foo;global-ceil:2foo;global-floor:1foo;global-round:2foo;global-percentage:25%}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var css_result = try compile(
+        std.testing.allocator,
+        "math-unary-css-functions.scss",
+        ".plain { abs: abs(var(--size)); abs-name: abs(foo); round: round(var(--size), 1px); round-name: round(foo); }",
+        .scss,
+        .{},
+    );
+    defer css_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{abs:abs(var(--size));abs-name:abs(foo);round:round(var(--size),1px);round-name:round(foo)}",
+        css_result.css(),
+    );
+}
+
+test "native Sass unary math functions reject unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-unary-math-module.scss",
+            .input = ".a { value: math.abs(-1px); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-unary-math-namespace.scss",
+            .input = "@use \"sass:math\" as Math; .a { value: math.ceil(1.2px); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.abs();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-long.scss",
+            .input = "@use \"sass:math\"; $value: math.round(1.2px, 1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-string.scss",
+            .input = "@use \"sass:math\"; $value: math.abs(\"-1px\");",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-unquoted-string.scss",
+            .input = "@use \"sass:math\"; $value: math.abs(foo);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-list.scss",
+            .input = "@use \"sass:math\"; $value: math.ceil((1px, 2px));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-null.scss",
+            .input = "@use \"sass:math\"; $value: math.floor(null);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-color.scss",
+            .input = "@use \"sass:math\"; $value: math.round(red);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-unitful-percentage.scss",
+            .input = "@use \"sass:math\"; $value: math.percentage(1px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-overflowing-percentage.scss",
+            .input = "@use \"sass:math\"; $value: math.percentage(1e308);",
+            .expected = error.InvalidNumber,
+        },
+        .{
+            .name = "unary-math-unknown-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.abs($other: $undefined);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-duplicate-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.floor($number: 1.2px, $number: 2.3px);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unary-math-splat.scss",
+            .input = "@use \"sass:math\"; $args: (1px,); $value: math.abs($args...);",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "star-unary-math-css-value.scss",
+            .input = "@use \"sass:math\" as *; $value: abs(var(--size));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "legacy-ceil-css-value.scss",
+            .input = "$value: ceil(var(--size));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "legacy-abs-quoted-string.scss",
+            .input = "$value: abs(\"foo\");",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "legacy-percentage-css-value.scss",
+            .input = "$value: percentage(var(--size));",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass inspects callable keywords through the built-in meta module" {
     const input =
         \\@use "sass:meta";
@@ -4611,6 +4799,8 @@ fn exerciseAllocationFailures(
         \\$math-compatible: math.compatible($inch, 96px);
         \\$math-unitless: math.is-unitless($inch / 96px);
         \\$math-unit: math.unit($inch / 1s);
+        \\$math-round: math.round(1.5px);
+        \\$math-percentage: math.percentage(.125);
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
         \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
         \\@function allocation-target($left, $right: 0) { @return $left + $right; }
@@ -4654,6 +4844,8 @@ fn exerciseAllocationFailures(
         \\  math-compatible: $math-compatible;
         \\  math-unitless: $math-unitless;
         \\  math-unit: $math-unit;
+        \\  math-round: $math-round;
+        \\  math-percentage: $math-percentage;
         \\  reduced-calc: calc($size + 2px);
         \\  deferred-calc: calc(100% - $size);
         \\  color: rgba(hsl(.5turn, 100%, 50%), .4);
@@ -4708,7 +4900,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
