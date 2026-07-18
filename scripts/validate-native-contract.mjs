@@ -152,6 +152,7 @@ const expectedImplementations = Object.freeze([
       'collection-accessors',
       'logical-comparison',
       'lazy-conditional-emission',
+      'flow-control-variable-scope',
       'interpolation',
       'lexical-scope',
       'selector-nesting',

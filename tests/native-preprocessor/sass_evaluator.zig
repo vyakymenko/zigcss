@@ -1163,7 +1163,225 @@ test "native Sass lazily evaluates bounded conditional chains" {
     try std.testing.expectEqualStrings(".sass-branch{value:yes}", sass_result.css());
 }
 
-test "native Sass conditionals reject malformed chains and unimplemented flow mutation" {
+test "native Sass flow scopes update existing variables and confine fresh bindings" {
+    const input =
+        \\$root: 1;
+        \\$nullable: null;
+        \\$global-only: global;
+        \\@if true {
+        \\  $root: 2;
+        \\  $nullable: 3 !default;
+        \\  $fresh: branch;
+        \\  @if true {
+        \\    $root: 4;
+        \\    $fresh: nested;
+        \\    .inside { root: $root; fresh: $fresh; }
+        \\  }
+        \\  .outer { root: $root; fresh: $fresh; nullable: $nullable; }
+        \\}
+        \\.after { root: $root; nullable: $nullable; global-only: $global-only; }
+        \\.card {
+        \\  $local: 1;
+        \\  before: $local;
+        \\  @if true {
+        \\    $local: 2;
+        \\    $global-only: local;
+        \\    $new: branch;
+        \\    inside-local: $local;
+        \\    inside-global: $global-only;
+        \\    inside-new: $new;
+        \\    @if true {
+        \\      $local: 3;
+        \\      $new: nested;
+        \\      nested-local: $local;
+        \\      nested-new: $new;
+        \\    }
+        \\    after-nested-local: $local;
+        \\    after-nested-new: $new;
+        \\  }
+        \\  after: $local;
+        \\  inherited: $global-only;
+        \\}
+        \\.final { global-only: $global-only; }
+    ;
+    var result = try compile(std.testing.allocator, "flow-scope.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".inside{root:4;fresh:nested}.outer{root:4;fresh:nested;nullable:3}.after{root:4;nullable:3;global-only:global}.card{before:1;inside-local:2;inside-global:local;inside-new:branch;nested-local:3;nested-new:nested;after-nested-local:3;after-nested-new:nested;after:3;inherited:global}.final{global-only:global}",
+        result.css(),
+    );
+
+    const global_input =
+        \\$x: global;
+        \\$defaulted: 1;
+        \\.shadow {
+        \\  $x: local;
+        \\  @if true {
+        \\    $x: new !global;
+        \\    $defaulted: 2 !global !default;
+        \\  }
+        \\  local: $x;
+        \\  global-default: $defaulted;
+        \\}
+        \\.direct {
+        \\  $x: direct-local;
+        \\  $x: direct-global !global;
+        \\  local: $x;
+        \\}
+        \\.between { value: $x; }
+        \\.unshadowed {
+        \\  @if true { $x: final !global; }
+        \\  value: $x;
+        \\}
+        \\.result { x: $x; defaulted: $defaulted; }
+    ;
+    var global_result = try compile(
+        std.testing.allocator,
+        "flow-global.scss",
+        global_input,
+        .scss,
+        .{},
+    );
+    defer global_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".shadow{local:local;global-default:1}.direct{local:direct-local}.between{value:direct-global}.unshadowed{value:final}.result{x:final;defaulted:1}",
+        global_result.css(),
+    );
+
+    var ordered_global = try compile(
+        std.testing.allocator,
+        "flow-ordered-global.scss",
+        "$x: old; .a { @if true { $x: new !global; $x: local; inside: $x; } after: $x; } .b { value: $x; }",
+        .scss,
+        .{},
+    );
+    defer ordered_global.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{inside:local;after:new}.b{value:new}",
+        ordered_global.css(),
+    );
+
+    var nested_lexical = try compile(
+        std.testing.allocator,
+        "flow-nested-lexical.scss",
+        ".parent { $local: parent; .child { @if true { $local: changed; seen: $local; } after: $local; } parent: $local; }",
+        .scss,
+        .{},
+    );
+    defer nested_lexical.deinit();
+    try std.testing.expectEqualStrings(
+        ".parent .child{seen:changed;after:changed}.parent{parent:changed}",
+        nested_lexical.css(),
+    );
+
+    var nested_direct = try compile(
+        std.testing.allocator,
+        "flow-nested-direct.scss",
+        "@if true { $fresh: outer; .child { $fresh: direct; seen: $fresh; } .outer { value: $fresh; } }",
+        .scss,
+        .{},
+    );
+    defer nested_direct.deinit();
+    try std.testing.expectEqualStrings(
+        ".child{seen:direct}.outer{value:direct}",
+        nested_direct.css(),
+    );
+
+    var nested_global = try compile(
+        std.testing.allocator,
+        "flow-nested-global.scss",
+        "$x: old; @if true { .child { $x: new !global; local: $x; } .inside { value: $x; } } .after { value: $x; }",
+        .scss,
+        .{},
+    );
+    defer nested_global.deinit();
+    try std.testing.expectEqualStrings(
+        ".child{local:new}.inside{value:new}.after{value:new}",
+        nested_global.css(),
+    );
+
+    var new_global = try compile(
+        std.testing.allocator,
+        "flow-new-global.scss",
+        ".a { @if true { $created: local; $created: 2 !global; value: $created; } } .b { value: $created; }",
+        .scss,
+        .{},
+    );
+    defer new_global.deinit();
+    try std.testing.expectEqualStrings(".a{value:local}.b{value:2}", new_global.css());
+    try std.testing.expectEqual(@as(usize, 1), new_global.nativeDiagnostics().len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        new_global.nativeDiagnostics()[0].severity,
+    );
+
+    const indented =
+        \\$inline_size: 1
+        \\@if true
+        \\  $inline-size: 2
+        \\.sass-flow
+        \\  value: $inline_size
+    ;
+    var sass_result = try compile(std.testing.allocator, "flow-scope.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(".sass-flow{value:2}", sass_result.css());
+
+    var upstream_regression = try compile(
+        std.testing.allocator,
+        "flow-upstream-1250.scss",
+        "$a: global; b { @if true { @if true { $a: local; } } } c { d: $a; }",
+        .scss,
+        .{},
+    );
+    defer upstream_regression.deinit();
+    try std.testing.expectEqualStrings("c{d:global}", upstream_regression.css());
+}
+
+test "native Sass fresh flow variables do not escape their declaring branch" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "fresh-root-flow.scss", .input = "@if true { $new: 1; } .a { value: $new; }" },
+        .{ .name = "fresh-rule-flow.scss", .input = ".a { @if true { $new: 1; } value: $new; }" },
+        .{ .name = "fresh-nested-flow.scss", .input = "@if true { @if true { $new: 1; } .a { value: $new; } }" },
+        .{ .name = "fresh-nested-rule.scss", .input = ".parent { .child { $new: 1; } value: $new; }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.UndefinedVariable,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var scope_limits = sass_evaluator.Limits{};
+    scope_limits.environment.max_scopes = 2;
+    try std.testing.expectError(
+        error.ScopeLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "flow-scope-limit.scss",
+            "@if true { .a { value: yes; } }",
+            .scss,
+            scope_limits,
+        ),
+    );
+
+    var binding_limits = sass_evaluator.Limits{};
+    binding_limits.environment.max_bindings = 1;
+    try std.testing.expectError(
+        error.BindingLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "flow-binding-limit.scss",
+            "@if true { $fresh: value; }",
+            .scss,
+            binding_limits,
+        ),
+    );
+}
+
+test "native Sass conditionals reject malformed chains and unsupported selected directives" {
     const invalid = [_]struct {
         name: []const u8,
         input: []const u8,
@@ -1184,20 +1402,16 @@ test "native Sass conditionals reject malformed chains and unimplemented flow mu
         );
     }
 
-    const unsupported = [_]struct {
-        name: []const u8,
-        input: []const u8,
-    }{
-        .{ .name = "flow-variable-root.scss", .input = "$x: 1; @if true { $x: 2; } .a { value: $x; }" },
-        .{ .name = "flow-variable-rule.scss", .input = ".a { @if true { $x: 2; value: $x; } }" },
-        .{ .name = "selected-loop.scss", .input = "@if true { @for $i from 1 through 2 { .a { value: $i; } } }" },
-    };
-    for (unsupported) |case| {
-        try std.testing.expectError(
-            error.UnsupportedFeature,
-            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
-        );
-    }
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "selected-loop.scss",
+            "@if true { @for $i from 1 through 2 { .a { value: $i; } } }",
+            .scss,
+            .{},
+        ),
+    );
 
     var limits = sass_evaluator.Limits{};
     limits.max_evaluation_depth = 2;
@@ -1564,11 +1778,13 @@ fn exerciseAllocationFailures(
         \\$enabled: not false;
         \\$inch: 1in;
         \\.#{$name} {
+        \\  $flow: 1px;
         \\  width: $size * 3;
         \\  color: map-get($theme, tone);
         \\  gap: nth(map-get($theme, spaces), 2);
         \\  enabled: $enabled and true;
-        \\  @if $enabled { conditional: yes; }
+        \\  @if $enabled { $flow: 2px; $ephemeral: yes; conditional: $flow; ephemeral: $ephemeral; }
+        \\  flow-after: $flow;
         \\  converted: $inch + 96px;
         \\  cancelled: ($inch / 2.54cm);
         \\  reduced-calc: calc($size + 2px);
@@ -1612,7 +1828,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;conditional:yes;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;conditional:2px;ephemeral:yes;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

@@ -179,6 +179,19 @@ const ConditionalSelection = struct {
     block: ?native_syntax.NodeId,
 };
 
+const ScopeKind = enum {
+    global,
+    lexical,
+    flow,
+};
+
+const ScopeFrame = struct {
+    cursor: native_environment.ScopeId,
+    owned_markers: ?native_environment.ScopeId = null,
+    kind: ScopeKind,
+    parent: ?*ScopeFrame,
+};
+
 const ArithmeticProbe = union(enum) {
     none,
     numeric: Numeric,
@@ -262,15 +275,20 @@ const Engine = struct {
         }
         const children = self.document.children(self.document.root) catch
             return error.InvalidSassSyntax;
-        try self.executeRootChildren(children, &self.global_scope, 1, false);
+        var scope = ScopeFrame{
+            .cursor = self.global_scope,
+            .kind = .global,
+            .parent = null,
+        };
+        try self.executeRootChildren(children, &scope, 1);
+        self.global_scope = scope.cursor;
     }
 
     fn executeRootChildren(
         self: *Engine,
         children: []const native_syntax.NodeId,
-        scope: *native_environment.ScopeId,
+        scope: *ScopeFrame,
         depth: u16,
-        in_flow: bool,
     ) Error!void {
         if (depth > self.limits.max_evaluation_depth) {
             const span = if (children.len > 0)
@@ -291,28 +309,25 @@ const Engine = struct {
                         try self.report(.syntax, child.span, "top-level Sass declaration is not a variable");
                         return error.InvalidSassSyntax;
                     }
-                    if (in_flow) {
-                        try self.report(
-                            .unsupported_feature,
-                            child.span,
-                            "flow-control variable assignment is not implemented by the native evaluator yet",
-                        );
-                        return error.UnsupportedFeature;
-                    }
                     try self.assignVariable(child_id, scope);
                 },
-                .rule => try self.evaluateRule(child_id, null, scope.*, depth),
+                .rule => try self.evaluateRule(child_id, null, scope, depth),
                 .comment => try self.emitRootComment(child),
                 .conditional => {
                     const selection = try self.selectConditionalChain(
                         children,
                         index,
-                        scope.*,
+                        scope.cursor,
                     );
                     if (selection.block) |block_id| {
                         const block_children = self.document.children(block_id) catch
                             return error.InvalidSassSyntax;
-                        try self.executeRootChildren(block_children, scope, depth + 1, true);
+                        var branch_scope = try self.beginFlowScope(scope);
+                        try self.executeRootChildren(
+                            block_children,
+                            &branch_scope,
+                            depth + 1,
+                        );
                     }
                     index += selection.consumed;
                     continue;
@@ -342,7 +357,7 @@ const Engine = struct {
         self: *Engine,
         rule_id: native_syntax.NodeId,
         parents: ?*const SelectorList,
-        inherited_scope: native_environment.ScopeId,
+        inherited_scope: *ScopeFrame,
         depth: u16,
     ) Error!void {
         if (depth > self.limits.max_evaluation_depth) {
@@ -363,9 +378,13 @@ const Engine = struct {
             return error.InvalidSassSyntax;
         }
 
-        var selectors = try self.buildSelectors(selector_node.text.?, parents, inherited_scope);
+        var selectors = try self.buildSelectors(selector_node.text.?, parents, inherited_scope.cursor);
         defer selectors.deinit(self.allocator);
-        var scope = try self.environment.push(inherited_scope);
+        var scope = ScopeFrame{
+            .cursor = try self.environment.push(inherited_scope.cursor),
+            .kind = .lexical,
+            .parent = inherited_scope,
+        };
         var declarations: std.ArrayList(u8) = .empty;
         defer declarations.deinit(self.allocator);
 
@@ -378,7 +397,6 @@ const Engine = struct {
             &scope,
             &declarations,
             depth,
-            false,
         );
 
         try self.emitRuleChunk(rule.span, &selectors, &declarations);
@@ -389,10 +407,9 @@ const Engine = struct {
         children: []const native_syntax.NodeId,
         owner_span: native_source.Span,
         selectors: *const SelectorList,
-        scope: *native_environment.ScopeId,
+        scope: *ScopeFrame,
         declarations: *std.ArrayList(u8),
         depth: u16,
-        in_flow: bool,
     ) Error!void {
         if (depth > self.limits.max_evaluation_depth) {
             try self.report(.resource_limit, owner_span, "native Sass evaluation depth exceeded");
@@ -406,41 +423,39 @@ const Engine = struct {
             switch (child.kind) {
                 .declaration => {
                     if (try self.isVariableDeclaration(child_id)) {
-                        if (in_flow) {
-                            try self.report(
-                                .unsupported_feature,
-                                child.span,
-                                "flow-control variable assignment is not implemented by the native evaluator yet",
-                            );
-                            return error.UnsupportedFeature;
-                        }
                         try self.assignVariable(child_id, scope);
                     } else {
-                        try self.appendDeclaration(child_id, "", scope, declarations, depth);
+                        try self.appendDeclaration(
+                            child_id,
+                            "",
+                            scope,
+                            declarations,
+                            depth,
+                        );
                     }
                 },
                 .rule => {
                     try self.emitRuleChunk(owner_span, selectors, declarations);
-                    try self.evaluateRule(child_id, selectors, scope.*, depth + 1);
+                    try self.evaluateRule(child_id, selectors, scope, depth + 1);
                 },
                 .comment => try self.appendBlockComment(child, declarations),
                 .conditional => {
                     const selection = try self.selectConditionalChain(
                         children,
                         index,
-                        scope.*,
+                        scope.cursor,
                     );
                     if (selection.block) |block_id| {
                         const block_children = self.document.children(block_id) catch
                             return error.InvalidSassSyntax;
+                        var branch_scope = try self.beginFlowScope(scope);
                         try self.executeRuleChildren(
                             block_children,
                             owner_span,
                             selectors,
-                            scope,
+                            &branch_scope,
                             declarations,
                             depth + 1,
-                            true,
                         );
                     }
                     index += selection.consumed;
@@ -457,6 +472,18 @@ const Engine = struct {
             }
             index += 1;
         }
+    }
+
+    fn beginFlowScope(
+        self: *Engine,
+        parent_scope: *ScopeFrame,
+    ) Error!ScopeFrame {
+        return .{
+            .cursor = try self.environment.push(parent_scope.cursor),
+            .owned_markers = try self.environment.push(self.environment.root()),
+            .kind = .flow,
+            .parent = parent_scope,
+        };
     }
 
     fn selectConditionalChain(
@@ -649,7 +676,7 @@ const Engine = struct {
     fn assignVariable(
         self: *Engine,
         declaration_id: native_syntax.NodeId,
-        scope: *native_environment.ScopeId,
+        scope: *ScopeFrame,
     ) Error!void {
         const declaration = self.document.get(declaration_id) catch return error.InvalidSassSyntax;
         const children = self.document.children(declaration_id) catch return error.InvalidSassSyntax;
@@ -670,14 +697,20 @@ const Engine = struct {
         defer self.allocator.free(normalized);
         const expression_bytes = try self.sources.slice(expression_node.text.?);
         const assignment = try self.parseVariableAssignment(expression_bytes, expression_node.span);
-        const lookup_scope = if (assignment.global) self.global_scope else scope.*;
-        const existing = try self.environment.lookup(lookup_scope, normalized);
+        const existing = if (assignment.global)
+            try self.environment.lookup(self.global_scope, normalized)
+        else
+            try self.lookupVisibleVariable(scope.cursor, normalized);
         if (assignment.default) {
             if (existing) |item| {
                 if (item.* != .null_value) return;
             }
         }
-        const item = try self.evaluateExpressionBytes(assignment.value, scope.*, expression_node.span);
+        const item = try self.evaluateExpressionBytes(
+            assignment.value,
+            scope.cursor,
+            expression_node.span,
+        );
         if (assignment.global) {
             if (existing == null) {
                 try self.transaction.report(
@@ -688,16 +721,94 @@ const Engine = struct {
                     &.{},
                 );
             }
-            const is_global_cursor = scope == &self.global_scope;
-            self.global_scope = try self.environment.set(self.global_scope, normalized, item);
-            if (is_global_cursor) {
-                scope.* = self.global_scope;
-            } else {
-                scope.* = try self.environment.set(scope.*, normalized, item);
-            }
+            try self.assignGlobalVariable(scope, normalized, item);
         } else {
-            scope.* = try self.environment.set(scope.*, normalized, item);
+            try self.assignScopedVariable(scope, normalized, item);
         }
+    }
+
+    fn assignScopedVariable(
+        self: *Engine,
+        scope: *ScopeFrame,
+        name: []const u8,
+        item: *const native_value.Value,
+    ) Error!void {
+        if (scope.kind == .global) {
+            try self.assignGlobalVariable(scope, name, item);
+            return;
+        }
+        if (try self.updateExistingNonGlobalVariable(scope, name, item)) return;
+
+        if (!self.hasLexicalScope(scope) and
+            try self.environment.lookup(self.global_scope, name) != null)
+        {
+            try self.assignGlobalVariable(scope, name, item);
+            return;
+        }
+        try self.defineOwnedVariable(scope, name, item);
+    }
+
+    fn updateExistingNonGlobalVariable(
+        self: *Engine,
+        scope: *ScopeFrame,
+        name: []const u8,
+        item: *const native_value.Value,
+    ) Error!bool {
+        if (scope.kind == .global) return false;
+        if (try self.scopeOwnsVariable(scope, name)) {
+            scope.cursor = try self.environment.set(scope.cursor, name, item);
+            return true;
+        }
+
+        const parent = scope.parent orelse return false;
+        if (!try self.updateExistingNonGlobalVariable(parent, name, item)) return false;
+        scope.cursor = try self.environment.set(scope.cursor, name, item);
+        return true;
+    }
+
+    fn scopeOwnsVariable(
+        self: *Engine,
+        scope: *const ScopeFrame,
+        name: []const u8,
+    ) Error!bool {
+        const markers = scope.owned_markers orelse return false;
+        return try self.environment.lookupLocal(markers, name) != null;
+    }
+
+    fn defineOwnedVariable(
+        self: *Engine,
+        scope: *ScopeFrame,
+        name: []const u8,
+        item: *const native_value.Value,
+    ) Error!void {
+        scope.cursor = try self.environment.set(scope.cursor, name, item);
+        if (scope.owned_markers == null) {
+            scope.owned_markers = try self.environment.push(self.environment.root());
+        }
+        scope.owned_markers = try self.environment.define(scope.owned_markers.?, name, item);
+    }
+
+    fn assignGlobalVariable(
+        self: *Engine,
+        scope: *ScopeFrame,
+        name: []const u8,
+        item: *const native_value.Value,
+    ) Error!void {
+        self.global_scope = try self.environment.set(self.global_scope, name, item);
+        var root = scope;
+        while (root.parent) |parent| {
+            root = parent;
+        }
+        root.cursor = self.global_scope;
+    }
+
+    fn hasLexicalScope(self: *const Engine, scope: *const ScopeFrame) bool {
+        _ = self;
+        var cursor: ?*const ScopeFrame = scope;
+        while (cursor) |frame| : (cursor = frame.parent) {
+            if (frame.kind == .lexical) return true;
+        }
+        return false;
     }
 
     fn parseVariableAssignment(
@@ -769,7 +880,7 @@ const Engine = struct {
         self: *Engine,
         declaration_id: native_syntax.NodeId,
         prefix: []const u8,
-        scope: *native_environment.ScopeId,
+        scope: *ScopeFrame,
         output: *std.ArrayList(u8),
         depth: u16,
     ) Error!void {
@@ -789,7 +900,7 @@ const Engine = struct {
             try self.report(.syntax, declaration.span, "malformed Sass property name");
             return error.InvalidSassSyntax;
         }
-        const property = try self.renderTemplate(property_node.text.?, scope.*, false);
+        const property = try self.renderTemplate(property_node.text.?, scope.cursor, false);
         defer self.allocator.free(property);
         const trimmed_property = trimWhitespace(property);
         if (trimmed_property.len == 0) {
@@ -813,7 +924,7 @@ const Engine = struct {
 
         if (expression) |expression_span| {
             if (std.mem.startsWith(u8, trimmed_property, "--")) {
-                const rendered = try self.renderTemplate(expression_span, scope.*, false);
+                const rendered = try self.renderTemplate(expression_span, scope.cursor, false);
                 defer self.allocator.free(rendered);
                 try self.appendTemporary(output, prefix);
                 try self.appendTemporary(output, trimmed_property);
@@ -821,7 +932,7 @@ const Engine = struct {
                 try self.appendTemporary(output, trimWhitespace(rendered));
                 try self.appendTemporary(output, "; ");
             } else {
-                const item = try self.evaluateExpression(expression_span, scope.*);
+                const item = try self.evaluateExpression(expression_span, scope.cursor);
                 if (item.* != .null_value) {
                     try self.ensureCssValue(item.*, expression_span);
                     try self.appendTemporary(output, prefix);
@@ -3599,9 +3710,18 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         const normalized = try self.normalizeVariable(raw_name);
         defer self.allocator.free(normalized);
-        if (try self.environment.lookup(scope, normalized)) |item| return item;
+        if (try self.lookupVisibleVariable(scope, normalized)) |item| return item;
         try self.report(.undefined_variable, span, "undefined Sass variable");
         return error.UndefinedVariable;
+    }
+
+    fn lookupVisibleVariable(
+        self: *Engine,
+        scope: native_environment.ScopeId,
+        normalized: []const u8,
+    ) Error!?*const native_value.Value {
+        if (try self.environment.lookupNonGlobal(scope, normalized)) |item| return item;
+        return self.environment.lookup(self.global_scope, normalized);
     }
 
     fn normalizeVariable(self: *Engine, raw_name: []const u8) Error![]u8 {

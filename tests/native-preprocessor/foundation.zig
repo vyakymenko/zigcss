@@ -186,8 +186,14 @@ test "persistent lexical environments preserve snapshots and shadow deterministi
     const shadowed = try env.define(child, "x", two);
 
     try std.testing.expect((try env.lookup(defined, "x")).? == one);
+    try std.testing.expect((try env.lookupLocal(defined, "x")).? == one);
+    try std.testing.expect((try env.lookupNonGlobal(defined, "x")) == null);
     try std.testing.expect((try env.lookup(child, "x")).? == one);
+    try std.testing.expect((try env.lookupLocal(child, "x")) == null);
+    try std.testing.expect((try env.lookupNonGlobal(child, "x")) == null);
     try std.testing.expect((try env.lookup(shadowed, "x")).? == two);
+    try std.testing.expect((try env.lookupLocal(shadowed, "x")).? == two);
+    try std.testing.expect((try env.lookupNonGlobal(shadowed, "x")).? == two);
     try std.testing.expectEqual(defined, try env.pop(shadowed));
     try std.testing.expectError(error.DuplicateBinding, env.define(defined, "x", two));
     try std.testing.expectError(error.RootScope, env.pop(defined));
