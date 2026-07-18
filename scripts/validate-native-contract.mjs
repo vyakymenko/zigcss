@@ -138,6 +138,7 @@ const expectedImplementations = Object.freeze([
       'color-space-equality',
       'color-channel-accessors',
       'legacy-color-manipulation',
+      'keyword-color-transforms',
       'keyword-argument-binding',
       'unicode-string-core',
       'legacy-string-builtins',

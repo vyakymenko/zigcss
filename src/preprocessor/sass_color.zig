@@ -13,6 +13,26 @@ pub const Error = native_numeric.Error || error{
     SerializationLimitExceeded,
 };
 
+pub const TransformKind = enum {
+    adjust,
+    change,
+    scale,
+};
+
+pub const RgbTransform = struct {
+    red: ?f64 = null,
+    green: ?f64 = null,
+    blue: ?f64 = null,
+    alpha: ?f64 = null,
+};
+
+pub const HslTransform = struct {
+    hue: ?f64 = null,
+    saturation: ?f64 = null,
+    lightness: ?f64 = null,
+    alpha: ?f64 = null,
+};
+
 const NamedColor = struct {
     name: []const u8,
     red: u8,
@@ -338,11 +358,96 @@ pub fn adjustAlpha(input: native_value.Color, amount: f64) Error!native_value.Co
     return result;
 }
 
+pub fn transformRgb(
+    input: native_value.Color,
+    kind: TransformKind,
+    transform: RgbTransform,
+) Error!native_value.Color {
+    try validateOptionalChannels(.{
+        transform.red,
+        transform.green,
+        transform.blue,
+        transform.alpha,
+    });
+    const has_color_channel = transform.red != null or
+        transform.green != null or transform.blue != null;
+    if (!has_color_channel and transform.alpha == null) return input;
+
+    var result = input;
+    if (has_color_channel) {
+        var channels = try toRgb(input);
+        channels[0] = try transformBoundedChannel(channels[0], transform.red, kind, 255);
+        channels[1] = try transformBoundedChannel(channels[1], transform.green, kind, 255);
+        channels[2] = try transformBoundedChannel(channels[2], transform.blue, kind, 255);
+        result = .{ .space = .rgb, .channels = channels };
+    }
+    result.channels[3] = try transformAlpha(result.channels[3], transform.alpha, kind);
+    return result;
+}
+
+pub fn transformHsl(
+    input: native_value.Color,
+    kind: TransformKind,
+    transform: HslTransform,
+) Error!native_value.Color {
+    try validateOptionalChannels(.{
+        transform.hue,
+        transform.saturation,
+        transform.lightness,
+        transform.alpha,
+    });
+    if (kind == .scale and transform.hue != null) return error.InvalidColor;
+    const has_color_channel = transform.hue != null or
+        transform.saturation != null or transform.lightness != null;
+    if (!has_color_channel and transform.alpha == null) return input;
+
+    var result = input;
+    if (has_color_channel) {
+        var channels = try toHsl(input);
+        if (transform.hue) |value| {
+            channels[0] = normalizeHue(switch (kind) {
+                .adjust => channels[0] + value,
+                .change => value,
+                .scale => unreachable,
+            });
+        }
+        channels[1] = try transformUnboundedChannel(
+            channels[1],
+            transform.saturation,
+            kind,
+            100,
+        );
+        channels[2] = try transformUnboundedChannel(
+            channels[2],
+            transform.lightness,
+            kind,
+            100,
+        );
+        result = .{ .space = .hsl, .channels = channels };
+    }
+    result.channels[3] = try transformAlpha(result.channels[3], transform.alpha, kind);
+    return result;
+}
+
 pub fn serialize(
     input: native_value.Color,
     buffer: *[max_serialized_bytes]u8,
     minified: bool,
 ) Error![]const u8 {
+    if (input.space == .rgb and
+        (input.channels[0] < 0 or input.channels[0] > 255 or
+            input.channels[1] < 0 or input.channels[1] > 255 or
+            input.channels[2] < 0 or input.channels[2] > 255))
+    {
+        return serializeFunctional(
+            try toHsl(input),
+            "hsl",
+            "hsla",
+            buffer,
+            minified,
+            true,
+        );
+    }
     if (input.space == .hsl and
         (input.channels[1] < 0 or input.channels[1] > 100 or
             input.channels[2] < 0 or input.channels[2] > 100))
@@ -572,6 +677,62 @@ fn normalizeHue(value: f64) f64 {
 
 fn clamp(value: f64, minimum: f64, maximum: f64) f64 {
     return @max(minimum, @min(maximum, value));
+}
+
+fn transformBoundedChannel(
+    current: f64,
+    change: ?f64,
+    kind: TransformKind,
+    maximum: f64,
+) Error!f64 {
+    const value = change orelse return current;
+    return switch (kind) {
+        .adjust => clamp(current + value, 0, maximum),
+        .change => value,
+        .scale => try scaleChannel(current, value, maximum),
+    };
+}
+
+fn transformUnboundedChannel(
+    current: f64,
+    change: ?f64,
+    kind: TransformKind,
+    maximum: f64,
+) Error!f64 {
+    const value = change orelse return current;
+    return switch (kind) {
+        .adjust => current + value,
+        .change => value,
+        .scale => try scaleChannel(current, value, maximum),
+    };
+}
+
+fn transformAlpha(current: f64, change: ?f64, kind: TransformKind) Error!f64 {
+    const value = change orelse return current;
+    return switch (kind) {
+        .adjust => clamp(current + value, 0, 1),
+        .change => if (value >= 0 and value <= 1) value else error.InvalidColor,
+        .scale => try scaleChannel(current, value, 1),
+    };
+}
+
+fn scaleChannel(current: f64, percentage: f64, maximum: f64) Error!f64 {
+    if (!std.math.isFinite(percentage) or percentage < -100 or percentage > 100) {
+        return error.InvalidColor;
+    }
+    const proportion = percentage / 100;
+    return if (proportion > 0)
+        current + (maximum - current) * proportion
+    else
+        current + current * proportion;
+}
+
+fn validateOptionalChannels(channels: [4]?f64) Error!void {
+    for (channels) |channel| {
+        if (channel) |value| {
+            if (!std.math.isFinite(value)) return error.InvalidColor;
+        }
+    }
 }
 
 fn allFinite(channels: [4]f64) bool {

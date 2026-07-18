@@ -116,3 +116,57 @@ test "native Sass legacy color manipulation matches closed conversion rules" {
         try color.serializeIeHex(try color.rgb(18, 52, 86, 0.4), &ie_buffer),
     );
 }
+
+test "native Sass keyword color transforms own bounded RGB and HSL semantics" {
+    const base = color.parseLiteral("#123456").?;
+    const alpha_base = try color.rgb(18, 52, 86, 0.4);
+    const cases = [_]struct {
+        value: preprocessor.value.Color,
+        expected: []const u8,
+    }{
+        .{
+            .value = try color.transformRgb(base, .adjust, .{ .red = 10 }),
+            .expected = "#1c3456",
+        },
+        .{
+            .value = try color.transformRgb(base, .change, .{ .red = 256 }),
+            .expected = "hsl(350,100.9900990099%,60.3921568627%)",
+        },
+        .{
+            .value = try color.transformRgb(base, .scale, .{ .red = 50 }),
+            .expected = "rgb(136.5,52,86)",
+        },
+        .{
+            .value = try color.transformHsl(base, .adjust, .{ .hue = 30 }),
+            .expected = "#121256",
+        },
+        .{
+            .value = try color.transformHsl(base, .adjust, .{ .saturation = 20 }),
+            .expected = "rgb(7.6,52,96.4)",
+        },
+        .{
+            .value = try color.transformHsl(base, .change, .{ .saturation = 101 }),
+            .expected = "hsl(210,101%,20.3921568627%)",
+        },
+        .{
+            .value = try color.transformHsl(base, .scale, .{ .lightness = 50 }),
+            .expected = "hsl(210,65.3846153846%,60.1960784314%)",
+        },
+        .{
+            .value = try color.transformRgb(alpha_base, .adjust, .{ .alpha = 0.2 }),
+            .expected = "rgba(18,52,86,.6)",
+        },
+    };
+    for (cases) |case| {
+        var buffer: [color.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(case.expected, try color.serialize(case.value, &buffer, true));
+    }
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.transformRgb(base, .scale, .{ .red = 101 }),
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.transformHsl(base, .scale, .{ .saturation = -101 }),
+    );
+}

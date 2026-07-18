@@ -573,6 +573,94 @@ test "native Sass legacy color manipulation rejects unsafe arguments" {
     }
 }
 
+test "native Sass evaluates keyword color transforms without a provider" {
+    const input =
+        \\.a {
+        \\  unchanged: adjust-color(#123456);
+        \\  adjust-red: adjust-color(#123456, $red: 10);
+        \\  adjust-red-percent: adjust-color(#123456, $red: 10%);
+        \\  adjust-green: adjust-color(#123456, $green: 10);
+        \\  adjust-blue-percent: adjust-color(#123456, $blue: 10%);
+        \\  adjust-hue: adjust-color(#123456, $hue: 30deg);
+        \\  adjust-saturation: adjust-color(#123456, $saturation: 20%);
+        \\  adjust-lightness: adjust-color(#123456, $lightness: 20%);
+        \\  adjust-alpha: adjust-color(rgba(18, 52, 86, .4), $alpha: .2);
+        \\  adjust-alpha-percent: adjust-color(rgba(18, 52, 86, .4), $alpha: .2%);
+        \\  change-red: change-color(#123456, $red: 256);
+        \\  change-green-percent: change-color(#123456, $green: 10%);
+        \\  change-blue: change-color(#123456, $blue: 100);
+        \\  change-hue: change-color(#123456, $hue: .5turn);
+        \\  change-saturation: change-color(#123456, $saturation: 101%);
+        \\  change-alpha: change-color(#123456, $alpha: 50%);
+        \\  scale-red-up: scale-color(#123456, $red: 50%);
+        \\  scale-red-down: scale-color(#123456, $red: -50%);
+        \\  scale-green: scale-color(#123456, $green: 100%);
+        \\  scale-blue: scale-color(#123456, $blue: -100%);
+        \\  scale-saturation: scale-color(#123456, $saturation: 50%);
+        \\  scale-lightness: scale-color(#123456, $lightness: 50%);
+        \\  scale-alpha: scale-color(rgba(18, 52, 86, .4), $alpha: 50%);
+        \\  reordered: adjust-color($red: 10, $color: #123456);
+        \\  explicit-rgb: adjust-color(#123456, $red: 10, $space: rgb);
+        \\  explicit-hsl: adjust-color(#123456, $hue: 30deg, $space: hsl);
+        \\  hsl-to-rgb: adjust-color(hsl(210, 65%, 20%), $red: 10);
+        \\  hsl-in-place: adjust-color(hsl(210, 65%, 20%), $hue: 30deg);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "keyword-colors.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{unchanged:#123456;adjust-red:#1c3456;adjust-red-percent:rgb(43.5,52,86);adjust-green:#123e56;adjust-blue-percent:rgb(18,52,111.5);adjust-hue:#121256;adjust-saturation:rgb(7.6,52,96.4);adjust-lightness:rgb(35.6538461538,103,170.3461538462);adjust-alpha:rgba(18,52,86,.6);adjust-alpha-percent:rgba(18,52,86,.6);change-red:hsl(350,100.9900990099%,60.3921568627%);change-green-percent:rgb(18,25.5,86);change-blue:#123464;change-hue:#125656;change-saturation:hsl(210,101%,20.3921568627%);change-alpha:rgba(18,52,86,.5);scale-red-up:rgb(136.5,52,86);scale-red-down:#093456;scale-green:#12ff56;scale-blue:#123400;scale-saturation:#09345f;scale-lightness:hsl(210,65.3846153846%,60.1960784314%);scale-alpha:rgba(18,52,86,.7);reordered:#1c3456;explicit-rgb:#1c3456;explicit-hsl:#121256;hsl-to-rgb:rgb(27.85,51,84.15);hsl-in-place:hsl(240,65%,20%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass keyword color transforms reject unsafe and unimplemented calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "positional-adjust.scss", .input = ".a { color: adjust-color(#123456, 10); }" },
+        .{ .name = "mixed-adjust.scss", .input = ".a { color: adjust-color(#123456, $red: 1, $hue: 1deg); }" },
+        .{ .name = "wrong-space.scss", .input = ".a { color: adjust-color(#123456, $red: 1, $space: hsl); }" },
+        .{ .name = "unitless-scale.scss", .input = ".a { color: scale-color(#123456, $red: 50); }" },
+        .{ .name = "scale-range.scss", .input = ".a { color: scale-color(#123456, $red: 101%); }" },
+        .{ .name = "alpha-range.scss", .input = ".a { color: change-color(#123456, $alpha: 1.1); }" },
+        .{ .name = "channel-type.scss", .input = ".a { color: adjust-color(#123456, $red: blue); }" },
+        .{ .name = "channel-unit.scss", .input = ".a { color: adjust-color(#123456, $green: 1px); }" },
+        .{ .name = "scale-hue.scss", .input = ".a { color: scale-color(#123456, $hue: 10%); }" },
+        .{ .name = "quoted-space.scss", .input = ".a { color: adjust-color(#123456, $red: 1, $space: \"rgb\"); }" },
+        .{ .name = "duplicate-transform.scss", .input = ".a { color: adjust-color(#123456, $red: 1, $red: 2); }" },
+        .{ .name = "unknown-transform.scss", .input = ".a { color: adjust-color(#123456, $unknown: 1); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "modern-space.scss",
+            ".a { color: adjust-color(#123456, $lightness: 10%, $space: lab); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "transform-splat.scss",
+            ".a { color: adjust-color($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass evaluates bounded Unicode string functions without a provider" {
     const input =
         \\.a {
@@ -868,6 +956,7 @@ fn exerciseAllocationFailures(
         \\  red-channel: red(#123456);
         \\  mixed-color: mix(red, blue, 25%);
         \\  adjusted-color: lighten(#123456, 10%);
+        \\  keyword-color: adjust-color($red: 10, $color: #123456);
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
         \\  string-quote: quote(foo);
@@ -895,7 +984,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

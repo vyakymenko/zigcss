@@ -132,10 +132,18 @@ const Builtin = enum {
     transparentize,
     fade_out,
     ie_hex_str,
+    adjust_color,
+    change_color,
+    scale_color,
     calculation,
     minimum,
     maximum,
     clamp,
+};
+
+const ColorTransformSpace = enum {
+    rgb,
+    hsl,
 };
 
 const ArithmeticProbe = union(enum) {
@@ -1077,6 +1085,12 @@ const Engine = struct {
             .fade_out
         else if (sassNameEql(name, "ie-hex-str"))
             .ie_hex_str
+        else if (sassNameEql(name, "adjust-color"))
+            .adjust_color
+        else if (sassNameEql(name, "change-color"))
+            .change_color
+        else if (sassNameEql(name, "scale-color"))
+            .scale_color
         else if (sassNameEql(name, "calc"))
             .calculation
         else if (sassNameEql(name, "min"))
@@ -1114,6 +1128,13 @@ const Engine = struct {
             .to_upper_case,
             .to_lower_case,
             => return try self.callStringBuiltinRaw(
+                builtin,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
+            .adjust_color, .change_color, .scale_color => return try self.callColorTransformRaw(
                 builtin,
                 body,
                 ranges.items,
@@ -1183,6 +1204,9 @@ const Engine = struct {
             .transparentize,
             .fade_out,
             => try self.callColorManipulation(builtin, raw, arguments.items, scope, span),
+            .adjust_color,
+            .change_color,
+            .scale_color,
             .rgb,
             .rgba,
             .hsl,
@@ -1493,6 +1517,233 @@ const Engine = struct {
             else => unreachable,
         };
         return self.values.own(.{ .color = result });
+    }
+
+    fn callColorTransformRaw(
+        self: *Engine,
+        builtin: Builtin,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "red", .required = false },
+            .{ .name = "green", .required = false },
+            .{ .name = "blue", .required = false },
+            .{ .name = "hue", .required = false },
+            .{ .name = "saturation", .required = false },
+            .{ .name = "lightness", .required = false },
+            .{ .name = "alpha", .required = false },
+            .{ .name = "space", .required = false },
+        };
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            &parameters,
+            1,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        var values: [parameters.len]?*const native_value.Value = @splat(null);
+        for (bound.values, 0..) |value_range, index| {
+            const range = value_range orelse continue;
+            values[index] = try self.evaluateExpressionBytes(
+                body[range.start..range.end],
+                scope,
+                span,
+            );
+        }
+        const color = try self.colorArgument(values[0].?.*, span);
+        const kind: native_color.TransformKind = switch (builtin) {
+            .adjust_color => .adjust,
+            .change_color => .change,
+            .scale_color => .scale,
+            else => unreachable,
+        };
+        if (kind == .scale and values[4] != null) {
+            try self.report(.invalid_operation, span, "scale-color() cannot scale a hue channel");
+            return error.InvalidExpression;
+        }
+
+        const has_rgb = values[1] != null or values[2] != null or values[3] != null;
+        const has_hsl = values[4] != null or values[5] != null or values[6] != null;
+        const explicit_space = if (values[8]) |item|
+            try self.colorTransformSpace(item.*, span)
+        else
+            null;
+        const selected_space: ?ColorTransformSpace = if (explicit_space) |space| blk: {
+            if ((space == .rgb and has_hsl) or (space == .hsl and has_rgb)) {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass color channel does not belong to the selected color space",
+                );
+                return error.InvalidExpression;
+            }
+            break :blk space;
+        } else blk: {
+            if (has_rgb and has_hsl) {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass color transform cannot mix RGB and HSL channels",
+                );
+                return error.InvalidExpression;
+            }
+            break :blk if (has_rgb) .rgb else if (has_hsl) .hsl else null;
+        };
+        const alpha = if (values[7]) |item|
+            try self.colorTransformAlpha(item.*, kind, span)
+        else
+            null;
+
+        const result = if (selected_space == .hsl)
+            native_color.transformHsl(color, kind, .{
+                .hue = if (values[4]) |item| try self.colorHue(item.*, span) else null,
+                .saturation = if (values[5]) |item|
+                    try self.colorTransformPercentage(item.*, kind, span)
+                else
+                    null,
+                .lightness = if (values[6]) |item|
+                    try self.colorTransformPercentage(item.*, kind, span)
+                else
+                    null,
+                .alpha = alpha,
+            }) catch |err| return self.colorTransformFailure(err, span)
+        else
+            native_color.transformRgb(color, kind, .{
+                .red = if (values[1]) |item|
+                    try self.colorTransformRgbChannel(item.*, kind, span)
+                else
+                    null,
+                .green = if (values[2]) |item|
+                    try self.colorTransformRgbChannel(item.*, kind, span)
+                else
+                    null,
+                .blue = if (values[3]) |item|
+                    try self.colorTransformRgbChannel(item.*, kind, span)
+                else
+                    null,
+                .alpha = alpha,
+            }) catch |err| return self.colorTransformFailure(err, span);
+        return self.values.own(.{ .color = result });
+    }
+
+    fn colorTransformSpace(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!?ColorTransformSpace {
+        const string = switch (item) {
+            .string => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass color space must be an identifier");
+                return error.InvalidExpression;
+            },
+        };
+        if (string.quoted) {
+            try self.report(.type_mismatch, span, "native Sass color space must be an unquoted identifier");
+            return error.InvalidExpression;
+        }
+        if (std.mem.eql(u8, string.bytes, "rgb")) return .rgb;
+        if (std.mem.eql(u8, string.bytes, "hsl")) return .hsl;
+        const known_modern = [_][]const u8{
+            "hwb", "lab", "lch", "oklab", "oklch", "xyz", "xyz-d50", "xyz-d65",
+        };
+        for (known_modern) |name| {
+            if (std.mem.eql(u8, string.bytes, name)) {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass modern color transforms are not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            }
+        }
+        try self.report(.invalid_operation, span, "unknown native Sass color space");
+        return error.InvalidExpression;
+    }
+
+    fn colorTransformRgbChannel(
+        self: *Engine,
+        item: native_value.Value,
+        kind: native_color.TransformKind,
+        span: native_source.Span,
+    ) Error!f64 {
+        return if (kind == .scale)
+            self.colorScalePercentage(item, span)
+        else
+            self.rgbChannel(item, span);
+    }
+
+    fn colorTransformPercentage(
+        self: *Engine,
+        item: native_value.Value,
+        kind: native_color.TransformKind,
+        span: native_source.Span,
+    ) Error!f64 {
+        return if (kind == .scale)
+            self.colorScalePercentage(item, span)
+        else
+            self.colorPercentage(item, span);
+    }
+
+    fn colorTransformAlpha(
+        self: *Engine,
+        item: native_value.Value,
+        kind: native_color.TransformKind,
+        span: native_source.Span,
+    ) Error!f64 {
+        const value = switch (kind) {
+            .adjust => try self.colorPercentage(item, span),
+            .change => try self.colorAlpha(item, span),
+            .scale => try self.colorScalePercentage(item, span),
+        };
+        if (kind == .change and (value < 0 or value > 1)) {
+            try self.report(.invalid_operation, span, "changed color alpha must be between zero and one");
+            return error.InvalidExpression;
+        }
+        return value;
+    }
+
+    fn colorScalePercentage(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.numerator_units.len != 1 or
+            !std.mem.eql(u8, number.numerator_units[0], "%"))
+        {
+            try self.report(.type_mismatch, span, "scaled color channel requires a percentage");
+            return error.InvalidExpression;
+        }
+        if (number.value < -100 or number.value > 100) {
+            try self.report(.invalid_operation, span, "scaled color channel must be within -100% and 100%");
+            return error.InvalidExpression;
+        }
+        return number.value;
+    }
+
+    fn colorTransformFailure(
+        self: *Engine,
+        failure: native_color.Error,
+        span: native_source.Span,
+    ) Error {
+        if (failure != error.InvalidColor) return failure;
+        self.report(.invalid_operation, span, "invalid native Sass color transformation") catch |err| {
+            return err;
+        };
+        return error.InvalidExpression;
     }
 
     fn colorArgument(
