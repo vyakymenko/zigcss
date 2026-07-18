@@ -13,6 +13,17 @@ fn compile(
     mode: sass.Mode,
     limits: sass_evaluator.Limits,
 ) !evaluator.ValidatedCss {
+    return compileWithTransactionLimits(allocator, name, input, mode, limits, .{});
+}
+
+fn compileWithTransactionLimits(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    input: []const u8,
+    mode: sass.Mode,
+    semantic_limits: sass_evaluator.Limits,
+    transaction_limits: evaluator.Limits,
+) !evaluator.ValidatedCss {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
@@ -45,7 +56,7 @@ fn compile(
         allocator,
         &sources,
         &session,
-        .{},
+        transaction_limits,
         .{},
     );
     defer transaction.deinit();
@@ -54,7 +65,7 @@ fn compile(
         &sources,
         &document,
         &transaction,
-        limits,
+        semantic_limits,
     );
     return transaction.finish(.{ .format = .minified, .source_map = true });
 }
@@ -1381,7 +1392,208 @@ test "native Sass fresh flow variables do not escape their declaring branch" {
     );
 }
 
-test "native Sass conditionals reject malformed chains and unsupported selected directives" {
+test "native Sass executes bounded for each and while loops" {
+    const input =
+        \\$i: outer;
+        \\$sum: 0;
+        \\@for $i from 1 through 3 {
+        \\  $sum: $sum + $i;
+        \\  $first: $i !default;
+        \\  .for-#{$i} { sum: $sum; first: $first; }
+        \\}
+        \\@for $j from 3 to 1 { .down-#{$j} { value: $j; } }
+        \\@for $unit from 1px through 2px { .unit { value: $unit; } }
+        \\$range-start: 1;
+        \\$range-end: 3;
+        \\@for $expr from $range-start + 1 through $range-end { .expr-#{$expr} { value: $expr; } }
+        \\@each $item in a, b { .each-#{$item} { value: $item; } }
+        \\$items: p, q;
+        \\@each $item in $items { .variable-each-#{$item} { value: $item; } }
+        \\@each $key, $value in (one: 1, two: 2) { .map-#{$key} { value: $value; } }
+        \\@each $a, $b, $c in (x y, z) { .tuple-#{$a} { b: $b; c: $c; } }
+        \\$while: 0;
+        \\@while $while < 2 {
+        \\  $while: $while + 1;
+        \\  .while-#{$while} { value: $while; }
+        \\}
+        \\.after { i: $i; sum: $sum; while: $while; }
+    ;
+    var result = try compile(std.testing.allocator, "loops.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".for-1{sum:1;first:1}.for-2{sum:3;first:1}.for-3{sum:6;first:1}.down-3{value:3}.down-2{value:2}.unit{value:1px}.unit{value:2px}.expr-2{value:2}.expr-3{value:3}.each-a{value:a}.each-b{value:b}.variable-each-p{value:p}.variable-each-q{value:q}.map-one{value:1}.map-two{value:2}.tuple-x{b:y}.while-1{value:1}.while-2{value:2}.after{i:outer;sum:6;while:2}",
+        result.css(),
+    );
+
+    const indented =
+        \\$total: 0
+        \\@for $i from 1 through 2
+        \\  $total: $total + $i
+        \\  .sass-#{$i}
+        \\    value: $total
+        \\.result
+        \\  total: $total
+    ;
+    var sass_result = try compile(std.testing.allocator, "loops.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass-1{value:1}.sass-2{value:3}.result{total:3}",
+        sass_result.css(),
+    );
+
+    const nested =
+        \\.container {
+        \\  $sum: 0;
+        \\  @for $i from 1 through 2 {
+        \\    $sum: $sum + $i;
+        \\    item-#{$i}: $sum;
+        \\    .child-#{$i} { value: $sum; }
+        \\  }
+        \\  after: $sum;
+        \\}
+        \\@each $single in solo { .scalar { value: $single; } }
+        \\@each $pair in (one: 1) { .pair { value: $pair; first: nth($pair, 1); } }
+        \\@each $duplicate, $duplicate in (one: 1, two: 2) { .duplicate-#{$duplicate} { value: $duplicate; } }
+        \\@if true { @for $nested from 1 through 2 { .selected-#{$nested} { value: $nested; } } }
+        \\$counter: 0;
+        \\.global-while { @while $counter < 2 { $counter: $counter + 1; inside: $counter; } after: $counter; }
+        \\.local-while { $counter: 0; @while $counter < 2 { $counter: $counter + 1; inside: $counter; } after: $counter; }
+        \\.counter-final { value: $counter; }
+    ;
+    var nested_result = try compile(std.testing.allocator, "nested-loops.scss", nested, .scss, .{});
+    defer nested_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".container{item-1:1}.container .child-1{value:1}.container{item-2:3}.container .child-2{value:3}.container{after:3}.scalar{value:solo}.pair{value:one 1;first:one}.duplicate-1{value:1}.duplicate-2{value:2}.selected-1{value:1}.selected-2{value:2}.global-while{inside:1;inside:2;after:0}.local-while{inside:1;inside:2;after:2}.counter-final{value:0}",
+        nested_result.css(),
+    );
+}
+
+test "native Sass zero-iteration loops leave unsupported bodies lazy" {
+    const input =
+        \\@for $i from 1 to 1 { @include unavailable; }
+        \\@each $item in () { @include unavailable; }
+        \\@while false { @include unavailable; }
+        \\.after { value: yes; }
+    ;
+    var result = try compile(std.testing.allocator, "lazy-loops.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".after{value:yes}", result.css());
+}
+
+test "native Sass loops reject malformed unbounded and escaping evaluation" {
+    const malformed = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "for-missing-from.scss", .input = "@for $i 1 through 2 { .a { value: $i; } }" },
+        .{ .name = "for-missing-kind.scss", .input = "@for $i from 1 2 { .a { value: $i; } }" },
+        .{ .name = "for-missing-end.scss", .input = "@for $i from 1 through { .a { value: $i; } }" },
+        .{ .name = "each-missing-comma.scss", .input = "@each $a $b in (x y) { .a { value: $a; } }" },
+        .{ .name = "each-trailing-comma.scss", .input = "@each $a, in (x y) { .a { value: $a; } }" },
+        .{ .name = "each-missing-iterable.scss", .input = "@each $a in { .a { value: $a; } }" },
+        .{ .name = "while-missing-condition.scss", .input = "@while { .a { value: no; } }" },
+        .{ .name = "loop-missing-block.scss", .input = "@for $i from 1 through 2;" },
+    };
+    for (malformed) |case| {
+        try std.testing.expectError(
+            error.InvalidSassSyntax,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "for-string.scss", .input = "@for $i from red through blue { .a { value: $i; } }" },
+        .{ .name = "for-fraction.scss", .input = "@for $i from 1.5 through 2 { .a { value: $i; } }" },
+        .{ .name = "for-no-progress.scss", .input = "@for $i from 9007199254740992 through 9007199254740994 { .a { value: $i; } }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.IncompatibleUnits,
+        compile(
+            std.testing.allocator,
+            "for-incompatible.scss",
+            "@for $i from 1px through 2s { .a { value: $i; } }",
+            .scss,
+            .{},
+        ),
+    );
+
+    const escaping = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "for-variable-escape.scss", .input = "@for $i from 1 through 1 {} .a { value: $i; }" },
+        .{ .name = "each-variable-escape.scss", .input = "@each $item in one {} .a { value: $item; }" },
+        .{ .name = "while-variable-escape.scss", .input = "$i: 0; @while $i < 1 { $i: $i + 1; $fresh: yes; } .a { value: $fresh; }" },
+    };
+    for (escaping) |case| {
+        try std.testing.expectError(
+            error.UndefinedVariable,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var semantic_limits = sass_evaluator.Limits{};
+    semantic_limits.max_loop_variables = 1;
+    try std.testing.expectError(
+        error.LoopVariableLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "loop-variable-limit.scss",
+            "@each $a, $b in (x y) { .a { value: $a; } }",
+            .scss,
+            semantic_limits,
+        ),
+    );
+    semantic_limits = .{};
+    semantic_limits.max_evaluation_depth = 1;
+    try std.testing.expectError(
+        error.EvaluationDepthExceeded,
+        compile(
+            std.testing.allocator,
+            "loop-depth-limit.scss",
+            "@for $i from 1 through 1 { .a { value: $i; } }",
+            .scss,
+            semantic_limits,
+        ),
+    );
+    semantic_limits = .{};
+    semantic_limits.max_loop_variables = 0;
+    try std.testing.expectError(
+        error.InvalidLimits,
+        compile(
+            std.testing.allocator,
+            "invalid-loop-limits.scss",
+            ".a { value: yes; }",
+            .scss,
+            semantic_limits,
+        ),
+    );
+
+    var transaction_limits = evaluator.Limits{};
+    transaction_limits.budget.max_loop_iterations = 2;
+    try std.testing.expectError(
+        error.LoopLimitExceeded,
+        compileWithTransactionLimits(
+            std.testing.allocator,
+            "loop-iteration-limit.scss",
+            "@while true { .a { value: yes; } }",
+            .scss,
+            .{},
+            transaction_limits,
+        ),
+    );
+}
+
+test "native Sass conditionals reject malformed chains" {
     const invalid = [_]struct {
         name: []const u8,
         input: []const u8,
@@ -1401,17 +1613,6 @@ test "native Sass conditionals reject malformed chains and unsupported selected 
             compile(std.testing.allocator, case.name, case.input, .scss, .{}),
         );
     }
-
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
-            std.testing.allocator,
-            "selected-loop.scss",
-            "@if true { @for $i from 1 through 2 { .a { value: $i; } } }",
-            .scss,
-            .{},
-        ),
-    );
 
     var limits = sass_evaluator.Limits{};
     limits.max_evaluation_depth = 2;
@@ -1779,11 +1980,16 @@ fn exerciseAllocationFailures(
         \\$inch: 1in;
         \\.#{$name} {
         \\  $flow: 1px;
+        \\  $loop-total: 0;
         \\  width: $size * 3;
         \\  color: map-get($theme, tone);
         \\  gap: nth(map-get($theme, spaces), 2);
         \\  enabled: $enabled and true;
         \\  @if $enabled { $flow: 2px; $ephemeral: yes; conditional: $flow; ephemeral: $ephemeral; }
+        \\  @for $iteration from 1 through 1 { $loop-total: $loop-total + $iteration; for-loop: $iteration; }
+        \\  @each $entry in only { each-loop: $entry; }
+        \\  @while $loop-total < 2 { $loop-total: $loop-total + 1; while-loop: $loop-total; }
+        \\  loop-after: $loop-total;
         \\  flow-after: $flow;
         \\  converted: $inch + 96px;
         \\  cancelled: ($inch / 2.54cm);
@@ -1828,7 +2034,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;conditional:2px;ephemeral:yes;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

@@ -59,6 +59,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('legacy-string-builtins'), true)
   assert.equal(sassCore.capabilities.includes('lazy-conditional-emission'), true)
   assert.equal(sassCore.capabilities.includes('flow-control-variable-scope'), true)
+  assert.equal(sassCore.capabilities.includes('bounded-control-flow-loops'), true)
   assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_color.zig'), true)
   assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_arguments.zig'), true)
   assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_string.zig'), true)

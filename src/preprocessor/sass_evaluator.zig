@@ -20,6 +20,7 @@ const hard_selector_bytes = 20 * 1024 * 1024;
 const hard_temporary_bytes = 20 * 1024 * 1024;
 const hard_expression_tokens = 1_000_000;
 const hard_function_arguments = 65_536;
+const hard_loop_variables = 65_536;
 const hard_evaluation_depth: u16 = 256;
 
 pub const Limits = struct {
@@ -30,6 +31,7 @@ pub const Limits = struct {
     max_temporary_bytes: usize = 10 * 1024 * 1024,
     max_expression_tokens: usize = 200_000,
     max_function_arguments: usize = 4_096,
+    max_loop_variables: usize = 4_096,
     max_evaluation_depth: u16 = 128,
 };
 
@@ -47,6 +49,7 @@ pub const Error = native_evaluator.Error ||
     InvalidExpression,
     InvalidLimits,
     InvalidSassSyntax,
+    LoopVariableLimitExceeded,
     SelectorLimitExceeded,
     TemporaryLimitExceeded,
     UndefinedVariable,
@@ -192,6 +195,34 @@ const ScopeFrame = struct {
     parent: ?*ScopeFrame,
 };
 
+const LoopBodyContext = union(enum) {
+    root,
+    rule: struct {
+        owner_span: native_source.Span,
+        selectors: *const SelectorList,
+        declarations: *std.ArrayList(u8),
+    },
+};
+
+const ParsedForLoop = struct {
+    name: []u8,
+    start: []const u8,
+    end: []const u8,
+    inclusive: bool,
+};
+
+const ParsedEachLoop = struct {
+    allocator: std.mem.Allocator,
+    names: [][]u8,
+    iterable: []const u8,
+
+    fn deinit(self: *ParsedEachLoop) void {
+        for (self.names) |name| self.allocator.free(name);
+        if (self.names.len > 0) self.allocator.free(self.names);
+        self.* = undefined;
+    }
+};
+
 const ArithmeticProbe = union(enum) {
     none,
     numeric: Numeric,
@@ -332,6 +363,7 @@ const Engine = struct {
                     index += selection.consumed;
                     continue;
                 },
+                .loop => try self.executeLoop(child_id, scope, depth, .root),
                 else => {
                     try self.report(
                         .unsupported_feature,
@@ -461,6 +493,11 @@ const Engine = struct {
                     index += selection.consumed;
                     continue;
                 },
+                .loop => try self.executeLoop(child_id, scope, depth, .{ .rule = .{
+                    .owner_span = owner_span,
+                    .selectors = selectors,
+                    .declarations = declarations,
+                } }),
                 else => {
                     try self.report(
                         .unsupported_feature,
@@ -483,6 +520,432 @@ const Engine = struct {
             .owned_markers = try self.environment.push(self.environment.root()),
             .kind = .flow,
             .parent = parent_scope,
+        };
+    }
+
+    fn executeLoop(
+        self: *Engine,
+        loop_id: native_syntax.NodeId,
+        parent_scope: *ScopeFrame,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        const loop_node = self.document.get(loop_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(loop_id) catch return error.InvalidSassSyntax;
+        if (loop_node.kind != .loop or loop_node.text == null or children.len != 2) {
+            try self.report(.syntax, loop_node.span, "malformed native Sass loop directive");
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null or
+            block_node.kind != .block)
+        {
+            try self.report(.syntax, loop_node.span, "native Sass loop requires a prelude and block");
+            return error.InvalidSassSyntax;
+        }
+        const keyword = try self.sources.slice(loop_node.text.?);
+        const prelude = try self.sources.slice(prelude_node.text.?);
+        const body = self.document.children(children[1]) catch return error.InvalidSassSyntax;
+        if (std.ascii.eqlIgnoreCase(keyword, "@for")) {
+            try self.executeForLoop(prelude, prelude_node.span, body, parent_scope, depth, context);
+        } else if (std.ascii.eqlIgnoreCase(keyword, "@each")) {
+            try self.executeEachLoop(prelude, prelude_node.span, body, parent_scope, depth, context);
+        } else if (std.ascii.eqlIgnoreCase(keyword, "@while")) {
+            try self.executeWhileLoop(prelude, prelude_node.span, body, parent_scope, depth, context);
+        } else {
+            try self.report(.syntax, loop_node.span, "unknown native Sass loop directive");
+            return error.InvalidSassSyntax;
+        }
+    }
+
+    fn executeForLoop(
+        self: *Engine,
+        prelude: []const u8,
+        span: native_source.Span,
+        body: []const native_syntax.NodeId,
+        parent_scope: *ScopeFrame,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        const parsed = try self.parseForLoop(prelude, span);
+        defer self.allocator.free(parsed.name);
+        const start_value = try self.evaluateExpressionBytes(parsed.start, parent_scope.cursor, span);
+        const end_value = try self.evaluateExpressionBytes(parsed.end, parent_scope.cursor, span);
+        var current = try self.requireLoopInteger(start_value.*, span);
+        const end = try self.requireLoopInteger(end_value.*, span);
+        const initial_order = try self.compareLoopNumbers(current, end, span);
+        const descending = initial_order == .greater;
+        var loop_scope = try self.beginFlowScope(parent_scope);
+
+        while (true) {
+            const ordering = try self.compareLoopNumbers(current, end, span);
+            const execute = if (descending)
+                if (parsed.inclusive) ordering != .less else ordering == .greater
+            else if (parsed.inclusive)
+                ordering != .greater
+            else
+                ordering == .less;
+            if (!execute) break;
+
+            try self.transaction.consumeLoopIterations(1);
+            var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+            var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+            const item = try self.values.own(.{ .number = try current.toNumber(
+                &numerator,
+                &denominator,
+            ) });
+            try self.assignOwnedVariable(&loop_scope, parsed.name, item);
+            try self.executeLoopBody(body, &loop_scope, depth + 1, context);
+            if (parsed.inclusive and ordering == .equal) break;
+
+            const step: f64 = if (descending) -1 else 1;
+            const next = current.value + step;
+            if (!std.math.isFinite(next) or next == current.value) {
+                try self.report(.invalid_operation, span, "native Sass @for range cannot advance");
+                return error.InvalidExpression;
+            }
+            current.value = next;
+        }
+    }
+
+    fn executeEachLoop(
+        self: *Engine,
+        prelude: []const u8,
+        span: native_source.Span,
+        body: []const native_syntax.NodeId,
+        parent_scope: *ScopeFrame,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        var parsed = try self.parseEachLoop(prelude, span);
+        defer parsed.deinit();
+        const iterable = try self.evaluateExpressionBytes(parsed.iterable, parent_scope.cursor, span);
+        var loop_scope = try self.beginFlowScope(parent_scope);
+        switch (iterable.*) {
+            .list => |list| {
+                for (list.items, 0..) |_, index| {
+                    try self.executeEachIteration(
+                        &loop_scope,
+                        parsed.names,
+                        &list.items[index],
+                        null,
+                        body,
+                        depth,
+                        context,
+                    );
+                }
+            },
+            .map => |map| {
+                for (map.entries, 0..) |_, index| {
+                    try self.executeEachIteration(
+                        &loop_scope,
+                        parsed.names,
+                        null,
+                        &map.entries[index],
+                        body,
+                        depth,
+                        context,
+                    );
+                }
+            },
+            else => try self.executeEachIteration(
+                &loop_scope,
+                parsed.names,
+                iterable,
+                null,
+                body,
+                depth,
+                context,
+            ),
+        }
+    }
+
+    fn executeEachIteration(
+        self: *Engine,
+        loop_scope: *ScopeFrame,
+        names: []const []u8,
+        item: ?*const native_value.Value,
+        map_entry: ?*const native_value.Entry,
+        body: []const native_syntax.NodeId,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        try self.transaction.consumeLoopIterations(1);
+        if (names.len == 1 and map_entry != null) {
+            const entry = map_entry.?;
+            const pair = [_]native_value.Value{ entry.key, entry.value };
+            const pair_value = try self.values.own(.{ .list = .{
+                .items = &pair,
+                .separator = .space,
+            } });
+            try self.assignOwnedVariable(loop_scope, names[0], pair_value);
+        } else {
+            var null_value: ?*const native_value.Value = null;
+            for (names, 0..) |name, index| {
+                const value = if (map_entry) |entry|
+                    if (index == 0) &entry.key else if (index == 1) &entry.value else null
+                else if (item) |single|
+                    switch (single.*) {
+                        .list => |list| if (index < list.items.len) &list.items[index] else null,
+                        else => if (index == 0) single else null,
+                    }
+                else
+                    null;
+                if (value) |present| {
+                    try self.assignOwnedVariable(loop_scope, name, present);
+                } else {
+                    if (null_value == null) {
+                        null_value = try self.values.own(.{ .null_value = {} });
+                    }
+                    try self.assignOwnedVariable(loop_scope, name, null_value.?);
+                }
+            }
+        }
+        try self.executeLoopBody(body, loop_scope, depth + 1, context);
+    }
+
+    fn executeWhileLoop(
+        self: *Engine,
+        prelude: []const u8,
+        span: native_source.Span,
+        body: []const native_syntax.NodeId,
+        parent_scope: *ScopeFrame,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        if (trimWhitespace(prelude).len == 0) {
+            try self.report(.syntax, span, "native Sass @while requires a condition");
+            return error.InvalidSassSyntax;
+        }
+        var loop_scope = try self.beginFlowScope(parent_scope);
+        while (true) {
+            const condition = try self.evaluateExpressionBytes(prelude, loop_scope.cursor, span);
+            if (!sassTruthy(condition.*)) break;
+            try self.transaction.consumeLoopIterations(1);
+            try self.executeLoopBody(body, &loop_scope, depth + 1, context);
+        }
+    }
+
+    fn executeLoopBody(
+        self: *Engine,
+        body: []const native_syntax.NodeId,
+        scope: *ScopeFrame,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        switch (context) {
+            .root => try self.executeRootChildren(body, scope, depth),
+            .rule => |rule| try self.executeRuleChildren(
+                body,
+                rule.owner_span,
+                rule.selectors,
+                scope,
+                rule.declarations,
+                depth,
+            ),
+        }
+    }
+
+    fn requireLoopInteger(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!Numeric {
+        const number = switch (item) {
+            .number => |number| number,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass @for bounds must be integers");
+                return error.InvalidExpression;
+            },
+        };
+        if (!std.math.isFinite(number.value) or @floor(number.value) != number.value) {
+            try self.report(.invalid_operation, span, "native Sass @for bounds must be integers");
+            return error.InvalidExpression;
+        }
+        return native_numeric.Numeric.fromNumber(number);
+    }
+
+    fn compareLoopNumbers(
+        self: *Engine,
+        left: Numeric,
+        right: Numeric,
+        span: native_source.Span,
+    ) Error!native_numeric.Ordering {
+        return native_numeric.compare(left, right) catch |err| {
+            try self.report(.invalid_operation, span, "native Sass @for bounds use incompatible units");
+            return err;
+        };
+    }
+
+    fn assignOwnedVariable(
+        self: *Engine,
+        scope: *ScopeFrame,
+        name: []const u8,
+        item: *const native_value.Value,
+    ) Error!void {
+        if (try self.scopeOwnsVariable(scope, name)) {
+            scope.cursor = try self.environment.set(scope.cursor, name, item);
+        } else {
+            try self.defineOwnedVariable(scope, name, item);
+        }
+    }
+
+    fn parseForLoop(
+        self: *Engine,
+        prelude: []const u8,
+        span: native_source.Span,
+    ) Error!ParsedForLoop {
+        var options = native_lexer.Options{};
+        options.max_input_bytes = @max(prelude.len, 1);
+        options.max_tokens = self.limits.max_expression_tokens;
+        const tokens = try native_lexer.tokenizeAlloc(self.allocator, prelude, .scss, options);
+        defer self.allocator.free(tokens);
+
+        var cursor: usize = 0;
+        while (cursor < tokens.len and isExpressionTrivia(tokens[cursor].kind)) cursor += 1;
+        if (cursor >= tokens.len or tokens[cursor].kind != .variable) {
+            try self.report(.syntax, span, "native Sass @for requires one loop variable");
+            return error.InvalidSassSyntax;
+        }
+        const name = try self.normalizeVariable(tokens[cursor].raw(prelude));
+        errdefer self.allocator.free(name);
+        cursor += 1;
+        while (cursor < tokens.len and isExpressionTrivia(tokens[cursor].kind)) cursor += 1;
+        if (cursor >= tokens.len or tokens[cursor].kind != .identifier or
+            !std.ascii.eqlIgnoreCase(tokens[cursor].raw(prelude), "from"))
+        {
+            try self.report(.syntax, span, "native Sass @for requires 'from'");
+            return error.InvalidSassSyntax;
+        }
+        cursor += 1;
+
+        var start_offset: ?u32 = null;
+        var start_end: u32 = 0;
+        var separator: ?native_lexer.Token = null;
+        var inclusive = false;
+        var nesting: usize = 0;
+        while (cursor < tokens.len) : (cursor += 1) {
+            const token = tokens[cursor];
+            if (token.kind == .eof) break;
+            if (isExpressionTrivia(token.kind)) continue;
+            if (nesting == 0 and token.kind == .identifier and start_offset != null) {
+                const word = token.raw(prelude);
+                if (std.ascii.eqlIgnoreCase(word, "through") or
+                    std.ascii.eqlIgnoreCase(word, "to"))
+                {
+                    separator = token;
+                    inclusive = std.ascii.eqlIgnoreCase(word, "through");
+                    cursor += 1;
+                    break;
+                }
+            }
+            if (start_offset == null) start_offset = token.span.start;
+            start_end = token.span.end;
+            switch (token.kind) {
+                .open_paren, .open_square, .open_curly, .interpolation_start => nesting += 1,
+                .close_paren, .close_square, .close_curly, .interpolation_end => {
+                    if (nesting > 0) nesting -= 1;
+                },
+                else => {},
+            }
+        }
+        if (start_offset == null or separator == null) {
+            try self.report(.syntax, span, "native Sass @for requires 'to' or 'through'");
+            return error.InvalidSassSyntax;
+        }
+
+        var end_offset: ?u32 = null;
+        var end_end: u32 = 0;
+        while (cursor < tokens.len) : (cursor += 1) {
+            const token = tokens[cursor];
+            if (token.kind == .eof) break;
+            if (isExpressionTrivia(token.kind)) continue;
+            if (end_offset == null) end_offset = token.span.start;
+            end_end = token.span.end;
+        }
+        if (end_offset == null) {
+            try self.report(.syntax, span, "native Sass @for range is missing its end");
+            return error.InvalidSassSyntax;
+        }
+        return .{
+            .name = name,
+            .start = trimWhitespace(prelude[start_offset.?..start_end]),
+            .end = trimWhitespace(prelude[end_offset.?..end_end]),
+            .inclusive = inclusive,
+        };
+    }
+
+    fn parseEachLoop(
+        self: *Engine,
+        prelude: []const u8,
+        span: native_source.Span,
+    ) Error!ParsedEachLoop {
+        var options = native_lexer.Options{};
+        options.max_input_bytes = @max(prelude.len, 1);
+        options.max_tokens = self.limits.max_expression_tokens;
+        const tokens = try native_lexer.tokenizeAlloc(self.allocator, prelude, .scss, options);
+        defer self.allocator.free(tokens);
+
+        var names: std.ArrayList([]u8) = .empty;
+        errdefer {
+            for (names.items) |name| self.allocator.free(name);
+            names.deinit(self.allocator);
+        }
+        var cursor: usize = 0;
+        var found_in = false;
+        while (true) {
+            while (cursor < tokens.len and isExpressionTrivia(tokens[cursor].kind)) cursor += 1;
+            if (cursor >= tokens.len or tokens[cursor].kind != .variable) {
+                try self.report(.syntax, span, "native Sass @each requires comma-separated variables");
+                return error.InvalidSassSyntax;
+            }
+            if (names.items.len >= self.limits.max_loop_variables) {
+                try self.report(.resource_limit, span, "native Sass loop variable limit exceeded");
+                return error.LoopVariableLimitExceeded;
+            }
+            const name = try self.normalizeVariable(tokens[cursor].raw(prelude));
+            names.append(self.allocator, name) catch |err| {
+                self.allocator.free(name);
+                return err;
+            };
+            cursor += 1;
+            while (cursor < tokens.len and isExpressionTrivia(tokens[cursor].kind)) cursor += 1;
+            if (cursor < tokens.len and tokens[cursor].kind == .identifier and
+                std.ascii.eqlIgnoreCase(tokens[cursor].raw(prelude), "in"))
+            {
+                found_in = true;
+                cursor += 1;
+                break;
+            }
+            if (cursor >= tokens.len or tokens[cursor].kind != .comma) {
+                try self.report(.syntax, span, "native Sass @each requires 'in'");
+                return error.InvalidSassSyntax;
+            }
+            cursor += 1;
+        }
+        if (!found_in or names.items.len == 0) {
+            try self.report(.syntax, span, "native Sass @each requires variables and 'in'");
+            return error.InvalidSassSyntax;
+        }
+
+        var iterable_offset: ?u32 = null;
+        var iterable_end: u32 = 0;
+        while (cursor < tokens.len) : (cursor += 1) {
+            const token = tokens[cursor];
+            if (token.kind == .eof) break;
+            if (isExpressionTrivia(token.kind)) continue;
+            if (iterable_offset == null) iterable_offset = token.span.start;
+            iterable_end = token.span.end;
+        }
+        if (iterable_offset == null) {
+            try self.report(.syntax, span, "native Sass @each iterable is missing");
+            return error.InvalidSassSyntax;
+        }
+        return .{
+            .allocator = self.allocator,
+            .names = try names.toOwnedSlice(self.allocator),
+            .iterable = trimWhitespace(prelude[iterable_offset.?..iterable_end]),
         };
     }
 
@@ -4161,6 +4624,7 @@ fn validateLimits(limits: Limits) Error!void {
         limits.max_expression_tokens > hard_expression_tokens or
         limits.max_function_arguments == 0 or
         limits.max_function_arguments > hard_function_arguments or
+        limits.max_loop_variables == 0 or limits.max_loop_variables > hard_loop_variables or
         limits.max_evaluation_depth == 0 or limits.max_evaluation_depth > hard_evaluation_depth)
     {
         return error.InvalidLimits;
