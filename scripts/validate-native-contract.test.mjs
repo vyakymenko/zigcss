@@ -73,13 +73,14 @@ test('rejects any widened production runtime boundary', () => {
 })
 
 test('rejects external modules and escaped files in the native Zig import closure', () => {
-  for (const injected of [
-    '@import("sass-runtime")',
-    '@import("../../outside.zig")',
+  for (const [target, injected] of [
+    ['src/preprocessor/sass_string.zig', '@import("sass-runtime")'],
+    ['src/preprocessor/sass_string.zig', '@import("../../outside.zig")'],
+    ['src/css/emitter.zig', '@import("transitive-runtime")'],
   ]) {
     const productionSources = loadProductionSources().map(([relativePath, source]) => [
       relativePath,
-      relativePath === 'src/preprocessor/sass_string.zig' ? `${source}\nconst drift = ${injected};\n` : source,
+      relativePath === target ? `${source}\nconst drift = ${injected};\n` : source,
     ])
     assert.throws(
       () => validateContract(loadContract(), { productionSources }),

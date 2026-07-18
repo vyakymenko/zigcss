@@ -359,7 +359,12 @@ function validateNativeImportClosure(contract, productionSources) {
   ])
   const sourceByPath = new Map(productionSources)
   const allowedBuiltinModules = new Set(['std', 'builtin'])
-  for (const relativePath of nativeSources) {
+  const pending = [...nativeSources]
+  const visited = new Set()
+  while (pending.length > 0) {
+    const relativePath = pending.pop()
+    if (visited.has(relativePath)) continue
+    visited.add(relativePath)
     const source = sourceByPath.get(relativePath)
     if (source === undefined) fail(`native import closure is missing ${relativePath}`)
     const calls = [...source.matchAll(/@import\s*\(/g)]
@@ -379,6 +384,7 @@ function validateNativeImportClosure(contract, productionSources) {
         fail(`${relativePath} import escapes the owned Zig source closure: ${specifier}`)
       }
       repositoryFile(relative)
+      pending.push(relative)
     }
   }
 }
