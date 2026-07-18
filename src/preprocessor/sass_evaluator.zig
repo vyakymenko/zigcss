@@ -125,6 +125,7 @@ const Builtin = enum {
     math_abs,
     math_ceil,
     math_compatible,
+    math_div,
     math_floor,
     math_is_unitless,
     math_percentage,
@@ -3618,6 +3619,132 @@ const Engine = struct {
         return self.values.own(.{ .number = number });
     }
 
+    fn callMathDiv(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(.invalid_operation, span, "math div() requires exactly two arguments");
+            return error.InvalidExpression;
+        }
+        if (arguments[0].* != .number or arguments[1].* != .number) {
+            if (arguments[0].* == .color and
+                (arguments[1].* == .number or arguments[1].* == .color))
+            {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "undefined native Sass color division",
+                );
+                return error.InvalidExpression;
+            }
+            var output: std.ArrayList(u8) = .empty;
+            defer output.deinit(self.allocator);
+            try self.transaction.consumeOperations(2);
+            self.appendMathDivOperand(&output, arguments[0].*) catch |err| {
+                try self.report(
+                    if (err == error.TemporaryLimitExceeded) .resource_limit else .invalid_operation,
+                    span,
+                    "invalid native Sass legacy math division operand",
+                );
+                return err;
+            };
+            self.appendTemporary(&output, "/") catch |err| {
+                try self.report(.resource_limit, span, "native Sass math division output limit exceeded");
+                return err;
+            };
+            self.appendMathDivOperand(&output, arguments[1].*) catch |err| {
+                try self.report(
+                    if (err == error.TemporaryLimitExceeded) .resource_limit else .invalid_operation,
+                    span,
+                    "invalid native Sass legacy math division operand",
+                );
+                return err;
+            };
+            return self.values.own(.{ .string = .{ .bytes = output.items } });
+        }
+
+        try self.transaction.consumeOperations(1);
+        const left = native_numeric.Numeric.fromNumber(arguments[0].number) catch |err| {
+            try self.report(
+                if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
+                span,
+                "invalid native Sass math division operand",
+            );
+            return err;
+        };
+        const right = native_numeric.Numeric.fromNumber(arguments[1].number) catch |err| {
+            try self.report(
+                if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
+                span,
+                "invalid native Sass math division operand",
+            );
+            return err;
+        };
+        const quotient = native_numeric.multiply(
+            left,
+            right,
+            '/',
+        ) catch |err| {
+            try self.report(
+                if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
+                span,
+                "invalid native Sass math division",
+            );
+            return err;
+        };
+        var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+        var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+        const number = quotient.toNumber(&numerator, &denominator) catch |err| {
+            try self.report(
+                if (err == error.UnitLimitExceeded) .resource_limit else .invalid_operation,
+                span,
+                "invalid native Sass math division result",
+            );
+            return err;
+        };
+        return self.values.own(.{ .number = number });
+    }
+
+    fn appendMathDivOperand(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        item: native_value.Value,
+    ) Error!void {
+        switch (item) {
+            .null_value => {},
+            .list => |list| {
+                if (list.items.len == 0 and !list.bracketed) return error.InvalidExpression;
+                if (list.bracketed) try self.appendTemporary(output, "[");
+                var emitted: usize = 0;
+                for (list.items) |child| {
+                    if (child == .null_value) continue;
+                    if (emitted > 0) try self.appendTemporary(output, switch (list.separator) {
+                        .comma => ", ",
+                        .slash, .legacy_slash => "/",
+                        .undecided, .space => " ",
+                    });
+                    try self.appendMathDivOperand(output, child);
+                    emitted += 1;
+                }
+                if (list.bracketed) try self.appendTemporary(output, "]");
+            },
+            .argument_list => |argument_list| {
+                if (argument_list.keywords.len != 0) return error.InvalidExpression;
+                var emitted: usize = 0;
+                for (argument_list.positional) |child| {
+                    if (child == .null_value) continue;
+                    if (emitted > 0) try self.appendTemporary(output, ", ");
+                    try self.appendMathDivOperand(output, child);
+                    emitted += 1;
+                }
+            },
+            .map, .callable => return error.InvalidExpression,
+            else => try self.appendValue(output, item, false),
+        }
+    }
+
     fn mathNumericArgument(
         self: *Engine,
         item: native_value.Value,
@@ -3998,6 +4125,7 @@ const Engine = struct {
             .math_abs,
             .math_ceil,
             .math_compatible,
+            .math_div,
             .math_floor,
             .math_is_unitless,
             .math_percentage,
@@ -7261,6 +7389,10 @@ const Engine = struct {
             .math_percentage,
             .math_round,
             => &.{.{ .name = "number" }},
+            .math_div => &.{
+                .{ .name = "number1" },
+                .{ .name = "number2" },
+            },
             .math_compatible => &.{
                 .{ .name = "number1" },
                 .{ .name = "number2" },
@@ -7347,6 +7479,7 @@ const Engine = struct {
                 .math_abs,
                 .math_ceil,
                 .math_compatible,
+                .math_div,
                 .math_floor,
                 .math_is_unitless,
                 .math_percentage,
@@ -7416,6 +7549,7 @@ const Engine = struct {
             .math_percentage,
             .math_round,
             => self.callMathUnary(builtin, arguments, span),
+            .math_div => self.callMathDiv(arguments, span),
             .math_compatible, .math_is_unitless => self.callMathUnitPredicate(
                 builtin,
                 arguments,
@@ -8568,6 +8702,7 @@ fn mathModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "abs")) return .math_abs;
     if (sassNameEql(name, "ceil")) return .math_ceil;
     if (sassNameEql(name, "compatible")) return .math_compatible;
+    if (sassNameEql(name, "div")) return .math_div;
     if (sassNameEql(name, "floor")) return .math_floor;
     if (sassNameEql(name, "is-unitless")) return .math_is_unitless;
     if (sassNameEql(name, "percentage")) return .math_percentage;

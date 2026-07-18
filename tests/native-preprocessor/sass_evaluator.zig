@@ -1672,6 +1672,176 @@ test "native Sass unary math functions reject unsafe arguments" {
     }
 }
 
+test "native Sass divides math values without a provider" {
+    const input =
+        \\@use "sass:list";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$evaluations: 0;
+        \\@function stamp($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.a {
+        \\  plain: math.div(6px, 2);
+        \\  converted: math.div(1in, 96px);
+        \\  decimal: math.div(1, 4);
+        \\  quotient-unit: math.unit(math.div(1px, 1s));
+        \\  denominator-unit: math.unit(math.div(1, 2px));
+        \\  custom-case: math.unit(math.div(1Foo, 1foo));
+        \\  alias: numbers.div(9s, 3);
+        \\  star: div(8em, 4);
+        \\  named: math.div($number2: stamp(2), $number1: stamp(10px));
+        \\  evaluations: $evaluations;
+        \\  strings: math.div(foo, bar);
+        \\  booleans: math.div(true, false);
+        \\  quoted: math.div("a b", c);
+        \\  left-color-string: math.div(red, foo);
+        \\  right-color: math.div(2, red);
+        \\  nested-color: math.div((red, x), foo);
+        \\  spaces: math.div((a b), (c d));
+        \\  lists: math.div((a, b), (c, d));
+        \\  brackets: math.div([a, b], [c d]);
+        \\  null-left: math.div(null, b);
+        \\  null-right: math.div(a, null);
+        \\  legacy-separator: list.separator(math.div((a, b), (c, d)));
+        \\  legacy-length: list.length(math.div((a, b), (c, d)));
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "math-div.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{plain:3px;converted:1;decimal:.25;quotient-unit:\"px/s\";denominator-unit:\"px^-1\";custom-case:\"Foo/foo\";alias:3s;star:2em;named:5px;evaluations:2;strings:foo/bar;booleans:true/false;quoted:\"a b\"/c;left-color-string:red/foo;right-color:2/red;nested-color:red, x/foo;spaces:a b/c d;lists:a, b/c, d;brackets:[a, b]/[c d];null-left:/b;null-right:a/;legacy-separator:space;legacy-length:1}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:math" as m
+        \\.sass
+        \\  plain: m.div(8px, 2)
+        \\  unit: m.unit(m.div(1s, 1px))
+        \\  string: m.div(a, b)
+        \\  starless: div(6px, 2)
+    ;
+    var sass_result = try compile(std.testing.allocator, "math-div.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{plain:4px;unit:\"s/px\";string:a/b;starless:div(6px, 2)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var css_result = try compile(
+        std.testing.allocator,
+        "math-div-global.scss",
+        ".plain { value: div(6px, 2); }",
+        .scss,
+        .{},
+    );
+    defer css_result.deinit();
+    try std.testing.expectEqualStrings(".plain{value:div(6px, 2)}", css_result.css());
+}
+
+test "native Sass math division rejects unsafe arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-math-div-module.scss",
+            .input = ".a { value: math.div(6px, 2); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-math-div-namespace.scss",
+            .input = "@use \"sass:math\" as Math; .a { value: math.div(6px, 2); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-empty.scss",
+            .input = "@use \"sass:math\"; $value: math.div();",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-short.scss",
+            .input = "@use \"sass:math\"; $value: math.div(1);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-long.scss",
+            .input = "@use \"sass:math\"; $value: math.div(1, 2, 3);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-zero.scss",
+            .input = "@use \"sass:math\"; $value: math.div(1, 0);",
+            .expected = error.DivisionByZero,
+        },
+        .{
+            .name = "math-div-unknown-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.div($other: $undefined, $number2: 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-duplicate-keyword.scss",
+            .input = "@use \"sass:math\"; $value: math.div($number1: 1, $number1: 2, $number2: 3);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-splat.scss",
+            .input = "@use \"sass:math\"; $args: (6px, 2); $value: math.div($args...);",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "math-div-compound-css.scss",
+            .input = "@use \"sass:math\"; .a { value: math.div(1px, 1s); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-colors.scss",
+            .input = "@use \"sass:math\"; $value: math.div(red, blue);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-color-number.scss",
+            .input = "@use \"sass:math\"; $value: math.div(red, 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-maps.scss",
+            .input = "@use \"sass:math\"; $value: math.div((a: 1), (b: 2));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "math-div-empty-list.scss",
+            .input = "@use \"sass:math\"; $value: math.div((), b);",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 8;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "math-div-temporary-limit.scss",
+            "@use \"sass:math\"; $value: math.div(\"abcdef\", g);",
+            .scss,
+            temporary_limits,
+        ),
+    );
+}
+
 test "native Sass inspects callable keywords through the built-in meta module" {
     const input =
         \\@use "sass:meta";
@@ -4801,6 +4971,8 @@ fn exerciseAllocationFailures(
         \\$math-unit: math.unit($inch / 1s);
         \\$math-round: math.round(1.5px);
         \\$math-percentage: math.percentage(.125);
+        \\$math-div: math.div($inch, 96px);
+        \\$math-div-string: math.div(foo, bar);
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
         \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
         \\@function allocation-target($left, $right: 0) { @return $left + $right; }
@@ -4846,6 +5018,8 @@ fn exerciseAllocationFailures(
         \\  math-unit: $math-unit;
         \\  math-round: $math-round;
         \\  math-percentage: $math-percentage;
+        \\  math-div: $math-div;
+        \\  math-div-string: $math-div-string;
         \\  reduced-calc: calc($size + 2px);
         \\  deferred-calc: calc(100% - $size);
         \\  color: rgba(hsl(.5turn, 100%, 50%), .4);
@@ -4900,7 +5074,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

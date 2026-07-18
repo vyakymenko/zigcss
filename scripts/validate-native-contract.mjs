@@ -159,6 +159,7 @@ const expectedImplementations = Object.freeze([
       'built-in-list-join',
       'built-in-list-zip',
       'built-in-list-slash',
+      'built-in-math-division',
       'built-in-math-unit-predicates',
       'built-in-math-unit-serialization',
       'built-in-math-unary-numeric',
