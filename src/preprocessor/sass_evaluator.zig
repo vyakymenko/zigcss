@@ -110,6 +110,10 @@ const Builtin = enum {
     hsl,
     hsla,
     hwb,
+    lab,
+    lch,
+    oklab,
+    oklch,
     red,
     green,
     blue,
@@ -145,6 +149,22 @@ const ColorTransformSpace = enum {
     rgb,
     hsl,
     hwb,
+};
+
+const ModernColorChannelKind = enum {
+    lab_lightness,
+    oklab_lightness,
+    lab_axis,
+    oklab_axis,
+    lch_chroma,
+    oklch_chroma,
+    hue,
+    alpha,
+};
+
+const ModernColorChannel = struct {
+    value: f64 = 0,
+    missing: bool = false,
 };
 
 const ArithmeticProbe = union(enum) {
@@ -1042,6 +1062,14 @@ const Engine = struct {
             .hsla
         else if (sassNameEql(name, "hwb"))
             .hwb
+        else if (sassNameEql(name, "lab"))
+            .lab
+        else if (sassNameEql(name, "lch"))
+            .lch
+        else if (sassNameEql(name, "oklab"))
+            .oklab
+        else if (sassNameEql(name, "oklch"))
+            .oklch
         else if (sassNameEql(name, "red"))
             .red
         else if (sassNameEql(name, "green"))
@@ -1197,7 +1225,161 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .lab, .lch, .oklab, .oklch => return try self.callModernColorConstructorRaw(
+                builtin,
+                raw,
+                body,
+                ranges.items,
+                comma_separated,
+                scope,
+                span,
+            ),
         }
+    }
+
+    fn callModernColorConstructorRaw(
+        self: *Engine,
+        builtin: Builtin,
+        raw: []const u8,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        comma_separated: bool,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (comma_separated) {
+            try self.report(.syntax, span, "modern Sass colors require one space-separated channel list");
+            return error.InvalidExpression;
+        }
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        const parameters = [_]native_arguments.Parameter{.{ .name = "channels" }};
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            &parameters,
+            1,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+        const channel_range = bound.values[0].?;
+        const allow_deferred = parsed.items.len == 1 and parsed.items[0].name == null;
+        return self.callModernColorConstructor(
+            builtin,
+            raw,
+            body[channel_range.start..channel_range.end],
+            allow_deferred,
+            scope,
+            span,
+        );
+    }
+
+    fn callModernColorConstructor(
+        self: *Engine,
+        builtin: Builtin,
+        raw: []const u8,
+        body: []const u8,
+        allow_deferred: bool,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        const slash = findTopLevelByte(body, '/');
+        if (slash) |separator| {
+            if (findTopLevelByte(body[separator + 1 ..], '/') != null) {
+                try self.report(.syntax, span, "modern Sass color has multiple alpha separators");
+                return error.InvalidExpression;
+            }
+            if (trimWhitespace(body[separator + 1 ..]).len == 0) {
+                try self.report(.syntax, span, "modern Sass color is missing its alpha channel");
+                return error.InvalidExpression;
+            }
+        }
+        const channel_end = slash orelse body.len;
+        _ = try splitTopLevelRanges(
+            self.allocator,
+            body[0..channel_end],
+            .color_whitespace,
+            &ranges,
+        );
+        if (trimWhitespace(body[0..channel_end]).len == 0) ranges.clearRetainingCapacity();
+        const total_channels = ranges.items.len + @intFromBool(slash != null);
+        if (total_channels > self.limits.max_function_arguments) {
+            try self.report(.resource_limit, span, "native Sass function argument limit exceeded");
+            return error.FunctionArgumentLimitExceeded;
+        }
+        if (containsDeferredCssCalculation(body)) {
+            if (allow_deferred) return self.preserveColorFunction(raw, scope, span);
+            try self.report(
+                .unsupported_feature,
+                span,
+                "deferred Sass keyword color constructors are not implemented by the native evaluator yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        if (ranges.items.len != 3) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "modern Sass colors require exactly three space-separated channels",
+            );
+            return error.InvalidExpression;
+        }
+        if (slash) |separator| {
+            const alpha_start = separator + 1;
+            try ranges.append(self.allocator, .{ .start = alpha_start, .end = body.len });
+        }
+        for (ranges.items) |range| {
+            if (trimWhitespace(body[range.start..range.end]).len == 0) {
+                try self.report(.syntax, span, "empty modern Sass color channel");
+                return error.InvalidExpression;
+            }
+        }
+        var arguments: [4]*const native_value.Value = undefined;
+        for (ranges.items, 0..) |range, index| {
+            const item = try self.evaluateExpressionBytes(body[range.start..range.end], scope, span);
+            if (isDeferredColorValue(item.*)) {
+                if (allow_deferred) return self.preserveColorFunction(raw, scope, span);
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "deferred Sass keyword color constructors are not implemented by the native evaluator yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            arguments[index] = item;
+        }
+
+        const space: native_value.ColorSpace = switch (builtin) {
+            .lab => .lab,
+            .lch => .lch,
+            .oklab => .oklab,
+            .oklch => .oklch,
+            else => unreachable,
+        };
+        const kinds: [4]ModernColorChannelKind = switch (builtin) {
+            .lab => .{ .lab_lightness, .lab_axis, .lab_axis, .alpha },
+            .lch => .{ .lab_lightness, .lch_chroma, .hue, .alpha },
+            .oklab => .{ .oklab_lightness, .oklab_axis, .oklab_axis, .alpha },
+            .oklch => .{ .oklab_lightness, .oklch_chroma, .hue, .alpha },
+            else => unreachable,
+        };
+        var channels = [4]f64{ 0, 0, 0, 1 };
+        var missing_mask: u4 = 0;
+        const missing_bits = [4]u4{ 0b0001, 0b0010, 0b0100, 0b1000 };
+        for (arguments[0..ranges.items.len], 0..) |argument, index| {
+            const channel = try self.modernColorChannel(argument.*, kinds[index], span);
+            channels[index] = channel.value;
+            if (channel.missing) missing_mask |= missing_bits[index];
+        }
+        return self.values.own(.{
+            .color = try native_color.modern(space, channels, missing_mask),
+        });
     }
 
     fn callColorConstructorRaw(
@@ -2003,6 +2185,42 @@ const Engine = struct {
         if (std.ascii.eqlIgnoreCase(unit, "turn")) return number.value * 360;
         try self.report(.type_mismatch, span, "color hue requires an angle");
         return error.InvalidExpression;
+    }
+
+    fn modernColorChannel(
+        self: *Engine,
+        item: native_value.Value,
+        kind: ModernColorChannelKind,
+        span: native_source.Span,
+    ) Error!ModernColorChannel {
+        if (item == .string and !item.string.quoted and
+            std.mem.eql(u8, item.string.bytes, "none"))
+        {
+            return .{ .missing = true };
+        }
+        if (kind == .hue) return .{ .value = try self.colorHue(item, span) };
+        if (kind == .alpha) return .{ .value = try self.colorAlpha(item, span) };
+
+        const number = try self.colorNumber(item, span);
+        const percentage = number.numerator_units.len == 1 and
+            std.mem.eql(u8, number.numerator_units[0], "%");
+        if (number.numerator_units.len != 0 and !percentage) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "modern Sass color channels require unitless numbers or percentages",
+            );
+            return error.InvalidExpression;
+        }
+        return .{ .value = switch (kind) {
+            .lab_lightness => number.value,
+            .oklab_lightness => if (percentage) number.value / 100 else number.value,
+            .lab_axis => if (percentage) number.value * 1.25 else number.value,
+            .oklab_axis => if (percentage) number.value * 0.004 else number.value,
+            .lch_chroma => if (percentage) number.value * 1.5 else number.value,
+            .oklch_chroma => if (percentage) number.value * 0.004 else number.value,
+            .hue, .alpha => unreachable,
+        } };
     }
 
     fn colorNumber(
@@ -3761,6 +3979,11 @@ fn whitespaceIsOperatorPadding(input: []const u8, start: usize, end: usize) bool
 fn colorWhitespaceIsOperatorPadding(input: []const u8, start: usize, end: usize) bool {
     if (end < input.len) {
         const next = input[end];
+        if ((next == '+' or next == '-') and
+            end + 1 < input.len and !isExpressionWhitespace(input[end + 1]))
+        {
+            return false;
+        }
         if ((isSymbolicExpressionOperator(next) and next != '%') or
             startsSassWord(input, end, "and") or startsSassWord(input, end, "or"))
         {
@@ -3874,7 +4097,8 @@ fn cssValueIsValid(item: native_value.Value, depth: u16) bool {
             break :blk list.bracketed or emitted > 0;
         },
         .color => |color| blk: {
-            _ = native_color.toRgb(color) catch break :blk false;
+            var buffer: [native_color.max_serialized_bytes]u8 = undefined;
+            _ = native_color.serialize(color, &buffer, true) catch break :blk false;
             break :blk true;
         },
         .map, .callable => false,

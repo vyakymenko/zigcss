@@ -144,6 +144,7 @@ const expectedImplementations = Object.freeze([
       'fixed-builtin-keyword-binding',
       'color-constructor-keyword-overloads',
       'variadic-map-get-binding',
+      'modern-lab-color-constructors',
       'unicode-string-core',
       'legacy-string-builtins',
       'typed-collections',

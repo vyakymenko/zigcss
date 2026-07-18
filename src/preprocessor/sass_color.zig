@@ -252,6 +252,38 @@ pub fn hwb(hue: f64, whiteness: f64, blackness: f64, alpha: f64) Error!native_va
     };
 }
 
+pub fn modern(
+    space: native_value.ColorSpace,
+    input_channels: [4]f64,
+    missing_mask: u4,
+) Error!native_value.Color {
+    if (!isModernSpace(space)) return error.InvalidColor;
+    var channels = input_channels;
+    for (&channels, 0..) |*channel, index| {
+        if (channelMissing(missing_mask, index)) {
+            channel.* = 0;
+        } else if (!std.math.isFinite(channel.*)) {
+            return error.InvalidColor;
+        }
+    }
+
+    if (!channelMissing(missing_mask, 0)) {
+        channels[0] = switch (space) {
+            .lab, .lch => clamp(channels[0], 0, 100),
+            .oklab, .oklch => clamp(channels[0], 0, 1),
+            else => unreachable,
+        };
+    }
+    if ((space == .lch or space == .oklch) and !channelMissing(missing_mask, 1)) {
+        channels[1] = @max(0, channels[1]);
+    }
+    if ((space == .lch or space == .oklch) and !channelMissing(missing_mask, 2)) {
+        channels[2] = normalizeHue(channels[2]);
+    }
+    if (!channelMissing(missing_mask, 3)) channels[3] = clamp(channels[3], 0, 1);
+    return .{ .space = space, .channels = channels, .missing_mask = missing_mask };
+}
+
 pub fn toRgb(input: native_value.Color) Error![4]f64 {
     return switch (input.space) {
         .rgb => input.channels,
@@ -301,6 +333,14 @@ pub fn toHwb(input: native_value.Color) Error![4]f64 {
 }
 
 pub fn equal(left: native_value.Color, right: native_value.Color) bool {
+    if (isModernSpace(left.space) or isModernSpace(right.space)) {
+        if (left.space != right.space or left.missing_mask != right.missing_mask) return false;
+        for (left.channels, right.channels, 0..) |left_channel, right_channel, index| {
+            if (channelMissing(left.missing_mask, index)) continue;
+            if (!approximatelyEqual(left_channel, right_channel)) return false;
+        }
+        return true;
+    }
     const left_rgb = toRgb(left) catch return false;
     const right_rgb = toRgb(right) catch return false;
     for (left_rgb, right_rgb) |left_channel, right_channel| {
@@ -500,6 +540,7 @@ pub fn serialize(
     buffer: *[max_serialized_bytes]u8,
     minified: bool,
 ) Error![]const u8 {
+    if (isModernSpace(input.space)) return serializeModern(input, buffer, minified);
     if (input.space == .rgb and
         (input.channels[0] < 0 or input.channels[0] > 255 or
             input.channels[1] < 0 or input.channels[1] > 255 or
@@ -562,6 +603,52 @@ pub fn serialize(
         rgb_candidate;
     var cursor: usize = 0;
     try append(buffer, &cursor, selected);
+    return buffer[0..cursor];
+}
+
+fn serializeModern(
+    input: native_value.Color,
+    buffer: *[max_serialized_bytes]u8,
+    minified: bool,
+) Error![]const u8 {
+    const normalized = try modern(input.space, input.channels, input.missing_mask);
+    const name: []const u8 = switch (normalized.space) {
+        .lab => "lab",
+        .lch => "lch",
+        .oklab => "oklab",
+        .oklch => "oklch",
+        else => unreachable,
+    };
+    var cursor: usize = 0;
+    try append(buffer, &cursor, name);
+    try append(buffer, &cursor, "(");
+    for (normalized.channels[0..3], 0..) |channel, index| {
+        if (index > 0) try append(buffer, &cursor, " ");
+        if (channelMissing(normalized.missing_mask, index)) {
+            try append(buffer, &cursor, "none");
+            continue;
+        }
+        var number_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        try appendModernNumber(buffer, &cursor, channel, &number_buffer, minified);
+    }
+    if (channelMissing(normalized.missing_mask, 3) or
+        !approximatelyEqual(normalized.channels[3], 1))
+    {
+        try append(buffer, &cursor, if (minified) "/" else " / ");
+        if (channelMissing(normalized.missing_mask, 3)) {
+            try append(buffer, &cursor, "none");
+        } else {
+            var alpha_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+            try appendModernNumber(
+                buffer,
+                &cursor,
+                normalized.channels[3],
+                &alpha_buffer,
+                minified,
+            );
+        }
+    }
+    try append(buffer, &cursor, ")");
     return buffer[0..cursor];
 }
 
@@ -739,6 +826,32 @@ fn append(buffer: *[max_serialized_bytes]u8, cursor: *usize, bytes: []const u8) 
     if (cursor.* + bytes.len > buffer.len) return error.SerializationLimitExceeded;
     @memcpy(buffer[cursor.* .. cursor.* + bytes.len], bytes);
     cursor.* += bytes.len;
+}
+
+fn appendModernNumber(
+    buffer: *[max_serialized_bytes]u8,
+    cursor: *usize,
+    value: f64,
+    number_buffer: *[native_numeric.max_serialized_bytes]u8,
+    minified: bool,
+) Error!void {
+    const serialized = try native_numeric.serialize(value, number_buffer, minified);
+    if (serialized.len >= 2 and serialized[0] == '-' and serialized[1] == '.') {
+        try append(buffer, cursor, "-0");
+        return append(buffer, cursor, serialized[1..]);
+    }
+    return append(buffer, cursor, serialized);
+}
+
+fn isModernSpace(space: native_value.ColorSpace) bool {
+    return switch (space) {
+        .lab, .lch, .oklab, .oklch => true,
+        else => false,
+    };
+}
+
+fn channelMissing(mask: u4, index: usize) bool {
+    return (mask & (@as(u4, 1) << @intCast(index))) != 0;
 }
 
 fn normalizeHue(value: f64) f64 {

@@ -902,6 +902,104 @@ test "native Sass color constructor keyword overloads reject ambiguous calls" {
     );
 }
 
+test "native Sass evaluates modern Lab color constructors without a provider" {
+    const input =
+        \\$lightness: 50%;
+        \\$axis: 10;
+        \\.a {
+        \\  lab-basic: lab($lightness $axis 20);
+        \\  lab-scaled: lab(120% 10% -10% / 2);
+        \\  lab-keyword: lab($channels: 50% 10 20 / .5);
+        \\  lch-value: lch(50% 20% .5turn);
+        \\  oklab-value: oklab(50% 10% -10% / 50%);
+        \\  oklch-value: oklch(120% -10% 480deg / -1);
+        \\  missing: lab(none none none / none);
+        \\  equal-lab: lab(50% 10 20) == lab(50 10 20);
+        \\  equal-ok: oklab(50% .1 .2) == oklab(.5 .1 .2);
+        \\  different: lab(50 10 20) == oklab(.5 .1 .2);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "modern-colors.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{lab-basic:lab(50 10 20);lab-scaled:lab(100 12.5 -12.5);lab-keyword:lab(50 10 20/.5);lch-value:lch(50 30 180);oklab-value:oklab(.5 .04 -0.04/.5);oklch-value:oklch(1 0 120/0);missing:lab(none none none/none);equal-lab:true;equal-ok:true;different:false}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    var deferred = try compile(
+        std.testing.allocator,
+        "deferred-modern-colors.scss",
+        ".a { first: lab(var(--channels)); second: lch(calc(var(--l) + 1) 20 30deg); }",
+        .scss,
+        .{},
+    );
+    defer deferred.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{first:lab(var(--channels));second:lch(calc(var(--l) + 1) 20 30deg)}",
+        deferred.css(),
+    );
+}
+
+test "native Sass modern Lab constructors reject ambiguous and invalid calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "modern-comma.scss", .input = ".a { color: lab(50%, 10, 20); }" },
+        .{ .name = "modern-short.scss", .input = ".a { color: lab(50% 10); }" },
+        .{ .name = "modern-long.scss", .input = ".a { color: lab(50% 10 20 30); }" },
+        .{ .name = "modern-unit.scss", .input = ".a { color: lab(50px 10 20); }" },
+        .{ .name = "modern-hue-unit.scss", .input = ".a { color: lch(50% 20 1px); }" },
+        .{ .name = "modern-none-case.scss", .input = ".a { color: lab(None none none); }" },
+        .{ .name = "modern-missing.scss", .input = ".a { color: lab(); }" },
+        .{ .name = "modern-unknown.scss", .input = ".a { color: lab($unknown: $undefined); }" },
+        .{ .name = "modern-duplicate.scss", .input = ".a { color: lab(50% 10 20, $channels: $undefined); }" },
+        .{ .name = "modern-order.scss", .input = ".a { color: lab($channels: 50% 10 20, $undefined); }" },
+        .{ .name = "modern-double-alpha.scss", .input = ".a { color: oklch(.5 .2 120deg / .5 / .4); }" },
+        .{ .name = "modern-deferred-double-alpha.scss", .input = ".a { color: lab(var(--channels) / .5 / .4); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "modern-splat.scss",
+            ".a { color: lab($channels...); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "modern-keyword-deferred.scss",
+            ".a { color: lab($channels: var(--channels)); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "modern-channel-limit.scss",
+            ".a { color: lab(50% 10 20); }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass evaluates bounded Unicode string functions without a provider" {
     const input =
         \\.a {
@@ -1202,6 +1300,7 @@ fn exerciseAllocationFailures(
         \\  fixed-keyword: mix($weight: 25%, $color2: blue, $color1: red);
         \\  nth-keyword: nth($n: 2, $list: (a, b));
         \\  constructor-keyword: rgb($channels: 255 0 0 / .5);
+        \\  modern-color: oklab($channels: 50% 10% -10% / .5);
         \\  map-keyword: map-get($key: tone, $map: $theme);
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
@@ -1230,7 +1329,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

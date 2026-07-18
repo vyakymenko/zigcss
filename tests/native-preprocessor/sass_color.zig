@@ -49,6 +49,56 @@ test "native Sass legacy color constructors clamp normalize and serialize determ
     try std.testing.expectError(error.InvalidColor, color.rgb(std.math.nan(f64), 0, 0, 1));
 }
 
+test "native Sass modern color constructors normalize missing channels and serialize deterministically" {
+    const cases = [_]struct {
+        value: preprocessor.value.Color,
+        expected: []const u8,
+    }{
+        .{
+            .value = try color.modern(.lab, .{ 120, 12.5, -12.5, 2 }, 0),
+            .expected = "lab(100 12.5 -12.5)",
+        },
+        .{
+            .value = try color.modern(.lch, .{ 50, 30, 540, 0.5 }, 0),
+            .expected = "lch(50 30 180/.5)",
+        },
+        .{
+            .value = try color.modern(.oklab, .{ 0.5, 0.04, -0.04, 0.5 }, 0),
+            .expected = "oklab(.5 .04 -0.04/.5)",
+        },
+        .{
+            .value = try color.modern(.oklch, .{ 2, -0.04, -240, -1 }, 0),
+            .expected = "oklch(1 0 120/0)",
+        },
+        .{
+            .value = try color.modern(.lab, .{ 99, 99, 99, 99 }, 0b1111),
+            .expected = "lab(none none none/none)",
+        },
+    };
+    for (cases) |case| {
+        var buffer: [color.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(
+            case.expected,
+            try color.serialize(case.value, &buffer, true),
+        );
+    }
+
+    const missing = try color.modern(.oklch, .{ 0.5, 0.2, 120, 1 }, 0b0110);
+    var pretty_buffer: [color.max_serialized_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "oklch(0.5 none none)",
+        try color.serialize(missing, &pretty_buffer, false),
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.modern(.rgb, .{ 0, 0, 0, 1 }, 0),
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.modern(.lab, .{ std.math.nan(f64), 0, 0, 1 }, 0),
+    );
+}
+
 test "native Sass legacy colors compare and expose channels across spaces" {
     const purple = color.parseLiteral("purple").?;
     const equivalent = try color.hsl(300, 100, 25.098039215686, 1);
@@ -64,6 +114,24 @@ test "native Sass legacy colors compare and expose channels across spaces" {
     try std.testing.expectApproxEqAbs(@as(f64, 50), channels[1], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 40), channels[2], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 0.4), channels[3], 1e-10);
+}
+
+test "native Sass modern colors compare exactly within a normalized space" {
+    const lab_percent = try color.modern(.lab, .{ 50, 10, 20, 1 }, 0);
+    const lab_unitless = try color.modern(.lab, .{ 50, 10, 20, 1 }, 0);
+    const different_lab = try color.modern(.lab, .{ 50, 10, 21, 1 }, 0);
+    const oklab = try color.modern(.oklab, .{ 0.5, 0.1, 0.2, 1 }, 0);
+    try std.testing.expect(color.equal(lab_percent, lab_unitless));
+    try std.testing.expect(!color.equal(lab_percent, different_lab));
+    try std.testing.expect(!color.equal(lab_percent, oklab));
+
+    const missing_left = try color.modern(.lab, .{ 50, 0, 20, 1 }, 0b0010);
+    const missing_right = try color.modern(.lab, .{ 50, 99, 20, 1 }, 0b0010);
+    try std.testing.expect(color.equal(missing_left, missing_right));
+    try std.testing.expect(!color.equal(
+        missing_left,
+        try color.modern(.lab, .{ 50, 0, 20, 1 }, 0),
+    ));
 }
 
 test "native Sass legacy color manipulation matches closed conversion rules" {

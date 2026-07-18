@@ -53,6 +53,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('fixed-builtin-keyword-binding'), true)
   assert.equal(sassCore.capabilities.includes('color-constructor-keyword-overloads'), true)
   assert.equal(sassCore.capabilities.includes('variadic-map-get-binding'), true)
+  assert.equal(sassCore.capabilities.includes('modern-lab-color-constructors'), true)
   assert.equal(sassCore.capabilities.includes('unicode-string-core'), true)
   assert.equal(sassCore.capabilities.includes('legacy-string-builtins'), true)
   assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_color.zig'), true)
