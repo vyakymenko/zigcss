@@ -1120,6 +1120,12 @@ const Engine = struct {
         }
 
         switch (builtin) {
+            .map_get => return try self.callMapGetRaw(
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
             .nth,
             .length,
             .red,
@@ -1191,66 +1197,7 @@ const Engine = struct {
                 scope,
                 span,
             ),
-            else => {},
         }
-
-        var arguments: std.ArrayList(*const native_value.Value) = .empty;
-        defer arguments.deinit(self.allocator);
-        for (ranges.items) |range| {
-            try arguments.append(
-                self.allocator,
-                try self.evaluateExpressionBytes(body[range.start..range.end], scope, span),
-            );
-        }
-
-        return switch (builtin) {
-            .map_get => try self.callMapGet(arguments.items, span),
-            .nth => try self.callNth(arguments.items, span),
-            .length => try self.callLength(arguments.items, span),
-            .quote,
-            .unquote,
-            .str_length,
-            .str_index,
-            .str_slice,
-            .str_insert,
-            .to_upper_case,
-            .to_lower_case,
-            => try self.callStringBuiltin(builtin, arguments.items, span),
-            .red, .green, .blue, .alpha, .hue, .saturation, .lightness => try self.callColorChannel(
-                builtin,
-                arguments.items,
-                span,
-            ),
-            .opacity => try self.callColorOpacity(raw, arguments.items, scope, span),
-            .ie_hex_str => try self.callIeHexStr(arguments.items, span),
-            .mix,
-            .lighten,
-            .darken,
-            .saturate,
-            .desaturate,
-            .adjust_hue,
-            .complement,
-            .grayscale,
-            .invert,
-            .opacify,
-            .fade_in,
-            .transparentize,
-            .fade_out,
-            => try self.callColorManipulation(builtin, raw, arguments.items, scope, span),
-            .adjust_color,
-            .change_color,
-            .scale_color,
-            .rgb,
-            .rgba,
-            .hsl,
-            .hsla,
-            .hwb,
-            .calculation,
-            .minimum,
-            .maximum,
-            .clamp,
-            => unreachable,
-        };
     }
 
     fn callColorConstructorRaw(
@@ -2303,6 +2250,68 @@ const Engine = struct {
             current = found orelse return self.values.own(.{ .null_value = {} });
         }
         return current;
+    }
+
+    fn callMapGetRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+
+        var has_keyword = false;
+        for (parsed.items) |argument| {
+            if (argument.name != null) {
+                has_keyword = true;
+                break;
+            }
+        }
+        if (!has_keyword) {
+            var arguments: std.ArrayList(*const native_value.Value) = .empty;
+            defer arguments.deinit(self.allocator);
+            for (parsed.items) |argument| {
+                try arguments.append(
+                    self.allocator,
+                    try self.evaluateExpressionBytes(
+                        body[argument.value.start..argument.value.end],
+                        scope,
+                        span,
+                    ),
+                );
+            }
+            return self.callMapGet(arguments.items, span);
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "map" },
+            .{ .name = "key" },
+        };
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            &parameters,
+            parameters.len,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        var arguments: [parameters.len]*const native_value.Value = undefined;
+        for (bound.values, 0..) |value_range, index| {
+            const range = value_range.?;
+            arguments[index] = try self.evaluateExpressionBytes(
+                body[range.start..range.end],
+                scope,
+                span,
+            );
+        }
+        return self.callMapGet(&arguments, span);
     }
 
     fn callNth(

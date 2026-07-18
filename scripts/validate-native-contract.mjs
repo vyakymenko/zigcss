@@ -143,6 +143,7 @@ const expectedImplementations = Object.freeze([
       'keyword-argument-binding',
       'fixed-builtin-keyword-binding',
       'color-constructor-keyword-overloads',
+      'variadic-map-get-binding',
       'unicode-string-core',
       'legacy-string-builtins',
       'typed-collections',

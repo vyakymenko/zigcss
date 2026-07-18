@@ -262,6 +262,59 @@ test "native Sass evaluates typed lists maps and native accessors" {
     );
 }
 
+test "native Sass map-get preserves variadic access and binds bounded keywords" {
+    const input =
+        \\$theme: (tone: blue, nested: (tone: red));
+        \\.a {
+        \\  reordered: map-get($key: tone, $map: $theme);
+        \\  mixed: map-get($theme, $key: tone);
+        \\  nested: map-get($theme, nested, tone);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "map-keywords.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{reordered:blue;mixed:blue;nested:red}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass map-get keyword binding rejects ambiguous calls before evaluation" {
+    const invalid = [_]struct {
+        name: []const u8,
+        expression: []const u8,
+    }{
+        .{ .name = "map-keyword-missing.scss", .expression = "map-get($map: $theme)" },
+        .{ .name = "map-keyword-unknown.scss", .expression = "map-get($undefined, $unknown: $also-undefined)" },
+        .{ .name = "map-keyword-order.scss", .expression = "map-get($map: $theme, tone)" },
+        .{ .name = "map-keyword-rest-name.scss", .expression = "map-get($map: $theme, $key: tone, $keys: nested)" },
+        .{ .name = "map-keyword-duplicate.scss", .expression = "map-get($theme, tone, $key: nested)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "$theme: (tone: blue); .a {{ value: {s}; }}",
+            .{case.expression},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "map-keyword-splat.scss",
+            "$args: ((tone: blue), tone); .a { value: map-get($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass rejects maps as CSS values and duplicate map keys" {
     try std.testing.expectError(
         error.InvalidExpression,
@@ -1149,6 +1202,7 @@ fn exerciseAllocationFailures(
         \\  fixed-keyword: mix($weight: 25%, $color2: blue, $color1: red);
         \\  nth-keyword: nth($n: 2, $list: (a, b));
         \\  constructor-keyword: rgb($channels: 255 0 0 / .5);
+        \\  map-keyword: map-get($key: tone, $map: $theme);
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
         \\  string-quote: quote(foo);
@@ -1176,7 +1230,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
