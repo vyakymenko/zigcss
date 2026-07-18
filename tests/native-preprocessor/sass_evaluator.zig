@@ -486,6 +486,32 @@ test "native Sass map queries reject unowned calls" {
             compile(std.testing.allocator, case.name, case.input, .scss, .{}),
         );
     }
+
+    var depth_limits = sass_evaluator.Limits{};
+    depth_limits.max_evaluation_depth = 2;
+    try std.testing.expectError(
+        error.EvaluationDepthExceeded,
+        compile(
+            std.testing.allocator,
+            "nested-map-depth-limit.scss",
+            "@use \"sass:map\"; $value: map.set((), a, b, c, d, 1);",
+            .scss,
+            depth_limits,
+        ),
+    );
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 1;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "map-mutation-temporary-limit.scss",
+            "@use \"sass:map\"; $value: map.set((a: 1), b, 2);",
+            .scss,
+            temporary_limits,
+        ),
+    );
 }
 
 test "native Sass mutates shallow maps immutably" {
@@ -620,18 +646,157 @@ test "native Sass shallow map mutations reject unowned calls" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "nested-map-merge.scss",
-            .input = "@use \"sass:map\"; $value: map.merge((a: (b: 1)), a, (c: 2));",
-            .expected = error.UnsupportedFeature,
-        },
-        .{
-            .name = "nested-map-set.scss",
-            .input = "@use \"sass:map\"; $value: map.set((a: (b: 1)), a, b, 2);",
-            .expected = error.UnsupportedFeature,
-        },
-        .{
             .name = "map-mutation-splat.scss",
             .input = "@use \"sass:map\"; $args: ((a: 1), (b: 2)); $value: map.merge($args...);",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
+test "native Sass mutates nested and deep maps immutably" {
+    const input =
+        \\@use "sass:map";
+        \\@use "sass:map" as maps;
+        \\@use "sass:map" as *;
+        \\$order: 0;
+        \\@function stamp($key) { $order: $order + 1 !global; @return ($key: $order); }
+        \\$base: (theme: (color: red, nested: (x: 1)), scalar: 5, untouched: (u: 1));
+        \\$nested-merge: map.merge($base, theme, nested, (x: 10, z: 3));
+        \\$legacy-nested: map-merge($base, theme, (accent: blue));
+        \\$missing-merge: map.merge($base, new-merge, a, (b: 2));
+        \\$scalar-merge: map.merge($base, scalar, (x: 9));
+        \\$nested-set: maps.set($base, theme, nested, y, 2);
+        \\$missing-set: map.set($base, new-set, a, b, 3);
+        \\$scalar-set: map.set($base, scalar, x, 9);
+        \\$deep: map.deep-merge((a: (x: 1, y: 2), b: 1), (a: (y: 20, z: 3), b: (nested: true), c: 4));
+        \\$star-deep: deep-merge((), (ready: true));
+        \\$named-deep: map.deep-merge($map2: stamp(b), $map1: stamp(a));
+        \\$removed: map.deep-remove($base, theme, nested, x);
+        \\$empty-child: map.deep-remove((single: (leaf: 1)), single, leaf);
+        \\$named-removed: map.deep-remove($key: color, $map: map.get($base, theme));
+        \\$missing-removed: map.deep-remove($base, theme, missing, x);
+        \\$scalar-removed: map.deep-remove($base, scalar, x);
+        \\.a {
+        \\  nested-merge-x: map.get($nested-merge, theme, nested, x);
+        \\  nested-merge-z: map.get($nested-merge, theme, nested, z);
+        \\  nested-merge-order: nth(map.keys(map.get($nested-merge, theme, nested)), 2);
+        \\  legacy-nested: map.get($legacy-nested, theme, accent);
+        \\  missing-merge: map.get($missing-merge, new-merge, a, b);
+        \\  scalar-merge: map.get($scalar-merge, scalar, x);
+        \\  nested-set: map.get($nested-set, theme, nested, y);
+        \\  missing-set: map.get($missing-set, new-set, a, b);
+        \\  scalar-set: map.get($scalar-set, scalar, x);
+        \\  original: map.get($base, theme, nested, x);
+        \\  deep-x: map.get($deep, a, x);
+        \\  deep-y: map.get($deep, a, y);
+        \\  deep-z: map.get($deep, a, z);
+        \\  deep-b: map.get($deep, b, nested);
+        \\  deep-root-order: nth(map.keys($deep), 3);
+        \\  deep-child-order: nth(map.keys(map.get($deep, a)), 3);
+        \\  star-deep: map.get($star-deep, ready);
+        \\  source-ordered-a: map.get($named-deep, a);
+        \\  source-ordered-b: map.get($named-deep, b);
+        \\  removed: map.has-key(map.get($removed, theme, nested), x);
+        \\  removed-parent: map.has-key(map.get($removed, theme), nested);
+        \\  empty-child: length(map.keys(map.get($empty-child, single)));
+        \\  empty-parent: map.has-key($empty-child, single);
+        \\  named-removed: map.has-key($named-removed, color);
+        \\  missing-unchanged: map.get($missing-removed, theme, nested, x);
+        \\  scalar-unchanged: map.get($scalar-removed, scalar);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "deep-map-mutations.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{nested-merge-x:10;nested-merge-z:3;nested-merge-order:z;legacy-nested:blue;missing-merge:2;scalar-merge:9;nested-set:2;missing-set:3;scalar-set:9;original:1;deep-x:1;deep-y:20;deep-z:3;deep-b:true;deep-root-order:c;deep-child-order:z;star-deep:true;source-ordered-a:2;source-ordered-b:1;removed:false;removed-parent:true;empty-child:0;empty-parent:true;named-removed:false;missing-unchanged:1;scalar-unchanged:5}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:map" as m
+        \\$base: (a: (b: (c: 1)), keep: 2)
+        \\$merged: m.merge($base, a, b, (c: 3, d: 4))
+        \\$set: m.set($base, a, b, e, 5)
+        \\$deep: m.deep-merge($base, (a: (b: (f: 6))))
+        \\$removed: m.deep-remove($base, a, b, c)
+        \\.sass
+        \\  merged: m.get($merged, a, b, d)
+        \\  set: m.get($set, a, b, e)
+        \\  deep: m.get($deep, a, b, f)
+        \\  removed: m.has-key(m.get($removed, a, b), c)
+        \\  keep: m.get($removed, keep)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "deep-map-mutations.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{merged:4;set:5;deep:6;removed:false;keep:2}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass nested and deep map mutations reject unsafe calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "deep-merge-left-type.scss",
+            .input = "@use \"sass:map\"; $value: map.deep-merge(1, (a: 1));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "deep-merge-right-type.scss",
+            .input = "@use \"sass:map\"; $value: map.deep-merge((a: 1), 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "deep-merge-arity.scss",
+            .input = "@use \"sass:map\"; $value: map.deep-merge((a: 1));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "deep-remove-type.scss",
+            .input = "@use \"sass:map\"; $value: map.deep-remove(1, a);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "deep-remove-arity.scss",
+            .input = "@use \"sass:map\"; $value: map.deep-remove((a: 1));",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "nested-merge-value-type.scss",
+            .input = "@use \"sass:map\"; $value: map.merge((a: (b: 1)), a, 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "nested-set-root-type.scss",
+            .input = "@use \"sass:map\"; $value: map.set(1, a, b, 2);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "deep-merge-splat.scss",
+            .input = "@use \"sass:map\"; $args: ((a: 1), (b: 2)); $value: map.deep-merge($args...);",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "deep-remove-splat.scss",
+            .input = "@use \"sass:map\"; $args: ((a: 1), a); $value: map.deep-remove($args...);",
             .expected = error.UnsupportedFeature,
         },
     };
@@ -3124,6 +3289,11 @@ fn exerciseAllocationFailures(
         \\$merged-theme: map.merge($theme, (accent: red));
         \\$removed-theme: map.remove($merged-theme, tone);
         \\$updated-theme: map.set($removed-theme, accent, green);
+        \\$deep-base: (a: (b: (x: 1)), scalar: 2);
+        \\$nested-merged: map.merge($deep-base, a, b, (y: 3));
+        \\$nested-set: map.set($deep-base, a, b, z, 4);
+        \\$deep-merged: map.deep-merge($deep-base, (a: (b: (x: 5, q: 6))));
+        \\$deep-removed: map.deep-remove($deep-base, a, b, x);
         \\$enabled: not false;
         \\$inch: 1in;
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
@@ -3184,6 +3354,10 @@ fn exerciseAllocationFailures(
         \\  map-merged: map.get($merged-theme, accent);
         \\  map-removed: map.has-key($removed-theme, tone);
         \\  map-set: map.get($updated-theme, accent);
+        \\  map-nested-merged: map.get($nested-merged, a, b, y);
+        \\  map-nested-set: map.get($nested-set, a, b, z);
+        \\  map-deep-merged: map.get($deep-merged, a, b, q);
+        \\  map-deep-removed: map.has-key(map.get($deep-removed, a, b), x);
         \\  string-length: str-length($string: "💚a");
         \\  string-slice: str-slice("hello", -2);
         \\  string-quote: quote(foo);
@@ -3211,7 +3385,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

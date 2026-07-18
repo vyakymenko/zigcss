@@ -110,6 +110,8 @@ const Builtin = enum {
     map_merge,
     map_remove,
     map_set,
+    map_deep_merge,
+    map_deep_remove,
     nth,
     length,
     meta_keywords,
@@ -464,6 +466,11 @@ const QualifiedName = struct {
 const CalculationArgument = union(enum) {
     number: native_value.Number,
     deferred,
+};
+
+const MapMutationScratch = struct {
+    allocator: std.mem.Allocator,
+    reserved_bytes: usize = 0,
 };
 
 const LogicalOperator = enum {
@@ -3669,7 +3676,12 @@ const Engine = struct {
                 scope,
                 span,
             ),
-            .map_merge, .map_remove, .map_set => return try self.callMapMutationRaw(
+            .map_merge,
+            .map_remove,
+            .map_set,
+            .map_deep_merge,
+            .map_deep_remove,
+            => return try self.callMapMutationRaw(
                 builtin,
                 body,
                 ranges.items,
@@ -5566,33 +5578,13 @@ const Engine = struct {
         ) catch |err| return self.argumentsFailure(err, span);
         defer parsed.deinit();
 
-        var positional_count: usize = 0;
         var has_keyword = false;
         for (parsed.items) |argument| {
             if (argument.splat) return self.argumentsFailure(error.SplatUnsupported, span);
-            if (argument.name == null) {
-                positional_count += 1;
-            } else {
-                has_keyword = true;
-            }
+            if (argument.name != null) has_keyword = true;
         }
 
-        const shallow_positional_limit: usize = switch (builtin) {
-            .map_merge => 2,
-            .map_set => 3,
-            .map_remove => std.math.maxInt(usize),
-            else => unreachable,
-        };
-        if (positional_count > shallow_positional_limit) {
-            try self.report(
-                .unsupported_feature,
-                span,
-                "nested native Sass map mutation is not supported yet",
-            );
-            return error.UnsupportedFeature;
-        }
-
-        if (builtin == .map_remove and !has_keyword) {
+        if (!has_keyword) {
             var arguments: std.ArrayList(*const native_value.Value) = .empty;
             defer arguments.deinit(self.allocator);
             for (parsed.items) |argument| {
@@ -5605,11 +5597,11 @@ const Engine = struct {
                     ),
                 );
             }
-            return self.callMapRemove(arguments.items, span);
+            return self.callMapMutation(builtin, arguments.items, span);
         }
 
         const parameters: []const native_arguments.Parameter = switch (builtin) {
-            .map_merge => &.{
+            .map_merge, .map_deep_merge => &.{
                 .{ .name = "map1" },
                 .{ .name = "map2" },
             },
@@ -5618,6 +5610,10 @@ const Engine = struct {
                 .{ .name = "map" },
                 .{ .name = "key" },
                 .{ .name = "value" },
+            },
+            .map_deep_remove => &.{
+                .{ .name = "map" },
+                .{ .name = "key" },
             },
             else => unreachable,
         };
@@ -5647,10 +5643,21 @@ const Engine = struct {
                 break;
             }
         }
+        return self.callMapMutation(builtin, arguments[0..parameters.len], span);
+    }
+
+    fn callMapMutation(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
         return switch (builtin) {
-            .map_merge => self.callMapMerge(arguments[0..2], span),
-            .map_remove => self.callMapRemove(arguments[0..1], span),
-            .map_set => self.callMapSet(arguments[0..3], span),
+            .map_merge => self.callMapMerge(arguments, span),
+            .map_remove => self.callMapRemove(arguments, span),
+            .map_set => self.callMapSet(arguments, span),
+            .map_deep_merge => self.callMapDeepMerge(arguments, span),
+            .map_deep_remove => self.callMapDeepRemove(arguments, span),
             else => unreachable,
         };
     }
@@ -5660,40 +5667,38 @@ const Engine = struct {
         arguments: []const *const native_value.Value,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        if (arguments.len != 2) {
-            try self.report(.invalid_operation, span, "map-merge() requires exactly two maps");
+        if (arguments.len < 2) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "map-merge() requires a map, zero or more keys, and a map",
+            );
             return error.InvalidExpression;
         }
         const left = nativeMapView(arguments[0].*) orelse {
             try self.report(.type_mismatch, span, "map-merge() requires a map as its first value");
             return error.InvalidExpression;
         };
-        const right = nativeMapView(arguments[1].*) orelse {
-            try self.report(.type_mismatch, span, "map-merge() requires a map as its second value");
+        const right = nativeMapView(arguments[arguments.len - 1].*) orelse {
+            try self.report(.type_mismatch, span, "map-merge() requires a map as its final value");
             return error.InvalidExpression;
         };
 
-        var entries: std.ArrayList(native_value.Entry) = .empty;
-        defer entries.deinit(self.allocator);
-        for (left.entries) |entry| {
-            try self.transaction.consumeOperations(1);
-            try entries.append(self.allocator, entry);
-        }
-        for (right.entries) |right_entry| {
-            var replaced = false;
-            for (entries.items) |*entry| {
-                try self.transaction.consumeOperations(1);
-                if (!sassValuesEqual(entry.key, right_entry.key)) continue;
-                entry.value = right_entry.value;
-                replaced = true;
-                break;
-            }
-            if (!replaced) {
-                try self.transaction.consumeOperations(1);
-                try entries.append(self.allocator, right_entry);
-            }
-        }
-        return self.values.own(.{ .map = .{ .entries = entries.items } });
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        var mutation_scratch = MapMutationScratch{ .allocator = scratch.allocator() };
+        const result = if (arguments.len == 2)
+            try self.mergeMapsShallow(&mutation_scratch, left, right, span)
+        else
+            try self.mergeMapPath(
+                &mutation_scratch,
+                left,
+                arguments[1 .. arguments.len - 1],
+                right,
+                0,
+                span,
+            );
+        return self.values.own(result);
     }
 
     fn callMapRemove(
@@ -5710,22 +5715,15 @@ const Engine = struct {
             return error.InvalidExpression;
         };
 
-        var entries: std.ArrayList(native_value.Entry) = .empty;
-        defer entries.deinit(self.allocator);
-        for (map.entries) |entry| {
-            var removed = false;
-            for (arguments[1..]) |key| {
-                try self.transaction.consumeOperations(1);
-                if (!sassValuesEqual(entry.key, key.*)) continue;
-                removed = true;
-                break;
-            }
-            if (!removed) {
-                try self.transaction.consumeOperations(1);
-                try entries.append(self.allocator, entry);
-            }
-        }
-        return self.values.own(.{ .map = .{ .entries = entries.items } });
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        var mutation_scratch = MapMutationScratch{ .allocator = scratch.allocator() };
+        return self.values.own(try self.removeMapKeys(
+            &mutation_scratch,
+            map,
+            arguments[1..],
+            span,
+        ));
     }
 
     fn callMapSet(
@@ -5733,8 +5731,12 @@ const Engine = struct {
         arguments: []const *const native_value.Value,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        if (arguments.len != 3) {
-            try self.report(.invalid_operation, span, "map.set() requires a map, key, and value");
+        if (arguments.len < 3) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "map.set() requires a map, one or more keys, and a value",
+            );
             return error.InvalidExpression;
         }
         const map = nativeMapView(arguments[0].*) orelse {
@@ -5742,29 +5744,366 @@ const Engine = struct {
             return error.InvalidExpression;
         };
 
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        var mutation_scratch = MapMutationScratch{ .allocator = scratch.allocator() };
+        return self.values.own(try self.setMapPath(
+            &mutation_scratch,
+            map,
+            arguments[1 .. arguments.len - 1],
+            arguments[arguments.len - 1].*,
+            0,
+            span,
+        ));
+    }
+
+    fn callMapDeepMerge(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(.invalid_operation, span, "map.deep-merge() requires exactly two maps");
+            return error.InvalidExpression;
+        }
+        const left = nativeMapView(arguments[0].*) orelse {
+            try self.report(
+                .type_mismatch,
+                span,
+                "map.deep-merge() requires a map as its first value",
+            );
+            return error.InvalidExpression;
+        };
+        const right = nativeMapView(arguments[1].*) orelse {
+            try self.report(
+                .type_mismatch,
+                span,
+                "map.deep-merge() requires a map as its second value",
+            );
+            return error.InvalidExpression;
+        };
+
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        var mutation_scratch = MapMutationScratch{ .allocator = scratch.allocator() };
+        return self.values.own(try self.mergeMapsDeep(
+            &mutation_scratch,
+            left,
+            right,
+            0,
+            span,
+        ));
+    }
+
+    fn callMapDeepRemove(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 2) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "map.deep-remove() requires a map and at least one key",
+            );
+            return error.InvalidExpression;
+        }
+        const map = nativeMapView(arguments[0].*) orelse {
+            try self.report(.type_mismatch, span, "map.deep-remove() requires a map value");
+            return error.InvalidExpression;
+        };
+
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        var mutation_scratch = MapMutationScratch{ .allocator = scratch.allocator() };
+        return self.values.own(try self.deepRemoveMapPath(
+            &mutation_scratch,
+            map,
+            arguments[1..],
+            0,
+            span,
+        ));
+    }
+
+    fn mergeMapsShallow(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        left: native_value.Map,
+        right: native_value.Map,
+        span: native_source.Span,
+    ) Error!native_value.Value {
         var entries: std.ArrayList(native_value.Entry) = .empty;
-        defer entries.deinit(self.allocator);
+        try self.reserveMapMutationEntries(
+            scratch,
+            &entries,
+            std.math.add(usize, left.entries.len, right.entries.len) catch {
+                try self.report(.resource_limit, span, "native Sass temporary limit exceeded");
+                return error.TemporaryLimitExceeded;
+            },
+            span,
+        );
+        for (left.entries) |entry| {
+            try self.transaction.consumeOperations(1);
+            entries.appendAssumeCapacity(entry);
+        }
+        for (right.entries) |right_entry| {
+            var replaced = false;
+            for (entries.items) |*entry| {
+                try self.transaction.consumeOperations(1);
+                if (!sassValuesEqual(entry.key, right_entry.key)) continue;
+                entry.value = right_entry.value;
+                replaced = true;
+                break;
+            }
+            if (!replaced) {
+                try self.transaction.consumeOperations(1);
+                entries.appendAssumeCapacity(right_entry);
+            }
+        }
+        return .{ .map = .{ .entries = entries.items } };
+    }
+
+    fn setMapEntry(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        map: native_value.Map,
+        key: native_value.Value,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Value {
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        try self.reserveMapMutationEntries(
+            scratch,
+            &entries,
+            std.math.add(usize, map.entries.len, 1) catch {
+                try self.report(.resource_limit, span, "native Sass temporary limit exceeded");
+                return error.TemporaryLimitExceeded;
+            },
+            span,
+        );
         var replaced = false;
         for (map.entries) |entry| {
             try self.transaction.consumeOperations(1);
-            const next = if (!replaced and sassValuesEqual(entry.key, arguments[1].*)) blk: {
+            const next = if (!replaced and sassValuesEqual(entry.key, key)) blk: {
                 replaced = true;
-                break :blk native_value.Entry{
-                    .key = entry.key,
-                    .value = arguments[2].*,
-                };
+                break :blk native_value.Entry{ .key = entry.key, .value = value };
             } else entry;
-            try self.transaction.consumeOperations(1);
-            try entries.append(self.allocator, next);
+            entries.appendAssumeCapacity(next);
         }
         if (!replaced) {
             try self.transaction.consumeOperations(1);
-            try entries.append(self.allocator, .{
-                .key = arguments[1].*,
-                .value = arguments[2].*,
-            });
+            entries.appendAssumeCapacity(.{ .key = key, .value = value });
         }
-        return self.values.own(.{ .map = .{ .entries = entries.items } });
+        return .{ .map = .{ .entries = entries.items } };
+    }
+
+    fn removeMapKeys(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        map: native_value.Map,
+        keys: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Value {
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        try self.reserveMapMutationEntries(scratch, &entries, map.entries.len, span);
+        for (map.entries) |entry| {
+            var removed = false;
+            for (keys) |key| {
+                try self.transaction.consumeOperations(1);
+                if (!sassValuesEqual(entry.key, key.*)) continue;
+                removed = true;
+                break;
+            }
+            if (!removed) {
+                try self.transaction.consumeOperations(1);
+                entries.appendAssumeCapacity(entry);
+            }
+        }
+        return .{ .map = .{ .entries = entries.items } };
+    }
+
+    fn copyMap(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        map: native_value.Map,
+        span: native_source.Span,
+    ) Error!native_value.Value {
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        try self.reserveMapMutationEntries(scratch, &entries, map.entries.len, span);
+        for (map.entries) |entry| {
+            try self.transaction.consumeOperations(1);
+            entries.appendAssumeCapacity(entry);
+        }
+        return .{ .map = .{ .entries = entries.items } };
+    }
+
+    fn mergeMapPath(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        map: native_value.Map,
+        keys: []const *const native_value.Value,
+        right: native_value.Map,
+        depth: u16,
+        span: native_source.Span,
+    ) Error!native_value.Value {
+        try self.checkMapMutationDepth(depth, span);
+        std.debug.assert(keys.len > 0);
+        const current = try self.findMapValue(map, keys[0].*);
+        const child_map: native_value.Map = if (current) |value|
+            nativeMapView(value.*) orelse .{ .entries = &.{} }
+        else
+            .{ .entries = &.{} };
+        const replacement = if (keys.len == 1)
+            try self.mergeMapsShallow(scratch, child_map, right, span)
+        else
+            try self.mergeMapPath(
+                scratch,
+                child_map,
+                keys[1..],
+                right,
+                depth + 1,
+                span,
+            );
+        return self.setMapEntry(scratch, map, keys[0].*, replacement, span);
+    }
+
+    fn setMapPath(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        map: native_value.Map,
+        keys: []const *const native_value.Value,
+        value: native_value.Value,
+        depth: u16,
+        span: native_source.Span,
+    ) Error!native_value.Value {
+        try self.checkMapMutationDepth(depth, span);
+        std.debug.assert(keys.len > 0);
+        if (keys.len == 1) return self.setMapEntry(scratch, map, keys[0].*, value, span);
+
+        const current = try self.findMapValue(map, keys[0].*);
+        const child_map: native_value.Map = if (current) |child|
+            nativeMapView(child.*) orelse .{ .entries = &.{} }
+        else
+            .{ .entries = &.{} };
+        const replacement = try self.setMapPath(
+            scratch,
+            child_map,
+            keys[1..],
+            value,
+            depth + 1,
+            span,
+        );
+        return self.setMapEntry(scratch, map, keys[0].*, replacement, span);
+    }
+
+    fn mergeMapsDeep(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        left: native_value.Map,
+        right: native_value.Map,
+        depth: u16,
+        span: native_source.Span,
+    ) Error!native_value.Value {
+        try self.checkMapMutationDepth(depth, span);
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        try self.reserveMapMutationEntries(
+            scratch,
+            &entries,
+            std.math.add(usize, left.entries.len, right.entries.len) catch {
+                try self.report(.resource_limit, span, "native Sass temporary limit exceeded");
+                return error.TemporaryLimitExceeded;
+            },
+            span,
+        );
+        for (left.entries) |entry| {
+            try self.transaction.consumeOperations(1);
+            entries.appendAssumeCapacity(entry);
+        }
+        for (right.entries) |right_entry| {
+            var replaced = false;
+            for (entries.items) |*entry| {
+                try self.transaction.consumeOperations(1);
+                if (!sassValuesEqual(entry.key, right_entry.key)) continue;
+                const left_child = nativeMapView(entry.value);
+                const right_child = nativeMapView(right_entry.value);
+                entry.value = if (left_child != null and right_child != null)
+                    try self.mergeMapsDeep(
+                        scratch,
+                        left_child.?,
+                        right_child.?,
+                        depth + 1,
+                        span,
+                    )
+                else
+                    right_entry.value;
+                replaced = true;
+                break;
+            }
+            if (!replaced) {
+                try self.transaction.consumeOperations(1);
+                entries.appendAssumeCapacity(right_entry);
+            }
+        }
+        return .{ .map = .{ .entries = entries.items } };
+    }
+
+    fn deepRemoveMapPath(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        map: native_value.Map,
+        keys: []const *const native_value.Value,
+        depth: u16,
+        span: native_source.Span,
+    ) Error!native_value.Value {
+        try self.checkMapMutationDepth(depth, span);
+        std.debug.assert(keys.len > 0);
+        if (keys.len == 1) return self.removeMapKeys(scratch, map, keys, span);
+
+        const current = (try self.findMapValue(map, keys[0].*)) orelse
+            return self.copyMap(scratch, map, span);
+        const child_map = nativeMapView(current.*) orelse
+            return self.copyMap(scratch, map, span);
+        const replacement = try self.deepRemoveMapPath(
+            scratch,
+            child_map,
+            keys[1..],
+            depth + 1,
+            span,
+        );
+        return self.setMapEntry(scratch, map, keys[0].*, replacement, span);
+    }
+
+    fn reserveMapMutationEntries(
+        self: *Engine,
+        scratch: *MapMutationScratch,
+        entries: *std.ArrayList(native_value.Entry),
+        capacity: usize,
+        span: native_source.Span,
+    ) Error!void {
+        const bytes = std.math.mul(usize, capacity, @sizeOf(native_value.Entry)) catch {
+            try self.report(.resource_limit, span, "native Sass temporary limit exceeded");
+            return error.TemporaryLimitExceeded;
+        };
+        const next = std.math.add(usize, scratch.reserved_bytes, bytes) catch {
+            try self.report(.resource_limit, span, "native Sass temporary limit exceeded");
+            return error.TemporaryLimitExceeded;
+        };
+        if (next > self.limits.max_temporary_bytes) {
+            try self.report(.resource_limit, span, "native Sass temporary limit exceeded");
+            return error.TemporaryLimitExceeded;
+        }
+        try entries.ensureTotalCapacityPrecise(scratch.allocator, capacity);
+        scratch.reserved_bytes = next;
+    }
+
+    fn checkMapMutationDepth(
+        self: *Engine,
+        depth: u16,
+        span: native_source.Span,
+    ) Error!void {
+        if (depth <= self.limits.max_evaluation_depth) return;
+        try self.report(.resource_limit, span, "native Sass map mutation depth exceeded");
+        return error.EvaluationDepthExceeded;
     }
 
     fn callNth(
@@ -7292,6 +7631,8 @@ fn mapModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "merge")) return .map_merge;
     if (sassNameEql(name, "remove")) return .map_remove;
     if (sassNameEql(name, "set")) return .map_set;
+    if (sassNameEql(name, "deep-merge")) return .map_deep_merge;
+    if (sassNameEql(name, "deep-remove")) return .map_deep_remove;
     return null;
 }
 
