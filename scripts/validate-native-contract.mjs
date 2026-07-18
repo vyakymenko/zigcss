@@ -151,6 +151,7 @@ const expectedImplementations = Object.freeze([
       'typed-collections',
       'collection-accessors',
       'logical-comparison',
+      'lazy-conditional-emission',
       'interpolation',
       'lexical-scope',
       'selector-nesting',

@@ -169,6 +169,16 @@ const ModernColorChannel = struct {
     missing: bool = false,
 };
 
+const ConditionalDirective = enum {
+    if_branch,
+    else_branch,
+};
+
+const ConditionalSelection = struct {
+    consumed: usize,
+    block: ?native_syntax.NodeId,
+};
+
 const ArithmeticProbe = union(enum) {
     none,
     numeric: Numeric,
@@ -252,8 +262,28 @@ const Engine = struct {
         }
         const children = self.document.children(self.document.root) catch
             return error.InvalidSassSyntax;
-        for (children) |child_id| {
+        try self.executeRootChildren(children, &self.global_scope, 1, false);
+    }
+
+    fn executeRootChildren(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+        scope: *native_environment.ScopeId,
+        depth: u16,
+        in_flow: bool,
+    ) Error!void {
+        if (depth > self.limits.max_evaluation_depth) {
+            const span = if (children.len > 0)
+                (self.document.get(children[0]) catch return error.InvalidSassSyntax).span
+            else
+                (self.document.get(self.document.root) catch return error.InvalidSassSyntax).span;
+            try self.report(.resource_limit, span, "native Sass evaluation depth exceeded");
+            return error.EvaluationDepthExceeded;
+        }
+        var index: usize = 0;
+        while (index < children.len) {
             try self.transaction.consumeOperations(1);
+            const child_id = children[index];
             const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
             switch (child.kind) {
                 .declaration => {
@@ -261,10 +291,32 @@ const Engine = struct {
                         try self.report(.syntax, child.span, "top-level Sass declaration is not a variable");
                         return error.InvalidSassSyntax;
                     }
-                    try self.assignVariable(child_id, &self.global_scope);
+                    if (in_flow) {
+                        try self.report(
+                            .unsupported_feature,
+                            child.span,
+                            "flow-control variable assignment is not implemented by the native evaluator yet",
+                        );
+                        return error.UnsupportedFeature;
+                    }
+                    try self.assignVariable(child_id, scope);
                 },
-                .rule => try self.evaluateRule(child_id, null, self.global_scope, 1),
+                .rule => try self.evaluateRule(child_id, null, scope.*, depth),
                 .comment => try self.emitRootComment(child),
+                .conditional => {
+                    const selection = try self.selectConditionalChain(
+                        children,
+                        index,
+                        scope.*,
+                    );
+                    if (selection.block) |block_id| {
+                        const block_children = self.document.children(block_id) catch
+                            return error.InvalidSassSyntax;
+                        try self.executeRootChildren(block_children, scope, depth + 1, true);
+                    }
+                    index += selection.consumed;
+                    continue;
+                },
                 else => {
                     try self.report(
                         .unsupported_feature,
@@ -274,6 +326,7 @@ const Engine = struct {
                     return error.UnsupportedFeature;
                 },
             }
+            index += 1;
         }
     }
 
@@ -318,22 +371,81 @@ const Engine = struct {
 
         const block_children = self.document.children(rule_children[1]) catch
             return error.InvalidSassSyntax;
-        for (block_children) |child_id| {
+        try self.executeRuleChildren(
+            block_children,
+            rule.span,
+            &selectors,
+            &scope,
+            &declarations,
+            depth,
+            false,
+        );
+
+        try self.emitRuleChunk(rule.span, &selectors, &declarations);
+    }
+
+    fn executeRuleChildren(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+        owner_span: native_source.Span,
+        selectors: *const SelectorList,
+        scope: *native_environment.ScopeId,
+        declarations: *std.ArrayList(u8),
+        depth: u16,
+        in_flow: bool,
+    ) Error!void {
+        if (depth > self.limits.max_evaluation_depth) {
+            try self.report(.resource_limit, owner_span, "native Sass evaluation depth exceeded");
+            return error.EvaluationDepthExceeded;
+        }
+        var index: usize = 0;
+        while (index < children.len) {
             try self.transaction.consumeOperations(1);
+            const child_id = children[index];
             const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
             switch (child.kind) {
                 .declaration => {
                     if (try self.isVariableDeclaration(child_id)) {
-                        try self.assignVariable(child_id, &scope);
+                        if (in_flow) {
+                            try self.report(
+                                .unsupported_feature,
+                                child.span,
+                                "flow-control variable assignment is not implemented by the native evaluator yet",
+                            );
+                            return error.UnsupportedFeature;
+                        }
+                        try self.assignVariable(child_id, scope);
                     } else {
-                        try self.appendDeclaration(child_id, "", &scope, &declarations, depth);
+                        try self.appendDeclaration(child_id, "", scope, declarations, depth);
                     }
                 },
                 .rule => {
-                    try self.emitRuleChunk(rule.span, &selectors, &declarations);
-                    try self.evaluateRule(child_id, &selectors, scope, depth + 1);
+                    try self.emitRuleChunk(owner_span, selectors, declarations);
+                    try self.evaluateRule(child_id, selectors, scope.*, depth + 1);
                 },
-                .comment => try self.appendBlockComment(child, &declarations),
+                .comment => try self.appendBlockComment(child, declarations),
+                .conditional => {
+                    const selection = try self.selectConditionalChain(
+                        children,
+                        index,
+                        scope.*,
+                    );
+                    if (selection.block) |block_id| {
+                        const block_children = self.document.children(block_id) catch
+                            return error.InvalidSassSyntax;
+                        try self.executeRuleChildren(
+                            block_children,
+                            owner_span,
+                            selectors,
+                            scope,
+                            declarations,
+                            depth + 1,
+                            true,
+                        );
+                    }
+                    index += selection.consumed;
+                    continue;
+                },
                 else => {
                     try self.report(
                         .unsupported_feature,
@@ -343,9 +455,156 @@ const Engine = struct {
                     return error.UnsupportedFeature;
                 },
             }
+            index += 1;
+        }
+    }
+
+    fn selectConditionalChain(
+        self: *Engine,
+        siblings: []const native_syntax.NodeId,
+        start: usize,
+        scope: native_environment.ScopeId,
+    ) Error!ConditionalSelection {
+        if (start >= siblings.len) return error.InvalidSassSyntax;
+
+        var selected: ?native_syntax.NodeId = null;
+        var consumed: usize = 0;
+        var saw_else = false;
+        var index = start;
+        while (index < siblings.len) : (index += 1) {
+            const node_id = siblings[index];
+            const node = self.document.get(node_id) catch return error.InvalidSassSyntax;
+            if (node.kind != .conditional) break;
+
+            const directive = try self.classifyConditionalDirective(node);
+            if (index == start) {
+                if (directive != .if_branch) {
+                    try self.report(.syntax, node.span, "Sass @else must follow an @if branch");
+                    return error.InvalidSassSyntax;
+                }
+            } else {
+                if (directive == .if_branch) break;
+                try self.transaction.consumeOperations(1);
+            }
+
+            const children = self.document.children(node_id) catch
+                return error.InvalidSassSyntax;
+            var condition: ?struct {
+                bytes: []const u8,
+                span: native_source.Span,
+            } = null;
+            var block_id: native_syntax.NodeId = undefined;
+
+            switch (directive) {
+                .if_branch => {
+                    if (children.len != 2) {
+                        try self.report(
+                            .syntax,
+                            node.span,
+                            "Sass @if requires a condition and a block",
+                        );
+                        return error.InvalidSassSyntax;
+                    }
+                    const expression = self.document.get(children[0]) catch
+                        return error.InvalidSassSyntax;
+                    if (expression.kind != .expression or expression.text == null) {
+                        try self.report(.syntax, node.span, "Sass @if condition is malformed");
+                        return error.InvalidSassSyntax;
+                    }
+                    const raw = trimWhitespace(try self.sources.slice(expression.text.?));
+                    if (raw.len == 0) {
+                        try self.report(.syntax, expression.span, "Sass @if condition is empty");
+                        return error.InvalidSassSyntax;
+                    }
+                    condition = .{ .bytes = raw, .span = expression.span };
+                    block_id = children[1];
+                },
+                .else_branch => {
+                    if (children.len == 1) {
+                        if (saw_else) {
+                            try self.report(.syntax, node.span, "Sass conditional has multiple @else branches");
+                            return error.InvalidSassSyntax;
+                        }
+                        saw_else = true;
+                        block_id = children[0];
+                    } else if (children.len == 2) {
+                        if (saw_else) {
+                            try self.report(.syntax, node.span, "Sass @else if cannot follow @else");
+                            return error.InvalidSassSyntax;
+                        }
+                        const expression = self.document.get(children[0]) catch
+                            return error.InvalidSassSyntax;
+                        if (expression.kind != .expression or expression.text == null) {
+                            try self.report(.syntax, node.span, "Sass @else if condition is malformed");
+                            return error.InvalidSassSyntax;
+                        }
+                        const prelude = trimWhitespace(try self.sources.slice(expression.text.?));
+                        if (prelude.len <= 2 or
+                            !std.ascii.eqlIgnoreCase(prelude[0..2], "if") or
+                            !isExpressionWhitespace(prelude[2]))
+                        {
+                            try self.report(
+                                .syntax,
+                                expression.span,
+                                "Sass @else only accepts an optional 'if' condition",
+                            );
+                            return error.InvalidSassSyntax;
+                        }
+                        const raw = trimWhitespace(prelude[2..]);
+                        if (raw.len == 0) {
+                            try self.report(.syntax, expression.span, "Sass @else if condition is empty");
+                            return error.InvalidSassSyntax;
+                        }
+                        condition = .{ .bytes = raw, .span = expression.span };
+                        block_id = children[1];
+                    } else {
+                        try self.report(
+                            .syntax,
+                            node.span,
+                            "Sass @else requires a block and an optional 'if' condition",
+                        );
+                        return error.InvalidSassSyntax;
+                    }
+                },
+            }
+
+            const block = self.document.get(block_id) catch return error.InvalidSassSyntax;
+            if (block.kind != .block) {
+                try self.report(.syntax, node.span, "Sass conditional branch is missing a block");
+                return error.InvalidSassSyntax;
+            }
+
+            if (selected == null) {
+                if (condition) |candidate| {
+                    const value = try self.evaluateExpressionBytes(
+                        candidate.bytes,
+                        scope,
+                        candidate.span,
+                    );
+                    if (sassTruthy(value.*)) selected = block_id;
+                } else {
+                    selected = block_id;
+                }
+            }
+            consumed += 1;
         }
 
-        try self.emitRuleChunk(rule.span, &selectors, &declarations);
+        return .{ .consumed = consumed, .block = selected };
+    }
+
+    fn classifyConditionalDirective(
+        self: *Engine,
+        node: *const native_syntax.Node,
+    ) Error!ConditionalDirective {
+        const text_span = node.text orelse {
+            try self.report(.syntax, node.span, "Sass conditional directive is missing a keyword");
+            return error.InvalidSassSyntax;
+        };
+        const keyword = try self.sources.slice(text_span);
+        if (std.ascii.eqlIgnoreCase(keyword, "@if")) return .if_branch;
+        if (std.ascii.eqlIgnoreCase(keyword, "@else")) return .else_branch;
+        try self.report(.syntax, node.span, "unknown Sass conditional directive");
+        return error.InvalidSassSyntax;
     }
 
     fn emitRuleChunk(

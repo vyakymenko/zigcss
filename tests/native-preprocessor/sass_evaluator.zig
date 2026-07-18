@@ -1107,6 +1107,112 @@ test "native Sass predefined colors reject unknown and ambiguous descriptions" {
     );
 }
 
+test "native Sass lazily evaluates bounded conditional chains" {
+    const input =
+        \\$enabled: true;
+        \\$disabled: false;
+        \\$zero: 0;
+        \\@if $enabled { .root { value: yes; } }
+        \\@else if $undefined { .wrong-condition { value: no; } }
+        \\@else { .wrong { value: $undefined; } }
+        \\@if $disabled { .skip { value: no; } }
+        \\@else if 1 < 2 { .fallback { value: yes; } }
+        \\@else { .wrong-two { value: no; } }
+        \\@if $zero { .truthy { value: zero; } }
+        \\@if false { @for $i from 1 through 2 { .unselected-#{$i} { value: no; } } }
+        \\.card {
+        \\  before: 1;
+        \\  @if $disabled { branch: no; }
+        \\  @else if $enabled {
+        \\    branch: yes;
+        \\    .child {
+        \\      nested: true;
+        \\      @if false { deep: no; }
+        \\      @else { deep: yes; }
+        \\    }
+        \\  }
+        \\  @else { branch: never; }
+        \\  after: 2;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "conditionals.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".root{value:yes}.fallback{value:yes}.truthy{value:zero}.card{before:1;branch:yes}.card .child{nested:true;deep:yes}.card{after:2}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\$enabled: true
+        \\@if $enabled
+        \\  .sass-branch
+        \\    value: yes
+        \\@else
+        \\  .wrong
+        \\    value: no
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "conditionals.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(".sass-branch{value:yes}", sass_result.css());
+}
+
+test "native Sass conditionals reject malformed chains and unimplemented flow mutation" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "stray-else.scss", .input = "@else { .a { value: no; } }" },
+        .{ .name = "missing-if-condition.scss", .input = "@if { .a { value: no; } }" },
+        .{ .name = "missing-if-block.scss", .input = "@if true;" },
+        .{ .name = "missing-else-if-condition.scss", .input = "@if false { .a { value: no; } } @else if { .b { value: no; } }" },
+        .{ .name = "invalid-else-prelude.scss", .input = "@if false { .a { value: no; } } @else when true { .b { value: no; } }" },
+        .{ .name = "missing-else-block.scss", .input = "@if false { .a { value: no; } } @else;" },
+        .{ .name = "duplicate-else.scss", .input = "@if false { .a { x: 1; } } @else { .b { x: 2; } } @else { .c { x: 3; } }" },
+        .{ .name = "else-if-after-else.scss", .input = "@if false { .a { x: 1; } } @else { .b { x: 2; } } @else if true { .c { x: 3; } }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidSassSyntax,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    const unsupported = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "flow-variable-root.scss", .input = "$x: 1; @if true { $x: 2; } .a { value: $x; }" },
+        .{ .name = "flow-variable-rule.scss", .input = ".a { @if true { $x: 2; value: $x; } }" },
+        .{ .name = "selected-loop.scss", .input = "@if true { @for $i from 1 through 2 { .a { value: $i; } } }" },
+    };
+    for (unsupported) |case| {
+        try std.testing.expectError(
+            error.UnsupportedFeature,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_evaluation_depth = 2;
+    try std.testing.expectError(
+        error.EvaluationDepthExceeded,
+        compile(
+            std.testing.allocator,
+            "conditional-depth.scss",
+            "@if true { @if true { .a { value: yes; } } }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass evaluates bounded Unicode string functions without a provider" {
     const input =
         \\.a {
@@ -1394,6 +1500,7 @@ fn exerciseAllocationFailures(
         \\  color: map-get($theme, tone);
         \\  gap: nth(map-get($theme, spaces), 2);
         \\  enabled: $enabled and true;
+        \\  @if $enabled { conditional: yes; }
         \\  converted: $inch + 96px;
         \\  cancelled: ($inch / 2.54cm);
         \\  reduced-calc: calc($size + 2px);
@@ -1437,7 +1544,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;conditional:yes;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
