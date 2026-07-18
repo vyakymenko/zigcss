@@ -149,6 +149,7 @@ const expectedImplementations = Object.freeze([
       'cross-space-color-conversion',
       'modern-color-transforms',
       'built-in-color-transform-aliases',
+      'built-in-meta-keywords',
       'unicode-string-core',
       'legacy-string-builtins',
       'typed-collections',

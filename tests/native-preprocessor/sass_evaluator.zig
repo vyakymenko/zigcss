@@ -680,6 +680,121 @@ test "native Sass loads the built-in color module without a provider" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass inspects callable keywords through the built-in meta module" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as introspect;
+        \\@use "sass:meta" as *;
+        \\@function pick($first, $rest...) {
+        \\  $keywords: meta.keywords($rest);
+        \\  @return map-get($keywords, target);
+        \\}
+        \\@function spelling($args...) {
+        \\  $keywords: introspect.keywords($args);
+        \\  @return map-get($keywords, start-at) map-get($keywords, "start_at");
+        \\}
+        \\@function override($args...) {
+        \\  $keywords: meta.keywords($args);
+        \\  @return map-get($keywords, start-at);
+        \\}
+        \\@function fixed($value) { @return $value; }
+        \\@function forwarded($args...) { @return pick(0, $args...); }
+        \\@function empty($args...) { @return length(keywords($args)); }
+        \\@mixin expose($args...) {
+        \\  $keywords: meta.keywords($args);
+        \\  mixin: map-get($keywords, tone);
+        \\}
+        \\@mixin supply { @content($tone: teal); }
+        \\.a {
+        \\  direct: pick(0, 1, 2, $target: red);
+        \\  forwarded: forwarded($target: blue);
+        \\  spelling: spelling($start_at: 7, ("start_at": 8)...);
+        \\  override: override($start_at: 1, ("start-at": 2)...);
+        \\  reordered: override(("start-at": 3)..., $start_at: 4);
+        \\  merged: override(("start-at": 1)..., ("start-at": 2)...);
+        \\  fixed: fixed($value: 1, (value: 2)...);
+        \\  fixed-reordered: fixed((value: 3)..., $value: 4);
+        \\  empty: empty(1, 2);
+        \\  @include expose($tone: green);
+        \\  @include supply using ($args...) {
+        \\    $keywords: meta.keywords($args);
+        \\    content: map-get($keywords, tone);
+        \\  }
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "meta-keywords.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{direct:red;forwarded:blue;spelling:7 8;override:2;reordered:3;merged:2;fixed:2;fixed-reordered:3;empty:0;mixin:green;content:teal}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@function take($args...)
+        \\  $keywords: m.keywords($args)
+        \\  @return map-get($keywords, tone)
+        \\.sass
+        \\  value: take($tone: purple)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-keywords.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(".sass{value:purple}", sass_result.css());
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta keyword inspection rejects unowned calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-meta-module.scss",
+            .input = "@function read($args...) { @return meta.keywords($args); } .a { value: read($x: 1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-meta-member.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.nope($undefined); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-keywords-type.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.keywords((a: b)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-keywords-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.keywords(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-keywords-extra.scss",
+            .input = "@use \"sass:meta\"; @function read($args...) { @return meta.keywords($args, 1); } .a { value: read(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "duplicate-mixed-module-namespace.scss",
+            .input = "@use \"sass:color\" as tools; @use \"sass:meta\" as tools;",
+            .expected = error.InvalidSassSyntax,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass color module rejects unresolved ambiguous or unsupported use" {
     const invalid = [_]struct {
         name: []const u8,
@@ -2706,6 +2821,7 @@ fn exerciseAllocationFailures(
     defer sources.deinit();
     const input =
         \\@use "sass:color";
+        \\@use "sass:meta";
         \\$size: 2px;
         \\$name: card;
         \\$spaces: 1px 2px 3px;
@@ -2716,6 +2832,10 @@ fn exerciseAllocationFailures(
         \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
         \\@function allocation-target($left, $right: 0) { @return $left + $right; }
         \\@function allocation-proxy($args...) { @return allocation-target($args...); }
+        \\@function allocation-keyword($args...) {
+        \\  $keywords: meta.keywords($args);
+        \\  @return map-get($keywords, value);
+        \\}
         \\@mixin allocation-mixin($value, $extra: 1) { mixin-value: $value + $extra; @content; }
         \\@mixin allocation-content($values...) {
         \\  @each $value in $values { @content($value, $offset: 1); }
@@ -2730,6 +2850,7 @@ fn exerciseAllocationFailures(
         \\  function-value: allocation_value(2);
         \\  rest-function: allocation-rest(1, (2, 3)...);
         \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
+        \\  inspected-keyword: allocation-keyword($value: 4);
         \\  @include allocation-mixin(2) { mixin-content: yes; }
         \\  @include allocation-content(a, b) using ($item, $offset: 0) {
         \\    content-item: $item $offset;
@@ -2785,7 +2906,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;rest-function:2;forwarded-function:5;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

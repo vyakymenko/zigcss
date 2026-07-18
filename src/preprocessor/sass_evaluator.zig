@@ -106,6 +106,7 @@ const Builtin = enum {
     map_get,
     nth,
     length,
+    meta_keywords,
     quote,
     unquote,
     str_length,
@@ -368,10 +369,12 @@ const EvaluatedCallArguments = struct {
     allocator: std.mem.Allocator,
     positional: std.ArrayList(*const native_value.Value) = .empty,
     keywords: std.ArrayList(EvaluatedKeywordArgument) = .empty,
+    splat_keywords: std.ArrayList(EvaluatedKeywordArgument) = .empty,
 
     fn deinit(self: *EvaluatedCallArguments) void {
         self.positional.deinit(self.allocator);
         self.keywords.deinit(self.allocator);
+        self.splat_keywords.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -432,6 +435,7 @@ const ArithmeticContext = enum {
 
 const BuiltinModule = enum {
     color,
+    meta,
 };
 
 const ModuleBinding = struct {
@@ -799,14 +803,18 @@ const Engine = struct {
             try self.report(.syntax, node.span, "malformed native Sass @use directive");
             return error.InvalidSassSyntax;
         };
-        if (!std.mem.eql(u8, parsed.url, "sass:color")) {
+        const module_kind: BuiltinModule = if (std.mem.eql(u8, parsed.url, "sass:color"))
+            .color
+        else if (std.mem.eql(u8, parsed.url, "sass:meta"))
+            .meta
+        else {
             try self.report(
                 .unsupported_feature,
                 node.span,
                 "native Sass module is not implemented yet",
             );
             return error.UnsupportedFeature;
-        }
+        };
         if (self.modules.items.len >= self.limits.max_modules) {
             try self.report(.resource_limit, node.span, "native Sass module limit exceeded");
             return error.ModuleLimitExceeded;
@@ -815,7 +823,10 @@ const Engine = struct {
         const namespace: ?[]const u8 = if (parsed.unprefixed)
             null
         else
-            parsed.namespace orelse "color";
+            parsed.namespace orelse switch (module_kind) {
+                .color => "color",
+                .meta => "meta",
+            };
         if (namespace) |candidate| {
             for (self.modules.items) |binding| {
                 if (binding.namespace) |existing| {
@@ -827,7 +838,7 @@ const Engine = struct {
             }
         }
         try self.modules.append(self.allocator, .{
-            .kind = .color,
+            .kind = module_kind,
             .namespace = namespace,
         });
     }
@@ -1401,6 +1412,7 @@ const Engine = struct {
                 try self.appendEvaluatedPositional(&result, item, span);
             }
         }
+        try self.mergeEvaluatedSplatKeywords(&result);
         return result;
     }
 
@@ -1429,7 +1441,7 @@ const Engine = struct {
                             return error.InvalidExpression;
                         },
                     };
-                    try self.appendEvaluatedKeyword(output, .{
+                    try self.appendEvaluatedSplatKeyword(output, .{
                         .name = name,
                         .value = &entry.value,
                         .normalize_name = false,
@@ -1442,7 +1454,7 @@ const Engine = struct {
                     try self.appendEvaluatedPositional(output, value, span);
                 }
                 for (argument_list.keywords) |*keyword| {
-                    try self.appendEvaluatedKeyword(output, .{
+                    try self.appendEvaluatedSplatKeyword(output, .{
                         .name = keyword.name,
                         .value = &keyword.value,
                         .normalize_name = keyword.normalize_name,
@@ -1478,15 +1490,46 @@ const Engine = struct {
         try output.keywords.append(self.allocator, keyword);
     }
 
+    fn appendEvaluatedSplatKeyword(
+        self: *Engine,
+        output: *EvaluatedCallArguments,
+        keyword: EvaluatedKeywordArgument,
+        span: native_source.Span,
+    ) Error!void {
+        try self.reserveExpandedCallArgument(output, span);
+        try output.splat_keywords.append(self.allocator, keyword);
+    }
+
+    fn mergeEvaluatedSplatKeywords(
+        self: *Engine,
+        output: *EvaluatedCallArguments,
+    ) Error!void {
+        for (output.splat_keywords.items) |keyword| {
+            var matched = false;
+            for (output.keywords.items) |*previous| {
+                if (!callKeywordNamesEqual(previous.*, keyword)) continue;
+                previous.value = keyword.value;
+                matched = true;
+                break;
+            }
+            if (!matched) try output.keywords.append(self.allocator, keyword);
+        }
+    }
+
     fn reserveExpandedCallArgument(
         self: *Engine,
         output: *const EvaluatedCallArguments,
         span: native_source.Span,
     ) Error!void {
-        const count = std.math.add(
+        const direct_count = std.math.add(
             usize,
             output.positional.items.len,
             output.keywords.items.len,
+        ) catch return self.argumentsFailure(error.ArgumentLimitExceeded, span);
+        const count = std.math.add(
+            usize,
+            direct_count,
+            output.splat_keywords.items.len,
         ) catch return self.argumentsFailure(error.ArgumentLimitExceeded, span);
         if (count >= self.limits.max_function_arguments) {
             return self.argumentsFailure(error.ArgumentLimitExceeded, span);
@@ -3433,6 +3476,7 @@ const Engine = struct {
                 if (binding.namespace != null) continue;
                 const builtin = switch (binding.kind) {
                     .color => colorModuleBuiltin(name),
+                    .meta => metaModuleBuiltin(name),
                 };
                 if (builtin) |resolved| return resolved;
             }
@@ -3454,6 +3498,7 @@ const Engine = struct {
         };
         const builtin = switch (module) {
             .color => colorModuleBuiltin(qualified.member),
+            .meta => metaModuleBuiltin(qualified.member),
         };
         return builtin orelse {
             try self.report(.invalid_operation, span, "undefined native Sass module function");
@@ -3603,6 +3648,7 @@ const Engine = struct {
             ),
             .nth,
             .length,
+            .meta_keywords,
             .red,
             .green,
             .blue,
@@ -5449,6 +5495,61 @@ const Engine = struct {
         return self.values.own(.{ .number = .{ .value = @floatFromInt(length) } });
     }
 
+    fn callMetaKeywords(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "meta.keywords() requires one argument list");
+            return error.InvalidExpression;
+        }
+        const argument_list = switch (arguments[0].*) {
+            .argument_list => |item| item,
+            else => {
+                try self.report(.type_mismatch, span, "meta.keywords() requires an argument list");
+                return error.InvalidExpression;
+            },
+        };
+        argument_list.state.keywords_accessed = true;
+
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        var normalized_names: std.ArrayList([]u8) = .empty;
+        defer {
+            for (normalized_names.items) |name| self.allocator.free(name);
+            normalized_names.deinit(self.allocator);
+        }
+        var normalized_bytes: usize = 0;
+        for (argument_list.keywords) |keyword| {
+            const name = if (keyword.normalize_name) blk: {
+                normalized_bytes = std.math.add(
+                    usize,
+                    normalized_bytes,
+                    keyword.name.len,
+                ) catch {
+                    try self.report(.resource_limit, span, "native Sass temporary limit exceeded");
+                    return error.TemporaryLimitExceeded;
+                };
+                if (normalized_bytes > self.limits.max_temporary_bytes) {
+                    try self.report(.resource_limit, span, "native Sass temporary limit exceeded");
+                    return error.TemporaryLimitExceeded;
+                }
+                const normalized = try self.normalizeCallableName(keyword.name);
+                normalized_names.append(self.allocator, normalized) catch |err| {
+                    self.allocator.free(normalized);
+                    return err;
+                };
+                break :blk normalized;
+            } else keyword.name;
+            try entries.append(self.allocator, .{
+                .key = .{ .string = .{ .bytes = name } },
+                .value = keyword.value,
+            });
+        }
+        return self.values.own(.{ .map = .{ .entries = entries.items } });
+    }
+
     fn callStringBuiltin(
         self: *Engine,
         builtin: Builtin,
@@ -5653,6 +5754,7 @@ const Engine = struct {
                 .{ .name = "n" },
             },
             .length => &.{.{ .name = "list" }},
+            .meta_keywords => &.{.{ .name = "args" }},
             .red,
             .green,
             .blue,
@@ -5742,6 +5844,7 @@ const Engine = struct {
         return switch (builtin) {
             .nth => self.callNth(arguments, span),
             .length => self.callLength(arguments, span),
+            .meta_keywords => self.callMetaKeywords(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
                 builtin,
                 arguments,
@@ -6840,16 +6943,24 @@ fn callKeywordNamesEqual(
     left: EvaluatedKeywordArgument,
     right: EvaluatedKeywordArgument,
 ) bool {
-    if (left.normalize_name and right.normalize_name) {
-        return native_arguments.nameEql(left.name, right.name);
+    if (left.name.len != right.name.len) return false;
+    for (left.name, right.name) |left_byte, right_byte| {
+        const normalized_left = if (left.normalize_name and left_byte == '_') '-' else left_byte;
+        const normalized_right = if (right.normalize_name and right_byte == '_') '-' else right_byte;
+        if (normalized_left != normalized_right) return false;
     }
-    return std.mem.eql(u8, left.name, right.name);
+    return true;
 }
 
 fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "adjust")) return .adjust_color;
     if (sassNameEql(name, "change")) return .change_color;
     if (sassNameEql(name, "scale")) return .scale_color;
+    return null;
+}
+
+fn metaModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "keywords")) return .meta_keywords;
     return null;
 }
 
