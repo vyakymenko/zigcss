@@ -40,6 +40,13 @@ test('accepts the closed native Sass implementation contract', () => {
     'native-sass-parser',
     'native-sass-semantic-core',
   ])
+  const sassCore = contract.implementations[1]
+  assert.equal(sassCore.capabilities.includes('legacy-color-core'), true)
+  assert.equal(sassCore.capabilities.includes('closed-named-colors'), true)
+  assert.equal(sassCore.capabilities.includes('color-space-equality'), true)
+  assert.equal(sassCore.capabilities.includes('color-channel-accessors'), true)
+  assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_color.zig'), true)
+  assert.equal(sassCore.testSources.includes('tests/native-preprocessor/sass_color.zig'), true)
   assert.equal(fs.realpathSync(contractPath).startsWith(`${repositoryRoot}${path.sep}`), true)
 })
 

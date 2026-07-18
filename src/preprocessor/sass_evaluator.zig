@@ -7,6 +7,7 @@ const native_diagnostics = @import("diagnostics.zig");
 const native_environment = @import("environment.zig");
 const native_evaluator = @import("evaluator.zig");
 const native_lexer = @import("lexer.zig");
+const native_color = @import("sass_color.zig");
 const native_numeric = @import("sass_numeric.zig");
 const native_source = @import("source.zig");
 const native_syntax = @import("syntax.zig");
@@ -33,6 +34,7 @@ pub const Limits = struct {
 pub const Error = native_evaluator.Error ||
     native_environment.Error ||
     native_lexer.Error ||
+    native_color.Error ||
     native_numeric.Error ||
     native_source.Error ||
     native_value.Error || error{
@@ -87,12 +89,25 @@ const SplitSeparator = enum {
     comma,
     slash,
     whitespace,
+    color_whitespace,
 };
 
 const Builtin = enum {
     map_get,
     nth,
     length,
+    rgb,
+    rgba,
+    hsl,
+    hsla,
+    hwb,
+    red,
+    green,
+    blue,
+    alpha,
+    hue,
+    saturation,
+    lightness,
     calculation,
     minimum,
     maximum,
@@ -761,6 +776,9 @@ const Engine = struct {
             return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = true } });
         }
         if (try self.tryBuiltinCall(trimmed, scope, diagnostic_span)) |item| return item;
+        if (native_color.parseLiteral(trimmed)) |color| {
+            return self.values.own(.{ .color = color });
+        }
         if (try self.tryLogicalExpression(trimmed, scope, diagnostic_span)) |item| return item;
         if (try self.tryArithmetic(trimmed, scope, diagnostic_span)) |numeric| {
             var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
@@ -965,6 +983,30 @@ const Engine = struct {
             .nth
         else if (sassNameEql(name, "length"))
             .length
+        else if (sassNameEql(name, "rgb"))
+            .rgb
+        else if (sassNameEql(name, "rgba"))
+            .rgba
+        else if (sassNameEql(name, "hsl"))
+            .hsl
+        else if (sassNameEql(name, "hsla"))
+            .hsla
+        else if (sassNameEql(name, "hwb"))
+            .hwb
+        else if (sassNameEql(name, "red"))
+            .red
+        else if (sassNameEql(name, "green"))
+            .green
+        else if (sassNameEql(name, "blue"))
+            .blue
+        else if (sassNameEql(name, "alpha"))
+            .alpha
+        else if (sassNameEql(name, "hue"))
+            .hue
+        else if (sassNameEql(name, "saturation"))
+            .saturation
+        else if (sassNameEql(name, "lightness"))
+            .lightness
         else if (sassNameEql(name, "calc"))
             .calculation
         else if (sassNameEql(name, "min"))
@@ -979,7 +1021,7 @@ const Engine = struct {
         const body = raw[opening + 1 .. raw.len - 1];
         var ranges: std.ArrayList(ExpressionRange) = .empty;
         defer ranges.deinit(self.allocator);
-        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        const comma_separated = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
         if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
         if (ranges.items.len > self.limits.max_function_arguments) {
             try self.report(.resource_limit, span, "native Sass function argument limit exceeded");
@@ -1001,6 +1043,15 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .rgb, .rgba, .hsl, .hsla, .hwb => return try self.callColorConstructor(
+                builtin,
+                raw,
+                body,
+                ranges.items,
+                comma_separated,
+                scope,
+                span,
+            ),
             else => {},
         }
 
@@ -1017,8 +1068,274 @@ const Engine = struct {
             .map_get => try self.callMapGet(arguments.items, span),
             .nth => try self.callNth(arguments.items, span),
             .length => try self.callLength(arguments.items, span),
-            .calculation, .minimum, .maximum, .clamp => unreachable,
+            .red, .green, .blue, .alpha, .hue, .saturation, .lightness => try self.callColorChannel(
+                builtin,
+                arguments.items,
+                span,
+            ),
+            .rgb,
+            .rgba,
+            .hsl,
+            .hsla,
+            .hwb,
+            .calculation,
+            .minimum,
+            .maximum,
+            .clamp,
+            => unreachable,
         };
+    }
+
+    fn callColorConstructor(
+        self: *Engine,
+        builtin: Builtin,
+        raw: []const u8,
+        body: []const u8,
+        comma_ranges: []const ExpressionRange,
+        comma_separated: bool,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        if (comma_separated) {
+            if (builtin == .hwb) {
+                try self.report(.syntax, span, "hwb() requires modern space-separated syntax");
+                return error.InvalidExpression;
+            }
+            if (findTopLevelByte(body, '/') != null) {
+                try self.report(.syntax, span, "native Sass color cannot mix comma and slash syntax");
+                return error.InvalidExpression;
+            }
+            try ranges.appendSlice(self.allocator, comma_ranges);
+        } else {
+            const slash = findTopLevelByte(body, '/');
+            const channel_end = slash orelse body.len;
+            _ = try splitTopLevelRanges(
+                self.allocator,
+                body[0..channel_end],
+                .color_whitespace,
+                &ranges,
+            );
+            if (trimWhitespace(body[0..channel_end]).len == 0) ranges.clearRetainingCapacity();
+            if (slash) |separator| {
+                if (findTopLevelByte(body[separator + 1 ..], '/') != null) {
+                    try self.report(.syntax, span, "native Sass color has multiple alpha separators");
+                    return error.InvalidExpression;
+                }
+                const alpha_start = separator + 1;
+                if (trimWhitespace(body[alpha_start..]).len == 0) {
+                    try self.report(.syntax, span, "native Sass color is missing its alpha channel");
+                    return error.InvalidExpression;
+                }
+                try ranges.append(self.allocator, .{ .start = alpha_start, .end = body.len });
+            }
+        }
+        if (ranges.items.len > self.limits.max_function_arguments) {
+            try self.report(.resource_limit, span, "native Sass function argument limit exceeded");
+            return error.FunctionArgumentLimitExceeded;
+        }
+        for (ranges.items) |range| {
+            if (trimWhitespace(body[range.start..range.end]).len == 0) {
+                try self.report(.syntax, span, "empty native Sass color channel");
+                return error.InvalidExpression;
+            }
+        }
+        if (containsDeferredCssCalculation(body)) {
+            return self.preserveColorFunction(raw, scope, span);
+        }
+
+        var arguments: std.ArrayList(*const native_value.Value) = .empty;
+        defer arguments.deinit(self.allocator);
+        for (ranges.items) |range| {
+            const item = try self.evaluateExpressionBytes(body[range.start..range.end], scope, span);
+            if (isDeferredColorValue(item.*)) return self.preserveColorFunction(raw, scope, span);
+            try arguments.append(self.allocator, item);
+        }
+
+        if (builtin == .rgba and comma_separated and arguments.items.len == 2 and
+            arguments.items[0].* == .color)
+        {
+            const alpha = try self.colorAlpha(arguments.items[1].*, span);
+            var result = arguments.items[0].color;
+            result.channels[3] = alpha;
+            return self.values.own(.{ .color = result });
+        }
+        if (arguments.items.len != 3 and arguments.items.len != 4) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "native Sass color constructors require three channels and optional alpha",
+            );
+            return error.InvalidExpression;
+        }
+        const alpha = if (arguments.items.len == 4)
+            try self.colorAlpha(arguments.items[3].*, span)
+        else
+            1;
+        const result = switch (builtin) {
+            .rgb, .rgba => try native_color.rgb(
+                try self.rgbChannel(arguments.items[0].*, span),
+                try self.rgbChannel(arguments.items[1].*, span),
+                try self.rgbChannel(arguments.items[2].*, span),
+                alpha,
+            ),
+            .hsl, .hsla => try native_color.hsl(
+                try self.colorHue(arguments.items[0].*, span),
+                try self.colorPercentage(arguments.items[1].*, span),
+                try self.colorPercentage(arguments.items[2].*, span),
+                alpha,
+            ),
+            .hwb => try native_color.hwb(
+                try self.colorHue(arguments.items[0].*, span),
+                try self.colorPercentage(arguments.items[1].*, span),
+                try self.colorPercentage(arguments.items[2].*, span),
+                alpha,
+            ),
+            else => unreachable,
+        };
+        return self.values.own(.{ .color = result });
+    }
+
+    fn callColorChannel(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1 or arguments[0].* != .color) {
+            try self.report(.type_mismatch, span, "native Sass color channel functions require one color");
+            return error.InvalidExpression;
+        }
+        const color = arguments[0].color;
+        var unit: ?[]const u8 = null;
+        const value = switch (builtin) {
+            .red => (try native_color.toRgb(color))[0],
+            .green => (try native_color.toRgb(color))[1],
+            .blue => (try native_color.toRgb(color))[2],
+            .alpha => (try native_color.toRgb(color))[3],
+            .hue => blk: {
+                unit = "deg";
+                break :blk (try native_color.toHsl(color))[0];
+            },
+            .saturation => blk: {
+                unit = "%";
+                break :blk (try native_color.toHsl(color))[1];
+            },
+            .lightness => blk: {
+                unit = "%";
+                break :blk (try native_color.toHsl(color))[2];
+            },
+            else => unreachable,
+        };
+        if (unit) |name| {
+            const units = [_][]const u8{name};
+            return self.values.own(.{ .number = .{
+                .value = value,
+                .numerator_units = &units,
+            } });
+        }
+        return self.values.own(.{ .number = .{ .value = value } });
+    }
+
+    fn rgbChannel(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.numerator_units.len == 0) return number.value;
+        if (number.numerator_units.len == 1 and
+            std.mem.eql(u8, number.numerator_units[0], "%"))
+        {
+            return number.value * 255 / 100;
+        }
+        try self.report(.type_mismatch, span, "RGB channels require unitless numbers or percentages");
+        return error.InvalidExpression;
+    }
+
+    fn colorAlpha(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.numerator_units.len == 0) return number.value;
+        if (number.numerator_units.len == 1 and
+            std.mem.eql(u8, number.numerator_units[0], "%"))
+        {
+            return number.value / 100;
+        }
+        try self.report(.type_mismatch, span, "color alpha requires a unitless number or percentage");
+        return error.InvalidExpression;
+    }
+
+    fn colorPercentage(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.numerator_units.len == 0) return number.value;
+        if (number.numerator_units.len == 1 and
+            std.mem.eql(u8, number.numerator_units[0], "%"))
+        {
+            return number.value;
+        }
+        try self.report(.type_mismatch, span, "color channel requires a percentage");
+        return error.InvalidExpression;
+    }
+
+    fn colorHue(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.numerator_units.len == 0) return number.value;
+        if (number.numerator_units.len != 1) {
+            try self.report(.type_mismatch, span, "color hue requires an angle");
+            return error.InvalidExpression;
+        }
+        const unit = number.numerator_units[0];
+        if (std.ascii.eqlIgnoreCase(unit, "deg")) return number.value;
+        if (std.ascii.eqlIgnoreCase(unit, "grad")) return number.value * 0.9;
+        if (std.ascii.eqlIgnoreCase(unit, "rad")) return number.value * 180 / std.math.pi;
+        if (std.ascii.eqlIgnoreCase(unit, "turn")) return number.value * 360;
+        try self.report(.type_mismatch, span, "color hue requires an angle");
+        return error.InvalidExpression;
+    }
+
+    fn colorNumber(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Number {
+        const number = switch (item) {
+            .number => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "native Sass color channel requires a number");
+                return error.InvalidExpression;
+            },
+        };
+        if (number.denominator_units.len != 0 or number.numerator_units.len > 1) {
+            try self.report(.type_mismatch, span, "native Sass color channel has compound units");
+            return error.InvalidExpression;
+        }
+        return number;
+    }
+
+    fn preserveColorFunction(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const rendered = try self.renderBytes(raw, scope, span, true);
+        defer self.allocator.free(rendered);
+        return self.values.own(.{
+            .string = .{ .bytes = minifyCalculationArgumentCommas(rendered) },
+        });
     }
 
     fn callCalculation(
@@ -1662,6 +1979,10 @@ const Engine = struct {
             .null_value => {},
             .boolean => |value| try self.appendTemporary(output, if (value) "true" else "false"),
             .number => |number| try self.appendNumber(output, number),
+            .color => |color| {
+                var buffer: [native_color.max_serialized_bytes]u8 = undefined;
+                try self.appendTemporary(output, try native_color.serialize(color, &buffer, true));
+            },
             .string, .selector => |string| {
                 if (string.quoted and !interpolation) {
                     try self.appendTemporary(output, "\"");
@@ -1698,7 +2019,7 @@ const Engine = struct {
                 }
                 if (list.bracketed) try self.appendTemporary(output, "]");
             },
-            .map, .color, .callable => return error.InvalidExpression,
+            .map, .callable => return error.InvalidExpression,
         }
     }
 
@@ -1998,17 +2319,21 @@ fn splitTopLevelRanges(
         const is_separator = top_level and switch (separator) {
             .comma => byte == ',',
             .slash => byte == '/',
-            .whitespace => isExpressionWhitespace(byte),
+            .whitespace, .color_whitespace => isExpressionWhitespace(byte),
         };
         if (!is_separator) {
             index += 1;
             continue;
         }
 
-        if (separator == .whitespace) {
+        if (separator == .whitespace or separator == .color_whitespace) {
             var end = index + 1;
             while (end < input.len and isExpressionWhitespace(input[end])) end += 1;
-            if (whitespaceIsOperatorPadding(input, index, end)) {
+            const operator_padding = if (separator == .color_whitespace)
+                colorWhitespaceIsOperatorPadding(input, index, end)
+            else
+                whitespaceIsOperatorPadding(input, index, end);
+            if (operator_padding) {
                 index = end;
                 continue;
             }
@@ -2265,6 +2590,27 @@ fn whitespaceIsOperatorPadding(input: []const u8, start: usize, end: usize) bool
     return false;
 }
 
+fn colorWhitespaceIsOperatorPadding(input: []const u8, start: usize, end: usize) bool {
+    if (end < input.len) {
+        const next = input[end];
+        if ((isSymbolicExpressionOperator(next) and next != '%') or
+            startsSassWord(input, end, "and") or startsSassWord(input, end, "or"))
+        {
+            return true;
+        }
+    }
+    if (start > 0) {
+        const previous = input[start - 1];
+        if ((isSymbolicExpressionOperator(previous) and previous != '%') or
+            endsSassWord(input, start, "and") or endsSassWord(input, start, "or") or
+            endsSassWord(input, start, "not"))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 fn isSymbolicExpressionOperator(byte: u8) bool {
     return switch (byte) {
         '+', '-', '*', '/', '%', '=', '!', '<', '>', '&', '|', '^', '~', '?' => true,
@@ -2306,7 +2652,7 @@ fn sassValuesEqualDepth(left: native_value.Value, right: native_value.Value, dep
             native_numeric.Numeric.fromNumber(number) catch return false,
             native_numeric.Numeric.fromNumber(right.number) catch return false,
         ),
-        .color => |color| std.meta.eql(color, right.color),
+        .color => |color| native_color.equal(color, right.color),
         .string => |string| std.mem.eql(u8, string.bytes, right.string.bytes),
         .selector => |selector| std.mem.eql(u8, selector.bytes, right.selector.bytes),
         .callable => |callable| std.meta.eql(callable, right.callable),
@@ -2359,7 +2705,19 @@ fn cssValueIsValid(item: native_value.Value, depth: u16) bool {
             }
             break :blk list.bracketed or emitted > 0;
         },
-        .map, .color, .callable => false,
+        .color => |color| blk: {
+            _ = native_color.toRgb(color) catch break :blk false;
+            break :blk true;
+        },
+        .map, .callable => false,
+    };
+}
+
+fn isDeferredColorValue(item: native_value.Value) bool {
+    return switch (item) {
+        .string, .selector => |string| !string.quoted and
+            containsDeferredCssCalculation(string.bytes),
+        else => false,
     };
 }
 

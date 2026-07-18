@@ -425,6 +425,94 @@ test "native Sass reduces and safely preserves CSS calculations" {
     );
 }
 
+test "native Sass evaluates the dependency-free legacy color core" {
+    const input =
+        \\.a {
+        \\  named: rebeccapurple;
+        \\  alpha-hex: #ff000080;
+        \\  rgb-percent: rgb(100%, 0%, 0%);
+        \\  rgb-modern: rgb(255 0 0 / 50%);
+        \\  rgba-color: rgba(red, .5);
+        \\  hsl: hsl(120, 40%, 50%);
+        \\  hsl-angle: hsl(.5turn, 100%, 50%);
+        \\  hwb-normalized: hwb(0 80% 80%);
+        \\  cross-space: purple == hsl(300, 100%, 25.098039215686%);
+        \\  quoted-is-string: "red" == red;
+        \\  red-channel: red(#123456);
+        \\  green-channel: green(#123456);
+        \\  blue-channel: blue(#123456);
+        \\  alpha-channel: alpha(rgba(1, 2, 3, .4));
+        \\  hue-channel: hue(hsl(120, 40%, 50%));
+        \\  saturation-channel: saturation(hsl(120, 40%, 50%));
+        \\  lightness-channel: lightness(hsl(120, 40%, 50%));
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "colors.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{named:#639;alpha-hex:rgba(255,0,0,.5019607843);rgb-percent:red;rgb-modern:rgba(255,0,0,.5);rgba-color:rgba(255,0,0,.5);hsl:hsl(120,40%,50%);hsl-angle:aqua;hwb-normalized:hsl(0,0%,50%);cross-space:true;quoted-is-string:false;red-channel:18;green-channel:52;blue-channel:86;alpha-channel:.4;hue-channel:120deg;saturation-channel:40%;lightness-channel:50%}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass preserves dynamic colors and rejects invalid static colors" {
+    const dynamic_input =
+        \\$channel: var(--red);
+        \\.a {
+        \\  rgb: rgb($channel 0 0 / .5);
+        \\  hsl: hsl(calc(var(--hue) + 10deg) 50% 50%);
+        \\  fallback: rgb(var(--r, 1, 2), 0, 0);
+        \\}
+    ;
+    var dynamic = try compile(
+        std.testing.allocator,
+        "dynamic-colors.scss",
+        dynamic_input,
+        .scss,
+        .{},
+    );
+    defer dynamic.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{rgb:rgb(var(--red) 0 0 / .5);hsl:hsl(calc(var(--hue) + 10deg) 50% 50%);fallback:rgb(var(--r, 1, 2),0,0)}",
+        dynamic.css(),
+    );
+
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "short-rgb.scss", .input = ".a { color: rgb(1, 2); }" },
+        .{ .name = "typed-rgb.scss", .input = ".a { color: rgb(red, 2, 3); }" },
+        .{ .name = "unit-rgb.scss", .input = ".a { color: rgb(1px, 2, 3); }" },
+        .{ .name = "unit-hsl.scss", .input = ".a { color: hsl(0, 2px, 3%); }" },
+        .{ .name = "channel-type.scss", .input = ".a { value: red(1); }" },
+        .{ .name = "comma-hwb.scss", .input = ".a { color: hwb(0, 20%, 30%); }" },
+        .{ .name = "space-rgba-color.scss", .input = ".a { color: rgba(red 50%); }" },
+        .{ .name = "mixed-color-syntax.scss", .input = ".a { color: rgb(1, 2, 3 / .5); }" },
+        .{ .name = "double-alpha.scss", .input = ".a { color: rgb(1 2 3 / .5 / .4); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "color-argument-limit.scss",
+            ".a { color: rgb(var(--red) 1 2); }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass calculations reject invalid arity types syntax and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -621,6 +709,8 @@ fn exerciseAllocationFailures(
         \\  cancelled: ($inch / 2.54cm);
         \\  reduced-calc: calc($size + 2px);
         \\  deferred-calc: calc(100% - $size);
+        \\  color: rgba(hsl(.5turn, 100%, 50%), .4);
+        \\  red-channel: red(#123456);
         \\  &:hover { margin: $size + 1px; }
         \\}
     ;
@@ -641,7 +731,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px)}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18}.card:hover{margin:3px}",
         result.css(),
     );
 }

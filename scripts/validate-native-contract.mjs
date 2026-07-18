@@ -133,6 +133,10 @@ const expectedImplementations = Object.freeze([
       'unit-conversion',
       'compound-unit-algebra',
       'css-calculations',
+      'legacy-color-core',
+      'closed-named-colors',
+      'color-space-equality',
+      'color-channel-accessors',
       'typed-collections',
       'collection-accessors',
       'logical-comparison',
@@ -145,10 +149,12 @@ const expectedImplementations = Object.freeze([
     nativeSources: Object.freeze([
       'src/preprocessor/sass_evaluator.zig',
       'src/preprocessor/sass_numeric.zig',
+      'src/preprocessor/sass_color.zig',
     ]),
     testSources: Object.freeze([
       'tests/native-preprocessor/sass_evaluator.zig',
       'tests/native-preprocessor/sass_numeric.zig',
+      'tests/native-preprocessor/sass_color.zig',
     ]),
     testStep: 'test-native-preprocessor',
     publicAvailable: false,
