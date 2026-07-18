@@ -156,6 +156,38 @@ test "typed values are deeply owned immutable and structurally comparable" {
     try std.testing.expect(!value.eql(owned.*, input));
 }
 
+test "typed Sass argument lists deeply own positional keyword and usage state" {
+    var store = value.Store.init(std.testing.allocator, .{});
+    defer store.deinit();
+
+    var state = value.ArgumentListState{};
+    var keyword_name = [_]u8{ 'e', 'n', 'd', '-', 'a', 't' };
+    var positional = [_]value.Value{.{ .number = .{ .value = 2 } }};
+    var keywords = [_]value.ArgumentKeyword{.{
+        .name = &keyword_name,
+        .value = .{ .number = .{ .value = 3 } },
+        .normalize_name = true,
+    }};
+    const owned = try store.own(.{ .argument_list = .{
+        .positional = &positional,
+        .keywords = &keywords,
+        .state = &state,
+    } });
+    state.keywords_accessed = true;
+    keyword_name[0] = 'x';
+    positional[0] = .{ .number = .{ .value = 9 } };
+    keywords[0].value = .{ .number = .{ .value = 8 } };
+
+    const argument_list = owned.argument_list;
+    try std.testing.expect(!argument_list.state.keywords_accessed);
+    try std.testing.expectEqual(@as(usize, 1), argument_list.positional.len);
+    try std.testing.expectEqual(@as(f64, 2), argument_list.positional[0].number.value);
+    try std.testing.expectEqualStrings("end-at", argument_list.keywords[0].name);
+    try std.testing.expectEqual(@as(f64, 3), argument_list.keywords[0].value.number.value);
+    argument_list.state.keywords_accessed = true;
+    try std.testing.expect(argument_list.state.keywords_accessed);
+}
+
 test "typed values reject invalid numbers and bounded recursive growth" {
     var store = value.Store.init(std.testing.allocator, .{ .max_values = 2 });
     defer store.deinit();
@@ -371,7 +403,16 @@ fn exerciseFoundationAllocationFailures(allocator: std.mem.Allocator) !void {
 
     var values = value.Store.init(allocator, .{});
     defer values.deinit();
-    const owned = try values.own(.{ .string = .{ .bytes = "value", .quoted = true } });
+    var argument_state = value.ArgumentListState{};
+    const owned = try values.own(.{ .argument_list = .{
+        .positional = &.{.{ .string = .{ .bytes = "value", .quoted = true } }},
+        .keywords = &.{.{
+            .name = "end-at",
+            .value = .{ .number = .{ .value = 2 } },
+            .normalize_name = true,
+        }},
+        .state = &argument_state,
+    } });
 
     var env = try environment.Environment.init(allocator, .{});
     defer env.deinit();

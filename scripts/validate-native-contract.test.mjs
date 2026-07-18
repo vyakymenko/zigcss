@@ -65,6 +65,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('bounded-control-flow-loops'), true)
   assert.equal(sassCore.capabilities.includes('bounded-user-functions'), true)
   assert.equal(sassCore.capabilities.includes('bounded-user-mixins-content'), true)
+  assert.equal(sassCore.capabilities.includes('callable-rest-splat-content-parameters'), true)
   assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_color.zig'), true)
   assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_arguments.zig'), true)
   assert.equal(sassCore.nativeSources.includes('src/preprocessor/sass_string.zig'), true)

@@ -63,6 +63,22 @@ pub const Map = struct {
     entries: []const Entry,
 };
 
+pub const ArgumentListState = struct {
+    keywords_accessed: bool = false,
+};
+
+pub const ArgumentKeyword = struct {
+    name: []const u8,
+    value: Value,
+    normalize_name: bool,
+};
+
+pub const ArgumentList = struct {
+    positional: []const Value,
+    keywords: []const ArgumentKeyword,
+    state: *ArgumentListState,
+};
+
 pub const Callable = struct {
     kind: CallableKind,
     id: u32,
@@ -76,6 +92,7 @@ pub const Value = union(enum) {
     string: String,
     list: List,
     map: Map,
+    argument_list: ArgumentList,
     selector: String,
     callable: Callable,
 };
@@ -131,6 +148,7 @@ pub const Store = struct {
             .callable => |item| .{ .callable = item },
             .list => |item| .{ .list = try self.cloneList(item, depth) },
             .map => |item| .{ .map = try self.cloneMap(item, depth) },
+            .argument_list => |item| .{ .argument_list = try self.cloneArgumentList(item, depth) },
         };
     }
 
@@ -186,6 +204,44 @@ pub const Store = struct {
             };
         }
         return .{ .entries = entries };
+    }
+
+    fn cloneArgumentList(
+        self: *Store,
+        input: ArgumentList,
+        depth: u16,
+    ) Error!ArgumentList {
+        const collection_count = std.math.add(
+            usize,
+            input.positional.len,
+            input.keywords.len,
+        ) catch return error.ValueLimitExceeded;
+        try self.reserveCollection(collection_count);
+
+        const positional = try self.arena.allocator().alloc(Value, input.positional.len);
+        for (input.positional, 0..) |item, index| {
+            positional[index] = try self.cloneValue(item, depth + 1);
+        }
+
+        const keywords = try self.arena.allocator().alloc(
+            ArgumentKeyword,
+            input.keywords.len,
+        );
+        for (input.keywords, 0..) |keyword, index| {
+            keywords[index] = .{
+                .name = try self.cloneBytes(keyword.name, false),
+                .value = try self.cloneValue(keyword.value, depth + 1),
+                .normalize_name = keyword.normalize_name,
+            };
+        }
+
+        const state = try self.arena.allocator().create(ArgumentListState);
+        state.* = input.state.*;
+        return .{
+            .positional = positional,
+            .keywords = keywords,
+            .state = state,
+        };
     }
 
     fn cloneBytes(self: *Store, bytes: []const u8, require_nonempty: bool) Error![]const u8 {
@@ -251,6 +307,26 @@ fn eqlDepth(left: Value, right: Value, depth: u16) bool {
             for (item.entries, other.entries) |entry, other_entry| {
                 if (!eqlDepth(entry.key, other_entry.key, depth + 1) or
                     !eqlDepth(entry.value, other_entry.value, depth + 1))
+                {
+                    break :blk false;
+                }
+            }
+            break :blk true;
+        },
+        .argument_list => |item| blk: {
+            const other = right.argument_list;
+            if (item.positional.len != other.positional.len or
+                item.keywords.len != other.keywords.len)
+            {
+                break :blk false;
+            }
+            for (item.positional, other.positional) |child, other_child| {
+                if (!eqlDepth(child, other_child, depth + 1)) break :blk false;
+            }
+            for (item.keywords, other.keywords) |keyword, other_keyword| {
+                if (keyword.normalize_name != other_keyword.normalize_name or
+                    !std.mem.eql(u8, keyword.name, other_keyword.name) or
+                    !eqlDepth(keyword.value, other_keyword.value, depth + 1))
                 {
                     break :blk false;
                 }

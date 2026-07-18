@@ -159,6 +159,7 @@ const expectedImplementations = Object.freeze([
       'bounded-control-flow-loops',
       'bounded-user-functions',
       'bounded-user-mixins-content',
+      'callable-rest-splat-content-parameters',
       'interpolation',
       'lexical-scope',
       'selector-nesting',

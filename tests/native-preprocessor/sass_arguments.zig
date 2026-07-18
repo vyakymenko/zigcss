@@ -16,6 +16,7 @@ test "native Sass arguments retain positional and keyword value ranges" {
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, 3), parsed.items.len);
     try std.testing.expectEqual(@as(?[]const u8, null), parsed.items[0].name);
+    try std.testing.expect(!parsed.items[0].splat);
     try std.testing.expectEqualStrings("foo", body[parsed.items[0].value.start..parsed.items[0].value.end]);
     try std.testing.expectEqualStrings("start_at", parsed.items[1].name.?);
     try std.testing.expectEqualStrings("2", body[parsed.items[1].value.start..parsed.items[1].value.end]);
@@ -23,6 +24,29 @@ test "native Sass arguments retain positional and keyword value ranges" {
     try std.testing.expectEqualStrings(
         "fn(a:b)",
         body[parsed.items[2].value.start..parsed.items[2].value.end],
+    );
+}
+
+test "native Sass arguments retain bounded splat expression ranges" {
+    const body = "$items..., (left: 1, right: 2)...";
+    const comma = std.mem.indexOfScalar(u8, body, ',').?;
+    const ranges = [_]arguments.Range{
+        .{ .start = 0, .end = comma },
+        .{ .start = comma + 1, .end = body.len },
+    };
+    var parsed = try arguments.parseAlloc(std.testing.allocator, body, &ranges, 8);
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), parsed.items.len);
+    try std.testing.expect(parsed.items[0].splat);
+    try std.testing.expect(parsed.items[1].splat);
+    try std.testing.expectEqual(@as(?[]const u8, null), parsed.items[0].name);
+    try std.testing.expectEqualStrings(
+        "$items",
+        body[parsed.items[0].value.start..parsed.items[0].value.end],
+    );
+    try std.testing.expectEqualStrings(
+        "(left: 1, right: 2)",
+        body[parsed.items[1].value.start..parsed.items[1].value.end],
     );
 }
 
@@ -94,9 +118,21 @@ test "native Sass arguments reject ambiguous and unsupported calls" {
         arguments.parseAlloc(std.testing.allocator, ordered_body, &ordered_ranges, 8),
     );
     const splat_range = [_]arguments.Range{.{ .start = 0, .end = "$args...".len }};
+    var splat = try arguments.parseAlloc(
+        std.testing.allocator,
+        "$args...",
+        &splat_range,
+        8,
+    );
+    defer splat.deinit();
     try std.testing.expectError(
         error.SplatUnsupported,
-        arguments.parseAlloc(std.testing.allocator, "$args...", &splat_range, 8),
+        arguments.bindAlloc(std.testing.allocator, splat.items, &parameters, 1),
+    );
+    const empty_splat_range = [_]arguments.Range{.{ .start = 0, .end = "...".len }};
+    try std.testing.expectError(
+        error.InvalidArgument,
+        arguments.parseAlloc(std.testing.allocator, "...", &empty_splat_range, 8),
     );
     const positional = [_]arguments.Argument{.{
         .name = null,
@@ -138,6 +174,12 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     defer bound.deinit();
     try std.testing.expect(bound.values[0] != null);
     try std.testing.expect(bound.values[1] != null);
+
+    const splat_body = "$args...";
+    const splat_ranges = [_]arguments.Range{.{ .start = 0, .end = splat_body.len }};
+    var splat = try arguments.parseAlloc(allocator, splat_body, &splat_ranges, 2);
+    defer splat.deinit();
+    try std.testing.expect(splat.items[0].splat);
 }
 
 test "native Sass argument binding handles every allocation failure" {

@@ -3,7 +3,8 @@
 //! This layer is syntax-only: it retains source ranges for the evaluator and
 //! never executes or coerces values. It owns positional-before-keyword order,
 //! underscore/hyphen name equivalence, duplicate detection, required/defaulted
-//! parameters, and the current fail-closed boundary for argument-list splats.
+//! parameters, and bounded source ranges for argument-list splats. Value
+//! expansion remains the evaluator's responsibility.
 
 const std = @import("std");
 
@@ -15,6 +16,7 @@ pub const Range = struct {
 pub const Argument = struct {
     name: ?[]const u8,
     value: Range,
+    splat: bool = false,
 };
 
 pub const Parameter = struct {
@@ -69,7 +71,18 @@ pub fn parseAlloc(
     for (ranges, 0..) |range, index| {
         const value_range = trimRange(body, range) orelse return error.InvalidArgument;
         const raw = body[value_range.start..value_range.end];
-        if (std.mem.endsWith(u8, raw, "...")) return error.SplatUnsupported;
+        if (std.mem.endsWith(u8, raw, "...")) {
+            const expression_range = trimRange(body, .{
+                .start = value_range.start,
+                .end = value_range.end - "...".len,
+            }) orelse return error.InvalidArgument;
+            items[index] = .{
+                .name = null,
+                .value = expression_range,
+                .splat = true,
+            };
+            continue;
+        }
         const colon = findTopLevelColon(raw);
         if (colon) |offset| {
             const left_range = trimRange(raw, .{ .start = 0, .end = offset }) orelse {
@@ -121,6 +134,7 @@ pub fn bindAlloc(
     @memset(values, null);
     var positional: usize = 0;
     for (arguments) |argument| {
+        if (argument.splat) return error.SplatUnsupported;
         const parameter_index = if (argument.name) |name| blk: {
             var found: ?usize = null;
             for (parameters, 0..) |parameter, index| {

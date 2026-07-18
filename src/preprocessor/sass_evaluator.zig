@@ -315,6 +315,7 @@ const LoopBodyContext = union(enum) {
 const CallableParameter = struct {
     name: []u8,
     default_value: ?[]const u8,
+    rest: bool = false,
 };
 
 const UserFunction = struct {
@@ -354,6 +355,41 @@ const ContentInvocation = struct {
     block: native_syntax.NodeId,
     owner: *ScopeFrame,
     captured_content: ?*const ContentInvocation,
+    parameters: []const CallableParameter,
+};
+
+const EvaluatedKeywordArgument = struct {
+    name: []const u8,
+    value: *const native_value.Value,
+    normalize_name: bool,
+};
+
+const EvaluatedCallArguments = struct {
+    allocator: std.mem.Allocator,
+    positional: std.ArrayList(*const native_value.Value) = .empty,
+    keywords: std.ArrayList(EvaluatedKeywordArgument) = .empty,
+
+    fn deinit(self: *EvaluatedCallArguments) void {
+        self.positional.deinit(self.allocator);
+        self.keywords.deinit(self.allocator);
+        self.* = undefined;
+    }
+};
+
+const BoundCallableArguments = struct {
+    allocator: std.mem.Allocator,
+    values: []?*const native_value.Value,
+    rest_value: ?*const native_value.Value,
+
+    fn deinit(self: *BoundCallableArguments) void {
+        if (self.values.len > 0) self.allocator.free(self.values);
+        self.* = undefined;
+    }
+};
+
+const IncludePrelude = struct {
+    call: []const u8,
+    content_parameter_body: ?[]const u8,
 };
 
 const CallableValidationContext = struct {
@@ -613,15 +649,24 @@ const Engine = struct {
                     try self.report(.syntax, node.span, "Sass @content is only valid inside a mixin declaration");
                     return error.InvalidSassSyntax;
                 }
-                const content_children = self.document.children(node_id) catch
-                    return error.InvalidSassSyntax;
-                if (content_children.len != 0) {
-                    try self.report(
-                        .unsupported_feature,
-                        node.span,
-                        "Sass content arguments are not implemented by the native evaluator yet",
-                    );
-                    return error.UnsupportedFeature;
+                var ranges: std.ArrayList(ExpressionRange) = .empty;
+                defer ranges.deinit(self.allocator);
+                const body = try self.parseContentArgumentBody(node_id, &ranges);
+                var parsed = native_arguments.parseAlloc(
+                    self.allocator,
+                    body,
+                    ranges.items,
+                    self.limits.max_function_arguments,
+                ) catch |err| return self.argumentsFailure(err, node.span);
+                defer parsed.deinit();
+                for (parsed.items, 0..) |argument, index| {
+                    const name = argument.name orelse continue;
+                    for (parsed.items[0..index]) |previous| {
+                        const previous_name = previous.name orelse continue;
+                        if (native_arguments.nameEql(name, previous_name)) {
+                            return self.argumentsFailure(error.DuplicateArgument, node.span);
+                        }
+                    }
                 }
             },
             .import, .module => {
@@ -699,7 +744,7 @@ const Engine = struct {
                 },
                 .loop => try self.executeLoop(child_id, scope, depth, .root),
                 .mixin => try self.executeMixinDirective(child_id, scope, depth, .root),
-                .content => try self.executeContentDirective(child_id, depth, .root),
+                .content => try self.executeContentDirective(child_id, scope, depth, .root),
                 .function => try self.defineUserFunction(child_id, scope),
                 .module => try self.executeModuleDirective(child_id),
                 .return_statement => {
@@ -913,7 +958,7 @@ const Engine = struct {
                     .selectors = selectors,
                     .declarations = declarations,
                 } }),
-                .content => try self.executeContentDirective(child_id, depth, .{ .rule = .{
+                .content => try self.executeContentDirective(child_id, scope, depth, .{ .rule = .{
                     .owner_span = owner_span,
                     .selectors = selectors,
                     .declarations = declarations,
@@ -948,6 +993,41 @@ const Engine = struct {
         };
     }
 
+    fn parseIncludePrelude(
+        self: *Engine,
+        prelude: []const u8,
+        span: native_source.Span,
+    ) Error!IncludePrelude {
+        var search_start: usize = 0;
+        while (search_start < prelude.len) {
+            const relative = findTopLevelWord(prelude[search_start..], "using") orelse break;
+            const index = search_start + relative;
+            const call = trimWhitespace(prelude[0..index]);
+            if (call.len == 0) {
+                search_start = index + "using".len;
+                continue;
+            }
+            const clause = trimWhitespace(prelude[index + "using".len ..]);
+            if (!fullyWrapped(clause, '(', ')')) {
+                try self.report(.syntax, span, "malformed native Sass content parameter list");
+                return error.InvalidSassSyntax;
+            }
+            return .{
+                .call = call,
+                .content_parameter_body = clause[1 .. clause.len - 1],
+            };
+        }
+        return .{ .call = prelude, .content_parameter_body = null };
+    }
+
+    fn deinitCallableParameters(
+        self: *Engine,
+        parameters: []CallableParameter,
+    ) void {
+        for (parameters) |parameter| self.allocator.free(parameter.name);
+        if (parameters.len > 0) self.allocator.free(parameters);
+    }
+
     fn validateMixinCallSyntax(
         self: *Engine,
         directive_id: native_syntax.NodeId,
@@ -972,19 +1052,27 @@ const Engine = struct {
         }
 
         const prelude = trimWhitespace(try self.sources.slice(prelude_node.text.?));
-        if (hasTopLevelWordAfterPrefix(prelude, "using")) return;
-        const opening = std.mem.indexOfScalar(u8, prelude, '(');
-        const raw_name = trimWhitespace(if (opening) |index| prelude[0..index] else prelude);
+        const include = try self.parseIncludePrelude(prelude, prelude_node.span);
+        if (include.content_parameter_body) |parameter_body| {
+            if (children.len != 2) {
+                try self.report(.syntax, prelude_node.span, "Sass content parameters require a content block");
+                return error.InvalidSassSyntax;
+            }
+            const parameters = try self.parseCallableParameters(parameter_body, prelude_node.span);
+            self.deinitCallableParameters(parameters);
+        }
+        const opening = std.mem.indexOfScalar(u8, include.call, '(');
+        const raw_name = trimWhitespace(if (opening) |index| include.call[0..index] else include.call);
         if (!isSimpleIdentifier(raw_name)) {
             try self.report(.syntax, prelude_node.span, "invalid native Sass mixin name");
             return error.InvalidSassSyntax;
         }
         const body = if (opening) |index| blk: {
-            if (!fullyWrapped(prelude[index..], '(', ')')) {
+            if (!fullyWrapped(include.call[index..], '(', ')')) {
                 try self.report(.syntax, prelude_node.span, "malformed native Sass mixin argument list");
                 return error.InvalidSassSyntax;
             }
-            break :blk prelude[index + 1 .. prelude.len - 1];
+            break :blk include.call[index + 1 .. include.call.len - 1];
         } else "";
         var ranges: std.ArrayList(ExpressionRange) = .empty;
         defer ranges.deinit(self.allocator);
@@ -1000,7 +1088,6 @@ const Engine = struct {
             ranges.items,
             self.limits.max_function_arguments,
         ) catch |err| switch (err) {
-            error.SplatUnsupported => return,
             else => return self.argumentsFailure(err, prelude_node.span),
         };
         defer parsed.deinit();
@@ -1048,27 +1135,24 @@ const Engine = struct {
             return error.InvalidSassSyntax;
         }
         const prelude = trimWhitespace(try self.sources.slice(prelude_node.text.?));
-        if (hasTopLevelWordAfterPrefix(prelude, "using")) {
-            try self.report(
-                .unsupported_feature,
-                prelude_node.span,
-                "Sass content-block parameters are not implemented by the native evaluator yet",
-            );
-            return error.UnsupportedFeature;
+        const include = try self.parseIncludePrelude(prelude, prelude_node.span);
+        if (include.content_parameter_body != null and children.len != 2) {
+            try self.report(.syntax, prelude_node.span, "Sass content parameters require a content block");
+            return error.InvalidSassSyntax;
         }
 
-        const opening = std.mem.indexOfScalar(u8, prelude, '(');
-        const raw_name = trimWhitespace(if (opening) |index| prelude[0..index] else prelude);
+        const opening = std.mem.indexOfScalar(u8, include.call, '(');
+        const raw_name = trimWhitespace(if (opening) |index| include.call[0..index] else include.call);
         if (!isSimpleIdentifier(raw_name)) {
             try self.report(.syntax, prelude_node.span, "invalid native Sass mixin name");
             return error.InvalidSassSyntax;
         }
         const body = if (opening) |index| blk: {
-            if (!fullyWrapped(prelude[index..], '(', ')')) {
+            if (!fullyWrapped(include.call[index..], '(', ')')) {
                 try self.report(.syntax, prelude_node.span, "malformed native Sass mixin argument list");
                 return error.InvalidSassSyntax;
             }
-            break :blk prelude[index + 1 .. prelude.len - 1];
+            break :blk include.call[index + 1 .. include.call.len - 1];
         } else "";
         var ranges: std.ArrayList(ExpressionRange) = .empty;
         defer ranges.deinit(self.allocator);
@@ -1091,12 +1175,18 @@ const Engine = struct {
             }
             break :blk children[1];
         } else null;
+        const content_parameters = try self.parseCallableParameters(
+            include.content_parameter_body orelse "",
+            prelude_node.span,
+        );
+        defer self.deinitCallableParameters(content_parameters);
         try self.callUserMixin(
             mixin_id,
             body,
             ranges.items,
             scope,
             content_block,
+            content_parameters,
             prelude_node.span,
             depth,
             context,
@@ -1174,7 +1264,7 @@ const Engine = struct {
             }
             break :blk prelude[index + 1 .. prelude.len - 1];
         } else "";
-        const parameters = try self.parseMixinParameters(parameter_body, prelude_node.span);
+        const parameters = try self.parseCallableParameters(parameter_body, prelude_node.span);
         return .{
             .allocator = self.allocator,
             .name = name,
@@ -1199,7 +1289,7 @@ const Engine = struct {
         return false;
     }
 
-    fn parseMixinParameters(
+    fn parseCallableParameters(
         self: *Engine,
         body: []const u8,
         span: native_source.Span,
@@ -1213,7 +1303,7 @@ const Engine = struct {
             if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
         }
         if (ranges.items.len > self.limits.max_function_arguments) {
-            try self.report(.resource_limit, span, "native Sass mixin parameter limit exceeded");
+            try self.report(.resource_limit, span, "native Sass callable parameter limit exceeded");
             return error.FunctionArgumentLimitExceeded;
         }
 
@@ -1222,40 +1312,47 @@ const Engine = struct {
             for (parameters.items) |parameter| self.allocator.free(parameter.name);
             parameters.deinit(self.allocator);
         }
-        for (ranges.items) |range| {
+        for (ranges.items, 0..) |range, parameter_index| {
             const raw_parameter = trimWhitespace(body[range.start..range.end]);
             if (raw_parameter.len == 0) {
-                try self.report(.syntax, span, "empty native Sass mixin parameter");
+                try self.report(.syntax, span, "empty native Sass callable parameter");
                 return error.InvalidSassSyntax;
             }
-            if (std.mem.endsWith(u8, raw_parameter, "...")) {
-                try self.report(
-                    .unsupported_feature,
-                    span,
-                    "Sass rest parameters are not implemented by the native evaluator yet",
-                );
-                return error.UnsupportedFeature;
+            const rest = std.mem.endsWith(u8, raw_parameter, "...");
+            if (rest and parameter_index + 1 != ranges.items.len) {
+                try self.report(.syntax, span, "native Sass rest parameter must be final");
+                return error.InvalidSassSyntax;
             }
-            const colon = findTopLevelByte(raw_parameter, ':');
-            const raw_parameter_name = trimWhitespace(raw_parameter[0 .. colon orelse raw_parameter.len]);
+            const parameter_source = trimWhitespace(if (rest)
+                raw_parameter[0 .. raw_parameter.len - "...".len]
+            else
+                raw_parameter);
+            const colon = findTopLevelByte(parameter_source, ':');
+            if (rest and colon != null) {
+                try self.report(.syntax, span, "native Sass rest parameter may not have a default");
+                return error.InvalidSassSyntax;
+            }
+            const raw_parameter_name = trimWhitespace(
+                parameter_source[0 .. colon orelse parameter_source.len],
+            );
             if (raw_parameter_name.len < 2 or raw_parameter_name[0] != '$' or
                 !isSimpleIdentifier(raw_parameter_name[1..]))
             {
-                try self.report(.syntax, span, "invalid native Sass mixin parameter");
+                try self.report(.syntax, span, "invalid native Sass callable parameter");
                 return error.InvalidSassSyntax;
             }
             const parameter_name = try self.normalizeCallableName(raw_parameter_name[1..]);
             errdefer self.allocator.free(parameter_name);
             for (parameters.items) |parameter| {
                 if (std.mem.eql(u8, parameter.name, parameter_name)) {
-                    try self.report(.syntax, span, "duplicate native Sass mixin parameter");
+                    try self.report(.syntax, span, "duplicate native Sass callable parameter");
                     return error.InvalidSassSyntax;
                 }
             }
             const default_value = if (colon) |separator| blk: {
-                const value = trimWhitespace(raw_parameter[separator + 1 ..]);
+                const value = trimWhitespace(parameter_source[separator + 1 ..]);
                 if (value.len == 0) {
-                    try self.report(.syntax, span, "native Sass mixin parameter default is missing");
+                    try self.report(.syntax, span, "native Sass callable parameter default is missing");
                     return error.InvalidSassSyntax;
                 }
                 break :blk value;
@@ -1263,9 +1360,236 @@ const Engine = struct {
             try parameters.append(self.allocator, .{
                 .name = parameter_name,
                 .default_value = default_value,
+                .rest = rest,
             });
         }
         return parameters.toOwnedSlice(self.allocator);
+    }
+
+    fn evaluateCallArguments(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!EvaluatedCallArguments {
+        var result = EvaluatedCallArguments{ .allocator = self.allocator };
+        errdefer result.deinit();
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+
+        for (parsed.items) |argument| {
+            const item = try self.evaluateExpressionBytes(
+                body[argument.value.start..argument.value.end],
+                scope,
+                span,
+            );
+            if (argument.splat) {
+                try self.expandCallSplat(&result, item, span);
+            } else if (argument.name) |name| {
+                try self.appendEvaluatedKeyword(&result, .{
+                    .name = name,
+                    .value = item,
+                    .normalize_name = true,
+                }, span);
+            } else {
+                try self.appendEvaluatedPositional(&result, item, span);
+            }
+        }
+        return result;
+    }
+
+    fn expandCallSplat(
+        self: *Engine,
+        output: *EvaluatedCallArguments,
+        item: *const native_value.Value,
+        span: native_source.Span,
+    ) Error!void {
+        switch (item.*) {
+            .list => |list| {
+                for (list.items) |*value| {
+                    try self.appendEvaluatedPositional(output, value, span);
+                }
+            },
+            .map => |map| {
+                for (map.entries) |*entry| {
+                    const name = switch (entry.key) {
+                        .string, .selector => |string| string.bytes,
+                        else => {
+                            try self.report(
+                                .type_mismatch,
+                                span,
+                                "native Sass keyword splat map requires string keys",
+                            );
+                            return error.InvalidExpression;
+                        },
+                    };
+                    try self.appendEvaluatedKeyword(output, .{
+                        .name = name,
+                        .value = &entry.value,
+                        .normalize_name = false,
+                    }, span);
+                }
+            },
+            .argument_list => |argument_list| {
+                argument_list.state.keywords_accessed = true;
+                for (argument_list.positional) |*value| {
+                    try self.appendEvaluatedPositional(output, value, span);
+                }
+                for (argument_list.keywords) |*keyword| {
+                    try self.appendEvaluatedKeyword(output, .{
+                        .name = keyword.name,
+                        .value = &keyword.value,
+                        .normalize_name = keyword.normalize_name,
+                    }, span);
+                }
+            },
+            else => try self.appendEvaluatedPositional(output, item, span),
+        }
+    }
+
+    fn appendEvaluatedPositional(
+        self: *Engine,
+        output: *EvaluatedCallArguments,
+        item: *const native_value.Value,
+        span: native_source.Span,
+    ) Error!void {
+        try self.reserveExpandedCallArgument(output, span);
+        try output.positional.append(self.allocator, item);
+    }
+
+    fn appendEvaluatedKeyword(
+        self: *Engine,
+        output: *EvaluatedCallArguments,
+        keyword: EvaluatedKeywordArgument,
+        span: native_source.Span,
+    ) Error!void {
+        try self.reserveExpandedCallArgument(output, span);
+        for (output.keywords.items) |previous| {
+            if (callKeywordNamesEqual(previous, keyword)) {
+                return self.argumentsFailure(error.DuplicateArgument, span);
+            }
+        }
+        try output.keywords.append(self.allocator, keyword);
+    }
+
+    fn reserveExpandedCallArgument(
+        self: *Engine,
+        output: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!void {
+        const count = std.math.add(
+            usize,
+            output.positional.items.len,
+            output.keywords.items.len,
+        ) catch return self.argumentsFailure(error.ArgumentLimitExceeded, span);
+        if (count >= self.limits.max_function_arguments) {
+            return self.argumentsFailure(error.ArgumentLimitExceeded, span);
+        }
+    }
+
+    fn bindCallableArguments(
+        self: *Engine,
+        parameters: []const CallableParameter,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!BoundCallableArguments {
+        const values = try self.allocator.alloc(?*const native_value.Value, parameters.len);
+        errdefer if (values.len > 0) self.allocator.free(values);
+        @memset(values, null);
+
+        const rest_index: ?usize = if (parameters.len > 0 and parameters[parameters.len - 1].rest)
+            parameters.len - 1
+        else
+            null;
+        const fixed_count = rest_index orelse parameters.len;
+        var rest_positional: std.ArrayList(native_value.Value) = .empty;
+        defer rest_positional.deinit(self.allocator);
+        var rest_keywords: std.ArrayList(native_value.ArgumentKeyword) = .empty;
+        defer rest_keywords.deinit(self.allocator);
+
+        for (arguments.positional.items, 0..) |item, index| {
+            if (index < fixed_count) {
+                if (values[index] != null) {
+                    return self.argumentsFailure(error.DuplicateArgument, span);
+                }
+                values[index] = item;
+            } else if (rest_index != null) {
+                try rest_positional.append(self.allocator, item.*);
+            } else {
+                return self.argumentsFailure(error.PositionalLimitExceeded, span);
+            }
+        }
+
+        for (arguments.keywords.items) |keyword| {
+            var matched: ?usize = null;
+            for (parameters[0..fixed_count], 0..) |parameter, index| {
+                const matches = if (keyword.normalize_name)
+                    native_arguments.nameEql(keyword.name, parameter.name)
+                else
+                    std.mem.eql(u8, keyword.name, parameter.name);
+                if (matches) {
+                    matched = index;
+                    break;
+                }
+            }
+            if (matched) |index| {
+                if (values[index] != null) {
+                    return self.argumentsFailure(error.DuplicateArgument, span);
+                }
+                values[index] = keyword.value;
+            } else if (rest_index != null) {
+                try rest_keywords.append(self.allocator, .{
+                    .name = keyword.name,
+                    .value = keyword.value.*,
+                    .normalize_name = keyword.normalize_name,
+                });
+            } else {
+                return self.argumentsFailure(error.UnknownArgument, span);
+            }
+        }
+
+        for (parameters[0..fixed_count], values[0..fixed_count]) |parameter, value| {
+            if (parameter.default_value == null and value == null) {
+                return self.argumentsFailure(error.MissingArgument, span);
+            }
+        }
+
+        var rest_value: ?*const native_value.Value = null;
+        if (rest_index) |index| {
+            var state = native_value.ArgumentListState{};
+            rest_value = try self.values.own(.{ .argument_list = .{
+                .positional = rest_positional.items,
+                .keywords = rest_keywords.items,
+                .state = &state,
+            } });
+            values[index] = rest_value;
+        }
+        return .{
+            .allocator = self.allocator,
+            .values = values,
+            .rest_value = rest_value,
+        };
+    }
+
+    fn ensureRestKeywordsConsumed(
+        self: *Engine,
+        rest_value: ?*const native_value.Value,
+        span: native_source.Span,
+    ) Error!void {
+        const item = rest_value orelse return;
+        const argument_list = switch (item.*) {
+            .argument_list => |value| value,
+            else => return error.InvalidSassSyntax,
+        };
+        if (argument_list.keywords.len > 0 and !argument_list.state.keywords_accessed) {
+            return self.argumentsFailure(error.UnknownArgument, span);
+        }
     }
 
     fn lookupUserMixin(
@@ -1298,6 +1622,7 @@ const Engine = struct {
         ranges: []const ExpressionRange,
         caller_scope: *ScopeFrame,
         content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
         span: native_source.Span,
         depth: u16,
         context: LoopBodyContext,
@@ -1310,54 +1635,15 @@ const Engine = struct {
             try self.report(.syntax, span, "native Sass mixin does not accept a content block");
             return error.InvalidSassSyntax;
         }
-        const parameter_specs = try self.allocator.alloc(
-            native_arguments.Parameter,
-            mixin.parameters.len,
-        );
-        defer if (parameter_specs.len > 0) self.allocator.free(parameter_specs);
-        for (mixin.parameters, 0..) |parameter, index| {
-            parameter_specs[index] = .{
-                .name = parameter.name,
-                .required = parameter.default_value == null,
-            };
-        }
-
-        var parsed = native_arguments.parseAlloc(
-            self.allocator,
+        var evaluated = try self.evaluateCallArguments(
             body,
             ranges,
-            self.limits.max_function_arguments,
-        ) catch |err| return self.argumentsFailure(err, span);
-        defer parsed.deinit();
-        var bound = native_arguments.bindAlloc(
-            self.allocator,
-            parsed.items,
-            parameter_specs,
-            parameter_specs.len,
-        ) catch |err| return self.argumentsFailure(err, span);
+            caller_scope.cursor,
+            span,
+        );
+        defer evaluated.deinit();
+        var bound = try self.bindCallableArguments(mixin.parameters, &evaluated, span);
         defer bound.deinit();
-
-        const evaluated = try self.allocator.alloc(?*const native_value.Value, mixin.parameters.len);
-        defer if (evaluated.len > 0) self.allocator.free(evaluated);
-        @memset(evaluated, null);
-        var positional: usize = 0;
-        for (parsed.items) |argument| {
-            const parameter_index = if (argument.name) |argument_name| blk: {
-                for (mixin.parameters, 0..) |parameter, index| {
-                    if (native_arguments.nameEql(argument_name, parameter.name)) break :blk index;
-                }
-                unreachable;
-            } else blk: {
-                const index = positional;
-                positional += 1;
-                break :blk index;
-            };
-            evaluated[parameter_index] = try self.evaluateExpressionBytes(
-                body[argument.value.start..argument.value.end],
-                caller_scope.cursor,
-                span,
-            );
-        }
 
         try self.transaction.enterCall();
         var active_call = true;
@@ -1368,7 +1654,7 @@ const Engine = struct {
             .parent = mixin.owner,
         };
         for (mixin.parameters, 0..) |parameter, index| {
-            const item = evaluated[index] orelse try self.evaluateExpressionBytes(
+            const item = bound.values[index] orelse try self.evaluateExpressionBytes(
                 parameter.default_value orelse return error.InvalidSassSyntax,
                 call_scope.cursor,
                 mixin.span,
@@ -1383,6 +1669,7 @@ const Engine = struct {
                 .block = block,
                 .owner = caller_scope,
                 .captured_content = previous_content,
+                .parameters = content_parameters,
             };
             break :blk &invocation;
         } else null;
@@ -1390,23 +1677,73 @@ const Engine = struct {
 
         const children = self.document.children(mixin.block) catch return error.InvalidSassSyntax;
         try self.executeLoopBody(children, &call_scope, depth + 1, context);
+        try self.ensureRestKeywordsConsumed(bound.rest_value, span);
         active_call = false;
         try self.transaction.leaveCall();
+    }
+
+    fn parseContentArgumentBody(
+        self: *Engine,
+        content_id: native_syntax.NodeId,
+        ranges: *std.ArrayList(ExpressionRange),
+    ) Error![]const u8 {
+        const content_node = self.document.get(content_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(content_id) catch return error.InvalidSassSyntax;
+        if (content_node.kind != .content or children.len > 1) {
+            try self.report(.syntax, content_node.span, "malformed native Sass @content");
+            return error.InvalidSassSyntax;
+        }
+        if (children.len == 0) return "";
+        const expression = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        if (expression.kind != .expression or expression.text == null) {
+            try self.report(.syntax, content_node.span, "malformed native Sass @content arguments");
+            return error.InvalidSassSyntax;
+        }
+        const raw = trimWhitespace(try self.sources.slice(expression.text.?));
+        if (!fullyWrapped(raw, '(', ')')) {
+            try self.report(.syntax, expression.span, "malformed native Sass @content argument list");
+            return error.InvalidSassSyntax;
+        }
+        const body = raw[1 .. raw.len - 1];
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, ranges);
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
+        }
+        return body;
     }
 
     fn executeContentDirective(
         self: *Engine,
         content_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
         depth: u16,
         context: LoopBodyContext,
     ) Error!void {
         const content_node = self.document.get(content_id) catch return error.InvalidSassSyntax;
-        const children = self.document.children(content_id) catch return error.InvalidSassSyntax;
-        if (content_node.kind != .content or children.len != 0 or context == .callable) {
+        if (content_node.kind != .content or context == .callable) {
             try self.report(.syntax, content_node.span, "malformed native Sass @content");
             return error.InvalidSassSyntax;
         }
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        const body = try self.parseContentArgumentBody(content_id, &ranges);
         const invocation = self.active_content orelse return;
+        var evaluated = try self.evaluateCallArguments(
+            body,
+            ranges.items,
+            scope.cursor,
+            content_node.span,
+        );
+        defer evaluated.deinit();
+        var bound = try self.bindCallableArguments(
+            invocation.parameters,
+            &evaluated,
+            content_node.span,
+        );
+        defer bound.deinit();
+
         try self.transaction.enterCall();
         var active_call = true;
         defer if (active_call) self.transaction.leaveCall() catch {};
@@ -1419,9 +1756,18 @@ const Engine = struct {
             .kind = .lexical,
             .parent = invocation.owner,
         };
+        for (invocation.parameters, 0..) |parameter, index| {
+            const item = bound.values[index] orelse try self.evaluateExpressionBytes(
+                parameter.default_value orelse return error.InvalidSassSyntax,
+                content_scope.cursor,
+                content_node.span,
+            );
+            try self.defineOwnedVariable(&content_scope, parameter.name, item);
+        }
         const content_children = self.document.children(invocation.block) catch
             return error.InvalidSassSyntax;
         try self.executeLoopBody(content_children, &content_scope, depth + 1, context);
+        try self.ensureRestKeywordsConsumed(bound.rest_value, content_node.span);
         active_call = false;
         try self.transaction.leaveCall();
     }
@@ -1505,68 +1851,7 @@ const Engine = struct {
         errdefer self.allocator.free(name);
 
         const body = prelude[opening + 1 .. prelude.len - 1];
-        var ranges: std.ArrayList(ExpressionRange) = .empty;
-        defer ranges.deinit(self.allocator);
-        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
-        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
-        if (ranges.items.len > 0) {
-            const final = ranges.items[ranges.items.len - 1];
-            if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
-        }
-        if (ranges.items.len > self.limits.max_function_arguments) {
-            try self.report(.resource_limit, prelude_node.span, "native Sass function parameter limit exceeded");
-            return error.FunctionArgumentLimitExceeded;
-        }
-
-        var parameters: std.ArrayList(CallableParameter) = .empty;
-        errdefer {
-            for (parameters.items) |parameter| self.allocator.free(parameter.name);
-            parameters.deinit(self.allocator);
-        }
-        for (ranges.items) |range| {
-            const raw_parameter = trimWhitespace(body[range.start..range.end]);
-            if (raw_parameter.len == 0) {
-                try self.report(.syntax, prelude_node.span, "empty native Sass function parameter");
-                return error.InvalidSassSyntax;
-            }
-            if (std.mem.endsWith(u8, raw_parameter, "...")) {
-                try self.report(
-                    .unsupported_feature,
-                    prelude_node.span,
-                    "Sass rest parameters are not implemented by the native evaluator yet",
-                );
-                return error.UnsupportedFeature;
-            }
-            const colon = findTopLevelByte(raw_parameter, ':');
-            const raw_parameter_name = trimWhitespace(raw_parameter[0 .. colon orelse raw_parameter.len]);
-            if (raw_parameter_name.len < 2 or raw_parameter_name[0] != '$' or
-                !isSimpleIdentifier(raw_parameter_name[1..]))
-            {
-                try self.report(.syntax, prelude_node.span, "invalid native Sass function parameter");
-                return error.InvalidSassSyntax;
-            }
-            const parameter_name = try self.normalizeCallableName(raw_parameter_name[1..]);
-            errdefer self.allocator.free(parameter_name);
-            for (parameters.items) |parameter| {
-                if (std.mem.eql(u8, parameter.name, parameter_name)) {
-                    try self.report(.syntax, prelude_node.span, "duplicate native Sass function parameter");
-                    return error.InvalidSassSyntax;
-                }
-            }
-            const default_value = if (colon) |separator| blk: {
-                const value = trimWhitespace(raw_parameter[separator + 1 ..]);
-                if (value.len == 0) {
-                    try self.report(.syntax, prelude_node.span, "native Sass parameter default is missing");
-                    return error.InvalidSassSyntax;
-                }
-                break :blk value;
-            } else null;
-            try parameters.append(self.allocator, .{
-                .name = parameter_name,
-                .default_value = default_value,
-            });
-        }
-        const owned_parameters = try parameters.toOwnedSlice(self.allocator);
+        const owned_parameters = try self.parseCallableParameters(body, prelude_node.span);
         return .{
             .allocator = self.allocator,
             .name = name,
@@ -1639,54 +1924,15 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         if (function_id >= self.user_functions.items.len) return error.InvalidSassSyntax;
         const function = &self.user_functions.items[function_id];
-        const parameter_specs = try self.allocator.alloc(
-            native_arguments.Parameter,
-            function.parameters.len,
-        );
-        defer if (parameter_specs.len > 0) self.allocator.free(parameter_specs);
-        for (function.parameters, 0..) |parameter, index| {
-            parameter_specs[index] = .{
-                .name = parameter.name,
-                .required = parameter.default_value == null,
-            };
-        }
-
-        var parsed = native_arguments.parseAlloc(
-            self.allocator,
+        var evaluated = try self.evaluateCallArguments(
             body,
             ranges,
-            self.limits.max_function_arguments,
-        ) catch |err| return self.argumentsFailure(err, span);
-        defer parsed.deinit();
-        var bound = native_arguments.bindAlloc(
-            self.allocator,
-            parsed.items,
-            parameter_specs,
-            parameter_specs.len,
-        ) catch |err| return self.argumentsFailure(err, span);
+            caller_scope,
+            span,
+        );
+        defer evaluated.deinit();
+        var bound = try self.bindCallableArguments(function.parameters, &evaluated, span);
         defer bound.deinit();
-
-        const evaluated = try self.allocator.alloc(?*const native_value.Value, function.parameters.len);
-        defer if (evaluated.len > 0) self.allocator.free(evaluated);
-        @memset(evaluated, null);
-        var positional: usize = 0;
-        for (parsed.items) |argument| {
-            const parameter_index = if (argument.name) |argument_name| blk: {
-                for (function.parameters, 0..) |parameter, index| {
-                    if (native_arguments.nameEql(argument_name, parameter.name)) break :blk index;
-                }
-                unreachable;
-            } else blk: {
-                const index = positional;
-                positional += 1;
-                break :blk index;
-            };
-            evaluated[parameter_index] = try self.evaluateExpressionBytes(
-                body[argument.value.start..argument.value.end],
-                caller_scope,
-                span,
-            );
-        }
 
         try self.transaction.enterCall();
         var active_call = true;
@@ -1697,7 +1943,7 @@ const Engine = struct {
             .parent = function.owner,
         };
         for (function.parameters, 0..) |parameter, index| {
-            const item = evaluated[index] orelse try self.evaluateExpressionBytes(
+            const item = bound.values[index] orelse try self.evaluateExpressionBytes(
                 parameter.default_value orelse return error.InvalidSassSyntax,
                 call_scope.cursor,
                 function.span,
@@ -1712,6 +1958,7 @@ const Engine = struct {
             try self.report(.syntax, function.span, "native Sass function finished without @return");
             return error.InvalidSassSyntax;
         }
+        try self.ensureRestKeywordsConsumed(bound.rest_value, span);
         active_call = false;
         try self.transaction.leaveCall();
         return return_value.?;
@@ -1930,6 +2177,20 @@ const Engine = struct {
                     if (loopBodyReturned(context)) return;
                 }
             },
+            .argument_list => |argument_list| {
+                for (argument_list.positional, 0..) |_, index| {
+                    try self.executeEachIteration(
+                        &loop_scope,
+                        parsed.names,
+                        &argument_list.positional[index],
+                        null,
+                        body,
+                        depth,
+                        context,
+                    );
+                    if (loopBodyReturned(context)) return;
+                }
+            },
             .map => |map| {
                 for (map.entries, 0..) |_, index| {
                     try self.executeEachIteration(
@@ -1983,6 +2244,10 @@ const Engine = struct {
                 else if (item) |single|
                     switch (single.*) {
                         .list => |list| if (index < list.items.len) &list.items[index] else null,
+                        .argument_list => |argument_list| if (index < argument_list.positional.len)
+                            &argument_list.positional[index]
+                        else
+                            null,
                         else => if (index == 0) single else null,
                     }
                 else
@@ -3733,6 +3998,7 @@ const Engine = struct {
         var has_channels = false;
         var has_color = false;
         for (parsed.items) |argument| {
+            if (argument.splat) return self.argumentsFailure(error.SplatUnsupported, span);
             const name = argument.name orelse continue;
             has_keyword = true;
             has_channels = has_channels or native_arguments.nameEql(name, "channels");
@@ -5086,6 +5352,7 @@ const Engine = struct {
 
         var has_keyword = false;
         for (parsed.items) |argument| {
+            if (argument.splat) return self.argumentsFailure(error.SplatUnsupported, span);
             if (argument.name != null) {
                 has_keyword = true;
                 break;
@@ -5143,11 +5410,13 @@ const Engine = struct {
         const length: usize = switch (arguments[0].*) {
             .list => |list| list.items.len,
             .map => |map| map.entries.len,
+            .argument_list => |argument_list| argument_list.positional.len,
             else => 1,
         };
         const index = try self.resolveListIndex(arguments[1].*, length, span);
         return switch (arguments[0].*) {
             .list => |list| &list.items[index],
+            .argument_list => |argument_list| &argument_list.positional[index],
             .map => |map| blk: {
                 const pair = [_]native_value.Value{
                     map.entries[index].key,
@@ -5174,6 +5443,7 @@ const Engine = struct {
         const length: usize = switch (arguments[0].*) {
             .list => |list| list.items.len,
             .map => |map| map.entries.len,
+            .argument_list => |argument_list| argument_list.positional.len,
             else => 1,
         };
         return self.values.own(.{ .number = .{ .value = @floatFromInt(length) } });
@@ -5510,7 +5780,7 @@ const Engine = struct {
             error.MissingArgument => "required native Sass function argument is missing",
             error.PositionalAfterKeyword => "positional Sass argument cannot follow a keyword argument",
             error.PositionalLimitExceeded => "native Sass function received too many positional arguments",
-            error.SplatUnsupported => "Sass argument-list expansion is not implemented by the native evaluator yet",
+            error.SplatUnsupported => "Sass argument-list expansion is not supported by this native built-in yet",
             error.UnknownArgument => "unknown native Sass keyword argument",
             error.OutOfMemory => return error.OutOfMemory,
         };
@@ -6012,6 +6282,16 @@ const Engine = struct {
                     emitted += 1;
                 }
                 if (list.bracketed) try self.appendTemporary(output, "]");
+            },
+            .argument_list => |argument_list| {
+                if (argument_list.keywords.len > 0) return error.InvalidExpression;
+                var emitted: usize = 0;
+                for (argument_list.positional) |child| {
+                    if (child == .null_value) continue;
+                    if (emitted > 0) try self.appendTemporary(output, ",");
+                    try self.appendValue(output, child, interpolation);
+                    emitted += 1;
+                }
             },
             .map, .callable => return error.InvalidExpression,
         }
@@ -6526,17 +6806,6 @@ fn findTopLevelWord(input: []const u8, word: []const u8) ?usize {
     return null;
 }
 
-fn hasTopLevelWordAfterPrefix(input: []const u8, word: []const u8) bool {
-    var search_start: usize = 0;
-    while (search_start < input.len) {
-        const relative = findTopLevelWord(input[search_start..], word) orelse return false;
-        const index = search_start + relative;
-        if (trimWhitespace(input[0..index]).len > 0) return true;
-        search_start = index + word.len;
-    }
-    return false;
-}
-
 fn commentEnd(input: []const u8, start: usize) ?usize {
     if (start + 1 >= input.len or input[start] != '/') return null;
     if (input[start + 1] == '*') {
@@ -6565,6 +6834,16 @@ fn sassNameEql(left: []const u8, right: []const u8) bool {
         if (normalized != right_byte) return false;
     }
     return true;
+}
+
+fn callKeywordNamesEqual(
+    left: EvaluatedKeywordArgument,
+    right: EvaluatedKeywordArgument,
+) bool {
+    if (left.normalize_name and right.normalize_name) {
+        return native_arguments.nameEql(left.name, right.name);
+    }
+    return std.mem.eql(u8, left.name, right.name);
 }
 
 fn colorModuleBuiltin(name: []const u8) ?Builtin {
@@ -6776,7 +7055,24 @@ fn sassValuesEqual(left: native_value.Value, right: native_value.Value) bool {
 }
 
 fn sassValuesEqualDepth(left: native_value.Value, right: native_value.Value, depth: u16) bool {
-    if (depth > 64 or std.meta.activeTag(left) != std.meta.activeTag(right)) return false;
+    if (depth > 64) return false;
+    if (std.meta.activeTag(left) != std.meta.activeTag(right)) {
+        return switch (left) {
+            .argument_list => |argument_list| switch (right) {
+                .list => |list| argumentListEqualsList(argument_list, list, depth),
+                else => false,
+            },
+            .list => |list| switch (right) {
+                .argument_list => |argument_list| argumentListEqualsList(
+                    argument_list,
+                    list,
+                    depth,
+                ),
+                else => false,
+            },
+            else => false,
+        };
+    }
     return switch (left) {
         .null_value => true,
         .boolean => |value| value == right.boolean,
@@ -6817,7 +7113,44 @@ fn sassValuesEqualDepth(left: native_value.Value, right: native_value.Value, dep
             }
             break :blk true;
         },
+        .argument_list => |argument_list| blk: {
+            const other = right.argument_list;
+            if (argument_list.positional.len != other.positional.len or
+                argument_list.keywords.len != other.keywords.len)
+            {
+                break :blk false;
+            }
+            for (argument_list.positional, other.positional) |item, other_item| {
+                if (!sassValuesEqualDepth(item, other_item, depth + 1)) break :blk false;
+            }
+            for (argument_list.keywords, other.keywords) |keyword, other_keyword| {
+                if (keyword.normalize_name != other_keyword.normalize_name or
+                    !std.mem.eql(u8, keyword.name, other_keyword.name) or
+                    !sassValuesEqualDepth(keyword.value, other_keyword.value, depth + 1))
+                {
+                    break :blk false;
+                }
+            }
+            break :blk true;
+        },
     };
+}
+
+fn argumentListEqualsList(
+    argument_list: native_value.ArgumentList,
+    list: native_value.List,
+    depth: u16,
+) bool {
+    if (argument_list.keywords.len > 0 or list.bracketed or
+        argument_list.positional.len != list.items.len)
+    {
+        return false;
+    }
+    if (list.items.len > 1 and list.separator != .comma) return false;
+    for (argument_list.positional, list.items) |item, other_item| {
+        if (!sassValuesEqualDepth(item, other_item, depth + 1)) return false;
+    }
+    return true;
 }
 
 fn cssValueIsValid(item: native_value.Value, depth: u16) bool {
@@ -6836,6 +7169,16 @@ fn cssValueIsValid(item: native_value.Value, depth: u16) bool {
                 emitted += 1;
             }
             break :blk list.bracketed or emitted > 0;
+        },
+        .argument_list => |argument_list| blk: {
+            if (argument_list.keywords.len > 0) break :blk false;
+            var emitted: usize = 0;
+            for (argument_list.positional) |child| {
+                if (child == .null_value) continue;
+                if (!cssValueIsValid(child, depth + 1)) break :blk false;
+                emitted += 1;
+            }
+            break :blk emitted > 0;
         },
         .color => |color| blk: {
             var buffer: [native_color.max_serialized_bytes]u8 = undefined;

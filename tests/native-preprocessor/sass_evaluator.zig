@@ -1932,6 +1932,10 @@ test "native Sass user functions reject invalid declarations calls and placement
         .{ .name = "function-duplicate-argument.scss", .input = "@function f($a) { @return $a; } .a { value: f(1, $a: 2); }" },
         .{ .name = "function-positional-after-keyword.scss", .input = "@function f($a, $b) { @return $a; } .a { value: f($a: 1, 2); }" },
         .{ .name = "function-too-many-arguments.scss", .input = "@function f() { @return 1; } .a { value: f(1); }" },
+        .{ .name = "function-unused-rest-keyword.scss", .input = "@function f($args...) { @return length($args); } .a { value: f($extra: 1); }" },
+        .{ .name = "function-non-string-map-key.scss", .input = "@function f($value: 0) { @return $value; } $args: (1: 2); .a { value: f($args...); }" },
+        .{ .name = "function-map-key-is-exact.scss", .input = "@function f($start-at: 0) { @return $start-at; } $args: (start_at: 2); .a { value: f($args...); }" },
+        .{ .name = "function-expanded-duplicate.scss", .input = "@function f($value) { @return $value; } $values: 1; $named: (value: 2); .a { value: f($values..., $named...); }" },
     };
     for (invalid_calls) |case| {
         try std.testing.expectError(
@@ -1940,26 +1944,19 @@ test "native Sass user functions reject invalid declarations calls and placement
         );
     }
 
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
-            std.testing.allocator,
-            "function-rest-parameter.scss",
-            "@function f($args...) { @return 1; }",
-            .scss,
-            .{},
-        ),
-    );
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
-            std.testing.allocator,
-            "function-splat-call.scss",
-            "@function f($a) { @return $a; } $args: 1; .a { value: f($args...); }",
-            .scss,
-            .{},
-        ),
-    );
+    const invalid_rest_parameters = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "function-rest-not-final.scss", .input = "@function f($args..., $last) { @return 1; }" },
+        .{ .name = "function-rest-default.scss", .input = "@function f($args...: 1) { @return 1; }" },
+    };
+    for (invalid_rest_parameters) |case| {
+        try std.testing.expectError(
+            error.InvalidSassSyntax,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
 }
 
 test "native Sass user functions enforce callable parameter and transaction limits" {
@@ -1983,6 +1980,17 @@ test "native Sass user functions enforce callable parameter and transaction limi
             std.testing.allocator,
             "function-parameter-limit.scss",
             "@function f($a, $b) { @return $a; }",
+            .scss,
+            semantic_limits,
+        ),
+    );
+    semantic_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "function-expanded-argument-limit.scss",
+            "@function f($args...) { @return length($args); } $values: 1, 2, 3; .a { value: f($values...); }",
             .scss,
             semantic_limits,
         ),
@@ -2105,6 +2113,83 @@ test "native Sass mixins retain lexical definition and content scope in both syn
     try std.testing.expectEqualStrings(".sass{width:3px;height:4px}", sass_result.css());
 }
 
+test "native Sass evaluates rest arguments splats and parameterized content natively" {
+    const scss =
+        \\@function total($head, $tail...) {
+        \\  $result: $head;
+        \\  @each $value in $tail { $result: $result + $value; }
+        \\  @return $result;
+        \\}
+        \\@function relay($args...) { @return total($args...); }
+        \\@function named($left: 0, $right: 0) { @return $left + $right; }
+        \\@function target($a, $b: 0) { @return $a + $b; }
+        \\@function proxy($args...) { @return target($args...); }
+        \\@function argument-list-equals($args...) { @return $args == (1, 2); }
+        \\@function echo-arguments($args...) { @return $args; }
+        \\$list: 2, 3;
+        \\$map: (left: 4, right: 5);
+        \\.functions {
+        \\  sum: relay(1, $list...);
+        \\  named: named($map...);
+        \\  forwarded: proxy($a: 6, $b: 7);
+        \\  equal: argument-list-equals(1, 2);
+        \\  emitted: echo-arguments(1, 2);
+        \\}
+        \\@mixin collect($first, $rest...) {
+        \\  first: $first;
+        \\  count: length($rest);
+        \\  @each $item in $rest { item: $item; }
+        \\}
+        \\.mixins { @include collect(1, $list...); }
+        \\@mixin provide($values...) {
+        \\  @each $value in $values { @content($value, $suffix: 10); }
+        \\}
+        \\.content {
+        \\  @include provide(a, b) using ($value, $suffix: 0) {
+        \\    result: $value $suffix;
+        \\  }
+        \\}
+        \\@mixin provide-rest { @content(1, 2, 3); }
+        \\.content-rest {
+        \\  @include provide-rest using ($head, $tail...) {
+        \\    count: length($tail);
+        \\    last: nth($tail, 2);
+        \\  }
+        \\}
+        \\@mixin provide-default { @content(8); }
+        \\.content-default {
+        \\  @include provide-default using ($value, $fallback: 9) {
+        \\    value: $value;
+        \\    fallback: $fallback;
+        \\  }
+        \\}
+    ;
+    var scss_result = try compile(std.testing.allocator, "rest-splat-content.scss", scss, .scss, .{});
+    defer scss_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".functions{sum:6;named:9;forwarded:13;equal:true;emitted:1,2}.mixins{first:1;count:2;item:2;item:3}.content{result:a 10;result:b 10}.content-rest{count:2;last:3}.content-default{value:8;fallback:9}",
+        scss_result.css(),
+    );
+
+    const indented =
+        \\@function total($head, $tail...)
+        \\  $result: $head
+        \\  @each $value in $tail
+        \\    $result: $result + $value
+        \\  @return $result
+        \\@mixin provide($values...)
+        \\  @each $value in $values
+        \\    @content($value)
+        \\.sass
+        \\  value: total(1, 2, 3)
+        \\  @include provide(a) using ($value)
+        \\    content: $value
+    ;
+    var sass_result = try compile(std.testing.allocator, "rest-splat-content.sass", indented, .sass, .{});
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(".sass{value:6;content:a}", sass_result.css());
+}
+
 test "native Sass mixins reject invalid declarations calls content and placement" {
     const invalid_syntax = [_]struct {
         name: []const u8,
@@ -2150,21 +2235,53 @@ test "native Sass mixins reject invalid declarations calls content and placement
         );
     }
 
-    const unsupported = [_]struct {
+    const invalid_content_calls = [_]struct {
         name: []const u8,
         input: []const u8,
     }{
-        .{ .name = "mixin-rest-parameter.scss", .input = "@mixin f($args...) { .a { value: no; } }" },
-        .{ .name = "mixin-splat-call.scss", .input = "@mixin f($a) { value: $a; } $args: 1; .a { @include f($args...); }" },
         .{ .name = "content-arguments.scss", .input = "@mixin f { @content(1); } .a { @include f { value: yes; } }" },
-        .{ .name = "content-using.scss", .input = "@mixin f { @content(1); } .a { @include f using ($value) { value: $value; } }" },
+        .{ .name = "content-missing-argument.scss", .input = "@mixin f { @content; } .a { @include f using ($value) { value: $value; } }" },
+        .{ .name = "content-too-many-arguments.scss", .input = "@mixin f { @content(1, 2); } .a { @include f using ($value) { value: $value; } }" },
+        .{ .name = "content-duplicate-argument.scss", .input = "@mixin f { @content(1, $value: 2); } .a { @include f using ($value) { value: $value; } }" },
+        .{ .name = "content-unused-rest-keyword.scss", .input = "@mixin f { @content($extra: 1); } .a { @include f using ($args...) { value: length($args); } }" },
     };
-    for (unsupported) |case| {
+    for (invalid_content_calls) |case| {
         try std.testing.expectError(
-            error.UnsupportedFeature,
+            error.InvalidExpression,
             compile(std.testing.allocator, case.name, case.input, .scss, .{}),
         );
     }
+
+    try std.testing.expectError(
+        error.InvalidSassSyntax,
+        compile(
+            std.testing.allocator,
+            "content-using-without-block.scss",
+            "@mixin f { @content; } .a { @include f using ($value); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidSassSyntax,
+        compile(
+            std.testing.allocator,
+            "mixin-rest-not-final.scss",
+            "@mixin f($args..., $last) { value: $last; }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidSassSyntax,
+        compile(
+            std.testing.allocator,
+            "mixin-rest-default.scss",
+            "@mixin f($args...: 1) { value: yes; }",
+            .scss,
+            .{},
+        ),
+    );
 }
 
 test "native Sass mixins enforce callable and transaction limits" {
@@ -2596,7 +2713,13 @@ fn exerciseAllocationFailures(
         \\$enabled: not false;
         \\$inch: 1in;
         \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
+        \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
+        \\@function allocation-target($left, $right: 0) { @return $left + $right; }
+        \\@function allocation-proxy($args...) { @return allocation-target($args...); }
         \\@mixin allocation-mixin($value, $extra: 1) { mixin-value: $value + $extra; @content; }
+        \\@mixin allocation-content($values...) {
+        \\  @each $value in $values { @content($value, $offset: 1); }
+        \\}
         \\.#{$name} {
         \\  $flow: 1px;
         \\  $loop-total: 0;
@@ -2605,7 +2728,12 @@ fn exerciseAllocationFailures(
         \\  gap: nth(map-get($theme, spaces), 2);
         \\  enabled: $enabled and true;
         \\  function-value: allocation_value(2);
+        \\  rest-function: allocation-rest(1, (2, 3)...);
+        \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
         \\  @include allocation-mixin(2) { mixin-content: yes; }
+        \\  @include allocation-content(a, b) using ($item, $offset: 0) {
+        \\    content-item: $item $offset;
+        \\  }
         \\  @if $enabled { $flow: 2px; $ephemeral: yes; conditional: $flow; ephemeral: $ephemeral; }
         \\  @for $iteration from 1 through 1 { $loop-total: $loop-total + $iteration; for-loop: $iteration; }
         \\  @each $entry in only { each-loop: $entry; }
@@ -2657,7 +2785,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;mixin-value:3;mixin-content:yes;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;function-value:3;rest-function:2;forwarded-function:5;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }
