@@ -7,11 +7,15 @@ const std = @import("std");
 pub const Limits = struct {
     max_selectors: usize = 200_000,
     max_bytes: usize = 10 * 1024 * 1024,
+    max_complex_components: usize = 200_000,
+    max_temporary_bytes: usize = 10 * 1024 * 1024,
+    max_relation_operations: u64 = 100_000_000,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
     InvalidSelector,
     SelectorLimitExceeded,
+    UnsupportedSelectorRelation,
 };
 
 pub const SelectorList = struct {
@@ -247,6 +251,578 @@ pub fn nest(
         current = replacement;
     }
     return current;
+}
+
+const RelationCombinator = enum {
+    none,
+    descendant,
+    child,
+    next_sibling,
+    following_sibling,
+};
+
+const RelationComponent = struct {
+    compound: []const u8,
+    combinator: RelationCombinator,
+};
+
+const RelationComplex = struct {
+    leading_combinator: bool,
+    components: []RelationComponent,
+};
+
+const RelationComplexList = struct {
+    allocator: std.mem.Allocator,
+    items: []RelationComplex,
+
+    fn deinit(self: *RelationComplexList) void {
+        for (self.items) |item| self.allocator.free(item.components);
+        self.allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
+const RelationContext = struct {
+    limits: Limits,
+    component_count: usize = 0,
+    temporary_bytes: usize = 0,
+    operations: u64 = 0,
+
+    fn reserveComponents(self: *RelationContext, count: usize) Error!void {
+        const next = std.math.add(usize, self.component_count, count) catch
+            return error.SelectorLimitExceeded;
+        if (next > self.limits.max_complex_components) {
+            return error.SelectorLimitExceeded;
+        }
+        self.component_count = next;
+    }
+
+    fn reserveTemporary(self: *RelationContext, count: usize) Error!void {
+        const next = std.math.add(usize, self.temporary_bytes, count) catch
+            return error.SelectorLimitExceeded;
+        if (next > self.limits.max_temporary_bytes) {
+            return error.SelectorLimitExceeded;
+        }
+        self.temporary_bytes = next;
+    }
+
+    fn consume(self: *RelationContext, count: u64) Error!void {
+        const next = std.math.add(u64, self.operations, count) catch
+            return error.SelectorLimitExceeded;
+        if (next > self.limits.max_relation_operations) {
+            return error.SelectorLimitExceeded;
+        }
+        self.operations = next;
+    }
+};
+
+const SelectorUsage = struct {
+    selectors: usize,
+    bytes: usize,
+};
+
+/// Returns whether every selector matched by `sub_input` is also matched by
+/// `super_input`. This first native slice owns structural selector lists,
+/// compounds, namespaces, and the standard combinators. Relation inference
+/// for non-identical functional pseudos, escaped identifiers, and normalized
+/// attribute spellings remains explicitly unavailable rather than guessed.
+pub fn isSuperselector(
+    allocator: std.mem.Allocator,
+    super_input: []const u8,
+    sub_input: []const u8,
+    limits: Limits,
+) Error!bool {
+    if (limits.max_selectors == 0 or limits.max_bytes == 0 or
+        limits.max_complex_components == 0 or limits.max_temporary_bytes == 0 or
+        limits.max_relation_operations == 0)
+    {
+        return error.SelectorLimitExceeded;
+    }
+
+    var super_selectors = try parseInternal(allocator, super_input, limits, false);
+    defer super_selectors.deinit();
+    const super_usage = try selectorUsage(&super_selectors);
+    var sub_limits = limits;
+    sub_limits.max_selectors -= super_usage.selectors;
+    sub_limits.max_bytes -= super_usage.bytes;
+    var sub_selectors = try parseInternal(allocator, sub_input, sub_limits, false);
+    defer sub_selectors.deinit();
+
+    var context = RelationContext{ .limits = limits };
+    const lists_equal = try relationListsEqual(
+        &context,
+        &super_selectors,
+        &sub_selectors,
+    );
+    var super_complexes = try buildRelationComplexList(
+        allocator,
+        &super_selectors,
+        &context,
+    );
+    defer super_complexes.deinit();
+    var sub_complexes = try buildRelationComplexList(
+        allocator,
+        &sub_selectors,
+        &context,
+    );
+    defer sub_complexes.deinit();
+
+    if (lists_equal) {
+        for (super_complexes.items) |complex| {
+            if (complex.leading_combinator or
+                complex.components[complex.components.len - 1].combinator != .none)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    for (sub_complexes.items) |sub_complex| {
+        var matched = false;
+        for (super_complexes.items) |super_complex| {
+            if (try relationComplexIsSuperselector(
+                &context,
+                super_complex,
+                sub_complex,
+            )) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) return false;
+    }
+    return true;
+}
+
+fn selectorUsage(list: *const SelectorList) Error!SelectorUsage {
+    var bytes: usize = 0;
+    for (list.items) |item| {
+        bytes = std.math.add(usize, bytes, item.len) catch
+            return error.SelectorLimitExceeded;
+    }
+    return .{ .selectors = list.items.len, .bytes = bytes };
+}
+
+fn relationListsEqual(
+    context: *RelationContext,
+    left: *const SelectorList,
+    right: *const SelectorList,
+) Error!bool {
+    try context.consume(1);
+    if (left.items.len != right.items.len) return false;
+    for (left.items, right.items) |left_item, right_item| {
+        try context.consume(1);
+        if (!std.mem.eql(u8, left_item, right_item)) return false;
+    }
+    return true;
+}
+
+fn buildRelationComplexList(
+    allocator: std.mem.Allocator,
+    selectors: *const SelectorList,
+    context: *RelationContext,
+) Error!RelationComplexList {
+    const list_bytes = std.math.mul(
+        usize,
+        selectors.items.len,
+        @sizeOf(RelationComplex),
+    ) catch return error.SelectorLimitExceeded;
+    try context.reserveTemporary(list_bytes);
+    const items = try allocator.alloc(RelationComplex, selectors.items.len);
+    var initialized: usize = 0;
+    errdefer {
+        for (items[0..initialized]) |item| allocator.free(item.components);
+        allocator.free(items);
+    }
+    for (selectors.items, 0..) |selector, index| {
+        items[index] = try buildRelationComplex(allocator, selector, context);
+        initialized += 1;
+    }
+    return .{ .allocator = allocator, .items = items };
+}
+
+const RelationScan = struct {
+    leading_combinator: bool,
+    component_count: usize,
+};
+
+fn buildRelationComplex(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    context: *RelationContext,
+) Error!RelationComplex {
+    const counted = try scanRelationComplex(input, null);
+    try context.reserveComponents(counted.component_count);
+    const component_bytes = std.math.mul(
+        usize,
+        counted.component_count,
+        @sizeOf(RelationComponent),
+    ) catch return error.SelectorLimitExceeded;
+    try context.reserveTemporary(component_bytes);
+    const components = try allocator.alloc(RelationComponent, counted.component_count);
+    errdefer allocator.free(components);
+    const filled = try scanRelationComplex(input, components);
+    std.debug.assert(filled.component_count == counted.component_count);
+    std.debug.assert(filled.leading_combinator == counted.leading_combinator);
+    return .{
+        .leading_combinator = filled.leading_combinator,
+        .components = components,
+    };
+}
+
+fn scanRelationComplex(
+    input: []const u8,
+    destination: ?[]RelationComponent,
+) Error!RelationScan {
+    var index = skipWhitespace(input, 0);
+    if (index == input.len) return error.InvalidSelector;
+    var leading_combinator = false;
+    const leading_length = explicitCombinatorLength(input, index);
+    if (leading_length != 0) {
+        leading_combinator = true;
+        index = skipWhitespace(input, index + leading_length);
+        if (index == input.len) return error.InvalidSelector;
+    }
+
+    var count: usize = 0;
+    while (index < input.len) {
+        const end = try compoundEnd(input, index);
+        if (end == index) return error.InvalidSelector;
+        const after_space = skipWhitespace(input, end);
+        const saw_space = after_space != end;
+        var next = after_space;
+        var combinator: RelationCombinator = .none;
+        if (next < input.len) {
+            const explicit_length = explicitCombinatorLength(input, next);
+            if (explicit_length != 0) {
+                combinator = switch (input[next]) {
+                    '>' => .child,
+                    '+' => .next_sibling,
+                    '~' => .following_sibling,
+                    else => unreachable,
+                };
+                next = skipWhitespace(input, next + explicit_length);
+            } else if (saw_space) {
+                combinator = .descendant;
+            } else {
+                return error.InvalidSelector;
+            }
+        }
+        if (destination) |components| {
+            if (count >= components.len) return error.InvalidSelector;
+            components[count] = .{
+                .compound = input[index..end],
+                .combinator = combinator,
+            };
+        }
+        count += 1;
+        if (next == input.len) break;
+        index = next;
+    }
+    if (count == 0) return error.InvalidSelector;
+    if (destination) |components| {
+        if (count != components.len) return error.InvalidSelector;
+    }
+    return .{
+        .leading_combinator = leading_combinator,
+        .component_count = count,
+    };
+}
+
+fn relationComplexIsSuperselector(
+    context: *RelationContext,
+    super_complex: RelationComplex,
+    sub_complex: RelationComplex,
+) Error!bool {
+    try context.consume(1);
+    if (super_complex.leading_combinator or sub_complex.leading_combinator) {
+        return false;
+    }
+    if (super_complex.components[super_complex.components.len - 1].combinator != .none or
+        sub_complex.components[sub_complex.components.len - 1].combinator != .none)
+    {
+        return false;
+    }
+
+    var super_index: usize = 0;
+    var sub_index: usize = 0;
+    var previous_combinator: ?RelationCombinator = null;
+    while (true) {
+        try context.consume(1);
+        const remaining_super = super_complex.components.len - super_index;
+        const remaining_sub = sub_complex.components.len - sub_index;
+        if (remaining_super == 0 or remaining_sub == 0 or remaining_super > remaining_sub) {
+            return false;
+        }
+        const super_component = super_complex.components[super_index];
+        if (remaining_super == 1) {
+            return relationCompoundIsSuperselector(
+                context,
+                super_component.compound,
+                sub_complex.components[sub_complex.components.len - 1].compound,
+            );
+        }
+
+        var match_index = sub_index;
+        while (match_index < sub_complex.components.len - 1) : (match_index += 1) {
+            if (try relationCompoundIsSuperselector(
+                context,
+                super_component.compound,
+                sub_complex.components[match_index].compound,
+            )) break;
+        }
+        if (match_index == sub_complex.components.len - 1) return false;
+        if (!relationPreviousCombinatorCompatible(
+            previous_combinator,
+            sub_complex.components[sub_index..match_index],
+        )) return false;
+        if (!relationIsSupercombinator(
+            super_component.combinator,
+            sub_complex.components[match_index].combinator,
+        )) return false;
+
+        previous_combinator = super_component.combinator;
+        super_index += 1;
+        sub_index = match_index + 1;
+        if (super_complex.components.len - super_index == 1) {
+            if (super_component.combinator == .following_sibling) {
+                for (sub_complex.components[sub_index .. sub_complex.components.len - 1]) |component| {
+                    if (!relationIsSupercombinator(
+                        .following_sibling,
+                        component.combinator,
+                    )) return false;
+                }
+            } else if (super_component.combinator != .descendant and
+                sub_complex.components.len - sub_index > 1)
+            {
+                return false;
+            }
+        }
+    }
+}
+
+fn relationPreviousCombinatorCompatible(
+    previous: ?RelationCombinator,
+    parents: []const RelationComponent,
+) bool {
+    if (parents.len == 0 or previous == null or previous.? == .descendant) {
+        return true;
+    }
+    if (previous.? != .following_sibling) return false;
+    for (parents) |parent| {
+        if (parent.combinator != .following_sibling and
+            parent.combinator != .next_sibling)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+fn relationIsSupercombinator(
+    super_combinator: RelationCombinator,
+    sub_combinator: RelationCombinator,
+) bool {
+    if (super_combinator == sub_combinator) return true;
+    if (super_combinator == .descendant and sub_combinator == .child) return true;
+    return super_combinator == .following_sibling and sub_combinator == .next_sibling;
+}
+
+fn relationCompoundIsSuperselector(
+    context: *RelationContext,
+    super_compound: []const u8,
+    sub_compound: []const u8,
+) Error!bool {
+    try context.consume(1);
+    const super_pseudo_element = try relationPseudoElement(context, super_compound);
+    const sub_pseudo_element = try relationPseudoElement(context, sub_compound);
+    if (super_pseudo_element) |super_pseudo| {
+        const sub_pseudo = sub_pseudo_element orelse return false;
+        if (!relationPseudoElementsEquivalent(super_pseudo, sub_pseudo)) {
+            if (relationSimpleRequiresInference(super_pseudo) or
+                relationSimpleRequiresInference(sub_pseudo))
+            {
+                return error.UnsupportedSelectorRelation;
+            }
+            return false;
+        }
+    } else if (sub_pseudo_element != null) {
+        return false;
+    }
+    const super_count = try relationSimpleCount(super_compound);
+    const sub_count = try relationSimpleCount(sub_compound);
+    if (super_count > sub_count) return false;
+
+    var super_cursor: usize = 0;
+    while (super_cursor < super_compound.len) {
+        const super_end = try simpleTokenEnd(super_compound, super_cursor);
+        const super_simple = super_compound[super_cursor..super_end];
+        var exact = false;
+        var sub_cursor: usize = 0;
+        while (sub_cursor < sub_compound.len) {
+            try context.consume(1);
+            const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
+            if (std.mem.eql(u8, super_simple, sub_compound[sub_cursor..sub_end])) {
+                exact = true;
+                break;
+            }
+            sub_cursor = sub_end;
+        }
+        if (!exact) {
+            if (super_simple[0] == '[') {
+                sub_cursor = 0;
+                while (sub_cursor < sub_compound.len) {
+                    const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
+                    if (sub_compound[sub_cursor] == '[') {
+                        return error.UnsupportedSelectorRelation;
+                    }
+                    sub_cursor = sub_end;
+                }
+                return false;
+            }
+            if (relationSimpleRequiresInference(super_simple)) {
+                return error.UnsupportedSelectorRelation;
+            }
+            var semantic_match = false;
+            var ambiguous_sub = false;
+            sub_cursor = 0;
+            while (sub_cursor < sub_compound.len) {
+                try context.consume(1);
+                const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
+                ambiguous_sub = ambiguous_sub or
+                    relationSimpleRequiresInference(sub_compound[sub_cursor..sub_end]);
+                if (relationSimpleIsSuperselector(
+                    super_simple,
+                    sub_compound[sub_cursor..sub_end],
+                )) {
+                    semantic_match = true;
+                    break;
+                }
+                sub_cursor = sub_end;
+            }
+            if (!semantic_match) {
+                if (ambiguous_sub) return error.UnsupportedSelectorRelation;
+                return false;
+            }
+        }
+        super_cursor = super_end;
+    }
+    return true;
+}
+
+fn relationPseudoElement(
+    context: *RelationContext,
+    compound: []const u8,
+) Error!?[]const u8 {
+    var result: ?[]const u8 = null;
+    var cursor: usize = 0;
+    while (cursor < compound.len) {
+        try context.consume(1);
+        const end = try simpleTokenEnd(compound, cursor);
+        const token = compound[cursor..end];
+        if (relationPseudoElementName(token) != null) {
+            if (result != null) return error.UnsupportedSelectorRelation;
+            result = token;
+        }
+        cursor = end;
+    }
+    return result;
+}
+
+fn relationPseudoElementName(input: []const u8) ?[]const u8 {
+    if (input.len > 2 and std.mem.startsWith(u8, input, "::")) {
+        return input[2..];
+    }
+    if (input.len <= 1 or input[0] != ':' or
+        std.mem.indexOfScalar(u8, input, '(') != null)
+    {
+        return null;
+    }
+    const name = input[1..];
+    const legacy_names = [_][]const u8{
+        "after",
+        "before",
+        "first-letter",
+        "first-line",
+    };
+    for (legacy_names) |legacy_name| {
+        if (std.ascii.eqlIgnoreCase(name, legacy_name)) return name;
+    }
+    return null;
+}
+
+fn relationPseudoElementsEquivalent(left: []const u8, right: []const u8) bool {
+    const left_name = relationPseudoElementName(left) orelse return false;
+    const right_name = relationPseudoElementName(right) orelse return false;
+    return std.mem.eql(u8, left_name, right_name);
+}
+
+fn relationSimpleRequiresInference(input: []const u8) bool {
+    return std.mem.indexOfScalar(u8, input, '\\') != null or
+        (input[0] == ':' and std.mem.indexOfScalar(u8, input, '(') != null);
+}
+
+fn relationSimpleCount(input: []const u8) Error!usize {
+    var count: usize = 0;
+    var cursor: usize = 0;
+    while (cursor < input.len) {
+        cursor = try simpleTokenEnd(input, cursor);
+        count = std.math.add(usize, count, 1) catch
+            return error.SelectorLimitExceeded;
+    }
+    return count;
+}
+
+const RelationQualifiedName = struct {
+    namespace: ?[]const u8,
+    name: []const u8,
+};
+
+fn relationSimpleIsSuperselector(
+    super_simple: []const u8,
+    sub_simple: []const u8,
+) bool {
+    const super_pseudo_element = relationPseudoElementName(super_simple);
+    const sub_pseudo_element = relationPseudoElementName(sub_simple);
+    if (super_pseudo_element != null or sub_pseudo_element != null) {
+        return relationPseudoElementsEquivalent(super_simple, sub_simple);
+    }
+    const super_name = relationQualifiedName(super_simple) orelse return false;
+    const super_is_universal = std.mem.eql(u8, super_name.name, "*");
+    const sub_name = relationQualifiedName(sub_simple);
+    if (super_is_universal) {
+        if (super_name.namespace) |namespace| {
+            if (std.mem.eql(u8, namespace, "*")) return true;
+        }
+        if (sub_name) |qualified| {
+            return relationNamespacesEqual(super_name.namespace, qualified.namespace);
+        }
+        return super_name.namespace == null;
+    }
+    const qualified = sub_name orelse return false;
+    if (std.mem.eql(u8, qualified.name, "*")) return false;
+    if (!std.mem.eql(u8, super_name.name, qualified.name)) return false;
+    if (super_name.namespace) |namespace| {
+        if (std.mem.eql(u8, namespace, "*")) return true;
+    }
+    return relationNamespacesEqual(super_name.namespace, qualified.namespace);
+}
+
+fn relationQualifiedName(input: []const u8) ?RelationQualifiedName {
+    if (input.len == 0) return null;
+    return switch (input[0]) {
+        '.', '#', '%', '[', ':', '&' => null,
+        else => if (std.mem.indexOfScalar(u8, input, '|')) |pipe|
+            .{ .namespace = input[0..pipe], .name = input[pipe + 1 ..] }
+        else
+            .{ .namespace = null, .name = input },
+    };
+}
+
+fn relationNamespacesEqual(left: ?[]const u8, right: ?[]const u8) bool {
+    if (left == null or right == null) return left == null and right == null;
+    return std.mem.eql(u8, left.?, right.?);
 }
 
 fn nestStep(

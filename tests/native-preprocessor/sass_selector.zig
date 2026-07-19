@@ -208,6 +208,121 @@ test "native Sass selector composition rejects invalid parents and limits" {
     );
 }
 
+test "native Sass selector relations compare structural superselectors" {
+    const cases = [_]struct {
+        super_selector: []const u8,
+        sub_selector: []const u8,
+        expected: bool,
+    }{
+        .{ .super_selector = ".a", .sub_selector = ".a", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ".a.b", .expected = true },
+        .{ .super_selector = ".a.b", .sub_selector = ".a", .expected = false },
+        .{ .super_selector = "*", .sub_selector = "button", .expected = true },
+        .{ .super_selector = "button", .sub_selector = "*", .expected = false },
+        .{ .super_selector = "button", .sub_selector = "button.primary", .expected = true },
+        .{ .super_selector = "svg|*", .sub_selector = "svg|a.icon", .expected = true },
+        .{ .super_selector = "*|a", .sub_selector = "svg|a", .expected = true },
+        .{ .super_selector = "html|*", .sub_selector = "svg|a", .expected = false },
+        .{ .super_selector = ".a .b", .sub_selector = ".x .a .y .b", .expected = true },
+        .{ .super_selector = ".a .b", .sub_selector = ".a > .b", .expected = true },
+        .{ .super_selector = ".a > .b", .sub_selector = ".a .b", .expected = false },
+        .{ .super_selector = ".a ~ .b", .sub_selector = ".a + .b", .expected = true },
+        .{ .super_selector = ".a + .b", .sub_selector = ".a ~ .b", .expected = false },
+        .{ .super_selector = ".a ~ .c", .sub_selector = ".a + .b + .c", .expected = true },
+        .{ .super_selector = ".b", .sub_selector = ".a > .b", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ".a > .b", .expected = false },
+        .{ .super_selector = ".foo, .bar", .sub_selector = ".foo.baz, .bar.qux", .expected = true },
+        .{ .super_selector = ".foo", .sub_selector = ".foo, .bar", .expected = false },
+        .{ .super_selector = ".foo, .bar", .sub_selector = ".foo", .expected = true },
+        .{ .super_selector = ":not(.a)", .sub_selector = ":not(.a)", .expected = true },
+        .{ .super_selector = ":not(.a)", .sub_selector = ":not(.a).b", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ".a:is(.b)", .expected = true },
+        .{ .super_selector = ".foo", .sub_selector = ".foo.\\66 oo", .expected = true },
+        .{ .super_selector = ".\\66 oo", .sub_selector = ".\\66 oo.bar", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ".a::before", .expected = false },
+        .{ .super_selector = "*", .sub_selector = ".a::before", .expected = false },
+        .{ .super_selector = "::before", .sub_selector = ".a::before", .expected = true },
+        .{ .super_selector = ":before", .sub_selector = "::before", .expected = true },
+        .{ .super_selector = ".a::before", .sub_selector = ".a.x::before", .expected = true },
+        .{ .super_selector = ".a::before", .sub_selector = ".a::after", .expected = false },
+        .{ .super_selector = "> .a", .sub_selector = "> .a", .expected = false },
+        .{ .super_selector = ".a >", .sub_selector = ".a >", .expected = false },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqual(
+            case.expected,
+            try selector.isSuperselector(
+                std.testing.allocator,
+                case.super_selector,
+                case.sub_selector,
+                .{},
+            ),
+        );
+    }
+}
+
+test "native Sass selector relations reject unsupported semantics and limits" {
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.isSuperselector(std.testing.allocator, "&.a", ".a", .{}),
+    );
+    const unsupported = [_]struct {
+        super_selector: []const u8,
+        sub_selector: []const u8,
+    }{
+        .{ .super_selector = ".foo", .sub_selector = ".\\66 oo" },
+        .{ .super_selector = ":is(.a)", .sub_selector = ".a" },
+        .{ .super_selector = "[x=y]", .sub_selector = "[x=\"y\"]" },
+    };
+    for (unsupported) |case| {
+        try std.testing.expectError(
+            error.UnsupportedSelectorRelation,
+            selector.isSuperselector(
+                std.testing.allocator,
+                case.super_selector,
+                case.sub_selector,
+                .{},
+            ),
+        );
+    }
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ".a, .b",
+            ".a",
+            .{ .max_selectors = 2 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ".a .b",
+            ".a > .b",
+            .{ .max_complex_components = 3 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ".a",
+            ".a.b",
+            .{ .max_relation_operations = 1 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ".a",
+            ".a.b",
+            .{ .max_temporary_bytes = 1 },
+        ),
+    );
+}
+
 test "native Sass selector parser rejects malformed parents and complex compounds" {
     const invalid_parse = [_][]const u8{
         "",
@@ -282,9 +397,16 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     );
     defer nested.deinit();
     try std.testing.expectEqual(@as(usize, 4), nested.items.len);
+
+    try std.testing.expect(try selector.isSuperselector(
+        allocator,
+        ".a .b, .c ~ .d",
+        ".x .a > .b, .c + .d.extra",
+        .{},
+    ));
 }
 
-test "native Sass selector parser handles every allocation failure" {
+test "native Sass selector parser composition and relations handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAllocationFailures,

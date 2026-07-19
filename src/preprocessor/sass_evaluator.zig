@@ -152,6 +152,7 @@ const Builtin = enum {
     meta_keywords,
     meta_type_of,
     selector_append,
+    selector_is_superselector,
     selector_nest,
     selector_parse,
     selector_simple_selectors,
@@ -4569,6 +4570,7 @@ const Engine = struct {
             .meta_inspect,
             .meta_keywords,
             .meta_type_of,
+            .selector_is_superselector,
             .selector_parse,
             .selector_simple_selectors,
             .red,
@@ -7635,6 +7637,75 @@ const Engine = struct {
         return self.ownSelectorValues(&parsed, true, span);
     }
 
+    fn callSelectorIsSuperselector(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "selector.is-superselector() requires exactly two arguments",
+            );
+            return error.InvalidExpression;
+        }
+        const super_input = try self.selectorInput(arguments[0].*, span);
+        defer self.allocator.free(super_input);
+        const sub_input = try self.selectorInput(arguments[1].*, span);
+        defer self.allocator.free(sub_input);
+        const input_bytes = std.math.add(usize, super_input.len, sub_input.len) catch
+            return self.selectorTemporaryFailure(span);
+        if (input_bytes >= self.limits.max_temporary_bytes) {
+            return self.selectorTemporaryFailure(span);
+        }
+        const relation_operations = std.math.mul(
+            u64,
+            @as(u64, @intCast(super_input.len + 1)),
+            @as(u64, @intCast(sub_input.len + 1)),
+        ) catch {
+            try self.transaction.consumeOperations(std.math.maxInt(u64));
+            unreachable;
+        };
+        try self.transaction.consumeOperations(relation_operations);
+        const remaining_temporary = self.limits.max_temporary_bytes - input_bytes;
+        const relation_limits = native_selector.Limits{
+            .max_selectors = self.limits.max_selectors -| self.selector_count,
+            .max_bytes = @min(
+                self.limits.max_selector_bytes -| self.selector_bytes,
+                remaining_temporary,
+            ),
+            .max_complex_components = self.limits.max_selectors -| self.selector_count,
+            .max_temporary_bytes = remaining_temporary,
+            .max_relation_operations = relation_operations,
+        };
+        const is_superselector = native_selector.isSuperselector(
+            self.allocator,
+            super_input,
+            sub_input,
+            relation_limits,
+        ) catch |err| switch (err) {
+            error.InvalidSelector => {
+                try self.report(.invalid_operation, span, "invalid native Sass selector relation");
+                return error.InvalidExpression;
+            },
+            error.UnsupportedSelectorRelation => {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass selector relation semantics are not yet available for this selector",
+                );
+                return error.UnsupportedFeature;
+            },
+            error.SelectorLimitExceeded => {
+                try self.report(.resource_limit, span, "native Sass selector relation limit exceeded");
+                return err;
+            },
+            else => return err,
+        };
+        return self.values.own(.{ .boolean = is_superselector });
+    }
+
     fn callSelectorCompositionRaw(
         self: *Engine,
         builtin: Builtin,
@@ -8449,6 +8520,10 @@ const Engine = struct {
             .math_unit => &.{.{ .name = "number" }},
             .meta_inspect, .meta_type_of => &.{.{ .name = "value" }},
             .meta_keywords => &.{.{ .name = "args" }},
+            .selector_is_superselector => &.{
+                .{ .name = "super" },
+                .{ .name = "sub" },
+            },
             .selector_parse, .selector_simple_selectors => &.{.{ .name = "selector" }},
             .red,
             .green,
@@ -8660,6 +8735,7 @@ const Engine = struct {
             .meta_inspect => self.callMetaInspect(arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .meta_type_of => self.callMetaTypeOf(arguments, span),
+            .selector_is_superselector => self.callSelectorIsSuperselector(arguments, span),
             .selector_parse => self.callSelectorParse(arguments, span),
             .selector_simple_selectors => self.callSelectorSimpleSelectors(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
@@ -9954,6 +10030,7 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
 
 fn selectorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "append")) return .selector_append;
+    if (sassNameEql(name, "is-superselector")) return .selector_is_superselector;
     if (sassNameEql(name, "nest")) return .selector_nest;
     if (sassNameEql(name, "parse")) return .selector_parse;
     if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;

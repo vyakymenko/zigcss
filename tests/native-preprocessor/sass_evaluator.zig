@@ -3223,6 +3223,85 @@ test "native Sass selector module appends and nests selector values" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module compares structural superselectors" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:selector" as sel;
+        \\@use "sass:selector" as *;
+        \\$count: 0;
+        \\@function mark($value) {
+        \\  $count: $count + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  same: selector.is-superselector(".a", ".a");
+        \\  class-extra: selector.is-superselector(".a", ".a.b");
+        \\  class-reverse: selector.is-superselector(".a.b", ".a");
+        \\  universal-type: selector.is-superselector("*", "button");
+        \\  type-universal: selector.is-superselector("button", "*");
+        \\  type-class: selector.is-superselector("button", "button.primary");
+        \\  namespaced: selector.is-superselector("svg|*", "svg|a.icon");
+        \\  any-namespace: selector.is-superselector("*|a", "svg|a");
+        \\  wrong-namespace: selector.is-superselector("html|*", "svg|a");
+        \\  descendant: selector.is-superselector(".a .b", ".x .a .y .b");
+        \\  descendant-child: selector.is-superselector(".a .b", ".a > .b");
+        \\  child-descendant: selector.is-superselector(".a > .b", ".a .b");
+        \\  sibling: selector.is-superselector(".a ~ .b", ".a + .b");
+        \\  adjacent: selector.is-superselector(".a + .b", ".a ~ .b");
+        \\  list-all: selector.is-superselector(".foo, .bar", ".foo.baz, .bar.qux");
+        \\  list-not-all: selector.is-superselector(".foo", ".foo, .bar");
+        \\  target-one: selector.is-superselector(".foo, .bar", ".foo");
+        \\  functional-exact: selector.is-superselector(":not(.a)", ":not(.a)");
+        \\  functional-extra: selector.is-superselector(":not(.a)", ":not(.a).b");
+        \\  ordinary-functional-extra: selector.is-superselector(".a", ".a:is(.b)");
+        \\  pseudo-element-subject: selector.is-superselector(".a", ".a::before");
+        \\  pseudo-element-extra: selector.is-superselector("::before", ".a::before");
+        \\  legacy-pseudo-element: selector.is-superselector(":before", "::before");
+        \\  typed: selector.is-superselector(selector.parse(".typed"), ".typed.more");
+        \\  from-list: selector.is-superselector((".a", ".b"), (".a.x", ".b.y"));
+        \\  alias: sel.is-superselector("#id", "#id.item");
+        \\  star: is-superselector("[x=y]", "button[x=y]");
+        \\  keyword: selector.is-superselector($sub: ".k.x", $super: ".k");
+        \\  marked: selector.is-superselector(mark(".m"), mark(".m.x"));
+        \\  evaluations: $count;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-is-superselector.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{same:true;class-extra:true;class-reverse:false;universal-type:true;type-universal:false;type-class:true;namespaced:true;any-namespace:true;wrong-namespace:false;descendant:true;descendant-child:true;child-descendant:false;sibling:true;adjacent:false;list-all:true;list-not-all:false;target-one:true;functional-exact:true;functional-extra:true;ordinary-functional-extra:true;pseudo-element-subject:false;pseudo-element-extra:true;legacy-pseudo-element:true;typed:true;from-list:true;alias:true;star:true;keyword:true;marked:true;evaluations:2}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  same: selector.is-superselector(".a", ".a.b")
+        \\  complex: selector.is-superselector(".a .b", ".a > .b")
+        \\  list: selector.is-superselector(".a, .b", ".a.x, .b.y")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-is-superselector.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{same:true;complex:true;list:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module rejects invalid or unavailable calls" {
     const invalid = [_]struct {
         name: []const u8,
@@ -3378,6 +3457,46 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .name = "selector-nest-invalid-parent.scss",
             .input = "@use \"sass:selector\"; .a { value: selector.nest(\".a\", \".b&\"); }",
             .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-superselector-missing.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-superselector-too-many.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\".a\", \".a\", \".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-superselector-unknown-keyword.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector($selector: \".a\", $sub: \".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-superselector-number.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(1, \".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-superselector-parent.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\"&.a\", \".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-superselector-functional-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":is(.a)\", \".a\"); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "selector-superselector-escape-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\".foo\", \".\\\\66 oo\"); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "selector-superselector-attribute-normalization-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\"[x=y]\", \"[x=\\\"y\\\"]\"); }",
+            .expected = error.UnsupportedFeature,
         },
         .{
             .name = "selector-unsupported-qualified.scss",
@@ -6910,6 +7029,7 @@ fn exerciseSelectorAllocationFailures(
         \\  nested: selector.nest(".a, .b", "& + &");
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
+        \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
         \\}
     ;
     const source_id = try sources.add("selector-allocation.scss", input);
@@ -6929,14 +7049,14 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
     try std.testing.expect(result.map() != null);
 }
 
-test "native Sass selector parsing and composition handle every allocation failure" {
+test "native Sass selector parsing composition and relations handle every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
