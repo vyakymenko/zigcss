@@ -151,6 +151,8 @@ const Builtin = enum {
     meta_inspect,
     meta_keywords,
     meta_type_of,
+    selector_append,
+    selector_nest,
     selector_parse,
     selector_simple_selectors,
     quote,
@@ -4527,6 +4529,13 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .selector_append, .selector_nest => return try self.callSelectorCompositionRaw(
+                builtin,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
             .nth,
             .length,
             .list_index,
@@ -7626,6 +7635,94 @@ const Engine = struct {
         return self.ownSelectorValues(&parsed, true, span);
     }
 
+    fn callSelectorCompositionRaw(
+        self: *Engine,
+        builtin: Builtin,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        if (evaluated.keywords.items.len != 0) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "variadic native Sass selector functions do not accept keyword arguments",
+            );
+            return error.InvalidExpression;
+        }
+        const arguments = evaluated.positional.items;
+        if (arguments.len == 0) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "native Sass selector composition requires an argument",
+            );
+            return error.InvalidExpression;
+        }
+
+        const pointer_bytes = std.math.mul(
+            usize,
+            arguments.len,
+            @sizeOf([]const u8),
+        ) catch return self.selectorTemporaryFailure(span);
+        if (pointer_bytes > self.limits.max_temporary_bytes) {
+            return self.selectorTemporaryFailure(span);
+        }
+        const inputs = try self.allocator.alloc([]const u8, arguments.len);
+        var input_count: usize = 0;
+        defer {
+            for (inputs[0..input_count]) |input| self.allocator.free(input);
+            self.allocator.free(inputs);
+        }
+        var temporary_bytes = pointer_bytes;
+        for (arguments) |argument| {
+            const input = try self.selectorInput(argument.*, span);
+            const next = std.math.add(usize, temporary_bytes, input.len) catch {
+                self.allocator.free(input);
+                return self.selectorTemporaryFailure(span);
+            };
+            if (next > self.limits.max_temporary_bytes) {
+                self.allocator.free(input);
+                return self.selectorTemporaryFailure(span);
+            }
+            inputs[input_count] = input;
+            input_count += 1;
+            temporary_bytes = next;
+            try self.transaction.consumeOperations(1);
+        }
+
+        const composition_bytes = self.limits.max_temporary_bytes - temporary_bytes;
+        if (composition_bytes == 0) return self.selectorTemporaryFailure(span);
+        const limits = native_selector.Limits{
+            .max_selectors = self.limits.max_selectors -| self.selector_count,
+            .max_bytes = @min(
+                self.limits.max_selector_bytes -| self.selector_bytes,
+                composition_bytes,
+            ),
+        };
+        const native_result = switch (builtin) {
+            .selector_append => native_selector.append(self.allocator, inputs, limits),
+            .selector_nest => native_selector.nest(self.allocator, inputs, limits),
+            else => unreachable,
+        };
+        var composed = native_result catch |err| switch (err) {
+            error.InvalidSelector => {
+                try self.report(.invalid_operation, span, "invalid native Sass selector composition");
+                return error.InvalidExpression;
+            },
+            error.SelectorLimitExceeded => {
+                try self.report(.resource_limit, span, "native Sass selector composition limit exceeded");
+                return err;
+            },
+            else => return err,
+        };
+        defer composed.deinit();
+        return self.ownSelectorValues(&composed, true, span);
+    }
+
     fn callSelectorSimpleSelectors(
         self: *Engine,
         arguments: []const *const native_value.Value,
@@ -9856,6 +9953,8 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
 }
 
 fn selectorModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "append")) return .selector_append;
+    if (sassNameEql(name, "nest")) return .selector_nest;
     if (sassNameEql(name, "parse")) return .selector_parse;
     if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;
     return null;

@@ -3146,6 +3146,83 @@ test "native Sass selector module parses lists and decomposes compounds" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module appends and nests selector values" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\@use "sass:list";
+        \\@use "sass:selector" as sel;
+        \\@use "sass:selector" as *;
+        \\$evaluations: 0;
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  append-one: selector.append(".a");
+        \\  append-basic: selector.append(".foo", ".bar");
+        \\  append-three: selector.append(".accordion", "__copy", ".open");
+        \\  append-list: selector.append(".a, .b", ".c, .d");
+        \\  append-complex: selector.append(".a > .b", ".c > .d");
+        \\  append-pseudo: selector.append(".foo", ":hover");
+        \\  append-type: selector.append(".foo", "button");
+        \\  append-attr: selector.append(".foo", "[x]");
+        \\  append-universal: selector.append("*", ".foo");
+        \\  append-namespaced: selector.append("svg|a", ".foo");
+        \\  nest-one: selector.nest(".a, .b");
+        \\  nest-basic: selector.nest(".foo", ".bar");
+        \\  nest-parent: selector.nest(".foo", "&:hover");
+        \\  nest-list: selector.nest(".a, .b", ".c, .d");
+        \\  nest-repeat: selector.nest(".foo, .bar", "& + &");
+        \\  nest-deep: selector.nest(".a, .b", "&:hover, .c &");
+        \\  nest-combinator: selector.nest(".a", "> .b");
+        \\  nest-three: selector.nest(".a", "&.b", "&:hover");
+        \\  append-typeof: meta.type-of(selector.append(".foo", ".bar"));
+        \\  nest-typeof: meta.type-of(selector.nest(".foo", ".bar"));
+        \\  append-inspect: meta.inspect(selector.append(".foo", ".bar"));
+        \\  nest-inspect: meta.inspect(selector.nest(".foo", ".bar"));
+        \\  append-length: list.length(selector.append(".a, .b", ".c"));
+        \\  from-value: selector.append(selector.parse(".typed"), ".value");
+        \\  list-splat: selector.append((".splat", ".item")...);
+        \\  nest-splat: selector.nest((".root", "&.child")...);
+        \\  alias: sel.append(".alias", ".ok");
+        \\  star: nest(".star", "&.ok");
+        \\  marked: selector.append(mark(".marked"), mark(".ok"));
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "selector-append-nest.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{append-one:.a;append-basic:.foo.bar;append-three:.accordion__copy.open;append-list:.a.c,.a.d,.b.c,.b.d;append-complex:.a > .b.c > .d;append-pseudo:.foo:hover;append-type:.foobutton;append-attr:.foo[x];append-universal:*.foo;append-namespaced:svg|a.foo;nest-one:.a,.b;nest-basic:.foo .bar;nest-parent:.foo:hover;nest-list:.a .c,.a .d,.b .c,.b .d;nest-repeat:.foo + .foo,.foo + .bar,.bar + .foo,.bar + .bar;nest-deep:.a:hover,.c .a,.b:hover,.c .b;nest-combinator:.a > .b;nest-three:.a.b:hover;append-typeof:list;nest-typeof:list;append-inspect:(.foo.bar,);nest-inspect:(.foo .bar,);append-length:2;from-value:.typed.value;list-splat:.splat.item;nest-splat:.root.child;alias:.alias.ok;star:.star.ok;marked:.marked.ok;evaluations:2}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\@use "sass:meta"
+        \\.sass
+        \\  type: meta.type-of(selector.append(".a", ".b"))
+        \\  append: selector.append(".a, .b", ".c")
+        \\  nest: selector.nest(".a, .b", "&:hover")
+        \\  inspect: meta.inspect(selector.nest(".root", "> .child"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-append-nest.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:list;append:.a.c,.b.c;nest:.a:hover,.b:hover;inspect:(.root > .child,)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module rejects invalid or unavailable calls" {
     const invalid = [_]struct {
         name: []const u8,
@@ -3258,13 +3335,58 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.InvalidExpression,
         },
         .{
+            .name = "selector-append-empty.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.append(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-append-keyword.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.append($selector: \".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-append-parent.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.append(\".a\", \"&.b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-append-leading-combinator.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.append(\".a\", \"> .b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-append-number.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.append(\".a\", 1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-nest-empty.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.nest(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-nest-keyword.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.nest($selector: \".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-nest-number.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.nest(\".a\", 1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-nest-invalid-parent.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.nest(\".a\", \".b&\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
             .name = "selector-unsupported-qualified.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.nest(\".a\", \".b\"); }",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a\", \".b\"); }",
             .expected = error.InvalidExpression,
         },
         .{
             .name = "selector-unsupported-star.scss",
-            .input = "@use \"sass:selector\" as *; .a { value: nest(\".a\", \".b\"); }",
+            .input = "@use \"sass:selector\" as *; .a { value: unify(\".a\", \".b\"); }",
             .expected = error.InvalidExpression,
         },
     };
@@ -3311,6 +3433,32 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             "@use \"sass:selector\"; $value: selector.parse(\".abcd\");",
             .scss,
             temporary,
+        ),
+    );
+
+    var composition_count = sass_evaluator.Limits{};
+    composition_count.max_selectors = 3;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "selector-composition-count-limit.scss",
+            "@use \"sass:selector\"; $value: selector.nest(\".a, .b\", \"& + &\");",
+            .scss,
+            composition_count,
+        ),
+    );
+
+    var composition_bytes = sass_evaluator.Limits{};
+    composition_bytes.max_selector_bytes = 5;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "selector-composition-byte-limit.scss",
+            "@use \"sass:selector\"; $value: selector.append(\".abc\", \".def\");",
+            .scss,
+            composition_bytes,
         ),
     );
 }
@@ -6758,6 +6906,10 @@ fn exerciseSelectorAllocationFailures(
         \\  inspected: meta.inspect(selector.parse(".a, .b"));
         \\  simple: selector.simple-selectors("[title=\"x\"].foo:hover");
         \\  from-value: selector.simple-selectors(selector.parse("button.primary"));
+        \\  appended: selector.append(".a, .b", ".c");
+        \\  nested: selector.nest(".a, .b", "& + &");
+        \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
+        \\  splat: selector.append((".splat", ".item")...);
         \\}
     ;
     const source_id = try sources.add("selector-allocation.scss", input);
@@ -6777,14 +6929,14 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
     try std.testing.expect(result.map() != null);
 }
 
-test "native Sass selector parsing handles every allocation failure" {
+test "native Sass selector parsing and composition handle every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");

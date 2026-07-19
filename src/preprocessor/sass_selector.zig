@@ -28,6 +28,7 @@ pub const SelectorList = struct {
 const Builder = struct {
     allocator: std.mem.Allocator,
     limits: Limits,
+    allow_parent: bool = false,
     items: std.ArrayList([]u8) = .empty,
     byte_count: usize = 0,
 
@@ -40,7 +41,12 @@ const Builder = struct {
     fn appendSegment(self: *Builder, raw: []const u8) Error!void {
         const trimmed = trimWhitespace(raw);
         if (trimmed.len == 0) return;
-        const owned = try canonicalize(self.allocator, trimmed, self.limits.max_bytes);
+        const owned = try canonicalize(
+            self.allocator,
+            trimmed,
+            self.limits.max_bytes,
+            self.allow_parent,
+        );
         self.admitOwned(owned) catch |err| {
             self.allocator.free(owned);
             return err;
@@ -82,10 +88,23 @@ pub fn parse(
     input: []const u8,
     limits: Limits,
 ) Error!SelectorList {
+    return parseInternal(allocator, input, limits, false);
+}
+
+fn parseInternal(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    limits: Limits,
+    allow_parent: bool,
+) Error!SelectorList {
     if (limits.max_selectors == 0 or limits.max_bytes == 0) {
         return error.SelectorLimitExceeded;
     }
-    var builder = Builder{ .allocator = allocator, .limits = limits };
+    var builder = Builder{
+        .allocator = allocator,
+        .limits = limits,
+        .allow_parent = allow_parent,
+    };
     errdefer builder.deinit();
 
     var segment_start: usize = 0;
@@ -165,10 +184,249 @@ pub fn simpleSelectors(
     return builder.finish();
 }
 
+pub fn append(
+    allocator: std.mem.Allocator,
+    inputs: []const []const u8,
+    limits: Limits,
+) Error!SelectorList {
+    if (inputs.len == 0) return error.InvalidSelector;
+    var current = try parseInternal(allocator, inputs[0], limits, false);
+    errdefer current.deinit();
+    for (inputs[1..]) |input| {
+        const replacement = try appendStep(allocator, &current, input, limits);
+        current.deinit();
+        current = replacement;
+    }
+    return current;
+}
+
+fn appendStep(
+    allocator: std.mem.Allocator,
+    left: *const SelectorList,
+    input: []const u8,
+    limits: Limits,
+) Error!SelectorList {
+    var right = try parseInternal(allocator, input, limits, false);
+    defer right.deinit();
+    var builder = Builder{ .allocator = allocator, .limits = limits };
+    errdefer builder.deinit();
+    for (left.items) |prefix| {
+        if (endsWithCombinator(prefix)) return error.InvalidSelector;
+        for (right.items) |suffix| {
+            if (startsWithCombinator(suffix)) return error.InvalidSelector;
+            const length = std.math.add(usize, prefix.len, suffix.len) catch
+                return error.SelectorLimitExceeded;
+            if (length > limits.max_bytes) return error.SelectorLimitExceeded;
+            const combined = try allocator.alloc(u8, length);
+            std.mem.copyForwards(u8, combined[0..prefix.len], prefix);
+            std.mem.copyForwards(u8, combined[prefix.len..], suffix);
+            validateComplex(combined, false) catch |err| {
+                allocator.free(combined);
+                return err;
+            };
+            builder.admitOwned(combined) catch |err| {
+                allocator.free(combined);
+                return err;
+            };
+        }
+    }
+    return builder.finish();
+}
+
+pub fn nest(
+    allocator: std.mem.Allocator,
+    inputs: []const []const u8,
+    limits: Limits,
+) Error!SelectorList {
+    if (inputs.len == 0) return error.InvalidSelector;
+    var current = try parseInternal(allocator, inputs[0], limits, true);
+    errdefer current.deinit();
+    for (inputs[1..]) |input| {
+        const replacement = try nestStep(allocator, &current, input, limits);
+        current.deinit();
+        current = replacement;
+    }
+    return current;
+}
+
+fn nestStep(
+    allocator: std.mem.Allocator,
+    parents: *const SelectorList,
+    input: []const u8,
+    limits: Limits,
+) Error!SelectorList {
+    var children = try parseInternal(allocator, input, limits, true);
+    defer children.deinit();
+    var builder = Builder{
+        .allocator = allocator,
+        .limits = limits,
+        .allow_parent = true,
+    };
+    errdefer builder.deinit();
+    for (parents.items) |parent| {
+        for (children.items) |child| {
+            const parent_count = countParentSelectors(child);
+            const expansion_count = if (parent_count == 0)
+                1
+            else
+                try selectorPowerBounded(
+                    parents.items.len,
+                    parent_count - 1,
+                    limits.max_selectors,
+                );
+            for (0..expansion_count) |ordinal| {
+                const combined = try combineNested(
+                    allocator,
+                    parents,
+                    parent,
+                    child,
+                    parent_count,
+                    ordinal,
+                    limits.max_bytes,
+                );
+                builder.admitOwned(combined) catch |err| {
+                    allocator.free(combined);
+                    return err;
+                };
+            }
+        }
+    }
+    return builder.finish();
+}
+
+fn combineNested(
+    allocator: std.mem.Allocator,
+    parents: *const SelectorList,
+    parent: []const u8,
+    child: []const u8,
+    parent_count: usize,
+    ordinal: usize,
+    max_bytes: usize,
+) Error![]u8 {
+    var raw: std.ArrayList(u8) = .empty;
+    defer raw.deinit(allocator);
+    if (parent_count == 0) {
+        try appendBounded(&raw, allocator, parent, max_bytes);
+        try appendBounded(&raw, allocator, " ", max_bytes);
+        try appendBounded(&raw, allocator, child, max_bytes);
+    } else {
+        var start: usize = 0;
+        var index: usize = 0;
+        var occurrence: usize = 0;
+        var square_depth: usize = 0;
+        var quote: ?u8 = null;
+        while (index < child.len) {
+            const byte = child[index];
+            if (quote) |active| {
+                if (byte == '\\') {
+                    index = escapeEnd(child, index) orelse return error.InvalidSelector;
+                    continue;
+                }
+                if (byte == active) quote = null;
+                index += 1;
+                continue;
+            }
+            if (byte == '\\') {
+                index = escapeEnd(child, index) orelse return error.InvalidSelector;
+                continue;
+            }
+            switch (byte) {
+                '\'', '"' => quote = byte,
+                '[' => square_depth += 1,
+                ']' => {
+                    if (square_depth == 0) return error.InvalidSelector;
+                    square_depth -= 1;
+                },
+                '&' => if (square_depth == 0) {
+                    try appendBounded(&raw, allocator, child[start..index], max_bytes);
+                    const replacement = if (occurrence == 0)
+                        parent
+                    else
+                        parents.items[
+                            selectorParentIndex(
+                                parents.items.len,
+                                parent_count - 1,
+                                occurrence - 1,
+                                ordinal,
+                            )
+                        ];
+                    try appendBounded(&raw, allocator, replacement, max_bytes);
+                    start = index + 1;
+                    occurrence += 1;
+                },
+                else => {},
+            }
+            index += 1;
+        }
+        if (quote != null or square_depth != 0 or occurrence != parent_count) {
+            return error.InvalidSelector;
+        }
+        try appendBounded(&raw, allocator, child[start..], max_bytes);
+    }
+    return canonicalize(allocator, raw.items, max_bytes, true);
+}
+
+fn countParentSelectors(input: []const u8) usize {
+    var count: usize = 0;
+    var index: usize = 0;
+    var square_depth: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\') {
+                index = escapeEnd(input, index) orelse return count;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\') {
+            index = escapeEnd(input, index) orelse return count;
+            continue;
+        }
+        switch (byte) {
+            '\'', '"' => quote = byte,
+            '[' => square_depth += 1,
+            ']' => square_depth -|= 1,
+            '&' => if (square_depth == 0) {
+                count += 1;
+            },
+            else => {},
+        }
+        index += 1;
+    }
+    return count;
+}
+
+fn selectorPowerBounded(base: usize, exponent: usize, maximum: usize) Error!usize {
+    var result: usize = 1;
+    for (0..exponent) |_| {
+        result = std.math.mul(usize, result, base) catch
+            return error.SelectorLimitExceeded;
+        if (result > maximum) return error.SelectorLimitExceeded;
+    }
+    return result;
+}
+
+fn selectorParentIndex(
+    parent_count: usize,
+    varying_parents: usize,
+    occurrence: usize,
+    ordinal: usize,
+) usize {
+    var divisor: usize = 1;
+    const following = varying_parents - occurrence - 1;
+    for (0..following) |_| divisor *= parent_count;
+    return (ordinal / divisor) % parent_count;
+}
+
 fn canonicalize(
     allocator: std.mem.Allocator,
     input: []const u8,
     max_bytes: usize,
+    allow_parent: bool,
 ) Error![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
@@ -202,7 +460,7 @@ fn canonicalize(
             continue;
         }
         const top_level = paren_depth == 0 and square_depth == 0;
-        if (byte == '&') return error.InvalidSelector;
+        if (byte == '&' and !allow_parent) return error.InvalidSelector;
         if (top_level and isWhitespace(byte)) {
             pending_space = output.items.len > 0;
             index += 1;
@@ -258,11 +516,114 @@ fn canonicalize(
         output.items.len -= 1;
     }
     if (output.items.len == 0) return error.InvalidSelector;
-    try validateComplex(output.items);
+    if (allow_parent) try validateParentPositions(allocator, output.items);
+    try validateComplex(output.items, allow_parent);
     return output.toOwnedSlice(allocator);
 }
 
-fn validateComplex(input: []const u8) Error!void {
+fn validateParentPositions(allocator: std.mem.Allocator, input: []const u8) Error!void {
+    var index: usize = 0;
+    var square_depth: usize = 0;
+    var quote: ?u8 = null;
+    var compound_start = true;
+    var parent_contexts: std.ArrayList(bool) = .empty;
+    defer parent_contexts.deinit(allocator);
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\') {
+                index = escapeEnd(input, index) orelse return error.InvalidSelector;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\') {
+            index = escapeEnd(input, index) orelse return error.InvalidSelector;
+            compound_start = false;
+            continue;
+        }
+        if (square_depth != 0) {
+            switch (byte) {
+                '\'', '"' => quote = byte,
+                '[' => square_depth += 1,
+                ']' => square_depth -= 1,
+                '&' => return error.InvalidSelector,
+                else => {},
+            }
+            index += 1;
+            continue;
+        }
+        switch (byte) {
+            '\'', '"' => {
+                quote = byte;
+                compound_start = false;
+            },
+            '[' => {
+                square_depth = 1;
+                compound_start = false;
+            },
+            '(' => {
+                const outer_allows_parent = parent_contexts.items.len == 0 or
+                    parent_contexts.items[parent_contexts.items.len - 1];
+                try parent_contexts.append(
+                    allocator,
+                    outer_allows_parent and selectorFunctionAllowsParent(input, index),
+                );
+                compound_start = true;
+            },
+            ',' => compound_start = true,
+            ')' => {
+                if (parent_contexts.items.len == 0) return error.InvalidSelector;
+                _ = parent_contexts.pop();
+                compound_start = false;
+            },
+            '&' => {
+                const context_allows_parent = parent_contexts.items.len == 0 or
+                    parent_contexts.items[parent_contexts.items.len - 1];
+                if (!context_allows_parent or !compound_start) return error.InvalidSelector;
+                compound_start = false;
+            },
+            '>', '+', '~' => compound_start = true,
+            else => if (isWhitespace(byte)) {
+                compound_start = true;
+            } else {
+                compound_start = false;
+            },
+        }
+        index += 1;
+    }
+    if (quote != null or square_depth != 0 or parent_contexts.items.len != 0) {
+        return error.InvalidSelector;
+    }
+}
+
+fn selectorFunctionAllowsParent(input: []const u8, opening: usize) bool {
+    var start = opening;
+    while (start > 0 and isNameContinue(input[start - 1])) start -= 1;
+    if (start == opening or start == 0 or input[start - 1] != ':') return false;
+    const name = input[start..opening];
+    const functions = [_][]const u8{
+        "not",
+        "is",
+        "where",
+        "has",
+        "matches",
+        "any",
+        "-webkit-any",
+        "-moz-any",
+        "host",
+        "host-context",
+        "slotted",
+    };
+    for (functions) |function| {
+        if (std.ascii.eqlIgnoreCase(name, function)) return true;
+    }
+    return false;
+}
+
+fn validateComplex(input: []const u8, allow_parent: bool) Error!void {
     var cursor = skipWhitespace(input, 0);
     if (cursor == input.len) return error.InvalidSelector;
     const leading_combinator_length = explicitCombinatorLength(input, cursor);
@@ -275,7 +636,7 @@ fn validateComplex(input: []const u8) Error!void {
     while (cursor < input.len) {
         const end = try compoundEnd(input, cursor);
         if (end == cursor) return error.InvalidSelector;
-        try validateCompound(input[cursor..end]);
+        try validateCompound(input[cursor..end], allow_parent);
         cursor = end;
         const after_space = skipWhitespace(input, cursor);
         const saw_space = after_space != cursor;
@@ -338,13 +699,14 @@ fn compoundEnd(input: []const u8, start: usize) Error!usize {
     return index;
 }
 
-fn validateCompound(input: []const u8) Error!void {
+fn validateCompound(input: []const u8, allow_parent: bool) Error!void {
     var cursor: usize = 0;
     while (cursor < input.len) {
         const byte = input[cursor];
         const end = try simpleTokenEnd(input, cursor);
         if (end <= cursor) return error.InvalidSelector;
         switch (byte) {
+            '&' => if (!allow_parent or cursor != 0) return error.InvalidSelector,
             '.' => if (!validName(input[cursor + 1 .. end], false)) return error.InvalidSelector,
             '#' => if (!validName(input[cursor + 1 .. end], true)) return error.InvalidSelector,
             '%' => if (!validName(input[cursor + 1 .. end], false)) return error.InvalidSelector,
@@ -366,9 +728,27 @@ fn simpleTokenEnd(input: []const u8, start: usize) Error!usize {
     return switch (input[start]) {
         '[' => matchingSquareEnd(input, start),
         ':' => pseudoEnd(input, start),
+        '&' => parentTokenEnd(input, start),
         '.', '#', '%' => namedTokenEnd(input, start + 1),
         else => namedTokenEnd(input, start),
     };
+}
+
+fn parentTokenEnd(input: []const u8, start: usize) Error!usize {
+    var index = start + 1;
+    while (index < input.len) {
+        if (input[index] == '\\') {
+            index = escapeEnd(input, index) orelse return error.InvalidSelector;
+            continue;
+        }
+        if (isWhitespace(input[index]) or isSimpleMarker(input[index]) or
+            explicitCombinatorLength(input, index) != 0)
+        {
+            break;
+        }
+        index += 1;
+    }
+    return index;
 }
 
 fn namedTokenEnd(input: []const u8, start: usize) Error!usize {
@@ -647,6 +1027,11 @@ fn endsWithCombinator(input: []const u8) bool {
         input[input.len - 1] == '~';
 }
 
+fn startsWithCombinator(input: []const u8) bool {
+    const index = skipWhitespace(input, 0);
+    return explicitCombinatorLength(input, index) != 0;
+}
+
 fn appendBounded(
     output: *std.ArrayList(u8),
     allocator: std.mem.Allocator,
@@ -674,7 +1059,7 @@ fn isWhitespace(byte: u8) bool {
 }
 
 fn isSimpleMarker(byte: u8) bool {
-    return byte == '.' or byte == '#' or byte == '%' or byte == '[' or byte == ':';
+    return byte == '&' or byte == '.' or byte == '#' or byte == '%' or byte == '[' or byte == ':';
 }
 
 fn isNameStart(byte: u8) bool {

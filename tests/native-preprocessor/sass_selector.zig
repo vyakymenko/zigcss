@@ -80,6 +80,134 @@ test "native Sass selector parser decomposes one compound structurally" {
     try expectItems(&.{ "svg|a", ".foo" }, namespaced);
 }
 
+test "native Sass selector composition appends selector lists cartesianly" {
+    var basic = try selector.append(
+        std.testing.allocator,
+        &.{ ".accordion", "__copy", ".open" },
+        .{},
+    );
+    defer basic.deinit();
+    try expectItems(&.{".accordion__copy.open"}, basic);
+
+    var cartesian = try selector.append(
+        std.testing.allocator,
+        &.{ ".a, .b", ".c, .d", ":hover, [x]" },
+        .{},
+    );
+    defer cartesian.deinit();
+    try expectItems(
+        &.{
+            ".a.c:hover",
+            ".a.c[x]",
+            ".a.d:hover",
+            ".a.d[x]",
+            ".b.c:hover",
+            ".b.c[x]",
+            ".b.d:hover",
+            ".b.d[x]",
+        },
+        cartesian,
+    );
+
+    var complex = try selector.append(
+        std.testing.allocator,
+        &.{ ".a > .b", ".c > .d" },
+        .{},
+    );
+    defer complex.deinit();
+    try expectItems(&.{".a > .b.c > .d"}, complex);
+}
+
+test "native Sass selector composition nests parents deterministically" {
+    var cartesian = try selector.nest(
+        std.testing.allocator,
+        &.{ ".a, .b", ".c, .d" },
+        .{},
+    );
+    defer cartesian.deinit();
+    try expectItems(&.{ ".a .c", ".a .d", ".b .c", ".b .d" }, cartesian);
+
+    var repeated = try selector.nest(
+        std.testing.allocator,
+        &.{ ".foo, .bar", "& + &" },
+        .{},
+    );
+    defer repeated.deinit();
+    try expectItems(
+        &.{ ".foo + .foo", ".foo + .bar", ".bar + .foo", ".bar + .bar" },
+        repeated,
+    );
+
+    var parent = try selector.nest(
+        std.testing.allocator,
+        &.{ "&.root", ":not(&), > .child" },
+        .{},
+    );
+    defer parent.deinit();
+    try expectItems(&.{ ":not(&.root)", "&.root > .child" }, parent);
+
+    var functional = try selector.nest(
+        std.testing.allocator,
+        &.{ ".a", ":not(:is(&)), :where(.x + &)" },
+        .{},
+    );
+    defer functional.deinit();
+    try expectItems(&.{ ":not(:is(.a))", ":where(.x + .a)" }, functional);
+}
+
+test "native Sass selector composition rejects invalid parents and limits" {
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.append(std.testing.allocator, &.{}, .{}),
+    );
+    const invalid_append = [_][]const []const u8{
+        &.{ ".a", "&.b" },
+        &.{ ".a", "> .b" },
+        &.{ ".a >", ".b" },
+    };
+    for (invalid_append) |inputs| {
+        try std.testing.expectError(
+            error.InvalidSelector,
+            selector.append(std.testing.allocator, inputs, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.nest(std.testing.allocator, &.{}, .{}),
+    );
+    const invalid_nest = [_][]const []const u8{
+        &.{ ".a", ".b&" },
+        &.{ ".a", "&&" },
+        &.{ ".a", "[x=&]" },
+        &.{ ".a", ":nth-child(2n+&)" },
+        &.{ ".a", ":not(calc(1+&))" },
+    };
+    for (invalid_nest) |inputs| {
+        try std.testing.expectError(
+            error.InvalidSelector,
+            selector.nest(std.testing.allocator, inputs, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.append(
+            std.testing.allocator,
+            &.{ ".a, .b", ".c, .d" },
+            .{ .max_selectors = 3 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.nest(
+            std.testing.allocator,
+            &.{ ".a, .b", "& + &" },
+            .{ .max_selectors = 3 },
+        ),
+    );
+}
+
 test "native Sass selector parser rejects malformed parents and complex compounds" {
     const invalid_parse = [_][]const u8{
         "",
@@ -138,6 +266,22 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     );
     defer simple.deinit();
     try std.testing.expectEqual(@as(usize, 5), simple.items.len);
+
+    var appended = try selector.append(
+        allocator,
+        &.{ ".a, .b", ".c, .d", ":hover" },
+        .{},
+    );
+    defer appended.deinit();
+    try std.testing.expectEqual(@as(usize, 4), appended.items.len);
+
+    var nested = try selector.nest(
+        allocator,
+        &.{ ".a, .b", "& + &" },
+        .{},
+    );
+    defer nested.deinit();
+    try std.testing.expectEqual(@as(usize, 4), nested.items.len);
 }
 
 test "native Sass selector parser handles every allocation failure" {

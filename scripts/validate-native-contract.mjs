@@ -152,6 +152,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-inspection',
       'built-in-meta-keywords',
       'built-in-selector-parse-simple',
+      'built-in-selector-composition',
       'built-in-map-queries',
       'shallow-map-mutations',
       'nested-deep-map-mutations',
