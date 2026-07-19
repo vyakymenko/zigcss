@@ -3427,6 +3427,52 @@ test "native Sass selector module unifies strict complex selector values" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module weaves disjoint complex selector values" {
+    const input =
+        \\@use "sass:selector";
+        \\.weave {
+        \\  descendant: selector.unify(".a .b", ".c .d");
+        \\  deep: selector.unify(".a > .b .c", ".d .e");
+        \\  left-rigid: selector.unify(".a > .b", ".c .d");
+        \\  right-rigid: selector.unify(".a .b", ".c > .d");
+        \\  list: selector.unify(".a .b, .x .y", ".c .d, .z .w");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-unify-weave.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".weave{descendant:.a .c .b.d,.c .a .b.d;deep:.a > .b .d .c.e,.d .a > .b .c.e;left-rigid:.c .a > .b.d;right-rigid:.a .c > .b.d;list:.a .c .b.d,.c .a .b.d,.a .z .b.w,.z .a .b.w,.x .c .y.d,.c .x .y.d,.x .z .y.w,.z .x .y.w}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.weave
+        \\  descendant: selector.unify(".a .b", ".c .d")
+        \\  rigid: selector.unify(".a > .b", ".c .d")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-unify-weave.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".weave{descendant:.a .c .b.d,.c .a .b.d;rigid:.c .a > .b.d}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector unification budgets growing compounds without truncation" {
     const input =
         \\@use "sass:selector";
@@ -3676,8 +3722,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "selector-unify-complex-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a .b\", \".c .d\"); }",
+            .name = "selector-unify-shared-anchor-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a .b .c\", \".d .b .e\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -7230,7 +7276,7 @@ fn exerciseSelectorAllocationFailures(
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
         \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
-        \\  unified: selector.unify(".a .b, .x > .y", ".c");
+        \\  unified: selector.unify(".a .b, .x > .y", ".c .d");
         \\}
     ;
     const source_id = try sources.add("selector-allocation.scss", input);
@@ -7250,7 +7296,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.a .b.c,.x > .y.c}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.a .c .b.d,.c .a .b.d,.c .x > .y.d}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

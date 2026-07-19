@@ -65,6 +65,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-selector-relations'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-unify-compound'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-unify-complex-strict'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-selector-unify-complex-weave-disjoint'), true)
   assert.equal(sassCore.capabilities.includes('built-in-map-queries'), true)
   assert.equal(sassCore.capabilities.includes('shallow-map-mutations'), true)
   assert.equal(sassCore.capabilities.includes('nested-deep-map-mutations'), true)
