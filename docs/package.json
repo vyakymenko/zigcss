@@ -27,8 +27,8 @@
     "@vitejs/plugin-react": "4.7.0",
     "jsdom": "25.0.1",
     "tailwindcss": "4.1.12",
-    "vite": "6.3.5",
-    "vitest": "3.2.4"
+    "vite": "6.4.3",
+    "vitest": "3.2.7"
   },
   "peerDependencies": {
     "react": ">=18.0.0",
