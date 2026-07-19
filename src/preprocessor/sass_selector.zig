@@ -385,8 +385,9 @@ const NamespaceIntersection = union(enum) {
 /// Returns the selector intersection for every left/right list pair. This slice
 /// owns compounds, complex subject replacement, exact/shared ancestry, strict
 /// child/adjacent-sibling ancestry, bounded disjoint ancestry weaving, and exact
-/// shared descendant anchors. Partial shared anchors, following-sibling weaving,
-/// escaped identifier equivalence, and host-selector semantics remain unavailable.
+/// shared descendant anchors plus two-component terminal sibling weaving. Partial
+/// shared anchors, longer sibling ancestries, escaped identifier equivalence, and
+/// host-selector semantics remain unavailable.
 pub fn unify(
     allocator: std.mem.Allocator,
     left_input: []const u8,
@@ -571,6 +572,14 @@ fn unifySelectorPair(
             }
             return;
         }
+        if (try emitTerminalSiblingUnifyWeave(
+            allocator,
+            left,
+            right,
+            subject,
+            context,
+            builder,
+        )) return;
         if (try emitSharedUnifyWeave(
             allocator,
             left,
@@ -712,6 +721,267 @@ fn planDisjointUnifyWeave(
     if (left_terminal == .descendant) return .left_then_right;
     if (right_terminal == .descendant) return .right_then_left;
     return null;
+}
+
+fn emitTerminalSiblingUnifyWeave(
+    allocator: std.mem.Allocator,
+    left: RelationComplex,
+    right: RelationComplex,
+    subject: []const u8,
+    context: *UnifyContext,
+    builder: *Builder,
+) Error!bool {
+    if (left.components.len != 2 or right.components.len != 2) return false;
+    const left_ancestor = left.components[0];
+    const right_ancestor = right.components[0];
+    const involves_following = left_ancestor.combinator == .following_sibling or
+        right_ancestor.combinator == .following_sibling;
+    const rigid_mismatch = (left_ancestor.combinator == .child and
+        right_ancestor.combinator == .next_sibling) or
+        (left_ancestor.combinator == .next_sibling and
+            right_ancestor.combinator == .child);
+    if (!involves_following and !rigid_mismatch) return false;
+
+    try context.consume(1);
+    if (!try unifyWeaveCompoundAvailable(left_ancestor.compound, context) or
+        !try unifyWeaveCompoundAvailable(right_ancestor.compound, context))
+    {
+        return false;
+    }
+
+    if (left_ancestor.combinator == .following_sibling and
+        right_ancestor.combinator == .following_sibling)
+    {
+        const merged_result = try unifyCompound(
+            allocator,
+            left_ancestor.compound,
+            right_ancestor.compound,
+            context,
+        );
+        const merged = merged_result orelse {
+            try emitTerminalSiblingOrder(
+                allocator,
+                left_ancestor,
+                right_ancestor,
+                subject,
+                context,
+                builder,
+            );
+            try emitTerminalSiblingOrder(
+                allocator,
+                right_ancestor,
+                left_ancestor,
+                subject,
+                context,
+                builder,
+            );
+            return true;
+        };
+        defer allocator.free(merged);
+        if (std.mem.eql(u8, merged, left_ancestor.compound) or
+            std.mem.eql(u8, merged, right_ancestor.compound))
+        {
+            try emitMergedTerminalSibling(
+                allocator,
+                merged,
+                .following_sibling,
+                subject,
+                context,
+                builder,
+            );
+            return true;
+        }
+        try emitTerminalSiblingOrder(
+            allocator,
+            left_ancestor,
+            right_ancestor,
+            subject,
+            context,
+            builder,
+        );
+        try emitTerminalSiblingOrder(
+            allocator,
+            right_ancestor,
+            left_ancestor,
+            subject,
+            context,
+            builder,
+        );
+        try emitMergedTerminalSibling(
+            allocator,
+            merged,
+            .following_sibling,
+            subject,
+            context,
+            builder,
+        );
+        return true;
+    }
+
+    if (left_ancestor.combinator == .following_sibling and
+        right_ancestor.combinator == .next_sibling)
+    {
+        try emitFollowingAdjacentUnifyWeave(
+            allocator,
+            left_ancestor,
+            right_ancestor,
+            subject,
+            context,
+            builder,
+        );
+        return true;
+    }
+    if (left_ancestor.combinator == .next_sibling and
+        right_ancestor.combinator == .following_sibling)
+    {
+        try emitFollowingAdjacentUnifyWeave(
+            allocator,
+            right_ancestor,
+            left_ancestor,
+            subject,
+            context,
+            builder,
+        );
+        return true;
+    }
+
+    const left_rank = terminalSiblingRank(left_ancestor.combinator) orelse
+        return false;
+    const right_rank = terminalSiblingRank(right_ancestor.combinator) orelse
+        return false;
+    if (left_rank == right_rank) return false;
+    if (left_rank < right_rank) {
+        try emitTerminalSiblingOrder(
+            allocator,
+            left_ancestor,
+            right_ancestor,
+            subject,
+            context,
+            builder,
+        );
+    } else {
+        try emitTerminalSiblingOrder(
+            allocator,
+            right_ancestor,
+            left_ancestor,
+            subject,
+            context,
+            builder,
+        );
+    }
+    return true;
+}
+
+fn emitFollowingAdjacentUnifyWeave(
+    allocator: std.mem.Allocator,
+    following: RelationComponent,
+    adjacent: RelationComponent,
+    subject: []const u8,
+    context: *UnifyContext,
+    builder: *Builder,
+) Error!void {
+    const merged_result = try unifyCompound(
+        allocator,
+        following.compound,
+        adjacent.compound,
+        context,
+    );
+    if (merged_result) |merged| {
+        defer allocator.free(merged);
+        if (std.mem.eql(u8, merged, adjacent.compound)) {
+            try emitMergedTerminalSibling(
+                allocator,
+                merged,
+                .next_sibling,
+                subject,
+                context,
+                builder,
+            );
+            return;
+        }
+        try emitTerminalSiblingOrder(
+            allocator,
+            following,
+            adjacent,
+            subject,
+            context,
+            builder,
+        );
+        try emitMergedTerminalSibling(
+            allocator,
+            merged,
+            .next_sibling,
+            subject,
+            context,
+            builder,
+        );
+        return;
+    }
+    try emitTerminalSiblingOrder(
+        allocator,
+        following,
+        adjacent,
+        subject,
+        context,
+        builder,
+    );
+}
+
+fn emitTerminalSiblingOrder(
+    allocator: std.mem.Allocator,
+    first: RelationComponent,
+    second: RelationComponent,
+    subject: []const u8,
+    context: *UnifyContext,
+    builder: *Builder,
+) Error!void {
+    const first_items = [_]RelationComponent{first};
+    const second_items = [_]RelationComponent{second};
+    try admitUnifyResult(
+        builder,
+        try renderUnifyWeave(
+            allocator,
+            &first_items,
+            &second_items,
+            subject,
+            context,
+        ),
+    );
+}
+
+fn emitMergedTerminalSibling(
+    allocator: std.mem.Allocator,
+    compound: []const u8,
+    combinator: RelationCombinator,
+    subject: []const u8,
+    context: *UnifyContext,
+    builder: *Builder,
+) Error!void {
+    const ancestry = [_]RelationComponent{.{
+        .compound = compound,
+        .combinator = combinator,
+    }};
+    const empty: []const RelationComponent = &.{};
+    try admitUnifyResult(
+        builder,
+        try renderUnifyWeave(
+            allocator,
+            &ancestry,
+            empty,
+            subject,
+            context,
+        ),
+    );
+}
+
+fn terminalSiblingRank(combinator: RelationCombinator) ?u8 {
+    return switch (combinator) {
+        .descendant => 0,
+        .child => 1,
+        .following_sibling => 2,
+        .next_sibling => 3,
+        .none => null,
+    };
 }
 
 const UnifyWeaveAnchor = struct {
@@ -1037,9 +1307,7 @@ fn renderUnifyWeave(
     for (ancestries) |ancestry| {
         for (ancestry) |component| {
             try context.consume(1);
-            if (component.combinator == .none or
-                component.combinator == .following_sibling)
-            {
+            if (component.combinator == .none) {
                 return error.UnsupportedSelectorUnification;
             }
             output_length = std.math.add(

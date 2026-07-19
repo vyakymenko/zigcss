@@ -3522,6 +3522,62 @@ test "native Sass selector module weaves exact shared descendant anchors" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module weaves terminal sibling constraints" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\.siblings {
+        \\  following: selector.unify(".a ~ .b", ".c ~ .d");
+        \\  following-adjacent: selector.unify(".a ~ .b", ".c + .d");
+        \\  adjacent-following: selector.unify(".a + .b", ".c ~ .d");
+        \\  child-adjacent: selector.unify(".a > .b", ".c + .d");
+        \\  adjacent-child: selector.unify(".a + .b", ".c > .d");
+        \\  child-following: selector.unify(".a > .b", ".c ~ .d");
+        \\  following-child: selector.unify(".a ~ .b", ".c > .d");
+        \\  descendant-following: selector.unify(".a .b", ".c ~ .d");
+        \\  following-descendant: selector.unify(".a ~ .b", ".c .d");
+        \\  conflict-following: selector.unify("a ~ .b", "c ~ .d");
+        \\  conflict-following-adjacent: selector.unify("a ~ .b", "c + .d");
+        \\  conflict-adjacent: meta.inspect(selector.unify("a + .b", "c + .d"));
+        \\  list: selector.unify(".a ~ .b, .x + .y", ".c ~ .d");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-unify-terminal-siblings.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".siblings{following:.a ~ .c ~ .b.d,.c ~ .a ~ .b.d,.a.c ~ .b.d;following-adjacent:.a ~ .c + .b.d,.a.c + .b.d;adjacent-following:.c ~ .a + .b.d,.c.a + .b.d;child-adjacent:.a > .c + .b.d;adjacent-child:.c > .a + .b.d;child-following:.a > .c ~ .b.d;following-child:.c > .a ~ .b.d;descendant-following:.a .c ~ .b.d;following-descendant:.c .a ~ .b.d;conflict-following:a ~ c ~ .b.d,c ~ a ~ .b.d;conflict-following-adjacent:a ~ c + .b.d;conflict-adjacent:null;list:.a ~ .c ~ .b.d,.c ~ .a ~ .b.d,.a.c ~ .b.d,.c ~ .x + .y.d,.c.x + .y.d}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.siblings
+        \\  following: selector.unify(".a ~ .b", ".c ~ .d")
+        \\  adjacent: selector.unify(".a ~ .b", ".c + .d")
+        \\  child: selector.unify(".a > .b", ".c + .d")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-unify-terminal-siblings.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".siblings{following:.a ~ .c ~ .b.d,.c ~ .a ~ .b.d,.a.c ~ .b.d;adjacent:.a ~ .c + .b.d,.a.c + .b.d;child:.a > .c + .b.d}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector unification budgets growing compounds without truncation" {
     const input =
         \\@use "sass:selector";
@@ -3781,8 +3837,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-unify-following-weave-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a ~ .b\", \".c ~ .d\"); }",
+            .name = "selector-unify-long-sibling-weave-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".p .a ~ .b\", \".q .c ~ .d\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -7330,7 +7386,7 @@ fn exerciseSelectorAllocationFailures(
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
         \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
-        \\  unified: selector.unify(".a1 .x .a2 .y .s", ".b1 .x .b2 .y .t");
+        \\  unified: selector.unify(".a ~ .b", ".c ~ .d");
         \\}
     ;
     const source_id = try sources.add("selector-allocation.scss", input);
@@ -7350,7 +7406,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.a1 .b1 .x .a2 .b2 .y .s.t,.b1 .a1 .x .a2 .b2 .y .s.t,.a1 .b1 .x .b2 .a2 .y .s.t,.b1 .a1 .x .b2 .a2 .y .s.t}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.a ~ .c ~ .b.d,.c ~ .a ~ .b.d,.a.c ~ .b.d}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
