@@ -616,6 +616,116 @@ test "native Sass selector unification weaves exact shared descendant anchors" {
     }
 }
 
+test "native Sass selector unification weaves shared anchors with rigid ancestry suffixes" {
+    const cases = [_]struct {
+        left: []const u8,
+        right: []const u8,
+        expected: []const []const u8,
+    }{
+        .{
+            .left = ".a > .b .c",
+            .right = ".d .b .e",
+            .expected = &.{".d .a > .b .c.e"},
+        },
+        .{
+            .left = ".a + .b .c",
+            .right = ".d .b .e",
+            .expected = &.{".d .a + .b .c.e"},
+        },
+        .{
+            .left = ".a ~ .b .c",
+            .right = ".d .b .e",
+            .expected = &.{".d .a ~ .b .c.e"},
+        },
+        .{
+            .left = ".a .b .c",
+            .right = ".d > .b .e",
+            .expected = &.{".a .d > .b .c.e"},
+        },
+        .{
+            .left = ".p .a > .b .c",
+            .right = ".q .d .b .e",
+            .expected = &.{
+                ".p .q .d .a > .b .c.e",
+                ".q .d .p .a > .b .c.e",
+            },
+        },
+        .{
+            .left = ".a > .b .x .c",
+            .right = ".d .b .y .e",
+            .expected = &.{
+                ".d .a > .b .x .y .c.e",
+                ".d .a > .b .y .x .c.e",
+            },
+        },
+        .{
+            .left = ".a > .m + .b .c",
+            .right = ".d .b .e",
+            .expected = &.{".d .a > .m + .b .c.e"},
+        },
+        .{
+            .left = ".a > .x .b + .y .c",
+            .right = ".d .x .e .y .f",
+            .expected = &.{".d .a > .x .e .b + .y .c.f"},
+        },
+        .{
+            .left = ".a > .b .c, .u + .v .w",
+            .right = ".d .b .e",
+            .expected = &.{
+                ".d .a > .b .c.e",
+                ".u + .v .d .b .w.e",
+                ".d .b .u + .v .w.e",
+            },
+        },
+        .{
+            .left = ".d .b .e",
+            .right = ".a > .b .c",
+            .expected = &.{".d .a > .b .e.c"},
+        },
+        .{
+            .left = ".p .a .b .c",
+            .right = ".q .d > .b .e",
+            .expected = &.{
+                ".p .a .q .d > .b .c.e",
+                ".q .p .a .d > .b .c.e",
+            },
+        },
+        .{
+            .left = ".a .b .c",
+            .right = ".d > .m + .b .e",
+            .expected = &.{".a .d > .m + .b .c.e"},
+        },
+        .{
+            .left = ".a > .b > .x .s",
+            .right = ".c .x .t",
+            .expected = &.{".c .a > .b > .x .s.t"},
+        },
+        .{
+            .left = ".p .a > .b > .x .s",
+            .right = ".q .c .x .t",
+            .expected = &.{
+                ".p .q .c .a > .b > .x .s.t",
+                ".q .c .p .a > .b > .x .s.t",
+            },
+        },
+        .{
+            .left = ".a > .x .b + .y .s",
+            .right = ".c .x .d .y .t",
+            .expected = &.{".c .a > .x .d .b + .y .s.t"},
+        },
+    };
+    for (cases) |case| {
+        var unified = (try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) orelse return error.TestUnexpectedResult;
+        defer unified.deinit();
+        try expectItems(case.expected, unified);
+    }
+}
+
 test "native Sass selector unification weaves terminal sibling constraints" {
     const cases = [_]struct {
         left: []const u8,
@@ -742,7 +852,9 @@ test "native Sass selector unification rejects unavailable semantics and limits"
         right: []const u8,
     }{
         .{ .left = ".a.b .c", .right = ".b.d .e" },
-        .{ .left = ".a > .b .c", .right = ".d .b .e" },
+        .{ .left = ".a > .b .c", .right = ".d > .b .e" },
+        .{ .left = ".a > .b .x .s", .right = ".c .x .t" },
+        .{ .left = ".a .x > .b .s", .right = ".c .x .d .t" },
         .{ .left = "* .b", .right = "a .d" },
         .{ .left = ".p .a ~ .b", .right = ".q .c ~ .d" },
         .{ .left = "#a .b", .right = ".c .d" },
@@ -1027,6 +1139,74 @@ test "native Sass selector unification rejects unavailable semantics and limits"
         },
         sibling_exactly_bounded,
     );
+
+    const rigid_left = ".p .a > .b .c";
+    const rigid_right = ".q .d .b .e";
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            rigid_left,
+            rigid_right,
+            .{ .max_selectors = 3 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            rigid_left,
+            rigid_right,
+            .{ .max_bytes = 65 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            rigid_left,
+            rigid_right,
+            .{ .max_complex_components = 30 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            rigid_left,
+            rigid_right,
+            .{ .max_temporary_bytes = 483 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            rigid_left,
+            rigid_right,
+            .{ .max_relation_operations = 90 },
+        ),
+    );
+    var rigid_exactly_bounded = (try selector.unify(
+        std.testing.allocator,
+        rigid_left,
+        rigid_right,
+        .{
+            .max_selectors = 4,
+            .max_bytes = 66,
+            .max_complex_components = 31,
+            .max_temporary_bytes = 484,
+            .max_relation_operations = 91,
+        },
+    )) orelse return error.TestUnexpectedResult;
+    defer rigid_exactly_bounded.deinit();
+    try expectItems(
+        &.{
+            ".p .q .d .a > .b .c.e",
+            ".q .d .p .a > .b .c.e",
+        },
+        rigid_exactly_bounded,
+    );
 }
 
 test "native Sass selector parser rejects malformed parents and complex compounds" {
@@ -1113,15 +1293,12 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
 
     var unified = (try selector.unify(
         allocator,
-        ".a ~ .b",
-        ".c ~ .d",
+        ".a > .b .c",
+        ".d .b .e",
         .{},
     )) orelse return error.TestUnexpectedResult;
     defer unified.deinit();
-    try expectItems(
-        &.{ ".a ~ .c ~ .b.d", ".c ~ .a ~ .b.d", ".a.c ~ .b.d" },
-        unified,
-    );
+    try expectItems(&.{".d .a > .b .c.e"}, unified);
 }
 
 test "native Sass selector parsing composition relations and unification handle every allocation failure" {

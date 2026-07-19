@@ -385,9 +385,10 @@ const NamespaceIntersection = union(enum) {
 /// Returns the selector intersection for every left/right list pair. This slice
 /// owns compounds, complex subject replacement, exact/shared ancestry, strict
 /// child/adjacent-sibling ancestry, bounded disjoint ancestry weaving, and exact
-/// shared descendant anchors plus two-component terminal sibling weaving. Partial
-/// shared anchors, longer sibling ancestries, escaped identifier equivalence, and
-/// host-selector semantics remain unavailable.
+/// shared descendant anchors with one-sided rigid ancestry suffixes plus
+/// two-component terminal sibling weaving. Partial shared anchors, ambiguous
+/// dual-rigid weaving, escaped identifier equivalence, and host-selector semantics
+/// remain unavailable.
 pub fn unify(
     allocator: std.mem.Allocator,
     left_input: []const u8,
@@ -1007,12 +1008,22 @@ fn emitSharedUnifyWeave(
         left_ancestry,
         right_ancestry,
     };
-    for (ancestries) |ancestry| {
+    var rigid_owner: ?usize = null;
+    for (ancestries, 0..) |ancestry, ancestry_index| {
         for (ancestry) |component| {
             try context.consume(1);
-            if (component.combinator != .descendant or
-                !try unifyWeaveCompoundAvailable(component.compound, context))
-            {
+            switch (component.combinator) {
+                .descendant => {},
+                .child, .next_sibling, .following_sibling => {
+                    if (rigid_owner) |owner| {
+                        if (owner != ancestry_index) return false;
+                    } else {
+                        rigid_owner = ancestry_index;
+                    }
+                },
+                .none => return false,
+            }
+            if (!try unifyWeaveCompoundAvailable(component.compound, context)) {
                 return false;
             }
         }
@@ -1043,10 +1054,9 @@ fn emitSharedUnifyWeave(
     for (1..row_count) |left_offset| {
         for (1..column_count) |right_offset| {
             const index = left_offset * column_count + right_offset;
-            if (std.mem.eql(
-                u8,
-                left_ancestry[left_offset - 1].compound,
-                right_ancestry[right_offset - 1].compound,
+            if (sharedUnifyWeaveAnchorMatches(
+                left_ancestry[left_offset - 1],
+                right_ancestry[right_offset - 1],
             )) {
                 lengths[index] = std.math.add(
                     usize,
@@ -1079,10 +1089,9 @@ fn emitSharedUnifyWeave(
     // Preserve Dart Sass's observable prefix-LCS tie break: when the two
     // predecessor lengths are equal, move left through the right ancestry.
     while (left_offset > 0 and right_offset > 0) {
-        if (std.mem.eql(
-            u8,
-            left_ancestry[left_offset - 1].compound,
-            right_ancestry[right_offset - 1].compound,
+        if (sharedUnifyWeaveAnchorMatches(
+            left_ancestry[left_offset - 1],
+            right_ancestry[right_offset - 1],
         )) {
             if (anchor_offset == 0) return error.InvalidSelector;
             anchor_offset -= 1;
@@ -1122,7 +1131,7 @@ fn emitSharedUnifyWeave(
             right_segment,
             context,
         )) return false;
-        if (left_segment.len > 0 and right_segment.len > 0) {
+        if (sharedUnifyWeaveSegmentVaries(left_segment, right_segment)) {
             varying_count = std.math.add(usize, varying_count, 1) catch
                 return error.SelectorLimitExceeded;
         }
@@ -1134,7 +1143,7 @@ fn emitSharedUnifyWeave(
     if (!try sharedUnifyWeaveSegmentAvailable(left_tail, right_tail, context)) {
         return false;
     }
-    if (left_tail.len > 0 and right_tail.len > 0) {
+    if (sharedUnifyWeaveSegmentVaries(left_tail, right_tail)) {
         varying_count = std.math.add(usize, varying_count, 1) catch
             return error.SelectorLimitExceeded;
     }
@@ -1166,11 +1175,25 @@ fn emitSharedUnifyWeave(
     return true;
 }
 
+fn sharedUnifyWeaveAnchorMatches(
+    left: RelationComponent,
+    right: RelationComponent,
+) bool {
+    return left.combinator == .descendant and
+        right.combinator == .descendant and
+        std.mem.eql(u8, left.compound, right.compound);
+}
+
 fn sharedUnifyWeaveSegmentAvailable(
     left: []const RelationComponent,
     right: []const RelationComponent,
     context: *UnifyContext,
 ) Error!bool {
+    const left_rigid_start = sharedUnifyWeaveRigidStart(left) orelse return false;
+    const right_rigid_start = sharedUnifyWeaveRigidStart(right) orelse return false;
+    if (left_rigid_start < left.len and right_rigid_start < right.len) {
+        return false;
+    }
     for (left) |left_component| {
         for (right) |right_component| {
             if (try unifyWeaveCompoundsShareAnchor(
@@ -1181,6 +1204,31 @@ fn sharedUnifyWeaveSegmentAvailable(
         }
     }
     return true;
+}
+
+fn sharedUnifyWeaveRigidStart(
+    components: []const RelationComponent,
+) ?usize {
+    var rigid_start = components.len;
+    for (components, 0..) |component, index| {
+        switch (component.combinator) {
+            .descendant => if (rigid_start != components.len) return null,
+            .child, .next_sibling, .following_sibling => if (rigid_start == components.len) {
+                rigid_start = index;
+            },
+            .none => return null,
+        }
+    }
+    return rigid_start;
+}
+
+fn sharedUnifyWeaveSegmentVaries(
+    left: []const RelationComponent,
+    right: []const RelationComponent,
+) bool {
+    const left_rigid_start = sharedUnifyWeaveRigidStart(left) orelse return false;
+    const right_rigid_start = sharedUnifyWeaveRigidStart(right) orelse return false;
+    return left_rigid_start > 0 and right_rigid_start > 0;
 }
 
 fn unifyWeaveCompoundAvailable(
@@ -1387,22 +1435,23 @@ fn renderSharedUnifyWeave(
     for (ancestries) |ancestry| {
         for (ancestry) |component| {
             try context.consume(1);
+            const combinator = unifyCombinatorBytes(component.combinator);
+            if (combinator.len == 0) return error.InvalidSelector;
             output_length = std.math.add(
                 usize,
                 output_length,
                 component.compound.len,
             ) catch return error.SelectorLimitExceeded;
-            output_length = std.math.add(usize, output_length, 1) catch
+            output_length = std.math.add(usize, output_length, combinator.len) catch
                 return error.SelectorLimitExceeded;
         }
     }
     for (anchors) |anchor| {
         if (anchor.left_index >= left_ancestry.len or
             anchor.right_index >= right_ancestry.len or
-            !std.mem.eql(
-                u8,
-                left_ancestry[anchor.left_index].compound,
-                right_ancestry[anchor.right_index].compound,
+            !sharedUnifyWeaveAnchorMatches(
+                left_ancestry[anchor.left_index],
+                right_ancestry[anchor.right_index],
             ))
         {
             return error.InvalidSelector;
@@ -1411,7 +1460,9 @@ fn renderSharedUnifyWeave(
         const duplicate_length = std.math.add(
             usize,
             left_ancestry[anchor.left_index].compound.len,
-            1,
+            unifyCombinatorBytes(
+                left_ancestry[anchor.left_index].combinator,
+            ).len,
         ) catch return error.SelectorLimitExceeded;
         if (duplicate_length > output_length) return error.InvalidSelector;
         output_length -= duplicate_length;
@@ -1483,8 +1534,17 @@ fn writeSharedUnifyWeaveSegment(
     varying_seen: *usize,
     varying_count: usize,
 ) Error!void {
+    const left_rigid_start = sharedUnifyWeaveRigidStart(left) orelse
+        return error.InvalidSelector;
+    const right_rigid_start = sharedUnifyWeaveRigidStart(right) orelse
+        return error.InvalidSelector;
+    if (left_rigid_start < left.len and right_rigid_start < right.len) {
+        return error.InvalidSelector;
+    }
+    const left_flexible = left[0..left_rigid_start];
+    const right_flexible = right[0..right_rigid_start];
     var right_first = false;
-    if (left.len > 0 and right.len > 0) {
+    if (left_flexible.len > 0 and right_flexible.len > 0) {
         // Each segment remains a whole chunk. The earliest varying segment is
         // the least-significant choice so provider result order stays exact.
         right_first = (ordinal / choice_divisor.*) % 2 == 1;
@@ -1496,12 +1556,14 @@ fn writeSharedUnifyWeaveSegment(
         }
     }
     if (right_first) {
-        try writeSharedUnifyWeaveComponents(output, offset, right);
-        try writeSharedUnifyWeaveComponents(output, offset, left);
+        try writeSharedUnifyWeaveComponents(output, offset, right_flexible);
+        try writeSharedUnifyWeaveComponents(output, offset, left_flexible);
     } else {
-        try writeSharedUnifyWeaveComponents(output, offset, left);
-        try writeSharedUnifyWeaveComponents(output, offset, right);
+        try writeSharedUnifyWeaveComponents(output, offset, left_flexible);
+        try writeSharedUnifyWeaveComponents(output, offset, right_flexible);
     }
+    try writeSharedUnifyWeaveComponents(output, offset, left[left_rigid_start..]);
+    try writeSharedUnifyWeaveComponents(output, offset, right[right_rigid_start..]);
 }
 
 fn writeSharedUnifyWeaveComponents(
@@ -1510,12 +1572,14 @@ fn writeSharedUnifyWeaveComponents(
     components: []const RelationComponent,
 ) Error!void {
     for (components) |component| {
+        const combinator = unifyCombinatorBytes(component.combinator);
+        if (combinator.len == 0) return error.InvalidSelector;
         const compound_end = std.math.add(
             usize,
             offset.*,
             component.compound.len,
         ) catch return error.SelectorLimitExceeded;
-        const next = std.math.add(usize, compound_end, 1) catch
+        const next = std.math.add(usize, compound_end, combinator.len) catch
             return error.SelectorLimitExceeded;
         if (next > output.len) return error.InvalidSelector;
         std.mem.copyForwards(
@@ -1523,7 +1587,7 @@ fn writeSharedUnifyWeaveComponents(
             output[offset.*..compound_end],
             component.compound,
         );
-        output[compound_end] = ' ';
+        std.mem.copyForwards(u8, output[compound_end..next], combinator);
         offset.* = next;
     }
 }

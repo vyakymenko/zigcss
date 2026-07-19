@@ -3522,6 +3522,57 @@ test "native Sass selector module weaves exact shared descendant anchors" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module weaves shared anchors with rigid ancestry suffixes" {
+    const input =
+        \\@use "sass:selector";
+        \\.rigid {
+        \\  child: selector.unify(".a > .b .c", ".d .b .e");
+        \\  adjacent: selector.unify(".a + .b .c", ".d .b .e");
+        \\  following: selector.unify(".a ~ .b .c", ".d .b .e");
+        \\  right: selector.unify(".a .b .c", ".d > .b .e");
+        \\  prefix: selector.unify(".p .a > .b .c", ".q .d .b .e");
+        \\  tail: selector.unify(".a > .b .x .c", ".d .b .y .e");
+        \\  chain: selector.unify(".a > .m + .b .c", ".d .b .e");
+        \\  multiple: selector.unify(".a > .x .b + .y .c", ".d .x .e .y .f");
+        \\  list: selector.unify(".a > .b .c, .u + .v .w", ".d .b .e");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-unify-shared-rigid.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".rigid{child:.d .a > .b .c.e;adjacent:.d .a + .b .c.e;following:.d .a ~ .b .c.e;right:.a .d > .b .c.e;prefix:.p .q .d .a > .b .c.e,.q .d .p .a > .b .c.e;tail:.d .a > .b .x .y .c.e,.d .a > .b .y .x .c.e;chain:.d .a > .m + .b .c.e;multiple:.d .a > .x .e .b + .y .c.f;list:.d .a > .b .c.e,.u + .v .d .b .w.e,.d .b .u + .v .w.e}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.rigid
+        \\  child: selector.unify(".a > .b .c", ".d .b .e")
+        \\  prefix: selector.unify(".p .a > .b .c", ".q .d .b .e")
+        \\  chain: selector.unify(".a > .m + .b .c", ".d .b .e")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-unify-shared-rigid.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".rigid{child:.d .a > .b .c.e;prefix:.p .q .d .a > .b .c.e,.q .d .p .a > .b .c.e;chain:.d .a > .m + .b .c.e}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module weaves terminal sibling constraints" {
     const input =
         \\@use "sass:selector";
@@ -3832,8 +3883,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-unify-rigid-shared-anchor-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a > .b .c\", \".d .b .e\"); }",
+            .name = "selector-unify-dual-rigid-shared-anchor-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a > .b .c\", \".d > .b .e\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -7386,7 +7437,7 @@ fn exerciseSelectorAllocationFailures(
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
         \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
-        \\  unified: selector.unify(".a ~ .b", ".c ~ .d");
+        \\  unified: selector.unify(".a > .b .c", ".d .b .e");
         \\}
     ;
     const source_id = try sources.add("selector-allocation.scss", input);
@@ -7406,7 +7457,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.a ~ .c ~ .b.d,.c ~ .a ~ .b.d,.a.c ~ .b.d}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
