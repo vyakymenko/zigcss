@@ -2946,6 +2946,136 @@ test "native Sass math constants and random reject unsafe arguments" {
     }
 }
 
+test "native Sass meta inspection reports exact types and canonical representations" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as introspect;
+        \\@use "sass:meta" as *;
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\$empty-map: map.remove((a: 1), a);
+        \\@function argument-type($args...) { @return meta.type-of($args); }
+        \\@function argument-inspect($args...) {
+        \\  $keywords: meta.keywords($args);
+        \\  @return meta.inspect($args);
+        \\}
+        \\.values {
+        \\  null-type: meta.type-of(null);
+        \\  bool-type: meta.type-of(true);
+        \\  number-type: meta.type-of(1px);
+        \\  string-type: meta.type-of("hello");
+        \\  color-type: meta.type-of(#abc);
+        \\  list-type: meta.type-of((1, 2));
+        \\  map-type: meta.type-of((a: 1));
+        \\  calculation-type: meta.type-of(calc(1px + var(--x)));
+        \\  css-variable-type: meta.type-of(var(--x));
+        \\  uppercase-calculation-type: meta.type-of(CALC(1px + var(--x)));
+        \\  composite-type: meta.type-of(foo calc(1px + var(--x)));
+        \\  empty-map-type: meta.type-of($empty-map);
+        \\  arglist-type: argument-type(1, 2);
+        \\  null-inspect: meta.inspect(null);
+        \\  bool-inspect: meta.inspect(true);
+        \\  number-inspect: meta.inspect(1px);
+        \\  quoted-inspect: meta.inspect("hello world");
+        \\  unquoted-inspect: meta.inspect(hello world);
+        \\  color-inspect: meta.inspect(#a1b2c3);
+        \\  comma-inspect: meta.inspect((1, 2));
+        \\  space-inspect: meta.inspect(1 2);
+        \\  bracket-inspect: meta.inspect([1 2]);
+        \\  slash-inspect: meta.inspect(list.slash(1, 2));
+        \\  map-inspect: meta.inspect((a: 1, "b": (2, 3)));
+        \\  empty-map-inspect: meta.inspect($empty-map);
+        \\  null-list-inspect: meta.inspect((null, 1, null));
+        \\  calculation-inspect: meta.inspect(calc(1px + var(--x)));
+        \\  arglist-inspect: argument-inspect(1, 2);
+        \\  single-arglist-inspect: argument-inspect(1);
+        \\  keyword-arglist-inspect: argument-inspect(1, $tone: red);
+        \\  alias: introspect.type-of($value: #abc);
+        \\  star: inspect((a: 1));
+        \\  global-type: type-of(1px);
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "meta-inspection.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{null-type:null;bool-type:bool;number-type:number;string-type:string;color-type:color;list-type:list;map-type:map;calculation-type:calculation;css-variable-type:string;uppercase-calculation-type:calculation;composite-type:list;empty-map-type:map;arglist-type:arglist;null-inspect:null;bool-inspect:true;number-inspect:1px;quoted-inspect:\"hello world\";unquoted-inspect:hello world;color-inspect:#a1b2c3;comma-inspect:1, 2;space-inspect:1 2;bracket-inspect:[1 2];slash-inspect:1 / 2;map-inspect:(a: 1, \"b\": (2, 3));empty-map-inspect:();null-list-inspect:null, 1, null;calculation-inspect:calc(1px + var(--x));arglist-inspect:1, 2;single-arglist-inspect:(1,);keyword-arglist-inspect:(1,);alias:color;star:(a: 1);global-type:number}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\.sass
+        \\  type: m.type-of((a: 1))
+        \\  inspect: m.inspect([1 2])
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-inspection.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(".sass{type:map;inspect:[1 2]}", sass_result.css());
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta inspection rejects unavailable or invalid calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-meta-type-module.scss",
+            .input = ".a { value: meta.type-of(1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-meta-type-namespace.scss",
+            .input = "@use \"sass:meta\" as Meta; .a { value: meta.type-of(1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-type-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-type-too-many.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(1, 2); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-type-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of($input: 1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-inspect-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-inspect-too-many.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(1, 2); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-inspect-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect($input: 1); }",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass inspects callable keywords through the built-in meta module" {
     const input =
         \\@use "sass:meta";
@@ -5965,6 +6095,10 @@ const MathAllocationContext = struct {
     root: []const u8,
 };
 
+const MetaInspectionAllocationContext = struct {
+    root: []const u8,
+};
+
 // Heap-layout-dependent in-place remaps make allocation counts unstable across
 // hosts. Force growth through explicit allocations so every OOM point is tested.
 const DeterministicAllocationBacking = struct {
@@ -6296,6 +6430,69 @@ test "native Sass math constants and random handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         backing.allocator(),
         exerciseMathConstantRandomAllocationFailures,
+        .{&context},
+    );
+}
+
+fn exerciseMetaInspectionAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const MetaInspectionAllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input =
+        \\@use "sass:meta";
+        \\@function inspect-args($args...) {
+        \\  $keywords: meta.keywords($args);
+        \\  @return meta.inspect($args);
+        \\}
+        \\$calculation: calc(1px + var(--x));
+        \\.allocation {
+        \\  type: meta.type-of($calculation);
+        \\  inspect: meta.inspect((a: (1, 2)));
+        \\  args: inspect-args(1, $tone: red);
+        \\}
+    ;
+    const source_id = try sources.add("meta-inspection-allocation.scss", input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{type:calculation;inspect:(a: (1, 2));args:(1,)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta inspection handles every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const context = MetaInspectionAllocationContext{ .root = root };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMetaInspectionAllocationFailures,
         .{&context},
     );
 }

@@ -146,7 +146,9 @@ const Builtin = enum {
     math_tan,
     math_unit,
     math_clamp,
+    meta_inspect,
     meta_keywords,
+    meta_type_of,
     quote,
     unquote,
     str_length,
@@ -4353,6 +4355,10 @@ const Engine = struct {
             .math_tan
         else if (sassNameEql(name, "unit"))
             .math_unit
+        else if (sassNameEql(name, "inspect"))
+            .meta_inspect
+        else if (sassNameEql(name, "type-of"))
+            .meta_type_of
         else if (sassNameEql(name, "quote"))
             .quote
         else if (sassNameEql(name, "unquote"))
@@ -4539,7 +4545,9 @@ const Engine = struct {
             .math_sqrt,
             .math_tan,
             .math_unit,
+            .meta_inspect,
             .meta_keywords,
+            .meta_type_of,
             .red,
             .green,
             .blue,
@@ -7541,6 +7549,53 @@ const Engine = struct {
         return error.TemporaryLimitExceeded;
     }
 
+    fn callMetaInspect(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "meta.inspect() requires exactly one argument");
+            return error.InvalidExpression;
+        }
+        var rendered: std.ArrayList(u8) = .empty;
+        defer rendered.deinit(self.allocator);
+        self.appendInspectedValue(&rendered, arguments[0].*, .root) catch |err| switch (err) {
+            error.InvalidExpression => {
+                try self.report(.type_mismatch, span, "native Sass callable inspection is not yet available");
+                return error.InvalidExpression;
+            },
+            else => return err,
+        };
+        return self.values.own(.{ .string = .{ .bytes = rendered.items } });
+    }
+
+    fn callMetaTypeOf(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "meta.type-of() requires exactly one argument");
+            return error.InvalidExpression;
+        }
+        const name: []const u8 = switch (arguments[0].*) {
+            .null_value => "null",
+            .boolean => "bool",
+            .number => "number",
+            .color => "color",
+            .string => |string| if (!string.quoted and isSassCalculationValue(string.bytes))
+                "calculation"
+            else
+                "string",
+            .selector, .list => "list",
+            .map => "map",
+            .argument_list => "arglist",
+            .callable => |callable| if (callable.kind == .mixin) "mixin" else "function",
+        };
+        return self.values.own(.{ .string = .{ .bytes = name } });
+    }
+
     fn callMetaKeywords(
         self: *Engine,
         arguments: []const *const native_value.Value,
@@ -8055,6 +8110,7 @@ const Engine = struct {
             },
             .math_is_unitless => &.{.{ .name = "number" }},
             .math_unit => &.{.{ .name = "number" }},
+            .meta_inspect, .meta_type_of => &.{.{ .name = "value" }},
             .meta_keywords => &.{.{ .name = "args" }},
             .red,
             .green,
@@ -8263,7 +8319,9 @@ const Engine = struct {
                 span,
             ),
             .math_unit => self.callMathUnit(arguments, span),
+            .meta_inspect => self.callMetaInspect(arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
+            .meta_type_of => self.callMetaTypeOf(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
                 builtin,
                 arguments,
@@ -8827,6 +8885,68 @@ const Engine = struct {
                 }
             },
             .map, .callable => return error.InvalidExpression,
+        }
+    }
+
+    const InspectionContext = enum { root, collection };
+
+    fn appendInspectedValue(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        item: native_value.Value,
+        context: InspectionContext,
+    ) Error!void {
+        try self.transaction.consumeOperations(1);
+        switch (item) {
+            .null_value => try self.appendTemporary(output, "null"),
+            .boolean, .number, .color, .string, .selector => try self.appendValue(output, item, false),
+            .list => |list| {
+                if (list.items.len == 0 and !list.bracketed) {
+                    try self.appendTemporary(output, "()");
+                    return;
+                }
+                const parenthesized = !list.bracketed and list.separator == .comma and
+                    (context == .collection or list.items.len == 1);
+                if (list.bracketed) try self.appendTemporary(output, "[");
+                if (parenthesized) try self.appendTemporary(output, "(");
+                for (list.items, 0..) |child, index| {
+                    if (index > 0) try self.appendTemporary(output, switch (list.separator) {
+                        .comma => ", ",
+                        .slash, .legacy_slash => " / ",
+                        .undecided, .space => " ",
+                    });
+                    try self.appendInspectedValue(output, child, .collection);
+                }
+                if (list.separator == .comma and list.items.len == 1) {
+                    try self.appendTemporary(output, ",");
+                }
+                if (parenthesized) try self.appendTemporary(output, ")");
+                if (list.bracketed) try self.appendTemporary(output, "]");
+            },
+            .map => |map| {
+                try self.appendTemporary(output, "(");
+                for (map.entries, 0..) |entry, index| {
+                    if (index > 0) try self.appendTemporary(output, ", ");
+                    try self.appendInspectedValue(output, entry.key, .collection);
+                    try self.appendTemporary(output, ": ");
+                    try self.appendInspectedValue(output, entry.value, .collection);
+                }
+                try self.appendTemporary(output, ")");
+            },
+            .argument_list => |argument_list| {
+                if (argument_list.positional.len == 0) {
+                    try self.appendTemporary(output, "()");
+                    return;
+                }
+                const parenthesized = argument_list.positional.len == 1;
+                if (parenthesized) try self.appendTemporary(output, "(");
+                for (argument_list.positional, 0..) |child, index| {
+                    if (index > 0) try self.appendTemporary(output, ", ");
+                    try self.appendInspectedValue(output, child, .collection);
+                }
+                if (parenthesized) try self.appendTemporary(output, ",)");
+            },
+            .callable => return error.InvalidExpression,
         }
     }
 
@@ -9486,7 +9606,9 @@ fn mathModuleOwnsFunction(name: []const u8) bool {
 }
 
 fn metaModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "inspect")) return .meta_inspect;
     if (sassNameEql(name, "keywords")) return .meta_keywords;
+    if (sassNameEql(name, "type-of")) return .meta_type_of;
     return null;
 }
 
@@ -9604,6 +9726,21 @@ fn containsDeferredCssCalculation(input: []const u8) bool {
             if (std.ascii.eqlIgnoreCase(input[index .. index + name.len], name)) return true;
         }
         index += 1;
+    }
+    return false;
+}
+
+fn isSassCalculationValue(input: []const u8) bool {
+    const opening = std.mem.indexOfScalar(u8, input, '(') orelse return false;
+    if (opening == 0 or !fullyWrapped(input[opening..], '(', ')')) return false;
+    const name = input[0..opening];
+    const functions = [_][]const u8{
+        "calc", "min",  "max",   "clamp", "round", "mod",  "rem",
+        "sin",  "cos",  "tan",   "asin",  "acos",  "atan", "atan2",
+        "pow",  "sqrt", "hypot", "log",   "exp",   "abs",  "sign",
+    };
+    for (functions) |function| {
+        if (std.ascii.eqlIgnoreCase(name, function)) return true;
     }
     return false;
 }
