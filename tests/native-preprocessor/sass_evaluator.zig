@@ -3302,6 +3302,73 @@ test "native Sass selector module compares structural superselectors" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module extends and replaces compound matches" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\@use "sass:list";
+        \\@use "sass:selector" as sel;
+        \\@use "sass:selector" as *;
+        \\$evaluations: 0;
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  basic: selector.extend(".a", ".a", ".b");
+        \\  replace: selector.replace(".a", ".a", ".b");
+        \\  compound: selector.extend(".a.c", ".a", ".b.d");
+        \\  complex: selector.extend(".x > .a + .y", ".a", ".b");
+        \\  repeated: selector.extend(".a.c .a.d", ".a", ".b");
+        \\  list: selector.replace(".a, .x > .a, .none", ".a", ".b");
+        \\  no-match: selector.extend(".none", ".a", ".b");
+        \\  typed: selector.replace(selector.parse("button.a"), ".a", ".b");
+        \\  keyword: selector.extend($extender: ".k3", $selector: ".k1.k2", $extendee: ".k1");
+        \\  alias: sel.replace(".m1.m2", ".m1", ".m3");
+        \\  star: extend(".s1", ".s1", ".s2");
+        \\  marked: selector.replace(mark(".q1"), mark(".q1"), mark(".q2"));
+        \\  evaluations: $evaluations;
+        \\  type: meta.type-of(selector.extend(".a", ".a", ".b"));
+        \\  separator: list.separator(selector.extend(".a", ".a", ".b"));
+        \\  inspect: meta.inspect(selector.extend(".a", ".a", ".b"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-extend-replace.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{basic:.a,.b;replace:.b;compound:.a.c,.c.b.d;complex:.x > .a + .y,.x > .b + .y;repeated:.a.c .a.d,.c.b .a.d,.a.c .d.b,.c.b .d.b;list:.b,.x > .b,.none;no-match:.none;typed:button.b;keyword:.k1.k2,.k2.k3;alias:.m2.m3;star:.s1,.s2;marked:.q2;evaluations:3;type:list;separator:comma;inspect:.a, .b}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  extend: selector.extend(".a.c", ".a", ".b")
+        \\  replace: selector.replace(".x > .a", ".a", ".b")
+        \\  repeated: selector.extend(".a .a", ".a", ".b")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-extend-replace.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{extend:.a.c,.c.b;replace:.x > .b;repeated:.a .a,.b .a,.a .b,.b .b}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -3848,6 +3915,41 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
+            .name = "selector-extend-missing.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.extend(\".a\", \".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-replace-too-many.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.replace(\".a\", \".a\", \".b\", \".c\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-extend-unknown-keyword.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.extend($selector: \".a\", $extendee: \".a\", $replacement: \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-extend-number.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.extend(1, \".a\", \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-extend-list-extendee-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.extend(\".a\", \".a, .c\", \".b\"); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "selector-replace-complex-extender-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.replace(\".a\", \".a\", \".x .b\"); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "selector-extend-functional-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.extend(\":is(.a)\", \".a\", \".b\"); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
             .name = "selector-unify-missing.scss",
             .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a\"); }",
             .expected = error.InvalidExpression,
@@ -3985,6 +4087,19 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             "@use \"sass:selector\"; $value: selector.unify(\".a, .b\", \".x, .y\");",
             .scss,
             unification_count,
+        ),
+    );
+
+    var extension_count = sass_evaluator.Limits{};
+    extension_count.max_selectors = 6;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "selector-extension-count-limit.scss",
+            "@use \"sass:selector\"; $value: selector.extend(\".a .a\", \".a\", \".b\");",
+            .scss,
+            extension_count,
         ),
     );
 }
@@ -7437,6 +7552,8 @@ fn exerciseSelectorAllocationFailures(
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
         \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
+        \\  extended: selector.extend(".a.c .a.d", ".a", ".b");
+        \\  replaced: selector.replace(".a.c .a.d", ".a", ".b");
         \\  unified: selector.unify(".a > .b .c", ".d .b .e");
         \\}
     ;
@@ -7457,14 +7574,14 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:.a.c .a.d,.c.b .a.d,.a.c .d.b,.c.b .d.b;replaced:.c.b .d.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
     try std.testing.expect(result.map() != null);
 }
 
-test "native Sass selector parsing composition relations and unification handle every allocation failure" {
+test "native Sass selector parsing composition relations extension replacement and unification handle every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");

@@ -152,9 +152,11 @@ const Builtin = enum {
     meta_keywords,
     meta_type_of,
     selector_append,
+    selector_extend,
     selector_is_superselector,
     selector_nest,
     selector_parse,
+    selector_replace,
     selector_simple_selectors,
     selector_unify,
     quote,
@@ -4571,7 +4573,9 @@ const Engine = struct {
             .meta_inspect,
             .meta_keywords,
             .meta_type_of,
+            .selector_extend,
             .selector_is_superselector,
+            .selector_replace,
             .selector_unify,
             .selector_parse,
             .selector_simple_selectors,
@@ -7708,6 +7712,102 @@ const Engine = struct {
         return self.values.own(.{ .boolean = is_superselector });
     }
 
+    fn callSelectorExtension(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 3) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "selector.extend()/replace() requires exactly three arguments",
+            );
+            return error.InvalidExpression;
+        }
+        const selector_input = try self.selectorInput(arguments[0].*, span);
+        defer self.allocator.free(selector_input);
+        const extendee_input = try self.selectorInput(arguments[1].*, span);
+        defer self.allocator.free(extendee_input);
+        const extender_input = try self.selectorInput(arguments[2].*, span);
+        defer self.allocator.free(extender_input);
+        const first_input_bytes = std.math.add(
+            usize,
+            selector_input.len,
+            extendee_input.len,
+        ) catch return self.selectorTemporaryFailure(span);
+        const input_bytes = std.math.add(
+            usize,
+            first_input_bytes,
+            extender_input.len,
+        ) catch return self.selectorTemporaryFailure(span);
+        if (input_bytes >= self.limits.max_temporary_bytes) {
+            return self.selectorTemporaryFailure(span);
+        }
+        const remaining_selectors = self.limits.max_selectors -| self.selector_count;
+        const extension_operations = selectorExtensionOperationBudget(
+            selector_input,
+            extendee_input,
+            extender_input,
+            remaining_selectors,
+            builtin == .selector_extend,
+        ) orelse {
+            try self.transaction.consumeOperations(std.math.maxInt(u64));
+            unreachable;
+        };
+        try self.transaction.consumeOperations(extension_operations);
+        const remaining_temporary = self.limits.max_temporary_bytes - input_bytes;
+        const extension_limits = native_selector.Limits{
+            .max_selectors = remaining_selectors,
+            .max_bytes = @min(
+                self.limits.max_selector_bytes -| self.selector_bytes,
+                remaining_temporary,
+            ),
+            .max_complex_components = remaining_selectors,
+            .max_temporary_bytes = remaining_temporary,
+            .max_relation_operations = extension_operations,
+        };
+        const native_result = switch (builtin) {
+            .selector_extend => native_selector.extend(
+                self.allocator,
+                selector_input,
+                extendee_input,
+                extender_input,
+                extension_limits,
+            ),
+            .selector_replace => native_selector.replace(
+                self.allocator,
+                selector_input,
+                extendee_input,
+                extender_input,
+                extension_limits,
+            ),
+            else => unreachable,
+        };
+        var extended = native_result catch |err| switch (err) {
+            error.InvalidSelector => {
+                try self.report(.invalid_operation, span, "invalid native Sass selector extension");
+                return error.InvalidExpression;
+            },
+            error.UnsupportedSelectorExtension => {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass selector extension semantics are not yet available for this selector",
+                );
+                return error.UnsupportedFeature;
+            },
+            error.SelectorLimitExceeded => {
+                try self.report(.resource_limit, span, "native Sass selector extension limit exceeded");
+                return err;
+            },
+            else => return err,
+        };
+        defer extended.deinit();
+        return self.ownSelectorValues(&extended, true, span);
+    }
+
     fn callSelectorUnify(
         self: *Engine,
         arguments: []const *const native_value.Value,
@@ -8597,6 +8697,11 @@ const Engine = struct {
                 .{ .name = "super" },
                 .{ .name = "sub" },
             },
+            .selector_extend, .selector_replace => &.{
+                .{ .name = "selector" },
+                .{ .name = "extendee" },
+                .{ .name = "extender" },
+            },
             .selector_unify => &.{
                 .{ .name = "selector1" },
                 .{ .name = "selector2" },
@@ -8812,6 +8917,11 @@ const Engine = struct {
             .meta_inspect => self.callMetaInspect(arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .meta_type_of => self.callMetaTypeOf(arguments, span),
+            .selector_extend, .selector_replace => self.callSelectorExtension(
+                builtin,
+                arguments,
+                span,
+            ),
             .selector_is_superselector => self.callSelectorIsSuperselector(arguments, span),
             .selector_unify => self.callSelectorUnify(arguments, span),
             .selector_parse => self.callSelectorParse(arguments, span),
@@ -10108,9 +10218,11 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
 
 fn selectorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "append")) return .selector_append;
+    if (sassNameEql(name, "extend")) return .selector_extend;
     if (sassNameEql(name, "is-superselector")) return .selector_is_superselector;
     if (sassNameEql(name, "nest")) return .selector_nest;
     if (sassNameEql(name, "parse")) return .selector_parse;
+    if (sassNameEql(name, "replace")) return .selector_replace;
     if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;
     if (sassNameEql(name, "unify")) return .selector_unify;
     return null;
@@ -10653,6 +10765,52 @@ const SelectorOperationStats = struct {
     length_sum: u64 = 0,
     length_square_sum: u64 = 0,
 };
+
+fn selectorExtensionOperationBudget(
+    selector_input: []const u8,
+    extendee_input: []const u8,
+    extender_input: []const u8,
+    max_results: usize,
+    retains_original_paths: bool,
+) ?u64 {
+    if (max_results == 0) return 1;
+    const first_length = std.math.add(
+        usize,
+        selector_input.len,
+        extendee_input.len,
+    ) catch return null;
+    const total_length = std.math.add(
+        usize,
+        first_length,
+        extender_input.len,
+    ) catch return null;
+    const width = std.math.add(usize, total_length, 1) catch return null;
+    const width_u64 = std.math.cast(u64, width) orelse return null;
+    const width_square = std.math.mul(u64, width_u64, width_u64) catch return null;
+
+    var result_bound: u64 = 1;
+    if (retains_original_paths) {
+        const denominator = @max(extendee_input.len, 1);
+        const occurrence_bound = selector_input.len / denominator;
+        const maximum = std.math.cast(u64, max_results) orelse return null;
+        for (0..occurrence_bound) |_| {
+            if (result_bound >= maximum) break;
+            result_bound = std.math.mul(u64, result_bound, 2) catch return null;
+            result_bound = @min(result_bound, maximum);
+        }
+    } else {
+        const selector_stats = selectorOperationStats(selector_input) orelse return null;
+        const maximum = std.math.cast(u64, max_results) orelse return null;
+        result_bound = @max(@min(selector_stats.count, maximum), 1);
+    }
+    const comparison_bound = std.math.mul(
+        u64,
+        result_bound,
+        result_bound,
+    ) catch return null;
+    const work = std.math.mul(u64, width_square, comparison_bound) catch return null;
+    return std.math.mul(u64, work, 8) catch return null;
+}
 
 fn selectorUnifyOperationBudget(left: []const u8, right: []const u8) ?u64 {
     const left_stats = selectorOperationStats(left) orelse return null;

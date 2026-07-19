@@ -397,6 +397,272 @@ test "native Sass selector unification intersects bounded compounds" {
     }
 }
 
+test "native Sass selector extension and replacement expand compound matches" {
+    const cases = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+        extended: []const []const u8,
+        replaced: []const []const u8,
+    }{
+        .{
+            .selector_input = ".a",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".a", ".b" },
+            .replaced = &.{".b"},
+        },
+        .{
+            .selector_input = ".a.c",
+            .extendee = ".a",
+            .extender = ".b.d",
+            .extended = &.{ ".a.c", ".c.b.d" },
+            .replaced = &.{".c.b.d"},
+        },
+        .{
+            .selector_input = "a.foo",
+            .extendee = "a",
+            .extender = "button",
+            .extended = &.{ "a.foo", "button.foo" },
+            .replaced = &.{"button.foo"},
+        },
+        .{
+            .selector_input = "#a.foo",
+            .extendee = "#a",
+            .extender = "#b",
+            .extended = &.{ "#a.foo", ".foo#b" },
+            .replaced = &.{".foo#b"},
+        },
+        .{
+            .selector_input = "%a.foo",
+            .extendee = "%a",
+            .extender = "%b",
+            .extended = &.{ "%a.foo", ".foo%b" },
+            .replaced = &.{".foo%b"},
+        },
+        .{
+            .selector_input = ".x > .a + .y",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".x > .a + .y", ".x > .b + .y" },
+            .replaced = &.{".x > .b + .y"},
+        },
+        .{
+            .selector_input = ".a.c .a.d",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{
+                ".a.c .a.d",
+                ".c.b .a.d",
+                ".a.c .d.b",
+                ".c.b .d.b",
+            },
+            .replaced = &.{".c.b .d.b"},
+        },
+        .{
+            .selector_input = ".a.c, .x > .a.d, .none",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{
+                ".a.c",
+                ".c.b",
+                ".x > .a.d",
+                ".x > .d.b",
+                ".none",
+            },
+            .replaced = &.{ ".c.b", ".x > .d.b", ".none" },
+        },
+        .{
+            .selector_input = ".a.b",
+            .extendee = ".a",
+            .extender = ".a",
+            .extended = &.{".a.b"},
+            .replaced = &.{".b.a"},
+        },
+        .{
+            .selector_input = ".a, .x > .a",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".a", ".b", ".x > .a" },
+            .replaced = &.{ ".b", ".x > .b" },
+        },
+        .{
+            .selector_input = ".x > .a, .a",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".x > .a", ".a", ".b" },
+            .replaced = &.{ ".x > .b", ".b" },
+        },
+        .{
+            .selector_input = ".a, .b",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".a", ".b" },
+            .replaced = &.{".b"},
+        },
+        .{
+            .selector_input = ".x .b, .x > .a",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".x .b", ".x > .a" },
+            .replaced = &.{ ".x .b", ".x > .b" },
+        },
+        .{
+            .selector_input = ".a, .b.c",
+            .extendee = ".a",
+            .extender = ".c.b",
+            .extended = &.{ ".a", ".b.c" },
+            .replaced = &.{ ".c.b", ".b.c" },
+        },
+        .{
+            .selector_input = ".x > .b, .x .a",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".x > .b", ".x .a", ".x .b" },
+            .replaced = &.{ ".x > .b", ".x .b" },
+        },
+        .{
+            .selector_input = ".x > .a, .x .b",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".x > .a", ".x .b" },
+            .replaced = &.{ ".x > .b", ".x .b" },
+        },
+        .{
+            .selector_input = ".x .a, .x > .b",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".x .a", ".x .b", ".x > .b" },
+            .replaced = &.{ ".x .b", ".x > .b" },
+        },
+    };
+    for (cases) |case| {
+        var extended = try selector.extend(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer extended.deinit();
+        try expectItems(case.extended, extended);
+
+        var replaced = try selector.replace(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer replaced.deinit();
+        try expectItems(case.replaced, replaced);
+    }
+}
+
+test "native Sass selector extension and replacement fail closed and honor limits" {
+    const unsupported = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+    }{
+        .{ .selector_input = ".a", .extendee = ".a, .c", .extender = ".b" },
+        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b, .c" },
+        .{ .selector_input = ".a", .extendee = ".x .a", .extender = ".b" },
+        .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
+        .{ .selector_input = ".a.b, .b.a", .extendee = ".a", .extender = ".c" },
+        .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button" },
+        .{ .selector_input = ".a.a", .extendee = ".a", .extender = ".b" },
+        .{ .selector_input = ".a", .extendee = ".a.a", .extender = ".b" },
+        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b.b" },
+        .{ .selector_input = ".\\66 oo", .extendee = ".foo", .extender = ".b" },
+        .{ .selector_input = "[x=\"y\"]", .extendee = "[x=y]", .extender = ".b" },
+        .{ .selector_input = ":is(.a)", .extendee = ".a", .extender = ".b" },
+        .{ .selector_input = "svg|a", .extendee = "svg|a", .extender = "button" },
+        .{ .selector_input = "*.a", .extendee = ".a", .extender = ".b" },
+    };
+    for (unsupported) |case| {
+        try std.testing.expectError(
+            error.UnsupportedSelectorExtension,
+            selector.extend(
+                std.testing.allocator,
+                case.selector_input,
+                case.extendee,
+                case.extender,
+                .{},
+            ),
+        );
+        try std.testing.expectError(
+            error.UnsupportedSelectorExtension,
+            selector.replace(
+                std.testing.allocator,
+                case.selector_input,
+                case.extendee,
+                case.extender,
+                .{},
+            ),
+        );
+    }
+
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.extend(
+            std.testing.allocator,
+            ".a .a",
+            ".a",
+            ".b",
+            .{ .max_selectors = 6 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.replace(
+            std.testing.allocator,
+            ".a .a",
+            ".a",
+            ".b",
+            .{ .max_bytes = 13 },
+        ),
+    );
+
+    const below_exact = [_]selector.Limits{
+        .{ .max_selectors = 6 },
+        .{ .max_bytes = 28 },
+        .{ .max_complex_components = 33 },
+        .{ .max_temporary_bytes = 625 },
+        .{ .max_relation_operations = 146 },
+    };
+    for (below_exact) |limits| {
+        try std.testing.expectError(
+            error.SelectorLimitExceeded,
+            selector.extend(
+                std.testing.allocator,
+                ".a .a",
+                ".a",
+                ".b",
+                limits,
+            ),
+        );
+    }
+    var exactly_bounded = try selector.extend(
+        std.testing.allocator,
+        ".a .a",
+        ".a",
+        ".b",
+        .{
+            .max_selectors = 7,
+            .max_bytes = 29,
+            .max_complex_components = 34,
+            .max_temporary_bytes = 626,
+            .max_relation_operations = 147,
+        },
+    );
+    defer exactly_bounded.deinit();
+    try expectItems(
+        &.{ ".a .a", ".b .a", ".a .b", ".b .b" },
+        exactly_bounded,
+    );
+}
+
 test "native Sass selector unification replaces complex subjects and strict ancestry" {
     const cases = [_]struct {
         left: []const u8,
@@ -1299,9 +1565,32 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     )) orelse return error.TestUnexpectedResult;
     defer unified.deinit();
     try expectItems(&.{".d .a > .b .c.e"}, unified);
+
+    var extended = try selector.extend(
+        allocator,
+        ".a.c .a.d",
+        ".a",
+        ".b",
+        .{},
+    );
+    defer extended.deinit();
+    try expectItems(
+        &.{ ".a.c .a.d", ".c.b .a.d", ".a.c .d.b", ".c.b .d.b" },
+        extended,
+    );
+
+    var replaced = try selector.replace(
+        allocator,
+        ".a.c .a.d",
+        ".a",
+        ".b",
+        .{},
+    );
+    defer replaced.deinit();
+    try expectItems(&.{".c.b .d.b"}, replaced);
 }
 
-test "native Sass selector parsing composition relations and unification handle every allocation failure" {
+test "native Sass selector parsing composition relations extension replacement and unification handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAllocationFailures,

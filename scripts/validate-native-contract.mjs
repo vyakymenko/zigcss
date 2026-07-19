@@ -154,6 +154,7 @@ const expectedImplementations = Object.freeze([
       'built-in-selector-parse-simple',
       'built-in-selector-composition',
       'built-in-selector-relations',
+      'built-in-selector-extend-replace-compound',
       'built-in-selector-unify-compound',
       'built-in-selector-unify-complex-strict',
       'built-in-selector-unify-complex-weave-disjoint',
