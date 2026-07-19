@@ -506,13 +506,29 @@ const ExtensionCandidates = struct {
     }
 };
 
-/// Adds every selector produced by extending a single bounded compound extendee
-/// with a single bounded compound extender. Complex target selectors and every
-/// standard combinator are preserved, and each matching compound participates
-/// in Dart Sass's earliest-component-fastest expansion order. Extendee/extender
-/// lists, complex extenders, duplicate-simple and attribute normalization,
-/// escaped identifiers, namespace inference, and pseudo-selector inference
-/// remain explicitly unavailable.
+const ExtensionListOptions = struct {
+    allocator: std.mem.Allocator,
+    items: []std.ArrayList([]u8),
+
+    fn deinit(self: *ExtensionListOptions) void {
+        for (self.items) |*options| {
+            for (options.items) |item| self.allocator.free(item);
+            options.deinit(self.allocator);
+        }
+        self.allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
+const extension_trim_threshold = 100;
+
+/// Adds every selector produced by extending bounded compound extendees with
+/// bounded compound extenders. Complex target selectors and every standard
+/// combinator are preserved, and each matching compound participates in Dart
+/// Sass's earliest-component-fastest expansion order. Extendee list members are
+/// applied sequentially. Complex extendees/extenders, duplicate-simple and
+/// attribute normalization, escaped identifiers, namespace inference, and
+/// pseudo-selector inference remain explicitly unavailable.
 pub fn extend(
     allocator: std.mem.Allocator,
     selector_input: []const u8,
@@ -648,12 +664,11 @@ fn selectorExtension(
     );
     defer extender_complexes.deinit();
 
-    if (extendee_complexes.items.len != 1 or
-        extendee_complexes.items[0].components.len != 1 or
-        extender_complexes.items.len != 1 or
-        extender_complexes.items[0].components.len != 1)
-    {
-        return error.UnsupportedSelectorExtension;
+    for (extendee_complexes.items) |complex| {
+        if (complex.components.len != 1) return error.UnsupportedSelectorExtension;
+    }
+    for (extender_complexes.items) |complex| {
+        if (complex.components.len != 1) return error.UnsupportedSelectorExtension;
     }
     for (selector_complexes.items, 0..) |left, left_index| {
         for (selector_complexes.items[left_index + 1 ..]) |right| {
@@ -661,6 +676,21 @@ fn selectorExtension(
                 return error.UnsupportedSelectorExtension;
             }
         }
+    }
+    const list_mode = extendee_complexes.items.len > 1 or
+        extender_complexes.items.len > 1;
+    if (list_mode) {
+        try validateExtensionMembersUnique(extendee_complexes.items, &context);
+        try validateExtensionMembersUnique(extender_complexes.items, &context);
+        return selectorExtensionLists(
+            allocator,
+            selector_complexes.items,
+            extendee_complexes.items,
+            extender_complexes.items,
+            output_limits,
+            mode,
+            &context,
+        );
     }
 
     var pattern = try loadExtensionPattern(
@@ -686,6 +716,27 @@ fn selectorExtension(
     }
     try pruneExtensionCandidates(mode, &candidates, &context);
 
+    return finishExtensionCandidates(allocator, &candidates, output_limits);
+}
+
+fn validateExtensionMembersUnique(
+    complexes: []const RelationComplex,
+    context: *UnifyContext,
+) Error!void {
+    for (complexes, 0..) |left, left_index| {
+        for (complexes[left_index + 1 ..]) |right| {
+            if (try extensionComplexesEquivalent(left, right, context)) {
+                return error.UnsupportedSelectorExtension;
+            }
+        }
+    }
+}
+
+fn finishExtensionCandidates(
+    allocator: std.mem.Allocator,
+    candidates: *ExtensionCandidates,
+    output_limits: Limits,
+) Error!SelectorList {
     var builder = Builder{ .allocator = allocator, .limits = output_limits };
     errdefer builder.deinit();
     for (candidates.items.items) |*candidate| {
@@ -701,6 +752,429 @@ fn selectorExtension(
     }
     if (builder.items.items.len == 0) return error.UnsupportedSelectorExtension;
     return builder.finish();
+}
+
+fn selectorExtensionLists(
+    allocator: std.mem.Allocator,
+    selector_complexes: []const RelationComplex,
+    extendee_complexes: []const RelationComplex,
+    extender_complexes: []const RelationComplex,
+    output_limits: Limits,
+    mode: ExtensionMode,
+    context: *UnifyContext,
+) Error!SelectorList {
+    var current = ExtensionCandidates{ .allocator = allocator };
+    var has_current = false;
+    defer if (has_current) current.deinit();
+
+    for (extendee_complexes) |extendee| {
+        var pattern = try loadExtensionPattern(
+            allocator,
+            extendee.components[0].compound,
+            context,
+        );
+        defer pattern.deinit();
+
+        var next = ExtensionCandidates{ .allocator = allocator };
+        errdefer next.deinit();
+        var stage_applied = false;
+        if (has_current) {
+            for (current.items.items) |candidate| {
+                if (candidate.removed) continue;
+                const candidate_applied = try emitExtensionListCandidates(
+                    allocator,
+                    candidate.complex,
+                    candidate.original,
+                    &pattern,
+                    extender_complexes,
+                    mode,
+                    output_limits.max_selectors,
+                    context,
+                    &next,
+                );
+                stage_applied = stage_applied or candidate_applied;
+            }
+        } else {
+            for (selector_complexes) |complex| {
+                const candidate_applied = try emitExtensionListCandidates(
+                    allocator,
+                    complex,
+                    true,
+                    &pattern,
+                    extender_complexes,
+                    mode,
+                    output_limits.max_selectors,
+                    context,
+                    &next,
+                );
+                stage_applied = stage_applied or candidate_applied;
+            }
+        }
+        if (stage_applied) {
+            try pruneExtensionListCandidates(allocator, &next, context);
+        }
+        if (has_current) current.deinit();
+        current = next;
+        has_current = true;
+    }
+
+    return finishExtensionCandidates(allocator, &current, output_limits);
+}
+
+fn emitExtensionListCandidates(
+    allocator: std.mem.Allocator,
+    complex: RelationComplex,
+    source_original: bool,
+    pattern: *const ExtensionPattern,
+    extenders: []const RelationComplex,
+    mode: ExtensionMode,
+    maximum_candidates: usize,
+    context: *UnifyContext,
+    candidates: *ExtensionCandidates,
+) Error!bool {
+    const options_bytes = std.math.mul(
+        usize,
+        complex.components.len,
+        @sizeOf(std.ArrayList([]u8)),
+    ) catch return error.SelectorLimitExceeded;
+    try context.reserveTemporary(options_bytes);
+    const option_items = try allocator.alloc(
+        std.ArrayList([]u8),
+        complex.components.len,
+    );
+    for (option_items) |*options| options.* = .empty;
+    var replacement_options = ExtensionListOptions{
+        .allocator = allocator,
+        .items = option_items,
+    };
+    defer replacement_options.deinit();
+
+    var extension_applied = false;
+    for (complex.components, 0..) |component, component_index| {
+        var pattern_matched = false;
+        for (extenders) |extender| {
+            const result = try extensionCompoundReplacement(
+                allocator,
+                component.compound,
+                pattern,
+                extender.components[0].compound,
+                context,
+            );
+            switch (result) {
+                .no_match => {
+                    if (pattern_matched) return error.InvalidSelector;
+                    break;
+                },
+                .replacement => |owned| {
+                    pattern_matched = true;
+                    extension_applied = true;
+                    var retained = false;
+                    defer if (!retained) allocator.free(owned);
+                    if (mode == .extend and try extensionCompoundsEquivalent(
+                        component.compound,
+                        owned,
+                        context,
+                    )) {
+                        continue;
+                    }
+                    try appendExtensionListOption(
+                        allocator,
+                        &replacement_options.items[component_index],
+                        owned,
+                        context,
+                    );
+                    retained = true;
+                },
+            }
+        }
+    }
+
+    if (extension_applied) {
+        try ensureExtensionListPatternExpansionBound(
+            pattern.tokens.len,
+            extenders.len,
+            mode,
+            context,
+        );
+    }
+
+    if (candidates.items.items.len >= maximum_candidates) {
+        return error.SelectorLimitExceeded;
+    }
+    const remaining = maximum_candidates - candidates.items.items.len;
+    var expansion_count: usize = 1;
+    for (replacement_options.items) |options| {
+        const choice_count = extensionListChoiceCount(options.items.len, mode) catch
+            return error.SelectorLimitExceeded;
+        expansion_count = std.math.mul(
+            usize,
+            expansion_count,
+            choice_count,
+        ) catch return error.SelectorLimitExceeded;
+        if (expansion_count > remaining) return error.SelectorLimitExceeded;
+    }
+
+    for (0..expansion_count) |ordinal| {
+        const rendered = try renderExtensionListCandidate(
+            allocator,
+            complex,
+            replacement_options.items,
+            ordinal,
+            mode,
+            context,
+        );
+        try appendExtensionCandidate(
+            allocator,
+            candidates,
+            rendered,
+            source_original and ordinal == 0,
+            context,
+        );
+    }
+    return extension_applied;
+}
+
+fn appendExtensionListOption(
+    allocator: std.mem.Allocator,
+    options: *std.ArrayList([]u8),
+    owned: []u8,
+    context: *UnifyContext,
+) Error!void {
+    const next_length = std.math.add(usize, options.items.len, 1) catch
+        return error.SelectorLimitExceeded;
+    if (next_length > options.capacity) {
+        const additional = next_length - options.capacity;
+        const additional_bytes = std.math.mul(
+            usize,
+            additional,
+            @sizeOf([]u8),
+        ) catch return error.SelectorLimitExceeded;
+        try context.reserveTemporary(additional_bytes);
+        try options.ensureTotalCapacityPrecise(allocator, next_length);
+    }
+    options.appendAssumeCapacity(owned);
+}
+
+fn extensionListChoiceCount(
+    replacement_count: usize,
+    mode: ExtensionMode,
+) error{SelectorLimitExceeded}!usize {
+    if (replacement_count == 0) return 1;
+    return if (mode == .extend)
+        std.math.add(usize, replacement_count, 1) catch
+            error.SelectorLimitExceeded
+    else
+        replacement_count;
+}
+
+fn ensureExtensionListPatternExpansionBound(
+    pattern_token_count: usize,
+    extender_count: usize,
+    mode: ExtensionMode,
+    context: *UnifyContext,
+) Error!void {
+    const choice_count = try extensionListChoiceCount(extender_count, mode);
+    var expansion_count: usize = 1;
+    for (0..pattern_token_count) |_| {
+        try context.consume(1);
+        expansion_count = std.math.mul(
+            usize,
+            expansion_count,
+            choice_count,
+        ) catch return error.SelectorLimitExceeded;
+        if (expansion_count > extension_trim_threshold) {
+            return error.SelectorLimitExceeded;
+        }
+    }
+}
+
+fn renderExtensionListCandidate(
+    allocator: std.mem.Allocator,
+    complex: RelationComplex,
+    replacement_options: []const std.ArrayList([]u8),
+    ordinal: usize,
+    mode: ExtensionMode,
+    context: *UnifyContext,
+) Error![]u8 {
+    if (replacement_options.len != complex.components.len) {
+        return error.InvalidSelector;
+    }
+    try context.reserveComponents(complex.components.len);
+    var output_length: usize = 0;
+    var remaining_ordinal = ordinal;
+    for (complex.components, replacement_options) |component, options| {
+        const compound = try extensionListCandidateCompound(
+            component.compound,
+            options.items,
+            mode,
+            &remaining_ordinal,
+        );
+        try context.consume(1);
+        output_length = std.math.add(usize, output_length, compound.len) catch
+            return error.SelectorLimitExceeded;
+        output_length = std.math.add(
+            usize,
+            output_length,
+            unifyCombinatorBytes(component.combinator).len,
+        ) catch return error.SelectorLimitExceeded;
+    }
+    std.debug.assert(remaining_ordinal == 0);
+    if (output_length == 0 or output_length > context.limits.max_bytes) {
+        return error.SelectorLimitExceeded;
+    }
+    try context.reserveTemporary(output_length);
+    const output = try allocator.alloc(u8, output_length);
+    errdefer allocator.free(output);
+
+    var offset: usize = 0;
+    remaining_ordinal = ordinal;
+    for (complex.components, replacement_options) |component, options| {
+        const compound = try extensionListCandidateCompound(
+            component.compound,
+            options.items,
+            mode,
+            &remaining_ordinal,
+        );
+        std.mem.copyForwards(u8, output[offset .. offset + compound.len], compound);
+        offset += compound.len;
+        const combinator = unifyCombinatorBytes(component.combinator);
+        std.mem.copyForwards(u8, output[offset .. offset + combinator.len], combinator);
+        offset += combinator.len;
+    }
+    std.debug.assert(remaining_ordinal == 0);
+    std.debug.assert(offset == output.len);
+    try validateComplex(output, false);
+    return output;
+}
+
+fn extensionListCandidateCompound(
+    original: []const u8,
+    replacements: []const []u8,
+    mode: ExtensionMode,
+    ordinal: *usize,
+) error{SelectorLimitExceeded}![]const u8 {
+    if (replacements.len == 0) return original;
+    const choice_count = try extensionListChoiceCount(replacements.len, mode);
+    const choice = ordinal.* % choice_count;
+    ordinal.* /= choice_count;
+    if (mode == .extend) {
+        return if (choice == 0) original else replacements[choice - 1];
+    }
+    return replacements[choice];
+}
+
+fn pruneExtensionListCandidates(
+    allocator: std.mem.Allocator,
+    candidates: *ExtensionCandidates,
+    context: *UnifyContext,
+) Error!void {
+    const items = candidates.items.items;
+    if (items.len > extension_trim_threshold) return;
+
+    const order_bytes = std.math.mul(usize, items.len, @sizeOf(usize)) catch
+        return error.SelectorLimitExceeded;
+    try context.reserveTemporary(order_bytes);
+    const order = try allocator.alloc(usize, items.len);
+    defer allocator.free(order);
+    var order_length: usize = 0;
+    var original_count: usize = 0;
+
+    var index = items.len;
+    while (index > 0) {
+        index -= 1;
+        const candidate = &items[index];
+        if (candidate.original) {
+            var duplicate_index: ?usize = null;
+            for (0..original_count) |original_index| {
+                if (std.mem.eql(
+                    u8,
+                    items[order[original_index]].bytes,
+                    candidate.bytes,
+                )) {
+                    duplicate_index = original_index;
+                    break;
+                }
+            }
+            if (duplicate_index) |matched_index| {
+                const matched = order[matched_index];
+                var rotate_index = matched_index;
+                while (rotate_index > 0) : (rotate_index -= 1) {
+                    order[rotate_index] = order[rotate_index - 1];
+                }
+                order[0] = matched;
+                continue;
+            }
+            prependExtensionCandidateIndex(order, &order_length, index);
+            original_count += 1;
+            continue;
+        }
+
+        var covered = false;
+        for (order[0..order_length]) |retained_index| {
+            if (try extensionComplexIsSuperselector(
+                items[retained_index].complex,
+                candidate.complex,
+                context,
+            )) {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered) {
+            for (items[0..index]) |earlier| {
+                if (try extensionComplexIsSuperselector(
+                    earlier.complex,
+                    candidate.complex,
+                    context,
+                )) {
+                    covered = true;
+                    break;
+                }
+            }
+        }
+        if (!covered) prependExtensionCandidateIndex(order, &order_length, index);
+    }
+
+    const reordered_bytes = std.math.mul(
+        usize,
+        items.len,
+        @sizeOf(ExtensionCandidate),
+    ) catch return error.SelectorLimitExceeded;
+    try context.reserveTemporary(reordered_bytes);
+    const reordered = try allocator.alloc(ExtensionCandidate, items.len);
+    defer allocator.free(reordered);
+    var reordered_length: usize = 0;
+    for (order[0..order_length]) |candidate_index| {
+        reordered[reordered_length] = items[candidate_index];
+        reordered[reordered_length].removed = false;
+        reordered_length += 1;
+    }
+    for (items, 0..) |candidate, candidate_index| {
+        var retained = false;
+        for (order[0..order_length]) |retained_index| {
+            if (retained_index == candidate_index) {
+                retained = true;
+                break;
+            }
+        }
+        if (retained) continue;
+        reordered[reordered_length] = candidate;
+        reordered[reordered_length].removed = true;
+        reordered_length += 1;
+    }
+    std.debug.assert(reordered_length == items.len);
+    std.mem.copyForwards(ExtensionCandidate, items, reordered);
+}
+
+fn prependExtensionCandidateIndex(
+    order: []usize,
+    order_length: *usize,
+    candidate_index: usize,
+) void {
+    var index = order_length.*;
+    while (index > 0) : (index -= 1) order[index] = order[index - 1];
+    order[0] = candidate_index;
+    order_length.* += 1;
 }
 
 fn buildExtensionComplexList(

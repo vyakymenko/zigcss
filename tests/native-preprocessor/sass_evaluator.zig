@@ -3369,6 +3369,62 @@ test "native Sass selector module extends and replaces compound matches" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module extends and replaces compound lists" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\@use "sass:list";
+        \\.values {
+        \\  extendee-list: selector.extend(".a.c .a", ".a, .c", ".x");
+        \\  replace-extendee-list: selector.replace(".a.c .a", ".a, .c", ".x");
+        \\  extender-list: selector.extend(".a .a", ".a", ".d, .b");
+        \\  replace-extender-list: selector.replace(".a .a", ".a", ".d, .b");
+        \\  both-lists: selector.extend(".a.c", ".a, .c", ".b, .d");
+        \\  replace-both-lists: selector.replace(".a, .c", ".a, .c", ".b, .d");
+        \\  ordered: selector.replace(".a.b", ".a, .a.b", ".x");
+        \\  reversed: selector.replace(".a.b", ".a.b, .a", ".x");
+        \\  typed: selector.replace("button.a, #id.a", ".a, .z", ".b, .c");
+        \\  no-match: selector.extend(".none", ".a, .c", ".b, .d");
+        \\  type: meta.type-of(selector.extend(".a", ".a, .c", ".b, .d"));
+        \\  separator: list.separator(selector.extend(".a", ".a, .c", ".b, .d"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-extend-replace-lists.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{extendee-list:.a.c .a,.x .a,.a.c .x,.x .x;replace-extendee-list:.x .x;extender-list:.a .a,.d .a,.b .a,.a .d,.d .d,.b .d,.a .b,.d .b,.b .b;replace-extender-list:.d .d,.b .d,.d .b,.b .b;both-lists:.a.c,.b,.d;replace-both-lists:.b,.d,.b;ordered:.b.x;reversed:.x;typed:button.b,button.c,#id.b,#id.c;no-match:.none;type:list;separator:comma}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  extendee: selector.extend(".a.c", ".a, .c", ".x")
+        \\  extender: selector.replace(".a .a", ".a", ".d, .b")
+        \\  ordered: selector.replace(".a.b", ".a, .a.b", ".x")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-extend-replace-lists.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{extendee:.a.c,.x;extender:.d .d,.b .d,.d .b,.b .b;ordered:.b.x}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -3935,8 +3991,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "selector-extend-list-extendee-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.extend(\".a\", \".a, .c\", \".b\"); }",
+            .name = "selector-extend-duplicate-extendee-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.extend(\".a\", \".a, .a\", \".b\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -4100,6 +4156,19 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             "@use \"sass:selector\"; $value: selector.extend(\".a .a\", \".a\", \".b\");",
             .scss,
             extension_count,
+        ),
+    );
+
+    var extension_list_count = sass_evaluator.Limits{};
+    extension_list_count.max_selectors = 12;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "selector-extension-list-count-limit.scss",
+            "@use \"sass:selector\"; $value: selector.extend(\".a .a\", \".a\", \".b, .c\");",
+            .scss,
+            extension_list_count,
         ),
     );
 }
@@ -7554,6 +7623,8 @@ fn exerciseSelectorAllocationFailures(
         \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
         \\  extended: selector.extend(".a.c .a.d", ".a", ".b");
         \\  replaced: selector.replace(".a.c .a.d", ".a", ".b");
+        \\  list-extended: selector.extend(".a.c .a", ".a, .c", ".x, .y");
+        \\  list-replaced: selector.replace(".a, .c", ".a, .c", ".b, .d");
         \\  unified: selector.unify(".a > .b .c", ".d .b .e");
         \\}
     ;
@@ -7574,7 +7645,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:.a.c .a.d,.c.b .a.d,.a.c .d.b,.c.b .d.b;replaced:.c.b .d.b;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:.a.c .a.d,.c.b .a.d,.a.c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

@@ -559,14 +559,198 @@ test "native Sass selector extension and replacement expand compound matches" {
     }
 }
 
+test "native Sass selector extension and replacement expand compound lists" {
+    const cases = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+        extended: []const []const u8,
+        replaced: []const []const u8,
+    }{
+        .{
+            .selector_input = ".a.c .a",
+            .extendee = ".a, .c",
+            .extender = ".x",
+            .extended = &.{ ".a.c .a", ".x .a", ".a.c .x", ".x .x" },
+            .replaced = &.{".x .x"},
+        },
+        .{
+            .selector_input = ".a .a",
+            .extendee = ".a",
+            .extender = ".d, .b",
+            .extended = &.{
+                ".a .a",
+                ".d .a",
+                ".b .a",
+                ".a .d",
+                ".d .d",
+                ".b .d",
+                ".a .b",
+                ".d .b",
+                ".b .b",
+            },
+            .replaced = &.{ ".d .d", ".b .d", ".d .b", ".b .b" },
+        },
+        .{
+            .selector_input = ".a.c",
+            .extendee = ".a, .c",
+            .extender = ".b, .d",
+            .extended = &.{ ".a.c", ".b", ".d" },
+            .replaced = &.{ ".b", ".d" },
+        },
+        .{
+            .selector_input = ".a, .c",
+            .extendee = ".a, .c",
+            .extender = ".b, .d",
+            .extended = &.{ ".a", ".b", ".d", ".c" },
+            .replaced = &.{ ".b", ".d", ".b" },
+        },
+        .{
+            .selector_input = ".a.b.c",
+            .extendee = ".a.b, .c",
+            .extender = ".x, .y",
+            .extended = &.{ ".a.b.c", ".x", ".y" },
+            .replaced = &.{ ".x", ".y" },
+        },
+        .{
+            .selector_input = ".a.b.c.d",
+            .extendee = ".a.b.c.d",
+            .extender = ".x, .y",
+            .extended = &.{ ".a.b.c.d", ".x", ".y" },
+            .replaced = &.{ ".x", ".y" },
+        },
+        .{
+            .selector_input = ".p > .a + .a",
+            .extendee = ".a",
+            .extender = ".b, .c",
+            .extended = &.{
+                ".p > .a + .a",
+                ".p > .b + .a",
+                ".p > .c + .a",
+                ".p > .a + .b",
+                ".p > .b + .b",
+                ".p > .c + .b",
+                ".p > .a + .c",
+                ".p > .b + .c",
+                ".p > .c + .c",
+            },
+            .replaced = &.{
+                ".p > .b + .b",
+                ".p > .c + .b",
+                ".p > .b + .c",
+                ".p > .c + .c",
+            },
+        },
+        .{
+            .selector_input = ".a.b",
+            .extendee = ".a, .a.b",
+            .extender = ".x",
+            .extended = &.{ ".a.b", ".x" },
+            .replaced = &.{".b.x"},
+        },
+        .{
+            .selector_input = ".none",
+            .extendee = ".a, .c",
+            .extender = ".b, .d",
+            .extended = &.{".none"},
+            .replaced = &.{".none"},
+        },
+        .{
+            .selector_input = ".none",
+            .extendee = ".a.b.c.d.e.f.g",
+            .extender = ".x, .y",
+            .extended = &.{".none"},
+            .replaced = &.{".none"},
+        },
+    };
+    for (cases) |case| {
+        var extended = try selector.extend(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer extended.deinit();
+        try expectItems(case.extended, extended);
+
+        var replaced = try selector.replace(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer replaced.deinit();
+        try expectItems(case.replaced, replaced);
+    }
+
+    var original_order = try selector.replace(
+        std.testing.allocator,
+        ".a, .b",
+        ".a",
+        ".b, .c",
+        .{},
+    );
+    defer original_order.deinit();
+    try expectItems(&.{ ".b", ".c", ".b" }, original_order);
+
+    var reversed = try selector.replace(
+        std.testing.allocator,
+        ".a.b",
+        ".a.b, .a",
+        ".x",
+        .{},
+    );
+    defer reversed.deinit();
+    try expectItems(&.{".x"}, reversed);
+
+    var typed = try selector.replace(
+        std.testing.allocator,
+        "button.a, #id.a",
+        ".a, .z",
+        ".b, .c",
+        .{},
+    );
+    defer typed.deinit();
+    try expectItems(&.{ "button.b", "button.c", "#id.b", "#id.c" }, typed);
+
+    var above_trim_threshold = try selector.extend(
+        std.testing.allocator,
+        ".a .a .a .a .a",
+        ".a",
+        ".b, .c",
+        .{},
+    );
+    defer above_trim_threshold.deinit();
+    try std.testing.expectEqual(@as(usize, 243), above_trim_threshold.items.len);
+    try std.testing.expectEqualStrings(
+        ".a .a .a .a .a",
+        above_trim_threshold.items[0],
+    );
+    try std.testing.expectEqualStrings(
+        ".b .a .a .a .a",
+        above_trim_threshold.items[1],
+    );
+    try std.testing.expectEqualStrings(
+        ".c .c .c .c .c",
+        above_trim_threshold.items[242],
+    );
+}
+
 test "native Sass selector extension and replacement fail closed and honor limits" {
     const unsupported = [_]struct {
         selector_input: []const u8,
         extendee: []const u8,
         extender: []const u8,
     }{
-        .{ .selector_input = ".a", .extendee = ".a, .c", .extender = ".b" },
-        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b, .c" },
+        .{ .selector_input = ".a", .extendee = ".a, .x .c", .extender = ".b" },
+        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b, .x .c" },
+        .{ .selector_input = ".a", .extendee = ".a, .a", .extender = ".b" },
+        .{ .selector_input = ".a", .extendee = ".a.b, .b.a", .extender = ".c" },
+        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b, .b" },
+        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b.c, .c.b" },
+        .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button, .x" },
         .{ .selector_input = ".a", .extendee = ".x .a", .extender = ".b" },
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
         .{ .selector_input = ".a.b, .b.a", .extendee = ".a", .extender = ".c" },
@@ -602,6 +786,31 @@ test "native Sass selector extension and replacement fail closed and honor limit
             ),
         );
     }
+
+    // Dart Sass stops trimming an individual compound's generated extension
+    // power set above 100 candidates. The bounded native list slice does not
+    // yet materialize those otherwise-redundant mixed compounds, so reject
+    // that boundary instead of returning a silently incomplete selector list.
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.extend(
+            std.testing.allocator,
+            ".a.b.c.d.e",
+            ".a.b.c.d.e",
+            ".x, .y",
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.replace(
+            std.testing.allocator,
+            ".a.b.c.d.e.f.g",
+            ".a.b.c.d.e.f.g",
+            ".x, .y",
+            .{},
+        ),
+    );
 
     try std.testing.expectError(
         error.SelectorLimitExceeded,
@@ -660,6 +869,45 @@ test "native Sass selector extension and replacement fail closed and honor limit
     try expectItems(
         &.{ ".a .a", ".b .a", ".a .b", ".b .b" },
         exactly_bounded,
+    );
+
+    const list_below_exact = [_]selector.Limits{
+        .{ .max_selectors = 12 },
+        .{ .max_bytes = 55 },
+    };
+    for (list_below_exact) |limits| {
+        try std.testing.expectError(
+            error.SelectorLimitExceeded,
+            selector.extend(
+                std.testing.allocator,
+                ".a .a",
+                ".a",
+                ".b, .c",
+                limits,
+            ),
+        );
+    }
+    var exactly_bounded_list = try selector.extend(
+        std.testing.allocator,
+        ".a .a",
+        ".a",
+        ".b, .c",
+        .{ .max_selectors = 13, .max_bytes = 56 },
+    );
+    defer exactly_bounded_list.deinit();
+    try expectItems(
+        &.{
+            ".a .a",
+            ".b .a",
+            ".c .a",
+            ".a .b",
+            ".b .b",
+            ".c .b",
+            ".a .c",
+            ".b .c",
+            ".c .c",
+        },
+        exactly_bounded_list,
     );
 }
 
@@ -1588,6 +1836,39 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     );
     defer replaced.deinit();
     try expectItems(&.{".c.b .d.b"}, replaced);
+
+    var list_extended = try selector.extend(
+        allocator,
+        ".a.c .a",
+        ".a, .c",
+        ".x, .y",
+        .{},
+    );
+    defer list_extended.deinit();
+    try expectItems(
+        &.{
+            ".a.c .a",
+            ".x .a",
+            ".y .a",
+            ".a.c .x",
+            ".x .x",
+            ".y .x",
+            ".a.c .y",
+            ".x .y",
+            ".y .y",
+        },
+        list_extended,
+    );
+
+    var list_replaced = try selector.replace(
+        allocator,
+        ".a, .c",
+        ".a, .c",
+        ".b, .d",
+        .{},
+    );
+    defer list_replaced.deinit();
+    try expectItems(&.{ ".b", ".d", ".b" }, list_replaced);
 }
 
 test "native Sass selector parsing composition relations extension replacement and unification handle every allocation failure" {
