@@ -191,6 +191,16 @@ pub fn build(b: *std.Build) void {
         .root_module = native_sass_string_test_module,
     });
     const run_native_sass_string_tests = b.addRunArtifact(native_sass_string_tests);
+    const native_sass_selector_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/native-preprocessor/sass_selector.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    native_sass_selector_test_module.addImport("native_preprocessor", native_preprocessor_module);
+    const native_sass_selector_tests = b.addTest(.{
+        .root_module = native_sass_selector_test_module,
+    });
+    const run_native_sass_selector_tests = b.addRunArtifact(native_sass_selector_tests);
     const native_sass_evaluator_test_module = b.createModule(.{
         .root_source_file = b.path("tests/native-preprocessor/sass_evaluator.zig"),
         .target = target,
@@ -215,6 +225,7 @@ pub fn build(b: *std.Build) void {
     native_preprocessor_test_step.dependOn(&run_native_sass_numeric_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_color_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_string_tests.step);
+    native_preprocessor_test_step.dependOn(&run_native_sass_selector_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_evaluator_tests.step);
 
     const public_api_test_module = b.createModule(.{
@@ -326,6 +337,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_native_sass_numeric_tests.step);
     test_step.dependOn(&run_native_sass_color_tests.step);
     test_step.dependOn(&run_native_sass_string_tests.step);
+    test_step.dependOn(&run_native_sass_selector_tests.step);
     test_step.dependOn(&run_native_sass_evaluator_tests.step);
     test_step.dependOn(&run_public_api_tests.step);
     test_step.dependOn(documentation_examples_step);

@@ -10,6 +10,7 @@ const native_lexer = @import("lexer.zig");
 const native_arguments = @import("sass_arguments.zig");
 const native_color = @import("sass_color.zig");
 const native_numeric = @import("sass_numeric.zig");
+const native_selector = @import("sass_selector.zig");
 const native_string = @import("sass_string.zig");
 const native_source = @import("source.zig");
 const native_syntax = @import("syntax.zig");
@@ -45,6 +46,7 @@ pub const Error = native_evaluator.Error ||
     native_arguments.Error ||
     native_color.Error ||
     native_numeric.Error ||
+    native_selector.Error ||
     native_string.Error ||
     native_source.Error ||
     native_value.Error || error{
@@ -149,6 +151,8 @@ const Builtin = enum {
     meta_inspect,
     meta_keywords,
     meta_type_of,
+    selector_parse,
+    selector_simple_selectors,
     quote,
     unquote,
     str_length,
@@ -482,6 +486,7 @@ const BuiltinModule = enum {
     map,
     math,
     meta,
+    selector,
     string,
 };
 
@@ -921,6 +926,8 @@ const Engine = struct {
             .math
         else if (std.mem.eql(u8, parsed.url, "sass:meta"))
             .meta
+        else if (std.mem.eql(u8, parsed.url, "sass:selector"))
+            .selector
         else if (std.mem.eql(u8, parsed.url, "sass:string"))
             .string
         else {
@@ -945,6 +952,7 @@ const Engine = struct {
                 .map => "map",
                 .math => "math",
                 .meta => "meta",
+                .selector => "selector",
                 .string => "string",
             };
         if (namespace == null and module_kind == .math) {
@@ -4194,10 +4202,13 @@ const Engine = struct {
                     .map => mapModuleBuiltin(name),
                     .math => mathModuleBuiltin(name),
                     .meta => metaModuleBuiltin(name),
+                    .selector => selectorModuleBuiltin(name),
                     .string => stringModuleBuiltin(name),
                 };
                 if (builtin) |resolved| return resolved;
-                if (binding.kind == .math and mathModuleOwnsFunction(name)) {
+                if ((binding.kind == .math and mathModuleOwnsFunction(name)) or
+                    (binding.kind == .selector and selectorModuleOwnsFunction(name)))
+                {
                     try self.report(
                         .invalid_operation,
                         span,
@@ -4228,6 +4239,7 @@ const Engine = struct {
             .map => mapModuleBuiltin(qualified.member),
             .math => mathModuleBuiltin(qualified.member),
             .meta => metaModuleBuiltin(qualified.member),
+            .selector => selectorModuleBuiltin(qualified.member),
             .string => stringModuleBuiltin(qualified.member),
         };
         return builtin orelse {
@@ -4548,6 +4560,8 @@ const Engine = struct {
             .meta_inspect,
             .meta_keywords,
             .meta_type_of,
+            .selector_parse,
+            .selector_simple_selectors,
             .red,
             .green,
             .blue,
@@ -7596,6 +7610,232 @@ const Engine = struct {
         return self.values.own(.{ .string = .{ .bytes = name } });
     }
 
+    fn callSelectorParse(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.invalid_operation, span, "selector.parse() requires exactly one argument");
+            return error.InvalidExpression;
+        }
+        const input = try self.selectorInput(arguments[0].*, span);
+        defer self.allocator.free(input);
+        var parsed = try self.parseSelectorValue(input, false, span);
+        defer parsed.deinit();
+        return self.ownSelectorValues(&parsed, true, span);
+    }
+
+    fn callSelectorSimpleSelectors(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "selector.simple-selectors() requires exactly one argument",
+            );
+            return error.InvalidExpression;
+        }
+        const input = try self.selectorInput(arguments[0].*, span);
+        defer self.allocator.free(input);
+        var parsed = try self.parseSelectorValue(input, true, span);
+        defer parsed.deinit();
+        return self.ownSelectorValues(&parsed, false, span);
+    }
+
+    fn selectorInput(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error![]u8 {
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        self.appendSelectorInput(&output, value, span) catch |err| switch (err) {
+            error.TemporaryLimitExceeded => {
+                try self.report(.resource_limit, span, "native Sass selector temporary limit exceeded");
+                return err;
+            },
+            else => return err,
+        };
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn appendSelectorInput(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!void {
+        switch (value) {
+            .string => |string| try self.appendSelectorString(output, string, span),
+            .selector => |selector| try self.appendTemporary(output, selector.bytes),
+            .list => |list| {
+                if (list.items.len == 0 or list.separator == .slash or
+                    list.separator == .legacy_slash)
+                {
+                    return self.invalidSelectorInput(span);
+                }
+                switch (list.separator) {
+                    .comma => for (list.items, 0..) |item, index| {
+                        if (index > 0) try self.appendTemporary(output, ", ");
+                        switch (item) {
+                            .string => |string| try self.appendSelectorString(output, string, span),
+                            .selector => |selector| try self.appendTemporary(output, selector.bytes),
+                            .list => |compound| {
+                                if (compound.separator != .space and
+                                    compound.separator != .undecided)
+                                {
+                                    return self.invalidSelectorInput(span);
+                                }
+                                try self.appendSelectorCompoundInput(output, compound, span);
+                            },
+                            else => return self.invalidSelectorInput(span),
+                        }
+                        try self.transaction.consumeOperations(1);
+                    },
+                    .space, .undecided => try self.appendSelectorCompoundInput(output, list, span),
+                    .slash, .legacy_slash => unreachable,
+                }
+            },
+            else => return self.invalidSelectorInput(span),
+        }
+    }
+
+    fn appendSelectorCompoundInput(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        list: native_value.List,
+        span: native_source.Span,
+    ) Error!void {
+        if (list.items.len == 0) return self.invalidSelectorInput(span);
+        for (list.items, 0..) |item, index| {
+            if (index > 0) try self.appendTemporary(output, " ");
+            switch (item) {
+                .string => |string| try self.appendSelectorString(output, string, span),
+                .selector => |selector| try self.appendTemporary(output, selector.bytes),
+                else => return self.invalidSelectorInput(span),
+            }
+            try self.transaction.consumeOperations(1);
+        }
+    }
+
+    fn appendSelectorString(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        string: native_value.String,
+        span: native_source.Span,
+    ) Error!void {
+        const decoded = native_string.decodeAlloc(
+            self.allocator,
+            string.bytes,
+            string.quoted,
+            self.limits.max_temporary_bytes,
+        ) catch |err| switch (err) {
+            error.InvalidString => return self.invalidSelectorInput(span),
+            error.OutputLimitExceeded => return self.selectorTemporaryFailure(span),
+            else => return err,
+        };
+        defer self.allocator.free(decoded);
+        try self.appendTemporary(output, decoded);
+    }
+
+    fn invalidSelectorInput(self: *Engine, span: native_source.Span) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "native Sass selector value must be a nonempty string or compatible string list",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
+    fn parseSelectorValue(
+        self: *Engine,
+        input: []const u8,
+        simple: bool,
+        span: native_source.Span,
+    ) Error!native_selector.SelectorList {
+        const limits = native_selector.Limits{
+            .max_selectors = self.limits.max_selectors -| self.selector_count,
+            .max_bytes = @min(
+                self.limits.max_selector_bytes -| self.selector_bytes,
+                self.limits.max_temporary_bytes,
+            ),
+        };
+        const result = if (simple)
+            native_selector.simpleSelectors(self.allocator, input, limits)
+        else
+            native_selector.parse(self.allocator, input, limits);
+        return result catch |err| switch (err) {
+            error.InvalidSelector => {
+                try self.report(.invalid_operation, span, "invalid native Sass selector value");
+                return error.InvalidExpression;
+            },
+            error.SelectorLimitExceeded => {
+                try self.report(.resource_limit, span, "native Sass selector value limit exceeded");
+                return err;
+            },
+            else => return err,
+        };
+    }
+
+    fn ownSelectorValues(
+        self: *Engine,
+        parsed: *const native_selector.SelectorList,
+        selector_values: bool,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const temporary_bytes = std.math.mul(
+            usize,
+            parsed.items.len,
+            @sizeOf(native_value.Value),
+        ) catch return self.selectorTemporaryFailure(span);
+        if (temporary_bytes > self.limits.max_temporary_bytes) {
+            return self.selectorTemporaryFailure(span);
+        }
+        const values = try self.allocator.alloc(native_value.Value, parsed.items.len);
+        defer self.allocator.free(values);
+        try self.admitSelectorValueCount(parsed.items.len, span);
+        for (parsed.items, 0..) |bytes, index| {
+            try self.transaction.consumeOperations(1);
+            try self.admitSelectorBytes(bytes.len, span);
+            values[index] = if (selector_values)
+                .{ .selector = .{ .bytes = bytes } }
+            else
+                .{ .string = .{ .bytes = bytes } };
+        }
+        return self.values.own(.{ .list = .{
+            .items = values,
+            .separator = .comma,
+        } });
+    }
+
+    fn admitSelectorValueCount(
+        self: *Engine,
+        count: usize,
+        span: native_source.Span,
+    ) Error!void {
+        const next = std.math.add(usize, self.selector_count, count) catch {
+            try self.report(.resource_limit, span, "native Sass selector limit exceeded");
+            return error.SelectorLimitExceeded;
+        };
+        if (next > self.limits.max_selectors) {
+            try self.report(.resource_limit, span, "native Sass selector limit exceeded");
+            return error.SelectorLimitExceeded;
+        }
+        self.selector_count = next;
+    }
+
+    fn selectorTemporaryFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(.resource_limit, span, "native Sass selector temporary limit exceeded") catch |err| return err;
+        return error.TemporaryLimitExceeded;
+    }
+
     fn callMetaKeywords(
         self: *Engine,
         arguments: []const *const native_value.Value,
@@ -8112,6 +8352,7 @@ const Engine = struct {
             .math_unit => &.{.{ .name = "number" }},
             .meta_inspect, .meta_type_of => &.{.{ .name = "value" }},
             .meta_keywords => &.{.{ .name = "args" }},
+            .selector_parse, .selector_simple_selectors => &.{.{ .name = "selector" }},
             .red,
             .green,
             .blue,
@@ -8322,6 +8563,8 @@ const Engine = struct {
             .meta_inspect => self.callMetaInspect(arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .meta_type_of => self.callMetaTypeOf(arguments, span),
+            .selector_parse => self.callSelectorParse(arguments, span),
+            .selector_simple_selectors => self.callSelectorSimpleSelectors(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
                 builtin,
                 arguments,
@@ -9610,6 +9853,29 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "keywords")) return .meta_keywords;
     if (sassNameEql(name, "type-of")) return .meta_type_of;
     return null;
+}
+
+fn selectorModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "parse")) return .selector_parse;
+    if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;
+    return null;
+}
+
+fn selectorModuleOwnsFunction(name: []const u8) bool {
+    const functions = [_][]const u8{
+        "append",
+        "extend",
+        "is-superselector",
+        "nest",
+        "parse",
+        "replace",
+        "simple-selectors",
+        "unify",
+    };
+    for (functions) |function| {
+        if (sassNameEql(name, function)) return true;
+    }
+    return false;
 }
 
 fn stringModuleBuiltin(name: []const u8) ?Builtin {

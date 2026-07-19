@@ -151,6 +151,7 @@ const expectedImplementations = Object.freeze([
       'built-in-color-transform-aliases',
       'built-in-meta-inspection',
       'built-in-meta-keywords',
+      'built-in-selector-parse-simple',
       'built-in-map-queries',
       'shallow-map-mutations',
       'nested-deep-map-mutations',
@@ -192,6 +193,7 @@ const expectedImplementations = Object.freeze([
       'src/preprocessor/sass_numeric.zig',
       'src/preprocessor/sass_color.zig',
       'src/preprocessor/sass_string.zig',
+      'src/preprocessor/sass_selector.zig',
     ]),
     testSources: Object.freeze([
       'tests/native-preprocessor/sass_evaluator.zig',
@@ -199,6 +201,7 @@ const expectedImplementations = Object.freeze([
       'tests/native-preprocessor/sass_numeric.zig',
       'tests/native-preprocessor/sass_color.zig',
       'tests/native-preprocessor/sass_string.zig',
+      'tests/native-preprocessor/sass_selector.zig',
     ]),
     testStep: 'test-native-preprocessor',
     publicAvailable: false,

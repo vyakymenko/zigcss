@@ -17,6 +17,7 @@ pub const sass = @import("preprocessor/sass.zig");
 pub const sass_arguments = @import("preprocessor/sass_arguments.zig");
 pub const sass_numeric = @import("preprocessor/sass_numeric.zig");
 pub const sass_color = @import("preprocessor/sass_color.zig");
+pub const sass_selector = @import("preprocessor/sass_selector.zig");
 pub const sass_string = @import("preprocessor/sass_string.zig");
 pub const sass_evaluator = @import("preprocessor/sass_evaluator.zig");
 

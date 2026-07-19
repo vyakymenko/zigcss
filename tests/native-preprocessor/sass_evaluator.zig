@@ -3076,6 +3076,245 @@ test "native Sass meta inspection rejects unavailable or invalid calls" {
     }
 }
 
+test "native Sass selector module parses lists and decomposes compounds" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:selector" as sel;
+        \\@use "sass:selector" as *;
+        \\@use "sass:meta";
+        \\@use "sass:list";
+        \\$count: 0;
+        \\@function mark($value) { $count: $count + 1 !global; @return $value; }
+        \\.values {
+        \\  basic: selector.parse(".foo");
+        \\  list: selector.parse(".foo > .bar, #id:hover");
+        \\  normalized: selector.parse("  .foo   >   .bar , #id:hover  ");
+        \\  functional: selector.parse("[data-x=\"a,b\"]:not(.x, .y)");
+        \\  leading: selector.parse("> .foo, + .bar, ~ .baz");
+        \\  from-list: selector.parse((a, b));
+        \\  interpolated: selector.parse(".item-#{2}");
+        \\  type: meta.type-of(selector.parse(".foo"));
+        \\  parse-item-type: meta.type-of(list.nth(selector.parse("a.foo"), 1));
+        \\  single-inspect: meta.inspect(selector.parse(".foo"));
+        \\  parse-length: list.length(selector.parse(".foo, .bar"));
+        \\  parse-separator: list.separator(selector.parse(".foo"));
+        \\  inspect: meta.inspect(selector.parse(".foo > .bar, #id:hover"));
+        \\  simple: selector.simple-selectors("a.foo#id:hover::before[title=\"x\"]");
+        \\  simple-item-type: meta.type-of(list.nth(selector.simple-selectors("a.foo"), 1));
+        \\  functional-simple: meta.inspect(selector.simple-selectors(":not(.a, .b).x"));
+        \\  simple-len: list.length(selector.simple-selectors("a.foo#id"));
+        \\  simple-first: list.nth(selector.simple-selectors("a.foo"), 1);
+        \\  simple-second: list.nth(selector.simple-selectors("a.foo"), 2);
+        \\  named: selector.parse($selector: ".named");
+        \\  named-simple: selector.simple-selectors($selector: "button.primary");
+        \\  alias: sel.parse(".alias");
+        \\  star: parse(".star");
+        \\  marked: selector.parse(mark(".marked"));
+        \\  marked-simple: selector.simple-selectors(mark("a.marked"));
+        \\  evaluations: $count;
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "selector-parse-simple.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{basic:.foo;list:.foo > .bar,#id:hover;normalized:.foo > .bar,#id:hover;functional:[data-x=\"a,b\"]:not(.x, .y);leading:> .foo,+ .bar,~ .baz;from-list:a,b;interpolated:.item-2;type:list;parse-item-type:list;single-inspect:(.foo,);parse-length:2;parse-separator:comma;inspect:.foo > .bar, #id:hover;simple:a,.foo,#id,:hover,::before,[title=x];simple-item-type:string;functional-simple::not(.a, .b), .x;simple-len:3;simple-first:a;simple-second:.foo;named:.named;named-simple:button,.primary;alias:.alias;star:.star;marked:.marked;marked-simple:a,.marked;evaluations:2}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\@use "sass:meta"
+        \\.sass
+        \\  type: meta.type-of(selector.parse(".foo, #bar:hover"))
+        \\  parse: selector.parse(".foo > .bar, #bar:hover")
+        \\  inspect: meta.inspect(selector.parse(".foo > .bar, #bar:hover"))
+        \\  simple: selector.simple-selectors("button.primary:hover")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-parse-simple.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:list;parse:.foo > .bar,#bar:hover;inspect:.foo > .bar, #bar:hover;simple:button,.primary,:hover}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass selector module rejects invalid or unavailable calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-selector-module.scss",
+            .input = ".a { value: selector.parse(\".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "case-sensitive-selector-namespace.scss",
+            .input = "@use \"sass:selector\" as Selector; .a { value: selector.parse(\".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-selector-member.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.nope(\".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-missing.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-too-many.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\".a\", \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-unknown-keyword.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse($value: \".a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-duplicate-keyword.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\".a\", $selector: \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-empty.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\"\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-parent.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\"&:hover\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-leading-empty.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\",a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-column-combinator.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\"a || b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-boolean.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(true); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-map.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse((a: 1)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-splat.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse((\".a\",)...); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "selector-simple-missing.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.simple-selectors(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-simple-too-many.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.simple-selectors(\"a\", \"b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-simple-unknown-keyword.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.simple-selectors($value: \"a\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-simple-empty.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.simple-selectors(\"\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-simple-complex.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.simple-selectors(\"a b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-simple-list.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.simple-selectors(\"a, b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-simple-parent.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.simple-selectors(\"&:hover\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-unsupported-qualified.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.nest(\".a\", \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-unsupported-star.scss",
+            .input = "@use \"sass:selector\" as *; .a { value: nest(\".a\", \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var selector_count = sass_evaluator.Limits{};
+    selector_count.max_selectors = 1;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "selector-value-count-limit.scss",
+            "@use \"sass:selector\"; $value: selector.parse(\".a, .b\");",
+            .scss,
+            selector_count,
+        ),
+    );
+
+    var selector_bytes = sass_evaluator.Limits{};
+    selector_bytes.max_selector_bytes = 3;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "selector-value-byte-limit.scss",
+            "@use \"sass:selector\"; $value: selector.parse(\".abcd\");",
+            .scss,
+            selector_bytes,
+        ),
+    );
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 3;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "selector-value-temporary-limit.scss",
+            "@use \"sass:selector\"; $value: selector.parse(\".abcd\");",
+            .scss,
+            temporary,
+        ),
+    );
+}
+
 test "native Sass inspects callable keywords through the built-in meta module" {
     const input =
         \\@use "sass:meta";
@@ -3234,7 +3473,7 @@ test "native Sass color module rejects unresolved ambiguous or unsupported use" 
         },
         .{
             .name = "unsupported-builtin-module.scss",
-            .input = "@use \"sass:selector\";",
+            .input = "@use \"sass:root\";",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -6099,6 +6338,10 @@ const MetaInspectionAllocationContext = struct {
     root: []const u8,
 };
 
+const SelectorAllocationContext = struct {
+    root: []const u8,
+};
+
 // Heap-layout-dependent in-place remaps make allocation counts unstable across
 // hosts. Force growth through explicit allocations so every OOM point is tested.
 const DeterministicAllocationBacking = struct {
@@ -6493,6 +6736,67 @@ test "native Sass meta inspection handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         backing.allocator(),
         exerciseMetaInspectionAllocationFailures,
+        .{&context},
+    );
+}
+
+fn exerciseSelectorAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const SelectorAllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\.allocation {
+        \\  parsed: selector.parse(".a > .b, #c:hover");
+        \\  inspected: meta.inspect(selector.parse(".a, .b"));
+        \\  simple: selector.simple-selectors("[title=\"x\"].foo:hover");
+        \\  from-value: selector.simple-selectors(selector.parse("button.primary"));
+        \\}
+    ;
+    const source_id = try sources.add("selector-allocation.scss", input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expect(result.map() != null);
+}
+
+test "native Sass selector parsing handles every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const context = SelectorAllocationContext{ .root = root };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseSelectorAllocationFailures,
         .{&context},
     );
 }
