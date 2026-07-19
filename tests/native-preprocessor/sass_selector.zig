@@ -527,6 +527,95 @@ test "native Sass selector unification weaves disjoint ancestry chunks" {
     }
 }
 
+test "native Sass selector unification weaves exact shared descendant anchors" {
+    const cases = [_]struct {
+        left: []const u8,
+        right: []const u8,
+        expected: []const []const u8,
+    }{
+        .{
+            .left = ".a .b .c",
+            .right = ".d .b .e",
+            .expected = &.{ ".a .d .b .c.e", ".d .a .b .c.e" },
+        },
+        .{
+            .left = ".a .b .c",
+            .right = ".b .d",
+            .expected = &.{".a .b .c.d"},
+        },
+        .{
+            .left = ".a .b .c",
+            .right = ".d .a .e",
+            .expected = &.{".d .a .b .c.e"},
+        },
+        .{
+            .left = ".a .b .c .d",
+            .right = ".x .b .c .e",
+            .expected = &.{ ".a .x .b .c .d.e", ".x .a .b .c .d.e" },
+        },
+        .{
+            .left = ".a1 .x .a2 .y .s",
+            .right = ".b1 .x .b2 .y .t",
+            .expected = &.{
+                ".a1 .b1 .x .a2 .b2 .y .s.t",
+                ".b1 .a1 .x .a2 .b2 .y .s.t",
+                ".a1 .b1 .x .b2 .a2 .y .s.t",
+                ".b1 .a1 .x .b2 .a2 .y .s.t",
+            },
+        },
+        .{
+            .left = ".a .x .c .s",
+            .right = ".b .x .d .t",
+            .expected = &.{
+                ".a .b .x .c .d .s.t",
+                ".b .a .x .c .d .s.t",
+                ".a .b .x .d .c .s.t",
+                ".b .a .x .d .c .s.t",
+            },
+        },
+        .{
+            .left = ".a .b .c",
+            .right = ".b .a .d",
+            .expected = &.{".a .b .a .c.d"},
+        },
+        .{
+            .left = ".b .a .d",
+            .right = ".a .b .c",
+            .expected = &.{".b .a .b .d.c"},
+        },
+        .{
+            .left = ".a .b .a .s",
+            .right = ".a .a .b .t",
+            .expected = &.{".a .b .a .b .s.t"},
+        },
+        .{
+            .left = ".a .b .a .s",
+            .right = ".b .a .b .t",
+            .expected = &.{".a .b .a .b .s.t"},
+        },
+        .{
+            .left = ".a .b .c",
+            .right = ".d .b .e, .x .b .y",
+            .expected = &.{
+                ".a .d .b .c.e",
+                ".d .a .b .c.e",
+                ".a .x .b .c.y",
+                ".x .a .b .c.y",
+            },
+        },
+    };
+    for (cases) |case| {
+        var unified = (try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) orelse return error.TestUnexpectedResult;
+        defer unified.deinit();
+        try expectItems(case.expected, unified);
+    }
+}
+
 test "native Sass selector unification rejects unavailable semantics and limits" {
     try std.testing.expectError(
         error.InvalidSelector,
@@ -536,8 +625,8 @@ test "native Sass selector unification rejects unavailable semantics and limits"
         left: []const u8,
         right: []const u8,
     }{
-        .{ .left = ".a .b .c", .right = ".d .b .e" },
         .{ .left = ".a.b .c", .right = ".b.d .e" },
+        .{ .left = ".a > .b .c", .right = ".d .b .e" },
         .{ .left = "* .b", .right = "a .d" },
         .{ .left = ".a ~ .b", .right = ".c ~ .d" },
         .{ .left = ".a > .b", .right = ".c + .d" },
@@ -684,6 +773,76 @@ test "native Sass selector unification rejects unavailable semantics and limits"
     )) orelse return error.TestUnexpectedResult;
     defer exactly_bounded.deinit();
     try expectItems(&.{ ".a .c .b.d", ".c .a .b.d" }, exactly_bounded);
+
+    const shared_left = ".a1 .x .a2 .y .s";
+    const shared_right = ".b1 .x .b2 .y .t";
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            shared_left,
+            shared_right,
+            .{ .max_selectors = 5 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            shared_left,
+            shared_right,
+            .{ .max_bytes = 135 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            shared_left,
+            shared_right,
+            .{ .max_complex_components = 50 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            shared_left,
+            shared_right,
+            .{ .max_temporary_bytes = 681 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            shared_left,
+            shared_right,
+            .{ .max_relation_operations = 127 },
+        ),
+    );
+    var shared_exactly_bounded = (try selector.unify(
+        std.testing.allocator,
+        shared_left,
+        shared_right,
+        .{
+            .max_selectors = 6,
+            .max_bytes = 136,
+            .max_complex_components = 51,
+            .max_temporary_bytes = 682,
+            .max_relation_operations = 128,
+        },
+    )) orelse return error.TestUnexpectedResult;
+    defer shared_exactly_bounded.deinit();
+    try expectItems(
+        &.{
+            ".a1 .b1 .x .a2 .b2 .y .s.t",
+            ".b1 .a1 .x .a2 .b2 .y .s.t",
+            ".a1 .b1 .x .b2 .a2 .y .s.t",
+            ".b1 .a1 .x .b2 .a2 .y .s.t",
+        },
+        shared_exactly_bounded,
+    );
 }
 
 test "native Sass selector parser rejects malformed parents and complex compounds" {
@@ -770,13 +929,18 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
 
     var unified = (try selector.unify(
         allocator,
-        ".a .b, .x > .y",
-        ".c .d",
+        ".a1 .x .a2 .y .s",
+        ".b1 .x .b2 .y .t",
         .{},
     )) orelse return error.TestUnexpectedResult;
     defer unified.deinit();
     try expectItems(
-        &.{ ".a .c .b.d", ".c .a .b.d", ".c .x > .y.d" },
+        &.{
+            ".a1 .b1 .x .a2 .b2 .y .s.t",
+            ".b1 .a1 .x .a2 .b2 .y .s.t",
+            ".a1 .b1 .x .b2 .a2 .y .s.t",
+            ".b1 .a1 .x .b2 .a2 .y .s.t",
+        },
         unified,
     );
 }

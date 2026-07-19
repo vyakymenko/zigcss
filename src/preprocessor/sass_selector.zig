@@ -384,9 +384,9 @@ const NamespaceIntersection = union(enum) {
 
 /// Returns the selector intersection for every left/right list pair. This slice
 /// owns compounds, complex subject replacement, exact/shared ancestry, strict
-/// child/adjacent-sibling ancestry, and bounded disjoint ancestry weaving.
-/// Shared-anchor and following-sibling weaving, escaped identifier equivalence,
-/// and host-selector semantics remain unavailable.
+/// child/adjacent-sibling ancestry, bounded disjoint ancestry weaving, and exact
+/// shared descendant anchors. Partial shared anchors, following-sibling weaving,
+/// escaped identifier equivalence, and host-selector semantics remain unavailable.
 pub fn unify(
     allocator: std.mem.Allocator,
     left_input: []const u8,
@@ -518,36 +518,15 @@ fn unifySelectorPair(
         return;
     }
     if (!try unifyStrictAncestriesCompatible(left, right, context)) {
-        const plan = (try planDisjointUnifyWeave(
+        if (try planDisjointUnifyWeave(
             left,
             right,
             context,
-        )) orelse return error.UnsupportedSelectorUnification;
-        const left_ancestry = left.components[0 .. left.components.len - 1];
-        const right_ancestry = right.components[0 .. right.components.len - 1];
-        switch (plan) {
-            .left_then_right => try admitUnifyResult(
-                builder,
-                try renderUnifyWeave(
-                    allocator,
-                    left_ancestry,
-                    right_ancestry,
-                    subject,
-                    context,
-                ),
-            ),
-            .right_then_left => try admitUnifyResult(
-                builder,
-                try renderUnifyWeave(
-                    allocator,
-                    right_ancestry,
-                    left_ancestry,
-                    subject,
-                    context,
-                ),
-            ),
-            .both => {
-                try admitUnifyResult(
+        )) |plan| {
+            const left_ancestry = left.components[0 .. left.components.len - 1];
+            const right_ancestry = right.components[0 .. right.components.len - 1];
+            switch (plan) {
+                .left_then_right => try admitUnifyResult(
                     builder,
                     try renderUnifyWeave(
                         allocator,
@@ -556,8 +535,8 @@ fn unifySelectorPair(
                         subject,
                         context,
                     ),
-                );
-                try admitUnifyResult(
+                ),
+                .right_then_left => try admitUnifyResult(
                     builder,
                     try renderUnifyWeave(
                         allocator,
@@ -566,10 +545,41 @@ fn unifySelectorPair(
                         subject,
                         context,
                     ),
-                );
-            },
+                ),
+                .both => {
+                    try admitUnifyResult(
+                        builder,
+                        try renderUnifyWeave(
+                            allocator,
+                            left_ancestry,
+                            right_ancestry,
+                            subject,
+                            context,
+                        ),
+                    );
+                    try admitUnifyResult(
+                        builder,
+                        try renderUnifyWeave(
+                            allocator,
+                            right_ancestry,
+                            left_ancestry,
+                            subject,
+                            context,
+                        ),
+                    );
+                },
+            }
+            return;
         }
-        return;
+        if (try emitSharedUnifyWeave(
+            allocator,
+            left,
+            right,
+            subject,
+            context,
+            builder,
+        )) return;
+        return error.UnsupportedSelectorUnification;
     }
 
     const ancestor_count = left.components.len - 1;
@@ -702,6 +712,205 @@ fn planDisjointUnifyWeave(
     if (left_terminal == .descendant) return .left_then_right;
     if (right_terminal == .descendant) return .right_then_left;
     return null;
+}
+
+const UnifyWeaveAnchor = struct {
+    left_index: usize,
+    right_index: usize,
+};
+
+fn emitSharedUnifyWeave(
+    allocator: std.mem.Allocator,
+    left: RelationComplex,
+    right: RelationComplex,
+    subject: []const u8,
+    context: *UnifyContext,
+    builder: *Builder,
+) Error!bool {
+    const left_ancestry = left.components[0 .. left.components.len - 1];
+    const right_ancestry = right.components[0 .. right.components.len - 1];
+    if (left_ancestry.len == 0 or right_ancestry.len == 0) {
+        return error.InvalidSelector;
+    }
+
+    const ancestries = [_][]const RelationComponent{
+        left_ancestry,
+        right_ancestry,
+    };
+    for (ancestries) |ancestry| {
+        for (ancestry) |component| {
+            try context.consume(1);
+            if (component.combinator != .descendant or
+                !try unifyWeaveCompoundAvailable(component.compound, context))
+            {
+                return false;
+            }
+        }
+    }
+
+    const row_count = std.math.add(usize, left_ancestry.len, 1) catch
+        return error.SelectorLimitExceeded;
+    const column_count = std.math.add(usize, right_ancestry.len, 1) catch
+        return error.SelectorLimitExceeded;
+    const cell_count = std.math.mul(usize, row_count, column_count) catch
+        return error.SelectorLimitExceeded;
+    const cell_bytes = std.math.mul(usize, cell_count, @sizeOf(usize)) catch
+        return error.SelectorLimitExceeded;
+    try context.reserveTemporary(cell_bytes);
+    const lengths = try allocator.alloc(usize, cell_count);
+    defer allocator.free(lengths);
+    @memset(lengths, 0);
+
+    const comparison_count = std.math.mul(
+        usize,
+        left_ancestry.len,
+        right_ancestry.len,
+    ) catch return error.SelectorLimitExceeded;
+    if (comparison_count > std.math.maxInt(u64)) {
+        return error.SelectorLimitExceeded;
+    }
+    try context.consume(@intCast(comparison_count));
+    for (1..row_count) |left_offset| {
+        for (1..column_count) |right_offset| {
+            const index = left_offset * column_count + right_offset;
+            if (std.mem.eql(
+                u8,
+                left_ancestry[left_offset - 1].compound,
+                right_ancestry[right_offset - 1].compound,
+            )) {
+                lengths[index] = std.math.add(
+                    usize,
+                    lengths[(left_offset - 1) * column_count + right_offset - 1],
+                    1,
+                ) catch return error.SelectorLimitExceeded;
+            } else {
+                lengths[index] = @max(
+                    lengths[(left_offset - 1) * column_count + right_offset],
+                    lengths[left_offset * column_count + right_offset - 1],
+                );
+            }
+        }
+    }
+
+    const anchor_count = lengths[left_ancestry.len * column_count + right_ancestry.len];
+    if (anchor_count == 0) return false;
+    const anchor_bytes = std.math.mul(
+        usize,
+        anchor_count,
+        @sizeOf(UnifyWeaveAnchor),
+    ) catch return error.SelectorLimitExceeded;
+    try context.reserveTemporary(anchor_bytes);
+    const anchors = try allocator.alloc(UnifyWeaveAnchor, anchor_count);
+    defer allocator.free(anchors);
+
+    var left_offset = left_ancestry.len;
+    var right_offset = right_ancestry.len;
+    var anchor_offset = anchor_count;
+    // Preserve Dart Sass's observable prefix-LCS tie break: when the two
+    // predecessor lengths are equal, move left through the right ancestry.
+    while (left_offset > 0 and right_offset > 0) {
+        if (std.mem.eql(
+            u8,
+            left_ancestry[left_offset - 1].compound,
+            right_ancestry[right_offset - 1].compound,
+        )) {
+            if (anchor_offset == 0) return error.InvalidSelector;
+            anchor_offset -= 1;
+            anchors[anchor_offset] = .{
+                .left_index = left_offset - 1,
+                .right_index = right_offset - 1,
+            };
+            left_offset -= 1;
+            right_offset -= 1;
+            continue;
+        }
+        const above = lengths[(left_offset - 1) * column_count + right_offset];
+        const before = lengths[left_offset * column_count + right_offset - 1];
+        if (above > before) {
+            left_offset -= 1;
+        } else {
+            right_offset -= 1;
+        }
+    }
+    if (anchor_offset != 0) return error.InvalidSelector;
+
+    var varying_count: usize = 0;
+    var left_start: usize = 0;
+    var right_start: usize = 0;
+    for (anchors) |anchor| {
+        if (anchor.left_index < left_start or
+            anchor.left_index >= left_ancestry.len or
+            anchor.right_index < right_start or
+            anchor.right_index >= right_ancestry.len)
+        {
+            return error.InvalidSelector;
+        }
+        const left_segment = left_ancestry[left_start..anchor.left_index];
+        const right_segment = right_ancestry[right_start..anchor.right_index];
+        if (!try sharedUnifyWeaveSegmentAvailable(
+            left_segment,
+            right_segment,
+            context,
+        )) return false;
+        if (left_segment.len > 0 and right_segment.len > 0) {
+            varying_count = std.math.add(usize, varying_count, 1) catch
+                return error.SelectorLimitExceeded;
+        }
+        left_start = anchor.left_index + 1;
+        right_start = anchor.right_index + 1;
+    }
+    const left_tail = left_ancestry[left_start..];
+    const right_tail = right_ancestry[right_start..];
+    if (!try sharedUnifyWeaveSegmentAvailable(left_tail, right_tail, context)) {
+        return false;
+    }
+    if (left_tail.len > 0 and right_tail.len > 0) {
+        varying_count = std.math.add(usize, varying_count, 1) catch
+            return error.SelectorLimitExceeded;
+    }
+
+    if (builder.items.items.len >= builder.limits.max_selectors) {
+        return error.SelectorLimitExceeded;
+    }
+    const remaining_selectors = builder.limits.max_selectors - builder.items.items.len;
+    const output_count = try selectorPowerBounded(
+        2,
+        varying_count,
+        remaining_selectors,
+    );
+    for (0..output_count) |ordinal| {
+        try admitUnifyResult(
+            builder,
+            try renderSharedUnifyWeave(
+                allocator,
+                left_ancestry,
+                right_ancestry,
+                anchors,
+                varying_count,
+                ordinal,
+                subject,
+                context,
+            ),
+        );
+    }
+    return true;
+}
+
+fn sharedUnifyWeaveSegmentAvailable(
+    left: []const RelationComponent,
+    right: []const RelationComponent,
+    context: *UnifyContext,
+) Error!bool {
+    for (left) |left_component| {
+        for (right) |right_component| {
+            if (try unifyWeaveCompoundsShareAnchor(
+                left_component.compound,
+                right_component.compound,
+                context,
+            )) return false;
+        }
+    }
+    return true;
 }
 
 fn unifyWeaveCompoundAvailable(
@@ -874,6 +1083,181 @@ fn renderUnifyWeave(
     std.debug.assert(offset == output.len);
     try validateComplex(output, false);
     return output;
+}
+
+fn renderSharedUnifyWeave(
+    allocator: std.mem.Allocator,
+    left_ancestry: []const RelationComponent,
+    right_ancestry: []const RelationComponent,
+    anchors: []const UnifyWeaveAnchor,
+    varying_count: usize,
+    ordinal: usize,
+    subject: []const u8,
+    context: *UnifyContext,
+) Error![]u8 {
+    const ancestry_count = std.math.add(
+        usize,
+        left_ancestry.len,
+        right_ancestry.len,
+    ) catch return error.SelectorLimitExceeded;
+    if (anchors.len > ancestry_count) return error.InvalidSelector;
+    const unique_ancestry_count = ancestry_count - anchors.len;
+    const component_count = std.math.add(
+        usize,
+        unique_ancestry_count,
+        1,
+    ) catch return error.SelectorLimitExceeded;
+    try context.reserveComponents(component_count);
+    if (subject.len == 0) return error.InvalidSelector;
+    try context.consume(1);
+
+    var output_length = subject.len;
+    const ancestries = [_][]const RelationComponent{
+        left_ancestry,
+        right_ancestry,
+    };
+    for (ancestries) |ancestry| {
+        for (ancestry) |component| {
+            try context.consume(1);
+            output_length = std.math.add(
+                usize,
+                output_length,
+                component.compound.len,
+            ) catch return error.SelectorLimitExceeded;
+            output_length = std.math.add(usize, output_length, 1) catch
+                return error.SelectorLimitExceeded;
+        }
+    }
+    for (anchors) |anchor| {
+        if (anchor.left_index >= left_ancestry.len or
+            anchor.right_index >= right_ancestry.len or
+            !std.mem.eql(
+                u8,
+                left_ancestry[anchor.left_index].compound,
+                right_ancestry[anchor.right_index].compound,
+            ))
+        {
+            return error.InvalidSelector;
+        }
+        try context.consume(1);
+        const duplicate_length = std.math.add(
+            usize,
+            left_ancestry[anchor.left_index].compound.len,
+            1,
+        ) catch return error.SelectorLimitExceeded;
+        if (duplicate_length > output_length) return error.InvalidSelector;
+        output_length -= duplicate_length;
+    }
+    if (output_length > context.limits.max_bytes) {
+        return error.SelectorLimitExceeded;
+    }
+    try context.reserveTemporary(output_length);
+    const output = try allocator.alloc(u8, output_length);
+    errdefer allocator.free(output);
+
+    var offset: usize = 0;
+    var left_start: usize = 0;
+    var right_start: usize = 0;
+    var choice_divisor: usize = 1;
+    var varying_seen: usize = 0;
+    for (anchors) |anchor| {
+        if (anchor.left_index < left_start or
+            anchor.right_index < right_start)
+        {
+            return error.InvalidSelector;
+        }
+        try writeSharedUnifyWeaveSegment(
+            output,
+            &offset,
+            left_ancestry[left_start..anchor.left_index],
+            right_ancestry[right_start..anchor.right_index],
+            ordinal,
+            &choice_divisor,
+            &varying_seen,
+            varying_count,
+        );
+        try writeSharedUnifyWeaveComponents(
+            output,
+            &offset,
+            left_ancestry[anchor.left_index .. anchor.left_index + 1],
+        );
+        left_start = anchor.left_index + 1;
+        right_start = anchor.right_index + 1;
+    }
+    try writeSharedUnifyWeaveSegment(
+        output,
+        &offset,
+        left_ancestry[left_start..],
+        right_ancestry[right_start..],
+        ordinal,
+        &choice_divisor,
+        &varying_seen,
+        varying_count,
+    );
+    if (varying_seen != varying_count) return error.InvalidSelector;
+    if (offset > output.len or subject.len > output.len - offset) {
+        return error.InvalidSelector;
+    }
+    std.mem.copyForwards(u8, output[offset .. offset + subject.len], subject);
+    offset += subject.len;
+    if (offset != output.len) return error.InvalidSelector;
+    try validateComplex(output, false);
+    return output;
+}
+
+fn writeSharedUnifyWeaveSegment(
+    output: []u8,
+    offset: *usize,
+    left: []const RelationComponent,
+    right: []const RelationComponent,
+    ordinal: usize,
+    choice_divisor: *usize,
+    varying_seen: *usize,
+    varying_count: usize,
+) Error!void {
+    var right_first = false;
+    if (left.len > 0 and right.len > 0) {
+        // Each segment remains a whole chunk. The earliest varying segment is
+        // the least-significant choice so provider result order stays exact.
+        right_first = (ordinal / choice_divisor.*) % 2 == 1;
+        varying_seen.* = std.math.add(usize, varying_seen.*, 1) catch
+            return error.SelectorLimitExceeded;
+        if (varying_seen.* < varying_count) {
+            choice_divisor.* = std.math.mul(usize, choice_divisor.*, 2) catch
+                return error.SelectorLimitExceeded;
+        }
+    }
+    if (right_first) {
+        try writeSharedUnifyWeaveComponents(output, offset, right);
+        try writeSharedUnifyWeaveComponents(output, offset, left);
+    } else {
+        try writeSharedUnifyWeaveComponents(output, offset, left);
+        try writeSharedUnifyWeaveComponents(output, offset, right);
+    }
+}
+
+fn writeSharedUnifyWeaveComponents(
+    output: []u8,
+    offset: *usize,
+    components: []const RelationComponent,
+) Error!void {
+    for (components) |component| {
+        const compound_end = std.math.add(
+            usize,
+            offset.*,
+            component.compound.len,
+        ) catch return error.SelectorLimitExceeded;
+        const next = std.math.add(usize, compound_end, 1) catch
+            return error.SelectorLimitExceeded;
+        if (next > output.len) return error.InvalidSelector;
+        std.mem.copyForwards(
+            u8,
+            output[offset.*..compound_end],
+            component.compound,
+        );
+        output[compound_end] = ' ';
+        offset.* = next;
+    }
 }
 
 fn unifyCombinatorBytes(combinator: RelationCombinator) []const u8 {
