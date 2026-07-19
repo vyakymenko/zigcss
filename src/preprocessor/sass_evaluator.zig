@@ -156,6 +156,7 @@ const Builtin = enum {
     selector_nest,
     selector_parse,
     selector_simple_selectors,
+    selector_unify,
     quote,
     unquote,
     str_length,
@@ -4571,6 +4572,7 @@ const Engine = struct {
             .meta_keywords,
             .meta_type_of,
             .selector_is_superselector,
+            .selector_unify,
             .selector_parse,
             .selector_simple_selectors,
             .red,
@@ -7706,6 +7708,77 @@ const Engine = struct {
         return self.values.own(.{ .boolean = is_superselector });
     }
 
+    fn callSelectorUnify(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "selector.unify() requires exactly two arguments",
+            );
+            return error.InvalidExpression;
+        }
+        const left_input = try self.selectorInput(arguments[0].*, span);
+        defer self.allocator.free(left_input);
+        const right_input = try self.selectorInput(arguments[1].*, span);
+        defer self.allocator.free(right_input);
+        const input_bytes = std.math.add(usize, left_input.len, right_input.len) catch
+            return self.selectorTemporaryFailure(span);
+        if (input_bytes >= self.limits.max_temporary_bytes) {
+            return self.selectorTemporaryFailure(span);
+        }
+        const unify_operations = selectorUnifyOperationBudget(
+            left_input,
+            right_input,
+        ) orelse {
+            try self.transaction.consumeOperations(std.math.maxInt(u64));
+            unreachable;
+        };
+        try self.transaction.consumeOperations(unify_operations);
+        const remaining_temporary = self.limits.max_temporary_bytes - input_bytes;
+        const unify_limits = native_selector.Limits{
+            .max_selectors = self.limits.max_selectors -| self.selector_count,
+            .max_bytes = @min(
+                self.limits.max_selector_bytes -| self.selector_bytes,
+                remaining_temporary,
+            ),
+            .max_complex_components = self.limits.max_selectors -| self.selector_count,
+            .max_temporary_bytes = remaining_temporary,
+            .max_relation_operations = unify_operations,
+        };
+        const native_result = native_selector.unify(
+            self.allocator,
+            left_input,
+            right_input,
+            unify_limits,
+        ) catch |err| switch (err) {
+            error.InvalidSelector => {
+                try self.report(.invalid_operation, span, "invalid native Sass selector unification");
+                return error.InvalidExpression;
+            },
+            error.UnsupportedSelectorUnification => {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass selector unification semantics are not yet available for this selector",
+                );
+                return error.UnsupportedFeature;
+            },
+            error.SelectorLimitExceeded => {
+                try self.report(.resource_limit, span, "native Sass selector unification limit exceeded");
+                return err;
+            },
+            else => return err,
+        };
+        var unified = native_result orelse
+            return self.values.own(.{ .null_value = {} });
+        defer unified.deinit();
+        return self.ownSelectorValues(&unified, true, span);
+    }
+
     fn callSelectorCompositionRaw(
         self: *Engine,
         builtin: Builtin,
@@ -8524,6 +8597,10 @@ const Engine = struct {
                 .{ .name = "super" },
                 .{ .name = "sub" },
             },
+            .selector_unify => &.{
+                .{ .name = "selector1" },
+                .{ .name = "selector2" },
+            },
             .selector_parse, .selector_simple_selectors => &.{.{ .name = "selector" }},
             .red,
             .green,
@@ -8736,6 +8813,7 @@ const Engine = struct {
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .meta_type_of => self.callMetaTypeOf(arguments, span),
             .selector_is_superselector => self.callSelectorIsSuperselector(arguments, span),
+            .selector_unify => self.callSelectorUnify(arguments, span),
             .selector_parse => self.callSelectorParse(arguments, span),
             .selector_simple_selectors => self.callSelectorSimpleSelectors(arguments, span),
             .red, .green, .blue, .alpha, .hue, .saturation, .lightness => self.callColorChannel(
@@ -10034,6 +10112,7 @@ fn selectorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "nest")) return .selector_nest;
     if (sassNameEql(name, "parse")) return .selector_parse;
     if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;
+    if (sassNameEql(name, "unify")) return .selector_unify;
     return null;
 }
 
@@ -10567,6 +10646,100 @@ fn splitSelectors(
     }
     const final = trimWhitespace(input[start..]);
     if (final.len > 0) try output.append(allocator, final);
+}
+
+const SelectorOperationStats = struct {
+    count: u64 = 0,
+    length_sum: u64 = 0,
+    length_square_sum: u64 = 0,
+};
+
+fn selectorUnifyOperationBudget(left: []const u8, right: []const u8) ?u64 {
+    const left_stats = selectorOperationStats(left) orelse return null;
+    const right_stats = selectorOperationStats(right) orelse return null;
+    const left_term = std.math.mul(
+        u64,
+        right_stats.count,
+        left_stats.length_square_sum,
+    ) catch return null;
+    const right_term = std.math.mul(
+        u64,
+        left_stats.count,
+        right_stats.length_square_sum,
+    ) catch return null;
+    const cross_product = std.math.mul(
+        u64,
+        left_stats.length_sum,
+        right_stats.length_sum,
+    ) catch return null;
+    const cross_term = std.math.mul(u64, cross_product, 2) catch return null;
+    const partial = std.math.add(u64, left_term, right_term) catch return null;
+    return std.math.add(u64, partial, cross_term) catch return null;
+}
+
+fn selectorOperationStats(input: []const u8) ?SelectorOperationStats {
+    var stats = SelectorOperationStats{};
+    var start: usize = 0;
+    var index: usize = 0;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) : (index += 1) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 1;
+            } else if (byte == active) {
+                quote = null;
+            }
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 1;
+            continue;
+        }
+        switch (byte) {
+            '\'', '"' => quote = byte,
+            '(' => paren_depth += 1,
+            ')' => paren_depth -|= 1,
+            '[' => square_depth += 1,
+            ']' => square_depth -|= 1,
+            ',' => if (paren_depth == 0 and square_depth == 0) {
+                addSelectorOperationSegment(&stats, input[start..index]) orelse
+                    return null;
+                start = index + 1;
+            },
+            else => {},
+        }
+    }
+    addSelectorOperationSegment(&stats, input[start..]) orelse return null;
+    if (stats.count == 0) {
+        stats.count = 1;
+        stats.length_sum = 1;
+        stats.length_square_sum = 1;
+    }
+    return stats;
+}
+
+fn addSelectorOperationSegment(
+    stats: *SelectorOperationStats,
+    raw: []const u8,
+) ?void {
+    const segment = trimWhitespace(raw);
+    if (segment.len == 0) return {};
+    const length = std.math.add(
+        u64,
+        @as(u64, @intCast(segment.len)),
+        1,
+    ) catch return null;
+    const square = std.math.mul(u64, length, length) catch return null;
+    stats.count = std.math.add(u64, stats.count, 1) catch return null;
+    stats.length_sum = std.math.add(u64, stats.length_sum, length) catch return null;
+    stats.length_square_sum = std.math.add(
+        u64,
+        stats.length_square_sum,
+        square,
+    ) catch return null;
 }
 
 fn findInterpolationEnd(input: []const u8, start: usize) ?usize {

@@ -3302,6 +3302,99 @@ test "native Sass selector module compares structural superselectors" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module unifies compound selector values" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\@use "sass:list";
+        \\@use "sass:selector" as sel;
+        \\@use "sass:selector" as *;
+        \\$evaluations: 0;
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  class: selector.unify(".a", ".b");
+        \\  same: selector.unify(".a", ".a");
+        \\  type-class: selector.unify("button", ".a");
+        \\  universal-type: selector.unify("*", "button");
+        \\  namespace: selector.unify("*|a", "svg|a");
+        \\  attributes: selector.unify("[x]", "[y]");
+        \\  pseudo: selector.unify(":hover", ".a");
+        \\  pseudo-element: selector.unify("::before", ".a");
+        \\  list: selector.unify(".a, .b", ".x, .y");
+        \\  functional-exact: selector.unify(":not(.a)", ".b:not(.a)");
+        \\  typed: selector.unify(selector.parse(".typed"), ".more");
+        \\  from-list: selector.unify((".l", ".r"), ".x");
+        \\  keyword: selector.unify($selector2: ".k2", $selector1: ".k1");
+        \\  alias: sel.unify(".m1", ".m2");
+        \\  star: unify(".m1", ".m2");
+        \\  marked: selector.unify(mark(".m1"), mark(".m2"));
+        \\  evaluations: $evaluations;
+        \\  type: meta.type-of(selector.unify(".a", ".b"));
+        \\  separator: list.separator(selector.unify(".a", ".b"));
+        \\  inspect: meta.inspect(selector.unify(".a", ".b"));
+        \\  type-conflict: meta.inspect(selector.unify("a", "b"));
+        \\  id-conflict: meta.inspect(selector.unify("#a", "#b"));
+        \\  namespace-conflict: meta.inspect(selector.unify("svg|a", "html|a"));
+        \\  pseudo-conflict: meta.inspect(selector.unify("::before", "::after"));
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "selector-unify.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{class:.a.b;same:.a;type-class:button.a;universal-type:button;namespace:svg|a;attributes:[x][y];pseudo:.a:hover;pseudo-element:.a::before;list:.a.x,.a.y,.b.x,.b.y;functional-exact:.b:not(.a);typed:.typed.more;from-list:.l.x,.r.x;keyword:.k1.k2;alias:.m1.m2;star:.m1.m2;marked:.m1.m2;evaluations:2;type:list;separator:comma;inspect:(.a.b,);type-conflict:null;id-conflict:null;namespace-conflict:null;pseudo-conflict:null}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\@use "sass:meta"
+        \\.sass
+        \\  value: selector.unify(".a", ".b")
+        \\  list: selector.unify(".a, .b", ".x")
+        \\  pseudo: selector.unify("::before", ".a")
+        \\  null: meta.inspect(selector.unify("a", "b"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-unify.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{value:.a.b;list:.a.x,.b.x;pseudo:.a::before;null:null}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass selector unification budgets growing compounds without truncation" {
+    const input =
+        \\@use "sass:selector";
+        \\.value {
+        \\  result: selector.unify(".a", ".b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-unify-operation-budget.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".value{result:.a.b.c.d.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module rejects invalid or unavailable calls" {
     const invalid = [_]struct {
         name: []const u8,
@@ -3499,14 +3592,49 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-unsupported-qualified.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a\", \".b\"); }",
+            .name = "selector-unify-missing.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a\"); }",
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "selector-unsupported-star.scss",
-            .input = "@use \"sass:selector\" as *; .a { value: unify(\".a\", \".b\"); }",
+            .name = "selector-unify-too-many.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a\", \".b\", \".c\"); }",
             .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-unify-unknown-keyword.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify($left: \".a\", $selector2: \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-unify-number.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(1, \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-unify-empty.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\"\", \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-unify-parent.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\"&.a\", \".b\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-unify-complex-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a .b\", \".c\"); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "selector-unify-escape-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".foo\", \".\\\\66 oo\"); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "selector-unify-host-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\":host(.a)\", \".b\"); }",
+            .expected = error.UnsupportedFeature,
         },
     };
     for (invalid) |case| {
@@ -3578,6 +3706,19 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             "@use \"sass:selector\"; $value: selector.append(\".abc\", \".def\");",
             .scss,
             composition_bytes,
+        ),
+    );
+
+    var unification_count = sass_evaluator.Limits{};
+    unification_count.max_selectors = 7;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "selector-unification-count-limit.scss",
+            "@use \"sass:selector\"; $value: selector.unify(\".a, .b\", \".x, .y\");",
+            .scss,
+            unification_count,
         ),
     );
 }
@@ -7030,6 +7171,7 @@ fn exerciseSelectorAllocationFailures(
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
         \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
+        \\  unified: selector.unify(".a, .b", ".x:hover");
         \\}
     ;
     const source_id = try sources.add("selector-allocation.scss", input);
@@ -7049,14 +7191,14 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.a.x:hover,.b.x:hover}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
     try std.testing.expect(result.map() != null);
 }
 
-test "native Sass selector parsing composition and relations handle every allocation failure" {
+test "native Sass selector parsing composition relations and unification handle every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");

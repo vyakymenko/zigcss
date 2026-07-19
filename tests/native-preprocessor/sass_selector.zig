@@ -323,6 +323,144 @@ test "native Sass selector relations reject unsupported semantics and limits" {
     );
 }
 
+test "native Sass selector unification intersects bounded compounds" {
+    const cases = [_]struct {
+        left: []const u8,
+        right: []const u8,
+        expected: []const []const u8,
+    }{
+        .{ .left = ".a", .right = ".b", .expected = &.{".a.b"} },
+        .{ .left = ".a", .right = ".a", .expected = &.{".a"} },
+        .{ .left = "button", .right = ".a", .expected = &.{"button.a"} },
+        .{ .left = "*", .right = "button", .expected = &.{"button"} },
+        .{ .left = "*|a", .right = "svg|a", .expected = &.{"svg|a"} },
+        .{ .left = "*|*", .right = "svg|a", .expected = &.{"svg|a"} },
+        .{ .left = "svg|*", .right = ".a", .expected = &.{"svg|*.a"} },
+        .{ .left = "[x=\"y\"]", .right = "[x=y]", .expected = &.{"[x=y]"} },
+        .{ .left = ".a", .right = "#id", .expected = &.{".a#id"} },
+        .{ .left = "#id", .right = ".a", .expected = &.{"#id.a"} },
+        .{ .left = ":hover", .right = "[x]", .expected = &.{"[x]:hover"} },
+        .{ .left = "::before", .right = ":hover", .expected = &.{":hover::before"} },
+        .{ .left = ".a::before", .right = ":before", .expected = &.{".a::before"} },
+        .{ .left = ":not(.a)", .right = ".b:not(.a)", .expected = &.{".b:not(.a)"} },
+        .{
+            .left = ":not(.a)",
+            .right = ":not(.b)",
+            .expected = &.{":not(.a):not(.b)"},
+        },
+        .{
+            .left = ".a, .b",
+            .right = ".x, .y",
+            .expected = &.{ ".a.x", ".a.y", ".b.x", ".b.y" },
+        },
+        .{
+            .left = ".a, .a",
+            .right = ".a, .a",
+            .expected = &.{ ".a", ".a", ".a", ".a" },
+        },
+        .{
+            .left = "a, .a",
+            .right = "b, .b",
+            .expected = &.{ "a.b", "b.a", ".a.b" },
+        },
+    };
+    for (cases) |case| {
+        var unified = (try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) orelse return error.TestUnexpectedResult;
+        defer unified.deinit();
+        try expectItems(case.expected, unified);
+    }
+
+    const conflicts = [_]struct {
+        left: []const u8,
+        right: []const u8,
+    }{
+        .{ .left = "a", .right = "b" },
+        .{ .left = "#a", .right = "#b" },
+        .{ .left = "svg|a", .right = "html|a" },
+        .{ .left = "|a", .right = "a" },
+        .{ .left = "*", .right = "svg|a" },
+        .{ .left = "::before", .right = "::after" },
+        .{ .left = "::before", .right = ":BEFORE" },
+    };
+    for (conflicts) |case| {
+        try std.testing.expect((try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) == null);
+    }
+}
+
+test "native Sass selector unification rejects unavailable semantics and limits" {
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.unify(std.testing.allocator, "&.a", ".b", .{}),
+    );
+    const unsupported = [_]struct {
+        left: []const u8,
+        right: []const u8,
+    }{
+        .{ .left = ".a .b", .right = ".c" },
+        .{ .left = ".foo", .right = ".\\66 oo" },
+        .{ .left = ":host", .right = ".b" },
+        .{ .left = ":host(.a)", .right = ".b" },
+        .{ .left = "::slotted(.a)", .right = ".b" },
+    };
+    for (unsupported) |case| {
+        try std.testing.expectError(
+            error.UnsupportedSelectorUnification,
+            selector.unify(
+                std.testing.allocator,
+                case.left,
+                case.right,
+                .{},
+            ),
+        );
+    }
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            ".a, .b",
+            ".x, .y",
+            .{ .max_selectors = 7 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            ".a",
+            ".b",
+            .{ .max_complex_components = 2 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            ".a",
+            ".b",
+            .{ .max_relation_operations = 1 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            ".a",
+            ".b",
+            .{ .max_temporary_bytes = 1 },
+        ),
+    );
+}
+
 test "native Sass selector parser rejects malformed parents and complex compounds" {
     const invalid_parse = [_][]const u8{
         "",
@@ -404,9 +542,21 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
         ".x .a > .b, .c + .d.extra",
         .{},
     ));
+
+    var unified = (try selector.unify(
+        allocator,
+        ".a, .b",
+        ".x:hover, [title=\"y\"]",
+        .{},
+    )) orelse return error.TestUnexpectedResult;
+    defer unified.deinit();
+    try expectItems(
+        &.{ ".a.x:hover", ".a[title=y]", ".b.x:hover", ".b[title=y]" },
+        unified,
+    );
 }
 
-test "native Sass selector parser composition and relations handle every allocation failure" {
+test "native Sass selector parsing composition relations and unification handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAllocationFailures,

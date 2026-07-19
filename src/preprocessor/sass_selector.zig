@@ -16,6 +16,7 @@ pub const Error = std.mem.Allocator.Error || error{
     InvalidSelector,
     SelectorLimitExceeded,
     UnsupportedSelectorRelation,
+    UnsupportedSelectorUnification,
 };
 
 pub const SelectorList = struct {
@@ -251,6 +252,437 @@ pub fn nest(
         current = replacement;
     }
     return current;
+}
+
+const UnifyContext = struct {
+    limits: Limits,
+    component_count: usize = 0,
+    temporary_bytes: usize = 0,
+    operations: u64 = 0,
+
+    fn reserveComponents(self: *UnifyContext, count: usize) Error!void {
+        const next = std.math.add(usize, self.component_count, count) catch
+            return error.SelectorLimitExceeded;
+        if (next > self.limits.max_complex_components) {
+            return error.SelectorLimitExceeded;
+        }
+        self.component_count = next;
+    }
+
+    fn reserveTemporary(self: *UnifyContext, count: usize) Error!void {
+        const next = std.math.add(usize, self.temporary_bytes, count) catch
+            return error.SelectorLimitExceeded;
+        if (next > self.limits.max_temporary_bytes) {
+            return error.SelectorLimitExceeded;
+        }
+        self.temporary_bytes = next;
+    }
+
+    fn consume(self: *UnifyContext, count: u64) Error!void {
+        const next = std.math.add(u64, self.operations, count) catch
+            return error.SelectorLimitExceeded;
+        if (next > self.limits.max_relation_operations) {
+            return error.SelectorLimitExceeded;
+        }
+        self.operations = next;
+    }
+};
+
+const UnifyCompound = struct {
+    allocator: std.mem.Allocator,
+    items: std.ArrayList([]u8) = .empty,
+
+    fn deinit(self: *UnifyCompound) void {
+        for (self.items.items) |item| self.allocator.free(item);
+        self.items.deinit(self.allocator);
+        self.* = undefined;
+    }
+};
+
+const QualifiedUnification = union(enum) {
+    conflict,
+    keep,
+    replace: []u8,
+};
+
+const NamespaceIntersection = union(enum) {
+    conflict,
+    value: ?[]const u8,
+};
+
+/// Returns the compound-selector intersection for every left/right list pair.
+/// This first slice deliberately rejects complex selectors, escaped identifier
+/// equivalence, and host-selector semantics rather than emitting a guess.
+pub fn unify(
+    allocator: std.mem.Allocator,
+    left_input: []const u8,
+    right_input: []const u8,
+    limits: Limits,
+) Error!?SelectorList {
+    if (limits.max_selectors == 0 or limits.max_bytes == 0 or
+        limits.max_complex_components == 0 or limits.max_temporary_bytes == 0 or
+        limits.max_relation_operations == 0)
+    {
+        return error.SelectorLimitExceeded;
+    }
+
+    var left = try parseInternal(allocator, left_input, limits, false);
+    defer left.deinit();
+    const left_usage = try selectorUsage(&left);
+    if (left_usage.selectors >= limits.max_selectors or
+        left_usage.bytes >= limits.max_bytes)
+    {
+        return error.SelectorLimitExceeded;
+    }
+    var right_limits = limits;
+    right_limits.max_selectors -= left_usage.selectors;
+    right_limits.max_bytes -= left_usage.bytes;
+    var right = try parseInternal(allocator, right_input, right_limits, false);
+    defer right.deinit();
+
+    for (left.items) |item| {
+        if (!isSingleCompound(item)) return error.UnsupportedSelectorUnification;
+    }
+    for (right.items) |item| {
+        if (!isSingleCompound(item)) return error.UnsupportedSelectorUnification;
+    }
+
+    const right_usage = try selectorUsage(&right);
+    const input_selectors = std.math.add(
+        usize,
+        left_usage.selectors,
+        right_usage.selectors,
+    ) catch return error.SelectorLimitExceeded;
+    const input_bytes = std.math.add(
+        usize,
+        left_usage.bytes,
+        right_usage.bytes,
+    ) catch return error.SelectorLimitExceeded;
+    if (input_selectors >= limits.max_selectors or input_bytes >= limits.max_bytes) {
+        return error.SelectorLimitExceeded;
+    }
+    var output_limits = limits;
+    output_limits.max_selectors -= input_selectors;
+    output_limits.max_bytes -= input_bytes;
+    var builder = Builder{ .allocator = allocator, .limits = output_limits };
+    errdefer builder.deinit();
+    var context = UnifyContext{ .limits = limits };
+
+    for (left.items) |left_item| {
+        for (right.items) |right_item| {
+            try context.consume(1);
+            const unified = try unifyCompound(
+                allocator,
+                left_item,
+                right_item,
+                &context,
+            );
+            if (unified) |owned| {
+                builder.admitOwned(owned) catch |err| {
+                    allocator.free(owned);
+                    return err;
+                };
+            }
+        }
+    }
+    if (builder.items.items.len == 0) {
+        builder.deinit();
+        return null;
+    }
+    return @as(?SelectorList, try builder.finish());
+}
+
+fn unifyCompound(
+    allocator: std.mem.Allocator,
+    left_input: []const u8,
+    right_input: []const u8,
+    context: *UnifyContext,
+) Error!?[]u8 {
+    var left = try loadUnifyCompound(allocator, left_input, context);
+    defer left.deinit();
+    var right = try loadUnifyCompound(allocator, right_input, context);
+    defer right.deinit();
+
+    for (right.items.items) |right_item| {
+        if (!try unifySimple(&left, right_item, context)) return null;
+    }
+
+    var output_length: usize = 0;
+    for (left.items.items) |item| {
+        try context.consume(1);
+        output_length = std.math.add(usize, output_length, item.len) catch
+            return error.SelectorLimitExceeded;
+    }
+    if (output_length == 0) return error.InvalidSelector;
+    if (output_length > context.limits.max_bytes) return error.SelectorLimitExceeded;
+    try context.reserveTemporary(output_length);
+    const output = try allocator.alloc(u8, output_length);
+    errdefer allocator.free(output);
+    var offset: usize = 0;
+    for (left.items.items) |item| {
+        std.mem.copyForwards(u8, output[offset .. offset + item.len], item);
+        offset += item.len;
+    }
+    std.debug.assert(offset == output.len);
+    try validateCompound(output, false);
+    return @as(?[]u8, output);
+}
+
+fn loadUnifyCompound(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    context: *UnifyContext,
+) Error!UnifyCompound {
+    var result = UnifyCompound{ .allocator = allocator };
+    errdefer result.deinit();
+    var cursor: usize = 0;
+    while (cursor < input.len) {
+        const end = try simpleTokenEnd(input, cursor);
+        const token = input[cursor..end];
+        if (std.mem.indexOfScalar(u8, token, '\\') != null or
+            unsupportedUnifyPseudo(token))
+        {
+            return error.UnsupportedSelectorUnification;
+        }
+        try context.consume(1);
+        try context.reserveComponents(1);
+        const reservation = std.math.add(
+            usize,
+            token.len,
+            @sizeOf([]u8),
+        ) catch return error.SelectorLimitExceeded;
+        try context.reserveTemporary(reservation);
+        const owned = if (token[0] == '[')
+            try normalizeAttribute(allocator, token)
+        else
+            try allocator.dupe(u8, token);
+        result.items.append(allocator, owned) catch |err| {
+            allocator.free(owned);
+            return err;
+        };
+        cursor = end;
+    }
+    if (result.items.items.len == 0) return error.InvalidSelector;
+    return result;
+}
+
+fn unsupportedUnifyPseudo(token: []const u8) bool {
+    if (token.len == 0 or token[0] != ':') return false;
+    const opening = std.mem.indexOfScalar(u8, token, '(');
+    var name_start: usize = 1;
+    if (name_start < token.len and token[name_start] == ':') name_start += 1;
+    const name = token[name_start .. opening orelse token.len];
+    if (std.ascii.eqlIgnoreCase(name, "host") or
+        std.ascii.eqlIgnoreCase(name, "host-context"))
+    {
+        return true;
+    }
+    return opening != null and relationPseudoElementName(token) != null;
+}
+
+fn unifySimple(
+    compound: *UnifyCompound,
+    candidate: []const u8,
+    context: *UnifyContext,
+) Error!bool {
+    if (try unifyExactIndex(compound, candidate, context) != null) return true;
+    if (relationQualifiedName(candidate) != null) {
+        return unifyQualified(compound, candidate, context);
+    }
+    if (candidate[0] == '#') return unifyId(compound, candidate, context);
+    if (candidate[0] == ':') return unifyPseudo(compound, candidate, context);
+    return insertUnifyClone(
+        compound,
+        try firstPseudoIndex(compound, context),
+        candidate,
+        context,
+    );
+}
+
+fn unifyExactIndex(
+    compound: *const UnifyCompound,
+    candidate: []const u8,
+    context: *UnifyContext,
+) Error!?usize {
+    for (compound.items.items, 0..) |item, index| {
+        try context.consume(1);
+        if (std.mem.eql(u8, item, candidate)) return index;
+    }
+    return null;
+}
+
+fn unifyQualified(
+    compound: *UnifyCompound,
+    candidate: []const u8,
+    context: *UnifyContext,
+) Error!bool {
+    const candidate_name = relationQualifiedName(candidate) orelse unreachable;
+    var existing_index: ?usize = null;
+    for (compound.items.items, 0..) |item, index| {
+        try context.consume(1);
+        if (relationQualifiedName(item) != null) {
+            existing_index = index;
+            break;
+        }
+    }
+    const index = existing_index orelse {
+        const wildcard_namespace = candidate_name.namespace != null and
+            std.mem.eql(u8, candidate_name.namespace.?, "*");
+        if (std.mem.eql(u8, candidate_name.name, "*") and
+            (candidate_name.namespace == null or wildcard_namespace))
+        {
+            return true;
+        }
+        return insertUnifyClone(compound, 0, candidate, context);
+    };
+    const merged = try unifyQualifiedNames(
+        compound.allocator,
+        compound.items.items[index],
+        candidate,
+        context,
+    );
+    switch (merged) {
+        .conflict => return false,
+        .keep => return true,
+        .replace => |replacement| {
+            compound.allocator.free(compound.items.items[index]);
+            compound.items.items[index] = replacement;
+            return true;
+        },
+    }
+}
+
+fn unifyQualifiedNames(
+    allocator: std.mem.Allocator,
+    left_bytes: []const u8,
+    right_bytes: []const u8,
+    context: *UnifyContext,
+) Error!QualifiedUnification {
+    const left = relationQualifiedName(left_bytes) orelse unreachable;
+    const right = relationQualifiedName(right_bytes) orelse unreachable;
+    const namespace = intersectNamespaces(left.namespace, right.namespace);
+    const result_namespace = switch (namespace) {
+        .conflict => return .conflict,
+        .value => |value| value,
+    };
+    const result_name = if (std.mem.eql(u8, left.name, right.name))
+        left.name
+    else if (std.mem.eql(u8, left.name, "*"))
+        right.name
+    else if (std.mem.eql(u8, right.name, "*"))
+        left.name
+    else
+        return .conflict;
+    if (relationNamespacesEqual(left.namespace, result_namespace) and
+        std.mem.eql(u8, left.name, result_name))
+    {
+        return .keep;
+    }
+    const length = if (result_namespace) |value| blk: {
+        const prefix_length = std.math.add(usize, value.len, 1) catch
+            return error.SelectorLimitExceeded;
+        break :blk std.math.add(usize, prefix_length, result_name.len) catch
+            return error.SelectorLimitExceeded;
+    } else result_name.len;
+    if (length > context.limits.max_bytes) return error.SelectorLimitExceeded;
+    try context.reserveTemporary(length);
+    const owned = try allocator.alloc(u8, length);
+    if (result_namespace) |value| {
+        std.mem.copyForwards(u8, owned[0..value.len], value);
+        owned[value.len] = '|';
+        std.mem.copyForwards(u8, owned[value.len + 1 ..], result_name);
+    } else {
+        std.mem.copyForwards(u8, owned, result_name);
+    }
+    return .{ .replace = owned };
+}
+
+fn intersectNamespaces(
+    left: ?[]const u8,
+    right: ?[]const u8,
+) NamespaceIntersection {
+    const left_wildcard = left != null and std.mem.eql(u8, left.?, "*");
+    const right_wildcard = right != null and std.mem.eql(u8, right.?, "*");
+    if (left_wildcard) return .{ .value = right };
+    if (right_wildcard) return .{ .value = left };
+    if (left == null or right == null) {
+        if (left == null and right == null) return .{ .value = null };
+        return .conflict;
+    }
+    if (!std.mem.eql(u8, left.?, right.?)) return .conflict;
+    return .{ .value = left };
+}
+
+fn unifyId(
+    compound: *UnifyCompound,
+    candidate: []const u8,
+    context: *UnifyContext,
+) Error!bool {
+    for (compound.items.items) |item| {
+        try context.consume(1);
+        if (item[0] == '#') return false;
+    }
+    return insertUnifyClone(
+        compound,
+        try firstPseudoIndex(compound, context),
+        candidate,
+        context,
+    );
+}
+
+fn unifyPseudo(
+    compound: *UnifyCompound,
+    candidate: []const u8,
+    context: *UnifyContext,
+) Error!bool {
+    if (relationPseudoElementName(candidate) != null) {
+        for (compound.items.items) |item| {
+            try context.consume(1);
+            if (relationPseudoElementName(item) != null) {
+                return relationPseudoElementsEquivalent(item, candidate);
+            }
+        }
+        return insertUnifyClone(compound, compound.items.items.len, candidate, context);
+    }
+    for (compound.items.items, 0..) |item, index| {
+        try context.consume(1);
+        if (relationPseudoElementName(item) != null) {
+            return insertUnifyClone(compound, index, candidate, context);
+        }
+    }
+    return insertUnifyClone(compound, compound.items.items.len, candidate, context);
+}
+
+fn firstPseudoIndex(
+    compound: *const UnifyCompound,
+    context: *UnifyContext,
+) Error!usize {
+    for (compound.items.items, 0..) |item, index| {
+        try context.consume(1);
+        if (item[0] == ':') return index;
+    }
+    return compound.items.items.len;
+}
+
+fn insertUnifyClone(
+    compound: *UnifyCompound,
+    index: usize,
+    candidate: []const u8,
+    context: *UnifyContext,
+) Error!bool {
+    const reservation = std.math.add(
+        usize,
+        candidate.len,
+        @sizeOf([]u8),
+    ) catch return error.SelectorLimitExceeded;
+    try context.reserveComponents(1);
+    try context.reserveTemporary(reservation);
+    const owned = try compound.allocator.dupe(u8, candidate);
+    compound.items.insert(compound.allocator, index, owned) catch |err| {
+        compound.allocator.free(owned);
+        return err;
+    };
+    return true;
 }
 
 const RelationCombinator = enum {
