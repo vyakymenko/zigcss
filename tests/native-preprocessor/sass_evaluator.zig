@@ -3373,6 +3373,60 @@ test "native Sass selector module unifies compound selector values" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module unifies strict complex selector values" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\.complex {
+        \\  left: selector.unify(".a .b", ".c");
+        \\  right: selector.unify(".a", ".b .c");
+        \\  exact: selector.unify(".a > .b", ".a > .b");
+        \\  shared: selector.unify(".a .b", ".a .c");
+        \\  strict: selector.unify(".a > .b + .c", ".d > .e + .f");
+        \\  list: selector.unify(".a .b, .x > .y", ".c, .z");
+        \\  partial: selector.unify(".a b, .x .y", "c, .z");
+        \\  following-one: selector.unify(".a ~ .b", ".c");
+        \\  conflict: meta.inspect(selector.unify(".a b", "c"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-unify-complex.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".complex{left:.a .b.c;right:.b .a.c;exact:.a > .b;shared:.a .b.c;strict:.a.d > .b.e + .c.f;list:.a .b.c,.a .b.z,.x > .y.c,.x > .y.z;partial:.a b.z,.x c.y,.x .y.z;following-one:.a ~ .b.c;conflict:null}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\@use "sass:meta"
+        \\.complex
+        \\  left: selector.unify(".a .b", ".c")
+        \\  strict: selector.unify(".a > .b", ".c > .d")
+        \\  list: selector.unify(".a .b, .x > .y", ".c")
+        \\  conflict: meta.inspect(selector.unify(".a b", "c"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-unify-complex.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".complex{left:.a .b.c;strict:.a.c > .b.d;list:.a .b.c,.x > .y.c;conflict:null}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector unification budgets growing compounds without truncation" {
     const input =
         \\@use "sass:selector";
@@ -3623,7 +3677,12 @@ test "native Sass selector module rejects invalid or unavailable calls" {
         },
         .{
             .name = "selector-unify-complex-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a .b\", \".c\"); }",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a .b\", \".c .d\"); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "selector-unify-following-weave-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".a ~ .b\", \".c ~ .d\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -7171,7 +7230,7 @@ fn exerciseSelectorAllocationFailures(
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
         \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
-        \\  unified: selector.unify(".a, .b", ".x:hover");
+        \\  unified: selector.unify(".a .b, .x > .y", ".c");
         \\}
     ;
     const source_id = try sources.add("selector-allocation.scss", input);
@@ -7191,7 +7250,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.a.x:hover,.b.x:hover}",
+        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;unified:.a .b.c,.x > .y.c}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

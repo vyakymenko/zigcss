@@ -155,6 +155,7 @@ const expectedImplementations = Object.freeze([
       'built-in-selector-composition',
       'built-in-selector-relations',
       'built-in-selector-unify-compound',
+      'built-in-selector-unify-complex-strict',
       'built-in-map-queries',
       'shallow-map-mutations',
       'nested-deep-map-mutations',

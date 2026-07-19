@@ -397,6 +397,58 @@ test "native Sass selector unification intersects bounded compounds" {
     }
 }
 
+test "native Sass selector unification replaces complex subjects and strict ancestry" {
+    const cases = [_]struct {
+        left: []const u8,
+        right: []const u8,
+        expected: []const []const u8,
+    }{
+        .{ .left = ".a .b", .right = ".c", .expected = &.{".a .b.c"} },
+        .{ .left = ".a", .right = ".b .c", .expected = &.{".b .a.c"} },
+        .{ .left = ".a > .b", .right = ".a > .b", .expected = &.{".a > .b"} },
+        .{ .left = ".a .b", .right = ".a .c", .expected = &.{".a .b.c"} },
+        .{
+            .left = ".a > .b + .c",
+            .right = ".d > .e + .f",
+            .expected = &.{".a.d > .b.e + .c.f"},
+        },
+        .{ .left = ".a ~ .b", .right = ".c", .expected = &.{".a ~ .b.c"} },
+        .{
+            .left = ".a .b, .x > .y",
+            .right = ".c, .z",
+            .expected = &.{ ".a .b.c", ".a .b.z", ".x > .y.c", ".x > .y.z" },
+        },
+        .{
+            .left = ".a b, .x .y",
+            .right = "c, .z",
+            .expected = &.{ ".a b.z", ".x c.y", ".x .y.z" },
+        },
+    };
+    for (cases) |case| {
+        var unified = (try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) orelse return error.TestUnexpectedResult;
+        defer unified.deinit();
+        try expectItems(case.expected, unified);
+    }
+
+    try std.testing.expect((try selector.unify(
+        std.testing.allocator,
+        ".a b",
+        "c",
+        .{},
+    )) == null);
+    try std.testing.expect((try selector.unify(
+        std.testing.allocator,
+        "a > .b",
+        "c > .d",
+        .{},
+    )) == null);
+}
+
 test "native Sass selector unification rejects unavailable semantics and limits" {
     try std.testing.expectError(
         error.InvalidSelector,
@@ -406,7 +458,10 @@ test "native Sass selector unification rejects unavailable semantics and limits"
         left: []const u8,
         right: []const u8,
     }{
-        .{ .left = ".a .b", .right = ".c" },
+        .{ .left = ".a .b", .right = ".c .d" },
+        .{ .left = ".a ~ .b", .right = ".c ~ .d" },
+        .{ .left = "> .a", .right = ".b" },
+        .{ .left = ".a >", .right = ".b" },
         .{ .left = ".foo", .right = ".\\66 oo" },
         .{ .left = ":host", .right = ".b" },
         .{ .left = ":host(.a)", .right = ".b" },
@@ -457,6 +512,33 @@ test "native Sass selector unification rejects unavailable semantics and limits"
             ".a",
             ".b",
             .{ .max_temporary_bytes = 1 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            ".a .b",
+            ".c",
+            .{ .max_complex_components = 3 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            ".a .b",
+            ".c",
+            .{ .max_bytes = 10 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.unify(
+            std.testing.allocator,
+            ".a .b",
+            ".c",
+            .{ .max_relation_operations = 4 },
         ),
     );
 }
@@ -545,13 +627,13 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
 
     var unified = (try selector.unify(
         allocator,
-        ".a, .b",
-        ".x:hover, [title=\"y\"]",
+        ".a .b, .x > .y",
+        ".c",
         .{},
     )) orelse return error.TestUnexpectedResult;
     defer unified.deinit();
     try expectItems(
-        &.{ ".a.x:hover", ".a[title=y]", ".b.x:hover", ".b[title=y]" },
+        &.{ ".a .b.c", ".x > .y.c" },
         unified,
     );
 }
