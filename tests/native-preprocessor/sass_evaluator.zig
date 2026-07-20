@@ -3480,6 +3480,59 @@ test "native Sass selector module normalizes duplicate simples and equivalent me
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module normalizes bounded attributes" {
+    const input =
+        \\@use "sass:selector";
+        \\.values {
+        \\  parse: selector.parse("[ x = \"y\" ]");
+        \\  quoted: selector.parse("[x='a b']");
+        \\  simple: selector.simple-selectors("button[x='a b']");
+        \\  relation: selector.is-superselector("[x='a b']", ".more[x=\"a b\"]");
+        \\  modifier: selector.is-superselector("[x=y i]", "[x=y I]");
+        \\  unify: selector.unify("[ x = 'a b' ]", "[x=\"a b\"]");
+        \\  extend: selector.extend("[x=\"y\"].c", "[x=y]", ".b");
+        \\  replace: selector.replace("[x='a b'].c", "[x=\"a b\"]", ".b");
+        \\  duplicate: selector.extend("[x=y][x=\"y\"].c", "[x=y]", ".b");
+        \\  no-match: selector.extend("[ x = \"y\" ]", "[z]", ".b");
+        \\  extender: selector.replace("[x=y]", "[x=y]", "[z=\"q\"]");
+        \\  namespace: selector.extend("[*|x=y].c", "[*|x=\"y\"]", ".b");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-attributes.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{parse:[x=y];quoted:[x=\"a b\"];simple:button,[x=\"a b\"];relation:true;modifier:false;unify:[x=\"a b\"];extend:[x=y].c,.c.b;replace:.c.b;duplicate:[x=y][x=y].c,.c.b;no-match:[x=y];extender:[z=q];namespace:[*|x=y].c,.c.b}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  parsed: selector.parse("[ data = 'wide value' I]")
+        \\  extended: selector.extend("[data='wide value'].x", "[data=\"wide value\"]", ".y")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-attributes.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{parsed:[data=\"wide value\" I];extended:[data=\"wide value\"].x,.x.y}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -3891,6 +3944,16 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.InvalidExpression,
         },
         .{
+            .name = "selector-parse-invalid-attribute-value.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\"[x=123]\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "selector-parse-invalid-attribute-modifier.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\"[x=y ii]\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
             .name = "selector-parse-boolean.scss",
             .input = "@use \"sass:selector\"; .a { value: selector.parse(true); }",
             .expected = error.InvalidExpression,
@@ -4021,8 +4084,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-superselector-attribute-normalization-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\"[x=y]\", \"[x=\\\"y\\\"]\"); }",
+            .name = "selector-superselector-attribute-escape-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\"[\\\\78=y]\", \"[x=y]\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -7662,7 +7725,7 @@ fn exerciseSelectorAllocationFailures(
         \\@use "sass:selector";
         \\@use "sass:meta";
         \\.allocation {
-        \\  parsed: selector.parse(".a > .b, #c:hover");
+        \\  parsed: selector.parse(".a > .b, [ data-x = 'a b' ]#c:hover");
         \\  inspected: meta.inspect(selector.parse(".a, .b"));
         \\  simple: selector.simple-selectors("[title=\"x\"].foo:hover");
         \\  from-value: selector.simple-selectors(selector.parse("button.primary"));
@@ -7670,9 +7733,9 @@ fn exerciseSelectorAllocationFailures(
         \\  nested: selector.nest(".a, .b", "& + &");
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
-        \\  relation: selector.is-superselector(".a .b", ".x .a > .b.extra");
-        \\  extended: selector.extend(".a.c .a.d", ".a", ".b");
-        \\  replaced: selector.replace(".a.c .a.d", ".a", ".b");
+        \\  relation: selector.is-superselector("[data-x='a b'] .b", ".x [data-x=\"a b\"] > .b.extra");
+        \\  extended: selector.extend("[data-x=\"y\"].c [data-x=y].d", "[data-x='y']", ".b");
+        \\  replaced: selector.replace("[data-x=\"y\"].c [data-x=y].d", "[data-x='y']", ".b");
         \\  list-extended: selector.extend(".a.c .a", ".a, .c", ".x, .y");
         \\  list-replaced: selector.replace(".a, .c", ".a, .c", ".b, .d");
         \\  unified: selector.unify(".a > .b .c", ".d .b .e");
@@ -7695,7 +7758,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:.a.c .a.d,.c.b .a.d,.a.c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

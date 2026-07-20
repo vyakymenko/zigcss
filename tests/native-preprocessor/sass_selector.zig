@@ -80,6 +80,60 @@ test "native Sass selector parser decomposes one compound structurally" {
     try expectItems(&.{ "svg|a", ".foo" }, namespaced);
 }
 
+test "native Sass selector parser normalizes bounded attribute selectors" {
+    const cases = [_]struct {
+        input: []const u8,
+        expected: []const u8,
+    }{
+        .{ .input = "[ x ]", .expected = "[x]" },
+        .{ .input = "[ x = \"y\" ]", .expected = "[x=y]" },
+        .{ .input = "[x='a b']", .expected = "[x=\"a b\"]" },
+        .{ .input = "[x='a\"b']", .expected = "[x='a\"b']" },
+        .{ .input = "[x=--custom]", .expected = "[x=\"--custom\"]" },
+        .{ .input = "[x=\"-item\" i]", .expected = "[x=-item i]" },
+        .{ .input = "[svg|data ^= 'wide value' S]", .expected = "[svg|data^=\"wide value\" S]" },
+        .{ .input = "[*|data~=token]", .expected = "[*|data~=token]" },
+        .{ .input = "[|data$=end]", .expected = "[|data$=end]" },
+        .{ .input = "[data|=prefix]", .expected = "[data|=prefix]" },
+        .{ .input = "[data*=middle z]", .expected = "[data*=middle z]" },
+        .{ .input = "[-data=_item]", .expected = "[-data=_item]" },
+        .{ .input = "[/*a*/data/*b*/=/*c*/token/*d*/ i]", .expected = "[data=token i]" },
+        .{ .input = "[data=/* ] , */token]", .expected = "[data=token]" },
+        .{ .input = "[data/**/]", .expected = "[data]" },
+        .{ .input = ":not([ x = \"y\" ])", .expected = ":not([x=y])" },
+        .{ .input = ":has(> [data='wide value'])", .expected = ":has(> [data=\"wide value\"])" },
+    };
+    for (cases) |case| {
+        var parsed = try selector.parse(std.testing.allocator, case.input, .{});
+        defer parsed.deinit();
+        try expectItems(&.{case.expected}, parsed);
+    }
+
+    var exactly_bounded = try selector.parse(
+        std.testing.allocator,
+        "[ x = \"y\" ]",
+        .{ .max_bytes = 5 },
+    );
+    defer exactly_bounded.deinit();
+    try expectItems(&.{"[x=y]"}, exactly_bounded);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            "[ x = \"y\" ]",
+            .{ .max_bytes = 4 },
+        ),
+    );
+
+    const truncated = "[svg|data^=\"wide value\" S]";
+    for (0..truncated.len) |end| {
+        try std.testing.expectError(
+            error.InvalidSelector,
+            selector.parse(std.testing.allocator, truncated[0..end], .{}),
+        );
+    }
+}
+
 test "native Sass selector composition appends selector lists cartesianly" {
     var basic = try selector.append(
         std.testing.allocator,
@@ -234,6 +288,12 @@ test "native Sass selector relations compare structural superselectors" {
         .{ .super_selector = ".foo, .bar", .sub_selector = ".foo.baz, .bar.qux", .expected = true },
         .{ .super_selector = ".foo", .sub_selector = ".foo, .bar", .expected = false },
         .{ .super_selector = ".foo, .bar", .sub_selector = ".foo", .expected = true },
+        .{ .super_selector = "[x='a b']", .sub_selector = "[x=\"a b\"]", .expected = true },
+        .{ .super_selector = "[x=y]", .sub_selector = ".more[x=\"y\"]", .expected = true },
+        .{ .super_selector = "[x=y i]", .sub_selector = "[x=y I]", .expected = false },
+        .{ .super_selector = "[x]", .sub_selector = "[x=y]", .expected = false },
+        .{ .super_selector = "[*|x=y]", .sub_selector = "[svg|x=y]", .expected = false },
+        .{ .super_selector = "[x=y][x=y]", .sub_selector = "[x=y]", .expected = false },
         .{ .super_selector = ":not(.a)", .sub_selector = ":not(.a)", .expected = true },
         .{ .super_selector = ":not(.a)", .sub_selector = ":not(.a).b", .expected = true },
         .{ .super_selector = ".a", .sub_selector = ".a:is(.b)", .expected = true },
@@ -272,7 +332,7 @@ test "native Sass selector relations reject unsupported semantics and limits" {
     }{
         .{ .super_selector = ".foo", .sub_selector = ".\\66 oo" },
         .{ .super_selector = ":is(.a)", .sub_selector = ".a" },
-        .{ .super_selector = "[x=y]", .sub_selector = "[x=\"y\"]" },
+        .{ .super_selector = "[\\78=y]", .sub_selector = "[x=y]" },
     };
     for (unsupported) |case| {
         try std.testing.expectError(
@@ -337,6 +397,9 @@ test "native Sass selector unification intersects bounded compounds" {
         .{ .left = "*|*", .right = "svg|a", .expected = &.{"svg|a"} },
         .{ .left = "svg|*", .right = ".a", .expected = &.{"svg|*.a"} },
         .{ .left = "[x=\"y\"]", .right = "[x=y]", .expected = &.{"[x=y]"} },
+        .{ .left = "[ x = 'a b' ]", .right = "[x=\"a b\"]", .expected = &.{"[x=\"a b\"]"} },
+        .{ .left = "[x=y i]", .right = "[x=y I]", .expected = &.{"[x=y i][x=y I]"} },
+        .{ .left = "[svg|x=\"y\"]", .right = "[svg|x=y]", .expected = &.{"[svg|x=y]"} },
         .{ .left = ".a", .right = "#id", .expected = &.{".a#id"} },
         .{ .left = "#id", .right = ".a", .expected = &.{"#id.a"} },
         .{ .left = ":hover", .right = "[x]", .expected = &.{"[x]:hover"} },
@@ -929,6 +992,151 @@ test "native Sass selector extension normalizes duplicate simples and equivalent
     }
 }
 
+test "native Sass selector extension normalizes bounded attributes" {
+    const cases = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+        extended: []const []const u8,
+        replaced: []const []const u8,
+    }{
+        .{
+            .selector_input = "[x=\"y\"].c",
+            .extendee = "[x=y]",
+            .extender = ".b",
+            .extended = &.{ "[x=y].c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = "[x='a b'].c",
+            .extendee = "[x=\"a b\"]",
+            .extender = ".b",
+            .extended = &.{ "[x=\"a b\"].c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = "[x=y I].c",
+            .extendee = "[x=y i]",
+            .extender = ".b",
+            .extended = &.{"[x=y I].c"},
+            .replaced = &.{"[x=y I].c"},
+        },
+        .{
+            .selector_input = "[ x = \"y\" ]",
+            .extendee = "[z]",
+            .extender = ".b",
+            .extended = &.{"[x=y]"},
+            .replaced = &.{"[x=y]"},
+        },
+        .{
+            .selector_input = "[x=y][x=\"y\"].c",
+            .extendee = "[x=y]",
+            .extender = ".b",
+            .extended = &.{ "[x=y][x=y].c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = "[x=y].c",
+            .extendee = "[x=y][x=\"y\"]",
+            .extender = ".b",
+            .extended = &.{ "[x=y].c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = "[x=y].a, .a[x=\"y\"]",
+            .extendee = "[x=y]",
+            .extender = ".b",
+            .extended = &.{ "[x=y].a", ".a.b", ".a[x=y]" },
+            .replaced = &.{".a.b"},
+        },
+        .{
+            .selector_input = "[x=y]",
+            .extendee = "[x=y]",
+            .extender = "[z=\"q\"]",
+            .extended = &.{ "[x=y]", "[z=q]" },
+            .replaced = &.{"[z=q]"},
+        },
+        .{
+            .selector_input = "[*|x=y].c",
+            .extendee = "[*|x=\"y\"]",
+            .extender = ".b",
+            .extended = &.{ "[*|x=y].c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = "[svg|x=y].c",
+            .extendee = "[*|x=y]",
+            .extender = ".b",
+            .extended = &.{"[svg|x=y].c"},
+            .replaced = &.{"[svg|x=y].c"},
+        },
+    };
+    for (cases) |case| {
+        var extended = try selector.extend(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer extended.deinit();
+        try expectItems(case.extended, extended);
+
+        var replaced = try selector.replace(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer replaced.deinit();
+        try expectItems(case.replaced, replaced);
+    }
+
+    const below_exact = [_]selector.Limits{
+        .{ .max_selectors = 6 },
+        .{ .max_bytes = 49 },
+        .{ .max_complex_components = 33 },
+        .{ .max_temporary_bytes = 861 },
+        .{ .max_relation_operations = 102 },
+    };
+    for (below_exact) |limits| {
+        try std.testing.expectError(
+            error.SelectorLimitExceeded,
+            selector.extend(
+                std.testing.allocator,
+                "[x=\"y\"] [x=y]",
+                "[x=y]",
+                ".b",
+                limits,
+            ),
+        );
+    }
+    var exactly_bounded = try selector.extend(
+        std.testing.allocator,
+        "[x=\"y\"] [x=y]",
+        "[x=y]",
+        ".b",
+        .{
+            .max_selectors = 7,
+            .max_bytes = 50,
+            .max_complex_components = 34,
+            .max_temporary_bytes = 862,
+            .max_relation_operations = 103,
+        },
+    );
+    defer exactly_bounded.deinit();
+    try expectItems(
+        &.{
+            "[x=y] [x=y]",
+            ".b [x=y]",
+            "[x=y] .b",
+            ".b .b",
+        },
+        exactly_bounded,
+    );
+}
+
 test "native Sass selector extension and replacement fail closed and honor limits" {
     const unsupported = [_]struct {
         selector_input: []const u8,
@@ -942,7 +1150,7 @@ test "native Sass selector extension and replacement fail closed and honor limit
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
         .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button" },
         .{ .selector_input = ".\\66 oo", .extendee = ".foo", .extender = ".b" },
-        .{ .selector_input = "[x=\"y\"]", .extendee = "[x=y]", .extender = ".b" },
+        .{ .selector_input = "[x=\\79]", .extendee = "[x=y]", .extender = ".b" },
         .{ .selector_input = ":is(.a)", .extendee = ".a", .extender = ".b" },
         .{ .selector_input = "svg|a", .extendee = "svg|a", .extender = "button" },
         .{ .selector_input = "*.a", .extendee = ".a", .extender = ".b" },
@@ -1915,6 +2123,11 @@ test "native Sass selector parser rejects malformed parents and complex compound
         "???",
         ".foo(",
         "[data-x",
+        "[=y]",
+        "[x=123]",
+        "[x=y ii]",
+        "[x=y i ]",
+        "[x=/* unterminated y]",
         ".foo\\",
     };
     for (invalid_parse) |input| {
@@ -1951,7 +2164,7 @@ test "native Sass selector parser rejects malformed parents and complex compound
 fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     var parsed = try selector.parse(
         allocator,
-        ".foo > .bar, [data-x=\"a,b\"]:not(.x, .y)",
+        ".foo > .bar, [ data-x = \"a,b\" ]:not(.x, .y)",
         .{},
     );
     defer parsed.deinit();
@@ -1983,8 +2196,8 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
 
     try std.testing.expect(try selector.isSuperselector(
         allocator,
-        ".a .b, .c ~ .d",
-        ".x .a > .b, .c + .d.extra",
+        ".a .b, [data-x='a b'] ~ .d",
+        ".x .a > .b, [data-x=\"a b\"] + .d.extra",
         .{},
     ));
 
@@ -1999,21 +2212,26 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
 
     var extended = try selector.extend(
         allocator,
-        ".a.c .a.d",
-        ".a",
+        "[data-x=\"y\"].c [data-x=y].d",
+        "[data-x='y']",
         ".b",
         .{},
     );
     defer extended.deinit();
     try expectItems(
-        &.{ ".a.c .a.d", ".c.b .a.d", ".a.c .d.b", ".c.b .d.b" },
+        &.{
+            "[data-x=y].c [data-x=y].d",
+            ".c.b [data-x=y].d",
+            "[data-x=y].c .d.b",
+            ".c.b .d.b",
+        },
         extended,
     );
 
     var replaced = try selector.replace(
         allocator,
-        ".a.c .a.d",
-        ".a",
+        "[data-x=\"y\"].c [data-x=y].d",
+        "[data-x='y']",
         ".b",
         .{},
     );

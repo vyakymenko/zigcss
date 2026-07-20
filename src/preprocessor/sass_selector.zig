@@ -61,7 +61,7 @@ const Builder = struct {
 
     fn appendToken(self: *Builder, raw: []const u8) Error!void {
         const owned = if (raw.len > 0 and raw[0] == '[')
-            try normalizeAttribute(self.allocator, raw)
+            try normalizeAttribute(self.allocator, raw, self.limits.max_bytes)
         else
             try self.allocator.dupe(u8, raw);
         self.admitOwned(owned) catch |err| {
@@ -131,6 +131,10 @@ fn parseInternal(
         }
         if (byte == '\\') {
             index = escapeEnd(input, index) orelse return error.InvalidSelector;
+            continue;
+        }
+        if (byte == '/' and index + 1 < input.len and input[index + 1] == '*') {
+            index = commentEnd(input, index) orelse return error.InvalidSelector;
             continue;
         }
         switch (byte) {
@@ -527,9 +531,9 @@ const extension_trim_threshold = 100;
 /// bounded compound extenders. Complex target selectors and every standard
 /// combinator are preserved, and each matching compound participates in Dart
 /// Sass's earliest-component-fastest expansion order. Extendee list members are
-/// applied sequentially. Duplicate simples and reordered equivalent members
-/// normalize for matching and trimming without rewriting observable originals.
-/// Complex extendees/extenders, attribute normalization, escaped identifiers,
+/// applied sequentially. Duplicate simples, reordered equivalent members, and
+/// bounded unescaped attributes normalize for matching and trimming without
+/// rewriting specificity. Complex extendees/extenders, escaped identifiers,
 /// namespace inference, and pseudo-selector inference remain unavailable.
 pub fn extend(
     allocator: std.mem.Allocator,
@@ -1227,9 +1231,7 @@ fn validateExtensionCompoundAvailability(
     while (cursor < input.len) {
         const end = try simpleTokenEnd(input, cursor);
         const token = input[cursor..end];
-        if (std.mem.indexOfScalar(u8, token, '\\') != null or
-            token[0] == ':' or token[0] == '[')
-        {
+        if (std.mem.indexOfScalar(u8, token, '\\') != null or token[0] == ':') {
             return error.UnsupportedSelectorExtension;
         }
         if (relationQualifiedName(token) != null and
@@ -2977,7 +2979,7 @@ fn loadUnifyCompound(
         ) catch return error.SelectorLimitExceeded;
         try context.reserveTemporary(reservation);
         const owned = if (token[0] == '[')
-            try normalizeAttribute(allocator, token)
+            try normalizeAttribute(allocator, token, context.limits.max_bytes)
         else
             try allocator.dupe(u8, token);
         result.items.append(allocator, owned) catch |err| {
@@ -3248,8 +3250,8 @@ const SelectorUsage = struct {
 /// Returns whether every selector matched by `sub_input` is also matched by
 /// `super_input`. This first native slice owns structural selector lists,
 /// compounds, namespaces, and the standard combinators. Relation inference
-/// for non-identical functional pseudos, escaped identifiers, and normalized
-/// attribute spellings remains explicitly unavailable rather than guessed.
+/// for non-identical functional pseudos and escaped identifiers remains
+/// explicitly unavailable rather than guessed.
 pub fn isSuperselector(
     allocator: std.mem.Allocator,
     super_input: []const u8,
@@ -3595,10 +3597,19 @@ fn relationCompoundIsSuperselector(
         }
         if (!exact) {
             if (super_simple[0] == '[') {
+                if (std.mem.indexOfScalar(u8, super_simple, '\\') != null) {
+                    return error.UnsupportedSelectorRelation;
+                }
                 sub_cursor = 0;
                 while (sub_cursor < sub_compound.len) {
                     const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
-                    if (sub_compound[sub_cursor] == '[') {
+                    if (sub_compound[sub_cursor] == '[' and
+                        std.mem.indexOfScalar(
+                            u8,
+                            sub_compound[sub_cursor..sub_end],
+                            '\\',
+                        ) != null)
+                    {
                         return error.UnsupportedSelectorRelation;
                     }
                     sub_cursor = sub_end;
@@ -3992,6 +4003,18 @@ fn canonicalize(
             try appendBounded(&output, allocator, " ", max_bytes);
             pending_space = false;
         }
+        if (byte == '[') {
+            const end = try matchingSquareEnd(input, index);
+            const attribute = try normalizeAttribute(
+                allocator,
+                input[index..end],
+                max_bytes,
+            );
+            defer allocator.free(attribute);
+            try appendBounded(&output, allocator, attribute, max_bytes);
+            index = end;
+            continue;
+        }
         switch (byte) {
             '\'', '"' => quote = byte,
             '(' => paren_depth += 1,
@@ -4301,6 +4324,10 @@ fn matchingSquareEnd(input: []const u8, start: usize) Error!usize {
             index = escapeEnd(input, index) orelse return error.InvalidSelector;
             continue;
         }
+        if (byte == '/' and index + 1 < input.len and input[index + 1] == '*') {
+            index = commentEnd(input, index) orelse return error.InvalidSelector;
+            continue;
+        }
         switch (byte) {
             '\'', '"' => quote = byte,
             '[' => depth += 1,
@@ -4399,45 +4426,243 @@ fn isSingleCompound(input: []const u8) bool {
     return quote == null and paren_depth == 0 and square_depth == 0;
 }
 
-fn normalizeAttribute(allocator: std.mem.Allocator, input: []const u8) Error![]u8 {
-    const equals = std.mem.indexOfScalar(u8, input, '=') orelse
-        return allocator.dupe(u8, input);
-    var opening = equals + 1;
-    while (opening + 1 < input.len and isWhitespace(input[opening])) opening += 1;
-    if (opening + 1 >= input.len or (input[opening] != '\'' and input[opening] != '"')) {
+const ParsedAttribute = struct {
+    name: []const u8,
+    operator: ?[]const u8,
+    value: ?[]const u8,
+    modifier: ?u8,
+};
+
+fn normalizeAttribute(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error![]u8 {
+    if (input.len < 3 or input[0] != '[' or input[input.len - 1] != ']') {
+        return error.InvalidSelector;
+    }
+    // Escape decoding is a separate fail-closed semantic package. Retaining
+    // exact bytes here keeps selector.parse() lossless while relation,
+    // unification, and extension gates continue to reject inferred equality.
+    if (std.mem.indexOfScalar(u8, input, '\\') != null) {
+        if (input.len > maximum_bytes) return error.SelectorLimitExceeded;
         return allocator.dupe(u8, input);
     }
-    const quote = input[opening];
-    var closing = opening + 1;
-    while (closing < input.len - 1) {
-        if (input[closing] == '\\') {
-            closing = escapeEnd(input, closing) orelse return error.InvalidSelector;
+
+    const parsed = try parseUnescapedAttribute(input);
+    const value_length = if (parsed.value) |value|
+        if (attributeValueIsIdentifier(value) and
+            !std.mem.startsWith(u8, value, "--"))
+            value.len
+        else
+            std.math.add(usize, value.len, 2) catch
+                return error.SelectorLimitExceeded
+    else
+        0;
+    var length = std.math.add(usize, parsed.name.len, 2) catch
+        return error.SelectorLimitExceeded;
+    if (parsed.operator) |operator| {
+        length = std.math.add(usize, length, operator.len) catch
+            return error.SelectorLimitExceeded;
+        length = std.math.add(usize, length, value_length) catch
+            return error.SelectorLimitExceeded;
+    }
+    if (parsed.modifier != null) {
+        length = std.math.add(usize, length, 2) catch
+            return error.SelectorLimitExceeded;
+    }
+    if (length > maximum_bytes) return error.SelectorLimitExceeded;
+
+    const owned = try allocator.alloc(u8, length);
+    errdefer allocator.free(owned);
+    var offset: usize = 0;
+    owned[offset] = '[';
+    offset += 1;
+    std.mem.copyForwards(u8, owned[offset .. offset + parsed.name.len], parsed.name);
+    offset += parsed.name.len;
+    if (parsed.operator) |operator| {
+        std.mem.copyForwards(u8, owned[offset .. offset + operator.len], operator);
+        offset += operator.len;
+        const value = parsed.value orelse return error.InvalidSelector;
+        if (attributeValueIsIdentifier(value) and
+            !std.mem.startsWith(u8, value, "--"))
+        {
+            std.mem.copyForwards(u8, owned[offset .. offset + value.len], value);
+            offset += value.len;
+        } else {
+            const quote: u8 = if (std.mem.indexOfScalar(u8, value, '"') != null)
+                '\''
+            else
+                '"';
+            if (std.mem.indexOfScalar(u8, value, quote) != null) {
+                return error.InvalidSelector;
+            }
+            owned[offset] = quote;
+            offset += 1;
+            std.mem.copyForwards(u8, owned[offset .. offset + value.len], value);
+            offset += value.len;
+            owned[offset] = quote;
+            offset += 1;
+        }
+    }
+    if (parsed.modifier) |modifier| {
+        owned[offset] = ' ';
+        owned[offset + 1] = modifier;
+        offset += 2;
+    }
+    owned[offset] = ']';
+    offset += 1;
+    std.debug.assert(offset == owned.len);
+    return owned;
+}
+
+fn parseUnescapedAttribute(input: []const u8) Error!ParsedAttribute {
+    const closing = input.len - 1;
+    var cursor = try skipAttributeWhitespace(input, 1, closing);
+    const name_start = cursor;
+    cursor = try attributeQualifiedNameEnd(input, cursor, closing);
+    const name = input[name_start..cursor];
+    cursor = try skipAttributeWhitespace(input, cursor, closing);
+    if (cursor == closing) {
+        return .{ .name = name, .operator = null, .value = null, .modifier = null };
+    }
+
+    const operator_start = cursor;
+    const operator_length: usize = switch (input[cursor]) {
+        '=' => 1,
+        '~', '|', '^', '$', '*' => if (cursor + 1 < closing and
+            input[cursor + 1] == '=')
+            2
+        else
+            return error.InvalidSelector,
+        else => return error.InvalidSelector,
+    };
+    cursor += operator_length;
+    const operator = input[operator_start..cursor];
+    cursor = try skipAttributeWhitespace(input, cursor, closing);
+    if (cursor == closing) return error.InvalidSelector;
+
+    const value: []const u8 = if (input[cursor] == '\'' or input[cursor] == '"') blk: {
+        const quote = input[cursor];
+        const start = cursor + 1;
+        cursor = start;
+        while (cursor < closing and input[cursor] != quote) : (cursor += 1) {
+            if (input[cursor] == 0 or input[cursor] == '\n' or
+                input[cursor] == '\r' or input[cursor] == '\x0c')
+            {
+                return error.InvalidSelector;
+            }
+        }
+        if (cursor == closing) return error.InvalidSelector;
+        const result = input[start..cursor];
+        cursor += 1;
+        break :blk result;
+    } else blk: {
+        const start = cursor;
+        cursor = attributeIdentifierEnd(input, cursor, closing) orelse
+            return error.InvalidSelector;
+        break :blk input[start..cursor];
+    };
+
+    cursor = try skipAttributeWhitespace(input, cursor, closing);
+    var modifier: ?u8 = null;
+    if (cursor < closing) {
+        if (!std.ascii.isAlphabetic(input[cursor]) or cursor + 1 != closing) {
+            return error.InvalidSelector;
+        }
+        modifier = input[cursor];
+        cursor += 1;
+    }
+    if (cursor != closing) return error.InvalidSelector;
+    return .{
+        .name = name,
+        .operator = operator,
+        .value = value,
+        .modifier = modifier,
+    };
+}
+
+fn skipAttributeWhitespace(
+    input: []const u8,
+    start: usize,
+    limit: usize,
+) Error!usize {
+    var cursor = start;
+    while (cursor < limit) {
+        if (isWhitespace(input[cursor])) {
+            cursor += 1;
             continue;
         }
-        if (input[closing] == quote) break;
-        closing += 1;
+        if (input[cursor] != '/' or cursor + 1 >= limit or
+            input[cursor + 1] != '*')
+        {
+            break;
+        }
+        cursor += 2;
+        while (cursor + 1 < limit and
+            (input[cursor] != '*' or input[cursor + 1] != '/'))
+        {
+            cursor += 1;
+        }
+        if (cursor + 1 >= limit) return error.InvalidSelector;
+        cursor += 2;
     }
-    if (closing >= input.len - 1 or input[closing] != quote) return error.InvalidSelector;
-    if (!validName(input[opening + 1 .. closing], false)) return allocator.dupe(u8, input);
-    const tail = trimWhitespace(input[closing + 1 .. input.len - 1]);
-    if (tail.len > 1 or (tail.len == 1 and
-        std.ascii.toLower(tail[0]) != 'i' and std.ascii.toLower(tail[0]) != 's'))
+    return cursor;
+}
+
+fn attributeQualifiedNameEnd(
+    input: []const u8,
+    start: usize,
+    closing: usize,
+) Error!usize {
+    if (start >= closing) return error.InvalidSelector;
+    if (input[start] == '*') {
+        if (start + 1 >= closing or input[start + 1] != '|') {
+            return error.InvalidSelector;
+        }
+        return attributeIdentifierEnd(input, start + 2, closing) orelse
+            error.InvalidSelector;
+    }
+    if (input[start] == '|') {
+        return attributeIdentifierEnd(input, start + 1, closing) orelse
+            error.InvalidSelector;
+    }
+    var cursor = attributeIdentifierEnd(input, start, closing) orelse
+        return error.InvalidSelector;
+    if (cursor < closing and input[cursor] == '|' and
+        (cursor + 1 >= closing or input[cursor + 1] != '='))
     {
-        return allocator.dupe(u8, input);
+        cursor = attributeIdentifierEnd(input, cursor + 1, closing) orelse
+            return error.InvalidSelector;
     }
-    const owned = try allocator.alloc(u8, input.len - 2);
-    std.mem.copyForwards(u8, owned[0..opening], input[0..opening]);
-    std.mem.copyForwards(
-        u8,
-        owned[opening .. opening + closing - opening - 1],
-        input[opening + 1 .. closing],
-    );
-    std.mem.copyForwards(
-        u8,
-        owned[opening + closing - opening - 1 ..],
-        input[closing + 1 ..],
-    );
-    return owned;
+    return cursor;
+}
+
+fn attributeIdentifierEnd(
+    input: []const u8,
+    start: usize,
+    limit: usize,
+) ?usize {
+    if (start >= limit) return null;
+    var cursor = start;
+    if (input[cursor] == '-') {
+        if (cursor + 1 >= limit or
+            (input[cursor + 1] != '-' and !isNameStart(input[cursor + 1])))
+        {
+            return null;
+        }
+        cursor += 2;
+    } else {
+        if (!isNameStart(input[cursor])) return null;
+        cursor += 1;
+    }
+    while (cursor < limit and isNameContinue(input[cursor])) cursor += 1;
+    return cursor;
+}
+
+fn attributeValueIsIdentifier(value: []const u8) bool {
+    const end = attributeIdentifierEnd(value, 0, value.len) orelse return false;
+    return end == value.len;
 }
 
 fn validTypeSelector(input: []const u8) bool {
@@ -4511,6 +4736,17 @@ fn escapeEnd(input: []const u8, start: usize) ?usize {
         return index;
     }
     return index + 1;
+}
+
+fn commentEnd(input: []const u8, start: usize) ?usize {
+    if (start + 1 >= input.len or input[start] != '/' or input[start + 1] != '*') {
+        return null;
+    }
+    var cursor = start + 2;
+    while (cursor + 1 < input.len) : (cursor += 1) {
+        if (input[cursor] == '*' and input[cursor + 1] == '/') return cursor + 2;
+    }
+    return null;
 }
 
 fn explicitCombinatorLength(input: []const u8, index: usize) usize {
