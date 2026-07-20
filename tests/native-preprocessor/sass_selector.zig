@@ -738,6 +738,197 @@ test "native Sass selector extension and replacement expand compound lists" {
     );
 }
 
+test "native Sass selector extension normalizes duplicate simples and equivalent members" {
+    const cases = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+        extended: []const []const u8,
+        replaced: []const []const u8,
+    }{
+        .{
+            .selector_input = ".a.a.c",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".a.a.c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = ".a.a.c",
+            .extendee = ".a.a",
+            .extender = ".b",
+            .extended = &.{ ".a.a.c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = ".a.c",
+            .extendee = ".a",
+            .extender = ".b.b",
+            .extended = &.{ ".a.c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = ".a",
+            .extendee = ".a",
+            .extender = ".b.b",
+            .extended = &.{ ".a", ".b.b" },
+            .replaced = &.{".b.b"},
+        },
+        .{
+            .selector_input = "#x#x.c",
+            .extendee = "#x",
+            .extender = ".b",
+            .extended = &.{ "#x#x.c", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = ".a.b, .b.a",
+            .extendee = ".a",
+            .extender = ".c",
+            .extended = &.{ ".a.b", ".b.c", ".b.a" },
+            .replaced = &.{".b.c"},
+        },
+        .{
+            .selector_input = ".a.b, .b.a",
+            .extendee = ".z",
+            .extender = ".x",
+            .extended = &.{ ".a.b", ".b.a" },
+            .replaced = &.{ ".a.b", ".b.a" },
+        },
+        .{
+            .selector_input = ".a, .a",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".a", ".b", ".a" },
+            .replaced = &.{".b"},
+        },
+        .{
+            .selector_input = ".a, .a",
+            .extendee = ".a",
+            .extender = ".a",
+            .extended = &.{".a"},
+            .replaced = &.{".a"},
+        },
+        .{
+            .selector_input = ".a, .a",
+            .extendee = ".z",
+            .extender = ".x",
+            .extended = &.{ ".a", ".a" },
+            .replaced = &.{ ".a", ".a" },
+        },
+        .{
+            .selector_input = ".a, .a, .c",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".a", ".b", ".c" },
+            .replaced = &.{ ".b", ".c" },
+        },
+        .{
+            .selector_input = ".a, .a, .b",
+            .extendee = ".a",
+            .extender = ".b",
+            .extended = &.{ ".a", ".b" },
+            .replaced = &.{".b"},
+        },
+        .{
+            .selector_input = ".a, .b, .a",
+            .extendee = ".a",
+            .extender = ".a",
+            .extended = &.{ ".a", ".b" },
+            .replaced = &.{ ".a", ".b" },
+        },
+        .{
+            .selector_input = ".a",
+            .extendee = ".a, .a",
+            .extender = ".b",
+            .extended = &.{ ".a", ".b" },
+            .replaced = &.{".b"},
+        },
+        .{
+            .selector_input = ".a.b",
+            .extendee = ".a.b, .b.a",
+            .extender = ".x",
+            .extended = &.{ ".a.b", ".x" },
+            .replaced = &.{".x"},
+        },
+        .{
+            .selector_input = ".a",
+            .extendee = ".a",
+            .extender = ".b, .b",
+            .extended = &.{ ".a", ".b" },
+            .replaced = &.{".b"},
+        },
+        .{
+            .selector_input = ".a",
+            .extendee = ".a",
+            .extender = ".b.c, .c.b",
+            .extended = &.{ ".a", ".b.c" },
+            .replaced = &.{".b.c"},
+        },
+        .{
+            .selector_input = ".a",
+            .extendee = ".a",
+            .extender = ".c.b, .b.c",
+            .extended = &.{ ".a", ".c.b" },
+            .replaced = &.{".c.b"},
+        },
+        .{
+            .selector_input = ".a",
+            .extendee = ".a.a.a.a.a",
+            .extender = ".b, .c",
+            .extended = &.{ ".a", ".b", ".c" },
+            .replaced = &.{ ".b", ".c" },
+        },
+        .{
+            .selector_input = ".a, .a, .c",
+            .extendee = ".a, .a",
+            .extender = ".b, .b",
+            .extended = &.{ ".a", ".b", ".c" },
+            .replaced = &.{ ".b", ".c" },
+        },
+        .{
+            .selector_input = ".a.b, .b.a, .c",
+            .extendee = ".a.b, .b.a",
+            .extender = ".x.y, .y.x",
+            .extended = &.{ ".a.b", ".x.y", ".b.a", ".c" },
+            .replaced = &.{ ".x.y", ".c" },
+        },
+        .{
+            .selector_input = ".a.a .a.a",
+            .extendee = ".a.a",
+            .extender = ".b.b, .b.b",
+            .extended = &.{
+                ".a.a .a.a",
+                ".b.b .a.a",
+                ".a.a .b.b",
+                ".b.b .b.b",
+            },
+            .replaced = &.{".b.b .b.b"},
+        },
+    };
+    for (cases) |case| {
+        var extended = try selector.extend(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer extended.deinit();
+        try expectItems(case.extended, extended);
+
+        var replaced = try selector.replace(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer replaced.deinit();
+        try expectItems(case.replaced, replaced);
+    }
+}
+
 test "native Sass selector extension and replacement fail closed and honor limits" {
     const unsupported = [_]struct {
         selector_input: []const u8,
@@ -746,18 +937,10 @@ test "native Sass selector extension and replacement fail closed and honor limit
     }{
         .{ .selector_input = ".a", .extendee = ".a, .x .c", .extender = ".b" },
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".b, .x .c" },
-        .{ .selector_input = ".a", .extendee = ".a, .a", .extender = ".b" },
-        .{ .selector_input = ".a", .extendee = ".a.b, .b.a", .extender = ".c" },
-        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b, .b" },
-        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b.c, .c.b" },
         .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button, .x" },
         .{ .selector_input = ".a", .extendee = ".x .a", .extender = ".b" },
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
-        .{ .selector_input = ".a.b, .b.a", .extendee = ".a", .extender = ".c" },
         .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button" },
-        .{ .selector_input = ".a.a", .extendee = ".a", .extender = ".b" },
-        .{ .selector_input = ".a", .extendee = ".a.a", .extender = ".b" },
-        .{ .selector_input = ".a", .extendee = ".a", .extender = ".b.b" },
         .{ .selector_input = ".\\66 oo", .extendee = ".foo", .extender = ".b" },
         .{ .selector_input = "[x=\"y\"]", .extendee = "[x=y]", .extender = ".b" },
         .{ .selector_input = ":is(.a)", .extendee = ".a", .extender = ".b" },
@@ -837,8 +1020,8 @@ test "native Sass selector extension and replacement fail closed and honor limit
         .{ .max_selectors = 6 },
         .{ .max_bytes = 28 },
         .{ .max_complex_components = 33 },
-        .{ .max_temporary_bytes = 625 },
-        .{ .max_relation_operations = 146 },
+        .{ .max_temporary_bytes = 849 },
+        .{ .max_relation_operations = 108 },
     };
     for (below_exact) |limits| {
         try std.testing.expectError(
@@ -861,8 +1044,8 @@ test "native Sass selector extension and replacement fail closed and honor limit
             .max_selectors = 7,
             .max_bytes = 29,
             .max_complex_components = 34,
-            .max_temporary_bytes = 626,
-            .max_relation_operations = 147,
+            .max_temporary_bytes = 850,
+            .max_relation_operations = 109,
         },
     );
     defer exactly_bounded.deinit();

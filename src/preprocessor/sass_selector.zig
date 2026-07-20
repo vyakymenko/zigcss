@@ -473,10 +473,11 @@ const ExtensionReplacement = union(enum) {
 
 const ExtensionPattern = struct {
     allocator: std.mem.Allocator,
+    storage: [][]const u8,
     tokens: [][]const u8,
 
     fn deinit(self: *ExtensionPattern) void {
-        self.allocator.free(self.tokens);
+        self.allocator.free(self.storage);
         self.* = undefined;
     }
 };
@@ -526,9 +527,10 @@ const extension_trim_threshold = 100;
 /// bounded compound extenders. Complex target selectors and every standard
 /// combinator are preserved, and each matching compound participates in Dart
 /// Sass's earliest-component-fastest expansion order. Extendee list members are
-/// applied sequentially. Complex extendees/extenders, duplicate-simple and
-/// attribute normalization, escaped identifiers, namespace inference, and
-/// pseudo-selector inference remain explicitly unavailable.
+/// applied sequentially. Duplicate simples and reordered equivalent members
+/// normalize for matching and trimming without rewriting observable originals.
+/// Complex extendees/extenders, attribute normalization, escaped identifiers,
+/// namespace inference, and pseudo-selector inference remain unavailable.
 pub fn extend(
     allocator: std.mem.Allocator,
     selector_input: []const u8,
@@ -670,18 +672,9 @@ fn selectorExtension(
     for (extender_complexes.items) |complex| {
         if (complex.components.len != 1) return error.UnsupportedSelectorExtension;
     }
-    for (selector_complexes.items, 0..) |left, left_index| {
-        for (selector_complexes.items[left_index + 1 ..]) |right| {
-            if (try extensionComplexesEquivalent(left, right, &context)) {
-                return error.UnsupportedSelectorExtension;
-            }
-        }
-    }
     const list_mode = extendee_complexes.items.len > 1 or
         extender_complexes.items.len > 1;
     if (list_mode) {
-        try validateExtensionMembersUnique(extendee_complexes.items, &context);
-        try validateExtensionMembersUnique(extender_complexes.items, &context);
         return selectorExtensionLists(
             allocator,
             selector_complexes.items,
@@ -702,8 +695,9 @@ fn selectorExtension(
     const extender = extender_complexes.items[0].components[0].compound;
     var candidates = ExtensionCandidates{ .allocator = allocator };
     defer candidates.deinit();
+    var extension_applied = false;
     for (selector_complexes.items) |complex| {
-        try emitExtensionCandidates(
+        extension_applied = try emitExtensionCandidates(
             allocator,
             complex,
             &pattern,
@@ -712,24 +706,20 @@ fn selectorExtension(
             output_limits.max_selectors,
             &context,
             &candidates,
-        );
+        ) or extension_applied;
     }
-    try pruneExtensionCandidates(mode, &candidates, &context);
-
-    return finishExtensionCandidates(allocator, &candidates, output_limits);
-}
-
-fn validateExtensionMembersUnique(
-    complexes: []const RelationComplex,
-    context: *UnifyContext,
-) Error!void {
-    for (complexes, 0..) |left, left_index| {
-        for (complexes[left_index + 1 ..]) |right| {
-            if (try extensionComplexesEquivalent(left, right, context)) {
-                return error.UnsupportedSelectorExtension;
-            }
+    if (extension_applied) {
+        switch (mode) {
+            .extend => try pruneExtensionListCandidates(
+                allocator,
+                &candidates,
+                &context,
+            ),
+            .replace => try pruneExtensionCandidates(mode, &candidates, &context),
         }
     }
+
+    return finishExtensionCandidates(allocator, &candidates, output_limits);
 }
 
 fn finishExtensionCandidates(
@@ -1242,15 +1232,6 @@ fn validateExtensionCompoundAvailability(
         {
             return error.UnsupportedSelectorExtension;
         }
-        var previous_cursor: usize = 0;
-        while (previous_cursor < cursor) {
-            const previous_end = try simpleTokenEnd(input, previous_cursor);
-            try context.consume(1);
-            if (std.mem.eql(u8, token, input[previous_cursor..previous_end])) {
-                return error.UnsupportedSelectorExtension;
-            }
-            previous_cursor = previous_end;
-        }
         if (relationQualifiedName(token) != null and
             (std.mem.eql(u8, token, "*") or
                 std.mem.indexOfScalar(u8, token, '|') != null))
@@ -1276,18 +1257,34 @@ fn loadExtensionPattern(
         @sizeOf([]const u8),
     ) catch return error.SelectorLimitExceeded;
     try context.reserveTemporary(pointer_bytes);
-    const tokens = try allocator.alloc([]const u8, token_count);
-    errdefer allocator.free(tokens);
+    const storage = try allocator.alloc([]const u8, token_count);
+    errdefer allocator.free(storage);
     var cursor: usize = 0;
     var index: usize = 0;
-    while (cursor < input.len) : (index += 1) {
+    while (cursor < input.len) {
         const end = try simpleTokenEnd(input, cursor);
-        try context.consume(1);
-        tokens[index] = input[cursor..end];
+        const token = input[cursor..end];
+        var duplicate = false;
+        for (storage[0..index]) |candidate| {
+            try context.consume(1);
+            if (std.mem.eql(u8, token, candidate)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            try context.consume(1);
+            storage[index] = token;
+            index += 1;
+        }
         cursor = end;
     }
-    std.debug.assert(index == token_count);
-    return .{ .allocator = allocator, .tokens = tokens };
+    std.debug.assert(index > 0 and index <= token_count);
+    return .{
+        .allocator = allocator,
+        .storage = storage,
+        .tokens = storage[0..index],
+    };
 }
 
 fn emitExtensionCandidates(
@@ -1299,7 +1296,7 @@ fn emitExtensionCandidates(
     maximum_candidates: usize,
     context: *UnifyContext,
     candidates: *ExtensionCandidates,
-) Error!void {
+) Error!bool {
     const replacement_bytes = std.math.mul(
         usize,
         complex.components.len,
@@ -1316,6 +1313,7 @@ fn emitExtensionCandidates(
     }
 
     var match_count: usize = 0;
+    var extension_applied = false;
     for (complex.components, 0..) |component, index| {
         const result = try extensionCompoundReplacement(
             allocator,
@@ -1327,6 +1325,7 @@ fn emitExtensionCandidates(
         switch (result) {
             .no_match => {},
             .replacement => |owned| {
+                extension_applied = true;
                 var retained = false;
                 defer if (!retained) allocator.free(owned);
                 if (mode == .extend and try extensionCompoundsEquivalent(
@@ -1367,7 +1366,7 @@ fn emitExtensionCandidates(
                 context,
             );
         }
-        return;
+        return extension_applied;
     }
 
     if (candidates.items.items.len >= maximum_candidates) {
@@ -1381,7 +1380,14 @@ fn emitExtensionCandidates(
         match_count != 0,
         context,
     );
-    try appendExtensionCandidate(allocator, candidates, rendered, false, context);
+    try appendExtensionCandidate(
+        allocator,
+        candidates,
+        rendered,
+        match_count == 0,
+        context,
+    );
+    return extension_applied;
 }
 
 fn extensionCompoundReplacement(
@@ -1468,14 +1474,15 @@ fn consumeExtensionPatternMatch(
     token: []const u8,
     context: *UnifyContext,
 ) Error!bool {
+    var found = false;
     for (pattern.tokens, 0..) |candidate, index| {
         try context.consume(1);
-        if (!matched[index] and std.mem.eql(u8, candidate, token)) {
+        if (std.mem.eql(u8, candidate, token)) {
             matched[index] = true;
-            return true;
+            found = true;
         }
     }
-    return false;
+    return found;
 }
 
 fn cloneExtensionCompound(
@@ -1598,6 +1605,7 @@ fn pruneExtensionCandidates(
     candidates: *ExtensionCandidates,
     context: *UnifyContext,
 ) Error!void {
+    if (candidates.items.items.len > extension_trim_threshold) return;
     for (candidates.items.items, 0..) |*left, left_index| {
         if (left.removed) continue;
         for (candidates.items.items[left_index + 1 ..]) |*right| {
@@ -1610,6 +1618,7 @@ fn pruneExtensionCandidates(
                     context,
                 ));
             if (equivalent) {
+                if (left.original and right.original) continue;
                 if (mode == .extend and !left.original and right.original) {
                     left.removed = true;
                     break;
@@ -1655,6 +1664,29 @@ fn pruneExtensionCandidates(
             ) catch |err| return err;
             if (right_super) {
                 left.removed = true;
+                break;
+            }
+        }
+    }
+    try pruneExactOriginalRuns(candidates, context);
+}
+
+fn pruneExactOriginalRuns(
+    candidates: *ExtensionCandidates,
+    context: *UnifyContext,
+) Error!void {
+    var run_start: usize = 0;
+    for (candidates.items.items, 0..) |*candidate, candidate_index| {
+        if (candidate.removed) continue;
+        if (!candidate.original) {
+            run_start = candidate_index + 1;
+            continue;
+        }
+        for (candidates.items.items[run_start..candidate_index]) |previous| {
+            if (previous.removed or !previous.original) continue;
+            try context.consume(1);
+            if (std.mem.eql(u8, previous.bytes, candidate.bytes)) {
+                candidate.removed = true;
                 break;
             }
         }

@@ -3425,6 +3425,61 @@ test "native Sass selector module extends and replaces compound lists" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module normalizes duplicate simples and equivalent members" {
+    const input =
+        \\@use "sass:selector";
+        \\.values {
+        \\  target-duplicate: selector.extend(".a.a.c", ".a", ".b");
+        \\  target-duplicate-replace: selector.replace(".a.a.c", ".a", ".b");
+        \\  extendee-duplicate: selector.extend(".a.a.c", ".a.a", ".b");
+        \\  extender-duplicate: selector.extend(".a.c", ".a", ".b.b");
+        \\  whole-extender-duplicate: selector.replace(".a", ".a", ".b.b");
+        \\  equivalent-target: selector.extend(".a.b, .b.a", ".a", ".c");
+        \\  duplicate-target: selector.extend(".a, .a", ".a", ".b");
+        \\  duplicate-trim: selector.extend(".a, .a, .c", ".a", ".b");
+        \\  duplicate-identity: selector.extend(".a, .a", ".a", ".a");
+        \\  duplicate-extendee-list: selector.replace(".a", ".a, .a", ".b");
+        \\  equivalent-extendee-list: selector.replace(".a.b", ".a.b, .b.a", ".x");
+        \\  normalized-pattern: selector.extend(".a", ".a.a.a.a.a", ".b, .c");
+        \\  duplicate-extender-list: selector.extend(".a", ".a", ".b, .b");
+        \\  equivalent-extender-list: selector.replace(".a", ".a", ".b.c, .c.b");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-extend-replace-normalized.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{target-duplicate:.a.a.c,.c.b;target-duplicate-replace:.c.b;extendee-duplicate:.a.a.c,.c.b;extender-duplicate:.a.c,.c.b;whole-extender-duplicate:.b.b;equivalent-target:.a.b,.b.c,.b.a;duplicate-target:.a,.b,.a;duplicate-trim:.a,.b,.c;duplicate-identity:.a;duplicate-extendee-list:.b;equivalent-extendee-list:.x;normalized-pattern:.a,.b,.c;duplicate-extender-list:.a,.b;equivalent-extender-list:.b.c}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  duplicate: selector.extend(".a.a", ".a", ".b")
+        \\  equivalent: selector.replace(".a", ".a", ".c.b, .b.c")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-extend-replace-normalized.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{duplicate:.a.a,.b;equivalent:.c.b}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -3989,11 +4044,6 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .name = "selector-extend-number.scss",
             .input = "@use \"sass:selector\"; .a { value: selector.extend(1, \".a\", \".b\"); }",
             .expected = error.InvalidExpression,
-        },
-        .{
-            .name = "selector-extend-duplicate-extendee-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.extend(\".a\", \".a, .a\", \".b\"); }",
-            .expected = error.UnsupportedFeature,
         },
         .{
             .name = "selector-replace-complex-extender-pending.scss",
