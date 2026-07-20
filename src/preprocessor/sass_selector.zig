@@ -392,8 +392,8 @@ const NamespaceIntersection = union(enum) {
 /// child/adjacent-sibling ancestry, bounded disjoint ancestry weaving, and exact
 /// shared descendant anchors with one-sided rigid ancestry suffixes plus
 /// two-component terminal sibling weaving. Partial shared anchors, ambiguous
-/// dual-rigid weaving, escaped identifier equivalence, and host-selector semantics
-/// remain unavailable.
+/// dual-rigid weaving and host-selector semantics remain unavailable. Bounded
+/// non-pseudo identifier and attribute escapes are canonical before this stage.
 pub fn unify(
     allocator: std.mem.Allocator,
     left_input: []const u8,
@@ -532,8 +532,8 @@ const extension_trim_threshold = 100;
 /// combinator are preserved, and each matching compound participates in Dart
 /// Sass's earliest-component-fastest expansion order. Extendee list members are
 /// applied sequentially. Duplicate simples, reordered equivalent members, and
-/// bounded unescaped attributes normalize for matching and trimming without
-/// rewriting specificity. Complex extendees/extenders, escaped identifiers,
+/// bounded attributes and non-pseudo identifier escapes normalize for matching
+/// and trimming without rewriting specificity. Complex extendees/extenders,
 /// namespace inference, and pseudo-selector inference remain unavailable.
 pub fn extend(
     allocator: std.mem.Allocator,
@@ -1231,7 +1231,7 @@ fn validateExtensionCompoundAvailability(
     while (cursor < input.len) {
         const end = try simpleTokenEnd(input, cursor);
         const token = input[cursor..end];
-        if (std.mem.indexOfScalar(u8, token, '\\') != null or token[0] == ':') {
+        if (token[0] == ':') {
             return error.UnsupportedSelectorExtension;
         }
         if (relationQualifiedName(token) != null and
@@ -2965,7 +2965,7 @@ fn loadUnifyCompound(
     while (cursor < input.len) {
         const end = try simpleTokenEnd(input, cursor);
         const token = input[cursor..end];
-        if (std.mem.indexOfScalar(u8, token, '\\') != null or
+        if ((token[0] == ':' and std.mem.indexOfScalar(u8, token, '\\') != null) or
             unsupportedUnifyPseudo(token))
         {
             return error.UnsupportedSelectorUnification;
@@ -3250,8 +3250,8 @@ const SelectorUsage = struct {
 /// Returns whether every selector matched by `sub_input` is also matched by
 /// `super_input`. This first native slice owns structural selector lists,
 /// compounds, namespaces, and the standard combinators. Relation inference
-/// for non-identical functional pseudos and escaped identifiers remains
-/// explicitly unavailable rather than guessed.
+/// for non-identical functional or escaped pseudos remains explicitly
+/// unavailable rather than guessed. Other admitted escapes are canonical.
 pub fn isSuperselector(
     allocator: std.mem.Allocator,
     super_input: []const u8,
@@ -3597,23 +3597,6 @@ fn relationCompoundIsSuperselector(
         }
         if (!exact) {
             if (super_simple[0] == '[') {
-                if (std.mem.indexOfScalar(u8, super_simple, '\\') != null) {
-                    return error.UnsupportedSelectorRelation;
-                }
-                sub_cursor = 0;
-                while (sub_cursor < sub_compound.len) {
-                    const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
-                    if (sub_compound[sub_cursor] == '[' and
-                        std.mem.indexOfScalar(
-                            u8,
-                            sub_compound[sub_cursor..sub_end],
-                            '\\',
-                        ) != null)
-                    {
-                        return error.UnsupportedSelectorRelation;
-                    }
-                    sub_cursor = sub_end;
-                }
                 return false;
             }
             if (relationSimpleRequiresInference(super_simple)) {
@@ -3694,8 +3677,9 @@ fn relationPseudoElementsEquivalent(left: []const u8, right: []const u8) bool {
 }
 
 fn relationSimpleRequiresInference(input: []const u8) bool {
-    return std.mem.indexOfScalar(u8, input, '\\') != null or
-        (input[0] == ':' and std.mem.indexOfScalar(u8, input, '(') != null);
+    return input[0] == ':' and
+        (std.mem.indexOfScalar(u8, input, '\\') != null or
+            std.mem.indexOfScalar(u8, input, '(') != null);
 }
 
 fn relationSimpleCount(input: []const u8) Error!usize {
@@ -4041,7 +4025,139 @@ fn canonicalize(
     if (output.items.len == 0) return error.InvalidSelector;
     if (allow_parent) try validateParentPositions(allocator, output.items);
     try validateComplex(output.items, allow_parent);
+    if (std.mem.indexOfScalar(u8, output.items, '\\') != null) {
+        const normalized = try normalizeOuterSelectorEscapesAlloc(
+            allocator,
+            output.items,
+            max_bytes,
+        );
+        output.deinit(allocator);
+        output = .empty;
+        errdefer allocator.free(normalized);
+        if (allow_parent) try validateParentPositions(allocator, normalized);
+        try validateComplex(normalized, allow_parent);
+        return normalized;
+    }
     return output.toOwnedSlice(allocator);
+}
+
+fn normalizeOuterSelectorEscapesAlloc(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    var cursor: usize = 0;
+    while (cursor < input.len) {
+        if (isWhitespace(input[cursor])) {
+            try appendByteBounded(
+                &output,
+                allocator,
+                input[cursor],
+                maximum_bytes,
+            );
+            cursor += 1;
+            continue;
+        }
+        const combinator_length = explicitCombinatorLength(input, cursor);
+        if (combinator_length != 0) {
+            try appendBounded(
+                &output,
+                allocator,
+                input[cursor .. cursor + combinator_length],
+                maximum_bytes,
+            );
+            cursor += combinator_length;
+            continue;
+        }
+        const end = try compoundEnd(input, cursor);
+        if (end == cursor) return error.InvalidSelector;
+        try appendNormalizedCompoundEscapes(
+            &output,
+            allocator,
+            input[cursor..end],
+            maximum_bytes,
+        );
+        cursor = end;
+    }
+    if (output.items.len > maximum_bytes) return error.SelectorLimitExceeded;
+    return output.toOwnedSlice(allocator);
+}
+
+fn appendNormalizedCompoundEscapes(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error!void {
+    var cursor: usize = 0;
+    while (cursor < input.len) {
+        const end = try simpleTokenEnd(input, cursor);
+        const token = input[cursor..end];
+        if (std.mem.indexOfScalar(u8, token, '\\') == null or
+            token[0] == '[' or token[0] == ':' or token[0] == '&')
+        {
+            try appendBounded(output, allocator, token, maximum_bytes);
+        } else switch (token[0]) {
+            '.', '#', '%' => {
+                try appendByteBounded(output, allocator, token[0], maximum_bytes);
+                try appendNormalizedIdentifier(
+                    output,
+                    allocator,
+                    token[1..],
+                    maximum_bytes,
+                );
+            },
+            else => try appendNormalizedTypeSelector(
+                output,
+                allocator,
+                token,
+                maximum_bytes,
+            ),
+        }
+        cursor = end;
+    }
+}
+
+fn appendNormalizedTypeSelector(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error!void {
+    if (findUnescapedPipe(input)) |pipe| {
+        const namespace = input[0..pipe];
+        if (namespace.len > 0) {
+            if (std.mem.eql(u8, namespace, "*")) {
+                try appendBounded(output, allocator, "*", maximum_bytes);
+            } else {
+                try appendNormalizedIdentifier(
+                    output,
+                    allocator,
+                    namespace,
+                    maximum_bytes,
+                );
+            }
+        }
+        try appendBounded(output, allocator, "|", maximum_bytes);
+        const name = input[pipe + 1 ..];
+        if (std.mem.eql(u8, name, "*")) {
+            try appendBounded(output, allocator, "*", maximum_bytes);
+        } else {
+            try appendNormalizedIdentifier(
+                output,
+                allocator,
+                name,
+                maximum_bytes,
+            );
+        }
+        return;
+    }
+    if (std.mem.eql(u8, input, "*")) {
+        return appendBounded(output, allocator, "*", maximum_bytes);
+    }
+    return appendNormalizedIdentifier(output, allocator, input, maximum_bytes);
 }
 
 fn validateParentPositions(allocator: std.mem.Allocator, input: []const u8) Error!void {
@@ -4430,6 +4546,7 @@ const ParsedAttribute = struct {
     name: []const u8,
     operator: ?[]const u8,
     value: ?[]const u8,
+    value_quoted: bool = false,
     modifier: ?u8,
 };
 
@@ -4441,82 +4558,46 @@ fn normalizeAttribute(
     if (input.len < 3 or input[0] != '[' or input[input.len - 1] != ']') {
         return error.InvalidSelector;
     }
-    // Escape decoding is a separate fail-closed semantic package. Retaining
-    // exact bytes here keeps selector.parse() lossless while relation,
-    // unification, and extension gates continue to reject inferred equality.
-    if (std.mem.indexOfScalar(u8, input, '\\') != null) {
-        if (input.len > maximum_bytes) return error.SelectorLimitExceeded;
-        return allocator.dupe(u8, input);
-    }
-
-    const parsed = try parseUnescapedAttribute(input);
-    const value_length = if (parsed.value) |value|
-        if (attributeValueIsIdentifier(value) and
-            !std.mem.startsWith(u8, value, "--"))
-            value.len
-        else
-            std.math.add(usize, value.len, 2) catch
-                return error.SelectorLimitExceeded
+    const parsed = try parseAttribute(input);
+    const name = try normalizeAttributeQualifiedNameAlloc(
+        allocator,
+        parsed.name,
+        maximum_bytes,
+    );
+    defer allocator.free(name);
+    const value = if (parsed.value) |raw|
+        try normalizeAttributeValueAlloc(
+            allocator,
+            raw,
+            parsed.value_quoted,
+            maximum_bytes,
+        )
     else
-        0;
-    var length = std.math.add(usize, parsed.name.len, 2) catch
-        return error.SelectorLimitExceeded;
-    if (parsed.operator) |operator| {
-        length = std.math.add(usize, length, operator.len) catch
-            return error.SelectorLimitExceeded;
-        length = std.math.add(usize, length, value_length) catch
-            return error.SelectorLimitExceeded;
-    }
-    if (parsed.modifier != null) {
-        length = std.math.add(usize, length, 2) catch
-            return error.SelectorLimitExceeded;
-    }
-    if (length > maximum_bytes) return error.SelectorLimitExceeded;
+        null;
+    defer if (value) |owned| allocator.free(owned);
 
-    const owned = try allocator.alloc(u8, length);
-    errdefer allocator.free(owned);
-    var offset: usize = 0;
-    owned[offset] = '[';
-    offset += 1;
-    std.mem.copyForwards(u8, owned[offset .. offset + parsed.name.len], parsed.name);
-    offset += parsed.name.len;
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    try appendBounded(&output, allocator, "[", maximum_bytes);
+    try appendBounded(&output, allocator, name, maximum_bytes);
     if (parsed.operator) |operator| {
-        std.mem.copyForwards(u8, owned[offset .. offset + operator.len], operator);
-        offset += operator.len;
-        const value = parsed.value orelse return error.InvalidSelector;
-        if (attributeValueIsIdentifier(value) and
-            !std.mem.startsWith(u8, value, "--"))
-        {
-            std.mem.copyForwards(u8, owned[offset .. offset + value.len], value);
-            offset += value.len;
-        } else {
-            const quote: u8 = if (std.mem.indexOfScalar(u8, value, '"') != null)
-                '\''
-            else
-                '"';
-            if (std.mem.indexOfScalar(u8, value, quote) != null) {
-                return error.InvalidSelector;
-            }
-            owned[offset] = quote;
-            offset += 1;
-            std.mem.copyForwards(u8, owned[offset .. offset + value.len], value);
-            offset += value.len;
-            owned[offset] = quote;
-            offset += 1;
-        }
+        try appendBounded(&output, allocator, operator, maximum_bytes);
+        try appendBounded(
+            &output,
+            allocator,
+            value orelse return error.InvalidSelector,
+            maximum_bytes,
+        );
     }
     if (parsed.modifier) |modifier| {
-        owned[offset] = ' ';
-        owned[offset + 1] = modifier;
-        offset += 2;
+        try appendBounded(&output, allocator, " ", maximum_bytes);
+        try appendByteBounded(&output, allocator, modifier, maximum_bytes);
     }
-    owned[offset] = ']';
-    offset += 1;
-    std.debug.assert(offset == owned.len);
-    return owned;
+    try appendBounded(&output, allocator, "]", maximum_bytes);
+    return output.toOwnedSlice(allocator);
 }
 
-fn parseUnescapedAttribute(input: []const u8) Error!ParsedAttribute {
+fn parseAttribute(input: []const u8) Error!ParsedAttribute {
     const closing = input.len - 1;
     var cursor = try skipAttributeWhitespace(input, 1, closing);
     const name_start = cursor;
@@ -4542,16 +4623,23 @@ fn parseUnescapedAttribute(input: []const u8) Error!ParsedAttribute {
     cursor = try skipAttributeWhitespace(input, cursor, closing);
     if (cursor == closing) return error.InvalidSelector;
 
+    var value_quoted = false;
     const value: []const u8 = if (input[cursor] == '\'' or input[cursor] == '"') blk: {
+        value_quoted = true;
         const quote = input[cursor];
         const start = cursor + 1;
         cursor = start;
-        while (cursor < closing and input[cursor] != quote) : (cursor += 1) {
+        while (cursor < closing and input[cursor] != quote) {
+            if (input[cursor] == '\\') {
+                cursor = escapeEnd(input, cursor) orelse return error.InvalidSelector;
+                continue;
+            }
             if (input[cursor] == 0 or input[cursor] == '\n' or
                 input[cursor] == '\r' or input[cursor] == '\x0c')
             {
                 return error.InvalidSelector;
             }
+            cursor += 1;
         }
         if (cursor == closing) return error.InvalidSelector;
         const result = input[start..cursor];
@@ -4578,6 +4666,7 @@ fn parseUnescapedAttribute(input: []const u8) Error!ParsedAttribute {
         .name = name,
         .operator = operator,
         .value = value,
+        .value_quoted = value_quoted,
         .modifier = modifier,
     };
 }
@@ -4645,24 +4734,406 @@ fn attributeIdentifierEnd(
 ) ?usize {
     if (start >= limit) return null;
     var cursor = start;
-    if (input[cursor] == '-') {
+    if (input[cursor] == '\\') {
+        cursor = escapeEnd(input, cursor) orelse return null;
+    } else if (input[cursor] == '-') {
         if (cursor + 1 >= limit or
-            (input[cursor + 1] != '-' and !isNameStart(input[cursor + 1])))
+            (input[cursor + 1] != '-' and
+                input[cursor + 1] != '\\' and
+                !isNameStart(input[cursor + 1])))
         {
             return null;
         }
-        cursor += 2;
+        cursor += 1;
+        if (input[cursor] == '\\') {
+            cursor = escapeEnd(input, cursor) orelse return null;
+        } else {
+            cursor += 1;
+        }
     } else {
         if (!isNameStart(input[cursor])) return null;
         cursor += 1;
     }
-    while (cursor < limit and isNameContinue(input[cursor])) cursor += 1;
+    while (cursor < limit) {
+        if (input[cursor] == '\\') {
+            cursor = escapeEnd(input, cursor) orelse return null;
+            continue;
+        }
+        if (!isNameContinue(input[cursor])) break;
+        cursor += 1;
+    }
     return cursor;
 }
 
-fn attributeValueIsIdentifier(value: []const u8) bool {
-    const end = attributeIdentifierEnd(value, 0, value.len) orelse return false;
-    return end == value.len;
+fn normalizeAttributeQualifiedNameAlloc(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    if (findUnescapedPipe(input)) |pipe| {
+        const namespace = input[0..pipe];
+        if (namespace.len > 0) {
+            if (std.mem.eql(u8, namespace, "*")) {
+                try appendBounded(&output, allocator, "*", maximum_bytes);
+            } else {
+                try appendNormalizedIdentifier(
+                    &output,
+                    allocator,
+                    namespace,
+                    maximum_bytes,
+                );
+            }
+        }
+        try appendBounded(&output, allocator, "|", maximum_bytes);
+        try appendNormalizedIdentifier(
+            &output,
+            allocator,
+            input[pipe + 1 ..],
+            maximum_bytes,
+        );
+    } else {
+        try appendNormalizedIdentifier(
+            &output,
+            allocator,
+            input,
+            maximum_bytes,
+        );
+    }
+    return output.toOwnedSlice(allocator);
+}
+
+fn normalizeAttributeValueAlloc(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    quoted: bool,
+    maximum_bytes: usize,
+) Error![]u8 {
+    if (!quoted) {
+        const normalized = try normalizeIdentifierAlloc(
+            allocator,
+            input,
+            maximum_bytes,
+        );
+        if (!std.mem.startsWith(u8, input, "--")) return normalized;
+        allocator.free(normalized);
+        const decoded = try decodeAttributeStringAlloc(
+            allocator,
+            input,
+            maximum_bytes,
+        );
+        defer allocator.free(decoded);
+        return quoteAttributeStringAlloc(allocator, decoded, maximum_bytes);
+    }
+
+    const decoded = try decodeAttributeStringAlloc(
+        allocator,
+        input,
+        maximum_bytes,
+    );
+    defer allocator.free(decoded);
+    if (attributeValueIsLiteralIdentifier(decoded) and
+        !std.mem.startsWith(u8, decoded, "--"))
+    {
+        return allocator.dupe(u8, decoded);
+    }
+    return quoteAttributeStringAlloc(allocator, decoded, maximum_bytes);
+}
+
+fn normalizeIdentifierAlloc(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    try appendNormalizedIdentifier(&output, allocator, input, maximum_bytes);
+    return output.toOwnedSlice(allocator);
+}
+
+const DecodedSelectorEscape = struct {
+    scalar: u32,
+    end: usize,
+};
+
+fn appendNormalizedIdentifier(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error!void {
+    if (input.len == 0 or !std.unicode.utf8ValidateSlice(input)) {
+        return error.InvalidSelector;
+    }
+    var cursor: usize = 0;
+    var position: usize = 0;
+    var first_scalar: ?u21 = null;
+    while (cursor < input.len) {
+        var escaped = false;
+        const scalar: u21 = if (input[cursor] == '\\') blk: {
+            escaped = true;
+            const decoded = try decodeSelectorEscape(input, cursor);
+            cursor = decoded.end;
+            if (decoded.scalar > 0x10ffff or
+                (decoded.scalar >= 0xd800 and decoded.scalar <= 0xdfff))
+            {
+                return error.InvalidSelector;
+            }
+            break :blk @intCast(decoded.scalar);
+        } else blk: {
+            const length = std.unicode.utf8ByteSequenceLength(input[cursor]) catch
+                return error.InvalidSelector;
+            const end = std.math.add(usize, cursor, length) catch
+                return error.InvalidSelector;
+            if (end > input.len) return error.InvalidSelector;
+            const decoded = std.unicode.utf8Decode(input[cursor..end]) catch
+                return error.InvalidSelector;
+            cursor = end;
+            break :blk decoded;
+        };
+        try appendNormalizedIdentifierScalar(
+            output,
+            allocator,
+            scalar,
+            escaped,
+            position,
+            first_scalar,
+            maximum_bytes,
+        );
+        if (first_scalar == null) first_scalar = scalar;
+        position = std.math.add(usize, position, 1) catch
+            return error.SelectorLimitExceeded;
+    }
+    if (position == 0) return error.InvalidSelector;
+}
+
+fn appendNormalizedIdentifierScalar(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    scalar: u21,
+    escaped: bool,
+    position: usize,
+    first_scalar: ?u21,
+    maximum_bytes: usize,
+) Error!void {
+    const leading_digit = scalar >= '0' and scalar <= '9' and
+        (position == 0 or (position == 1 and first_scalar == '-'));
+    if (scalar == 0 or scalar < 0x20 or scalar == 0x7f or leading_digit) {
+        return appendSelectorHexEscape(
+            output,
+            allocator,
+            scalar,
+            true,
+            maximum_bytes,
+        );
+    }
+    if (scalar >= 0x80) {
+        var encoded: [4]u8 = undefined;
+        const length = std.unicode.utf8Encode(scalar, &encoded) catch
+            return error.InvalidSelector;
+        return appendBounded(output, allocator, encoded[0..length], maximum_bytes);
+    }
+    const byte: u8 = @intCast(scalar);
+    if (std.ascii.isAlphabetic(byte) or std.ascii.isDigit(byte) or byte == '_') {
+        return appendByteBounded(output, allocator, byte, maximum_bytes);
+    }
+    if (byte == '-' and !escaped) {
+        return appendByteBounded(output, allocator, byte, maximum_bytes);
+    }
+    try appendBounded(output, allocator, "\\", maximum_bytes);
+    try appendByteBounded(output, allocator, byte, maximum_bytes);
+}
+
+fn decodeSelectorEscape(input: []const u8, start: usize) Error!DecodedSelectorEscape {
+    if (start + 1 >= input.len or input[start] != '\\') {
+        return error.InvalidSelector;
+    }
+    var cursor = start + 1;
+    if (input[cursor] == '\n' or input[cursor] == '\r' or
+        input[cursor] == '\x0c' or input[cursor] == 0)
+    {
+        return error.InvalidSelector;
+    }
+    if (std.ascii.isHex(input[cursor])) {
+        var scalar: u32 = 0;
+        var digits: usize = 0;
+        while (cursor < input.len and digits < 6 and std.ascii.isHex(input[cursor])) {
+            scalar = scalar * 16 + selectorHexValue(input[cursor]);
+            cursor += 1;
+            digits += 1;
+        }
+        if (cursor < input.len and isWhitespace(input[cursor])) {
+            cursor = normalizeEscapeWhitespace(input, cursor);
+        }
+        return .{ .scalar = scalar, .end = cursor };
+    }
+    const length = std.unicode.utf8ByteSequenceLength(input[cursor]) catch
+        return error.InvalidSelector;
+    const end = std.math.add(usize, cursor, length) catch
+        return error.InvalidSelector;
+    if (end > input.len) return error.InvalidSelector;
+    return .{
+        .scalar = std.unicode.utf8Decode(input[cursor..end]) catch
+            return error.InvalidSelector,
+        .end = end,
+    };
+}
+
+fn selectorHexValue(byte: u8) u32 {
+    if (byte >= '0' and byte <= '9') return byte - '0';
+    if (byte >= 'a' and byte <= 'f') return byte - 'a' + 10;
+    return byte - 'A' + 10;
+}
+
+fn appendSelectorHexEscape(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    scalar: u32,
+    terminate: bool,
+    maximum_bytes: usize,
+) Error!void {
+    var reversed: [6]u8 = undefined;
+    var length: usize = 0;
+    var remaining = scalar;
+    while (remaining != 0) {
+        const digit: u8 = @intCast(remaining & 0xf);
+        reversed[length] = if (digit < 10) '0' + digit else 'a' + digit - 10;
+        length += 1;
+        remaining >>= 4;
+    }
+    if (length == 0) {
+        reversed[0] = '0';
+        length = 1;
+    }
+    try appendBounded(output, allocator, "\\", maximum_bytes);
+    var index = length;
+    while (index > 0) {
+        index -= 1;
+        try appendByteBounded(output, allocator, reversed[index], maximum_bytes);
+    }
+    if (terminate) try appendByteBounded(output, allocator, ' ', maximum_bytes);
+}
+
+fn decodeAttributeStringAlloc(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error![]u8 {
+    if (!std.unicode.utf8ValidateSlice(input)) return error.InvalidSelector;
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    var cursor: usize = 0;
+    while (cursor < input.len) {
+        if (input[cursor] == '\\') {
+            const decoded = try decodeSelectorEscape(input, cursor);
+            cursor = decoded.end;
+            const scalar: u21 = if (decoded.scalar == 0 or
+                decoded.scalar > 0x10ffff or
+                (decoded.scalar >= 0xd800 and decoded.scalar <= 0xdfff))
+                0xfffd
+            else
+                @intCast(decoded.scalar);
+            var encoded: [4]u8 = undefined;
+            const length = std.unicode.utf8Encode(scalar, &encoded) catch unreachable;
+            try appendBounded(
+                &output,
+                allocator,
+                encoded[0..length],
+                maximum_bytes,
+            );
+            continue;
+        }
+        const length = std.unicode.utf8ByteSequenceLength(input[cursor]) catch
+            return error.InvalidSelector;
+        const end = std.math.add(usize, cursor, length) catch
+            return error.InvalidSelector;
+        if (end > input.len) return error.InvalidSelector;
+        const scalar = std.unicode.utf8Decode(input[cursor..end]) catch
+            return error.InvalidSelector;
+        if (scalar == 0 or scalar == '\n' or scalar == '\r' or scalar == '\x0c') {
+            return error.InvalidSelector;
+        }
+        try appendBounded(&output, allocator, input[cursor..end], maximum_bytes);
+        cursor = end;
+    }
+    return output.toOwnedSlice(allocator);
+}
+
+fn quoteAttributeStringAlloc(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error![]u8 {
+    if (!std.unicode.utf8ValidateSlice(input)) return error.InvalidSelector;
+    const contains_double = std.mem.indexOfScalar(u8, input, '"') != null;
+    const contains_single = std.mem.indexOfScalar(u8, input, '\'') != null;
+    const quote: u8 = if (contains_double and !contains_single) '\'' else '"';
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    try appendByteBounded(&output, allocator, quote, maximum_bytes);
+    var cursor: usize = 0;
+    while (cursor < input.len) {
+        const length = std.unicode.utf8ByteSequenceLength(input[cursor]) catch
+            return error.InvalidSelector;
+        const end = std.math.add(usize, cursor, length) catch
+            return error.InvalidSelector;
+        if (end > input.len) return error.InvalidSelector;
+        const scalar = std.unicode.utf8Decode(input[cursor..end]) catch
+            return error.InvalidSelector;
+        if (scalar == quote or scalar == '\\') {
+            try appendBounded(&output, allocator, "\\", maximum_bytes);
+            try appendBounded(&output, allocator, input[cursor..end], maximum_bytes);
+        } else if ((scalar < 0x20 and scalar != '\t') or scalar == 0x7f) {
+            const next_is_hex_or_space = if (end < input.len) blk: {
+                const next = input[end];
+                break :blk std.ascii.isHex(next) or isWhitespace(next);
+            } else false;
+            try appendSelectorHexEscape(
+                &output,
+                allocator,
+                scalar,
+                next_is_hex_or_space,
+                maximum_bytes,
+            );
+        } else {
+            try appendBounded(&output, allocator, input[cursor..end], maximum_bytes);
+        }
+        cursor = end;
+    }
+    try appendByteBounded(&output, allocator, quote, maximum_bytes);
+    return output.toOwnedSlice(allocator);
+}
+
+fn attributeValueIsLiteralIdentifier(value: []const u8) bool {
+    if (!std.unicode.utf8ValidateSlice(value) or value.len == 0) return false;
+    var cursor: usize = 0;
+    if (value[cursor] == '-') {
+        if (cursor + 1 >= value.len or
+            (value[cursor + 1] != '-' and !isNameStart(value[cursor + 1])))
+        {
+            return false;
+        }
+        cursor += 2;
+    } else {
+        if (!isNameStart(value[cursor])) return false;
+        cursor += 1;
+    }
+    while (cursor < value.len and isNameContinue(value[cursor])) cursor += 1;
+    return cursor == value.len;
+}
+
+fn findUnescapedPipe(input: []const u8) ?usize {
+    var cursor: usize = 0;
+    while (cursor < input.len) {
+        if (input[cursor] == '\\') {
+            cursor = escapeEnd(input, cursor) orelse return null;
+            continue;
+        }
+        if (input[cursor] == '|') return cursor;
+        cursor += 1;
+    }
+    return null;
 }
 
 fn validTypeSelector(input: []const u8) bool {
@@ -4724,6 +5195,11 @@ fn normalizeEscapeWhitespace(input: []const u8, index: usize) usize {
 fn escapeEnd(input: []const u8, start: usize) ?usize {
     if (start + 1 >= input.len) return null;
     var index = start + 1;
+    if (input[index] == 0 or input[index] == '\n' or input[index] == '\r' or
+        input[index] == '\x0c')
+    {
+        return null;
+    }
     if (std.ascii.isHex(input[index])) {
         var digits: usize = 0;
         while (index < input.len and digits < 6 and std.ascii.isHex(input[index])) {
@@ -4778,6 +5254,18 @@ fn appendBounded(
         return error.SelectorLimitExceeded;
     if (next > max_bytes) return error.SelectorLimitExceeded;
     try output.appendSlice(allocator, bytes);
+}
+
+fn appendByteBounded(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    byte: u8,
+    max_bytes: usize,
+) Error!void {
+    const next = std.math.add(usize, output.items.len, 1) catch
+        return error.SelectorLimitExceeded;
+    if (next > max_bytes) return error.SelectorLimitExceeded;
+    try output.append(allocator, byte);
 }
 
 fn skipWhitespace(input: []const u8, start: usize) usize {

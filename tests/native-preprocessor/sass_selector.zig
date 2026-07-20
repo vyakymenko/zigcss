@@ -27,14 +27,14 @@ test "native Sass selector parser canonicalizes bounded selector lists" {
     try expectItems(&.{"[data-x=\"a,b\"]:not(.x, .y)"}, functional);
 }
 
-test "native Sass selector parser retains escapes and forgiving empty segments" {
+test "native Sass selector parser normalizes escapes and forgiving empty segments" {
     var parsed = try selector.parse(std.testing.allocator, "a,,b,", .{});
     defer parsed.deinit();
     try expectItems(&.{ "a", "b" }, parsed);
 
     var escaped = try selector.parse(std.testing.allocator, ".\\31 23#\\66 oo", .{});
     defer escaped.deinit();
-    try expectItems(&.{".\\31 23#\\66 oo"}, escaped);
+    try expectItems(&.{".\\31 23#foo"}, escaped);
 
     var trailing = try selector.parse(std.testing.allocator, "a >", .{});
     defer trailing.deinit();
@@ -132,6 +132,148 @@ test "native Sass selector parser normalizes bounded attribute selectors" {
             selector.parse(std.testing.allocator, truncated[0..end], .{}),
         );
     }
+}
+
+test "native Sass selector parser and relations normalize bounded escapes" {
+    const cases = [_]struct {
+        input: []const u8,
+        expected: []const u8,
+    }{
+        .{ .input = ".\\66 oo", .expected = ".foo" },
+        .{ .input = ".\\00003123", .expected = ".\\31 23" },
+        .{ .input = ".caf\\e9 ", .expected = ".café" },
+        .{ .input = ".\\1f49a ", .expected = ".💚" },
+        .{ .input = ".foo\\2b bar", .expected = ".foo\\+bar" },
+        .{ .input = ".\\2d foo", .expected = ".\\-foo" },
+        .{ .input = ".\\0 ", .expected = ".\\0 " },
+        .{ .input = "#\\66 oo", .expected = "#foo" },
+        .{ .input = "%\\31 23", .expected = "%\\31 23" },
+        .{ .input = "\\62 utton", .expected = "button" },
+        .{ .input = "\\73 vg|\\61 ", .expected = "svg|a" },
+        .{ .input = "\\2a ", .expected = "\\*" },
+        .{ .input = "[\\78 =y]", .expected = "[x=y]" },
+        .{ .input = "[\\6e s|\\78 =y]", .expected = "[ns|x=y]" },
+        .{ .input = "[x=\\79 es]", .expected = "[x=yes]" },
+        .{ .input = "[x=\\31 23]", .expected = "[x=\\31 23]" },
+        .{ .input = "[x=foo\\2b bar]", .expected = "[x=foo\\+bar]" },
+        .{ .input = "[x=\\0 ]", .expected = "[x=\\0 ]" },
+        .{ .input = "[x=\"\\79 \"]", .expected = "[x=y]" },
+        .{ .input = "[x=\"a\\20 b\"]", .expected = "[x=\"a b\"]" },
+        .{ .input = "[x=\"\\110000 \"]", .expected = "[x=�]" },
+        .{ .input = "[x=\"\\d800 \"]", .expected = "[x=�]" },
+        .{ .input = "[x=\"\\0 \"]", .expected = "[x=�]" },
+        .{ .input = "[x=\"a\\\"b\"]", .expected = "[x='a\"b']" },
+        .{ .input = "[x=\"a'b\"]", .expected = "[x=\"a'b\"]" },
+        .{ .input = "[x=\"a'\\\"b\"]", .expected = "[x=\"a'\\\"b\"]" },
+    };
+    for (cases) |case| {
+        var parsed = try selector.parse(std.testing.allocator, case.input, .{});
+        defer parsed.deinit();
+        try expectItems(&.{case.expected}, parsed);
+    }
+
+    try std.testing.expect(try selector.isSuperselector(
+        std.testing.allocator,
+        ".foo",
+        ".\\66 oo",
+        .{},
+    ));
+    try std.testing.expect(try selector.isSuperselector(
+        std.testing.allocator,
+        "[x=y]",
+        "[\\78 =\\79 ]",
+        .{},
+    ));
+    try std.testing.expect(!try selector.isSuperselector(
+        std.testing.allocator,
+        ".-foo",
+        ".\\2d foo",
+        .{},
+    ));
+    try std.testing.expect(try selector.isSuperselector(
+        std.testing.allocator,
+        ".\\2d foo",
+        ".\\-foo",
+        .{},
+    ));
+    try std.testing.expect(!try selector.isSuperselector(
+        std.testing.allocator,
+        ".\\0 ",
+        ".�",
+        .{},
+    ));
+    try std.testing.expect(!try selector.isSuperselector(
+        std.testing.allocator,
+        "[x=\\0 ]",
+        "[x=�]",
+        .{},
+    ));
+
+    var unified = (try selector.unify(
+        std.testing.allocator,
+        ".foo",
+        ".\\66 oo",
+        .{},
+    )) orelse return error.TestUnexpectedResult;
+    defer unified.deinit();
+    try expectItems(&.{".foo"}, unified);
+
+    var extended = try selector.extend(
+        std.testing.allocator,
+        ".\\66 oo.c",
+        ".foo",
+        ".bar",
+        .{},
+    );
+    defer extended.deinit();
+    try expectItems(&.{ ".foo.c", ".c.bar" }, extended);
+
+    var replaced = try selector.replace(
+        std.testing.allocator,
+        "[\\78 =\\79 ].c",
+        "[x=y]",
+        ".bar",
+        .{},
+    );
+    defer replaced.deinit();
+    try expectItems(&.{".c.bar"}, replaced);
+
+    var expanded = try selector.parse(
+        std.testing.allocator,
+        ".\\31z",
+        .{ .max_bytes = 6 },
+    );
+    defer expanded.deinit();
+    try expectItems(&.{".\\31 z"}, expanded);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ".\\31z",
+            .{ .max_bytes = 5 },
+        ),
+    );
+
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.parse(std.testing.allocator, ".\\d800 ", .{}),
+    );
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.parse(std.testing.allocator, ".\\110000 ", .{}),
+    );
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.parse(std.testing.allocator, "[x=y \\69]", .{}),
+    );
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.parse(std.testing.allocator, ".\\\nfoo", .{}),
+    );
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.parse(std.testing.allocator, ".\\\x00foo", .{}),
+    );
 }
 
 test "native Sass selector composition appends selector lists cartesianly" {
@@ -330,9 +472,8 @@ test "native Sass selector relations reject unsupported semantics and limits" {
         super_selector: []const u8,
         sub_selector: []const u8,
     }{
-        .{ .super_selector = ".foo", .sub_selector = ".\\66 oo" },
         .{ .super_selector = ":is(.a)", .sub_selector = ".a" },
-        .{ .super_selector = "[\\78=y]", .sub_selector = "[x=y]" },
+        .{ .super_selector = ":hover", .sub_selector = ":\\68 over" },
     };
     for (unsupported) |case| {
         try std.testing.expectError(
@@ -1149,9 +1290,8 @@ test "native Sass selector extension and replacement fail closed and honor limit
         .{ .selector_input = ".a", .extendee = ".x .a", .extender = ".b" },
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
         .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button" },
-        .{ .selector_input = ".\\66 oo", .extendee = ".foo", .extender = ".b" },
-        .{ .selector_input = "[x=\\79]", .extendee = "[x=y]", .extender = ".b" },
         .{ .selector_input = ":is(.a)", .extendee = ".a", .extender = ".b" },
+        .{ .selector_input = ":\\68 over", .extendee = ":hover", .extender = ".b" },
         .{ .selector_input = "svg|a", .extendee = "svg|a", .extender = "button" },
         .{ .selector_input = "*.a", .extendee = ".a", .extender = ".b" },
     };
@@ -1767,7 +1907,7 @@ test "native Sass selector unification rejects unavailable semantics and limits"
         .{ .left = ":hover .b", .right = ".c .d" },
         .{ .left = "> .a", .right = ".b" },
         .{ .left = ".a >", .right = ".b" },
-        .{ .left = ".foo", .right = ".\\66 oo" },
+        .{ .left = ":hover", .right = ":\\68 over" },
         .{ .left = ":host", .right = ".b" },
         .{ .left = ":host(.a)", .right = ".b" },
         .{ .left = "::slotted(.a)", .right = ".b" },
@@ -2170,6 +2310,14 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, 2), parsed.items.len);
 
+    var escaped = try selector.parse(
+        allocator,
+        ".\\66 oo[\\78 =\"\\79 \"]",
+        .{},
+    );
+    defer escaped.deinit();
+    try expectItems(&.{".foo[x=y]"}, escaped);
+
     var simple = try selector.simpleSelectors(
         allocator,
         "a.foo#id:hover[title=\"x\"]",
@@ -2200,6 +2348,12 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
         ".x .a > .b, [data-x=\"a b\"] + .d.extra",
         .{},
     ));
+    try std.testing.expect(try selector.isSuperselector(
+        allocator,
+        ".foo[x=y]",
+        ".\\66 oo[\\78 =\\79 ]",
+        .{},
+    ));
 
     var unified = (try selector.unify(
         allocator,
@@ -2209,6 +2363,15 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     )) orelse return error.TestUnexpectedResult;
     defer unified.deinit();
     try expectItems(&.{".d .a > .b .c.e"}, unified);
+
+    var escaped_unified = (try selector.unify(
+        allocator,
+        ".foo[x=y]",
+        ".\\66 oo[\\78 =\\79 ]",
+        .{},
+    )) orelse return error.TestUnexpectedResult;
+    defer escaped_unified.deinit();
+    try expectItems(&.{".foo[x=y]"}, escaped_unified);
 
     var extended = try selector.extend(
         allocator,
@@ -2227,6 +2390,16 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
         },
         extended,
     );
+
+    var escaped_extended = try selector.extend(
+        allocator,
+        ".\\66 oo[\\78 =\\79 ].c",
+        ".foo[x=y]",
+        ".bar",
+        .{},
+    );
+    defer escaped_extended.deinit();
+    try expectItems(&.{ ".foo[x=y].c", ".c.bar" }, escaped_extended);
 
     var replaced = try selector.replace(
         allocator,

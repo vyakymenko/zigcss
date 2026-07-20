@@ -67,6 +67,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-selector-extend-replace-compound-lists'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-extend-replace-normalized-compounds'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-attribute-normalization'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-selector-escape-normalization'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-unify-compound'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-unify-complex-strict'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-unify-complex-weave-disjoint'), true)

@@ -3533,6 +3533,76 @@ test "native Sass selector module normalizes bounded attributes" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module normalizes bounded escapes" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\.values {
+        \\  class: selector.parse(".\\66 oo");
+        \\  digit: selector.parse(".\\00003123");
+        \\  unicode: selector.parse(".caf\\e9 ");
+        \\  emoji: selector.parse(".\\1f49a ");
+        \\  punctuation: selector.parse(".foo\\2b bar");
+        \\  escaped-hyphen: selector.parse(".\\2d foo");
+        \\  id: selector.parse("#\\66 oo");
+        \\  placeholder: selector.parse("%\\31 23");
+        \\  type: selector.parse("\\62 utton");
+        \\  qualified: selector.parse("\\73 vg|\\61 ");
+        \\  escaped-star: selector.parse("\\2a ");
+        \\  attribute-name: selector.parse("[\\78 =y]");
+        \\  attribute-namespace: selector.parse("[\\6e s|\\78 =y]");
+        \\  attribute-value: selector.parse("[x=\\79 es]");
+        \\  attribute-digit: selector.parse("[x=\\31 23]");
+        \\  attribute-punctuation: selector.parse("[x=foo\\2b bar]");
+        \\  attribute-quoted: selector.parse("[x='\\79 ']");
+        \\  attribute-space: selector.parse("[x='a\\20 b']");
+        \\  relation-class: selector.is-superselector(".foo", ".\\66 oo");
+        \\  relation-attribute: selector.is-superselector("[x=y]", "[\\78 =\\79 ]");
+        \\  escaped-distinct: selector.is-superselector(".-foo", ".\\2d foo");
+        \\  unify-class: selector.unify(".foo", ".\\66 oo");
+        \\  unify-attribute: selector.unify("[x=yes]", "[\\78 =\\79 es]");
+        \\  extend-class: selector.extend(".\\66 oo.c", ".foo", ".bar");
+        \\  replace-attribute: selector.replace("[\\78 =\\79 ].c", "[x=y]", ".bar");
+        \\  type-of: meta.type-of(selector.parse(".\\66 oo"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-escapes.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{class:.foo;digit:.\\31 23;unicode:.café;emoji:.💚;punctuation:.foo\\+bar;escaped-hyphen:.\\-foo;id:#foo;placeholder:%\\31 23;type:button;qualified:svg|a;escaped-star:\\*;attribute-name:[x=y];attribute-namespace:[ns|x=y];attribute-value:[x=yes];attribute-digit:[x=\\31 23];attribute-punctuation:[x=foo\\+bar];attribute-quoted:[x=y];attribute-space:[x=\"a b\"];relation-class:true;relation-attribute:true;escaped-distinct:false;unify-class:.foo;unify-attribute:[x=yes];extend-class:.foo.c,.c.bar;replace-attribute:.c.bar;type-of:list}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  parsed: selector.parse(".\\66 oo")
+        \\  attribute: selector.parse("[\\78 =\\79 es]")
+        \\  relation: selector.is-superselector(".foo", ".\\66 oo")
+        \\  extended: selector.extend("[\\78 =\\79 ].x", "[x=y]", ".z")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-escapes.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{parsed:.foo;attribute:[x=yes];relation:true;extended:[x=y].x,.x.z}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -4079,14 +4149,14 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-superselector-escape-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\".foo\", \".\\\\66 oo\"); }",
+            .name = "selector-superselector-pseudo-escape-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":hover\", \":\\\\68 over\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-superselector-attribute-escape-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\"[\\\\78=y]\", \"[x=y]\"); }",
-            .expected = error.UnsupportedFeature,
+            .name = "selector-parse-surrogate-escape-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.parse(\".\\\\d800 \"); }",
+            .expected = error.InvalidExpression,
         },
         .{
             .name = "selector-extend-missing.scss",
@@ -4164,8 +4234,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-unify-escape-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.unify(\".foo\", \".\\\\66 oo\"); }",
+            .name = "selector-unify-pseudo-escape-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.unify(\":hover\", \":\\\\68 over\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
