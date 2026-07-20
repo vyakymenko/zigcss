@@ -353,8 +353,9 @@ fn validateUnifyCompoundAvailability(
     while (cursor < input.len) {
         const end = try simpleTokenEnd(input, cursor);
         const token = input[cursor..end];
-        if (std.mem.indexOfScalar(u8, token, '\\') != null or
-            unsupportedUnifyPseudo(token))
+        const escaped = std.mem.indexOfScalar(u8, token, '\\') != null;
+        if ((escaped and token[0] != ':') or
+            (token[0] == ':' and normalizedPseudoUnavailableForUnify(token)))
         {
             return error.UnsupportedSelectorUnification;
         }
@@ -393,7 +394,8 @@ const NamespaceIntersection = union(enum) {
 /// shared descendant anchors with one-sided rigid ancestry suffixes plus
 /// two-component terminal sibling weaving. Partial shared anchors, ambiguous
 /// dual-rigid weaving and host-selector semantics remain unavailable. Bounded
-/// non-pseudo identifier and attribute escapes are canonical before this stage.
+/// identifier, simple-pseudo, and attribute escapes are canonical before this
+/// stage.
 pub fn unify(
     allocator: std.mem.Allocator,
     left_input: []const u8,
@@ -532,9 +534,10 @@ const extension_trim_threshold = 100;
 /// combinator are preserved, and each matching compound participates in Dart
 /// Sass's earliest-component-fastest expansion order. Extendee list members are
 /// applied sequentially. Duplicate simples, reordered equivalent members, and
-/// bounded attributes and non-pseudo identifier escapes normalize for matching
-/// and trimming without rewriting specificity. Complex extendees/extenders,
-/// namespace inference, and pseudo-selector inference remain unavailable.
+/// bounded attributes, identifier escapes, and ordinary simple pseudo-classes
+/// normalize for matching and trimming without rewriting specificity. Complex
+/// extendees/extenders, namespace inference, functional pseudos, pseudo-element
+/// extension, and host-selector semantics remain unavailable.
 pub fn extend(
     allocator: std.mem.Allocator,
     selector_input: []const u8,
@@ -1231,7 +1234,11 @@ fn validateExtensionCompoundAvailability(
     while (cursor < input.len) {
         const end = try simpleTokenEnd(input, cursor);
         const token = input[cursor..end];
-        if (token[0] == ':') {
+        if (token[0] == ':' and
+            (findUnescapedByte(token, '(') != null or
+                relationPseudoElementName(token) != null or
+                unsupportedUnifyPseudo(token)))
+        {
             return error.UnsupportedSelectorExtension;
         }
         if (relationQualifiedName(token) != null and
@@ -2965,9 +2972,7 @@ fn loadUnifyCompound(
     while (cursor < input.len) {
         const end = try simpleTokenEnd(input, cursor);
         const token = input[cursor..end];
-        if ((token[0] == ':' and std.mem.indexOfScalar(u8, token, '\\') != null) or
-            unsupportedUnifyPseudo(token))
-        {
+        if (token[0] == ':' and normalizedPseudoUnavailableForUnify(token)) {
             return error.UnsupportedSelectorUnification;
         }
         try context.consume(1);
@@ -2994,7 +2999,7 @@ fn loadUnifyCompound(
 
 fn unsupportedUnifyPseudo(token: []const u8) bool {
     if (token.len == 0 or token[0] != ':') return false;
-    const opening = std.mem.indexOfScalar(u8, token, '(');
+    const opening = findUnescapedByte(token, '(');
     var name_start: usize = 1;
     if (name_start < token.len and token[name_start] == ':') name_start += 1;
     const name = token[name_start .. opening orelse token.len];
@@ -3004,6 +3009,12 @@ fn unsupportedUnifyPseudo(token: []const u8) bool {
         return true;
     }
     return opening != null and relationPseudoElementName(token) != null;
+}
+
+fn normalizedPseudoUnavailableForUnify(token: []const u8) bool {
+    if (unsupportedUnifyPseudo(token)) return true;
+    return findUnescapedByte(token, '(') != null and
+        std.mem.indexOfScalar(u8, token, '\\') != null;
 }
 
 fn unifySimple(
@@ -3250,8 +3261,9 @@ const SelectorUsage = struct {
 /// Returns whether every selector matched by `sub_input` is also matched by
 /// `super_input`. This first native slice owns structural selector lists,
 /// compounds, namespaces, and the standard combinators. Relation inference
-/// for non-identical functional or escaped pseudos remains explicitly
-/// unavailable rather than guessed. Other admitted escapes are canonical.
+/// for non-identical functional pseudos remains explicitly unavailable rather
+/// than guessed. Admitted identifier, simple-pseudo, and attribute escapes are
+/// canonical.
 pub fn isSuperselector(
     allocator: std.mem.Allocator,
     super_input: []const u8,
@@ -3653,7 +3665,7 @@ fn relationPseudoElementName(input: []const u8) ?[]const u8 {
         return input[2..];
     }
     if (input.len <= 1 or input[0] != ':' or
-        std.mem.indexOfScalar(u8, input, '(') != null)
+        findUnescapedByte(input, '(') != null)
     {
         return null;
     }
@@ -3677,9 +3689,7 @@ fn relationPseudoElementsEquivalent(left: []const u8, right: []const u8) bool {
 }
 
 fn relationSimpleRequiresInference(input: []const u8) bool {
-    return input[0] == ':' and
-        (std.mem.indexOfScalar(u8, input, '\\') != null or
-            std.mem.indexOfScalar(u8, input, '(') != null);
+    return input[0] == ':' and findUnescapedByte(input, '(') != null;
 }
 
 fn relationSimpleCount(input: []const u8) Error!usize {
@@ -4096,7 +4106,7 @@ fn appendNormalizedCompoundEscapes(
         const end = try simpleTokenEnd(input, cursor);
         const token = input[cursor..end];
         if (std.mem.indexOfScalar(u8, token, '\\') == null or
-            token[0] == '[' or token[0] == ':' or token[0] == '&')
+            token[0] == '[' or token[0] == '&')
         {
             try appendBounded(output, allocator, token, maximum_bytes);
         } else switch (token[0]) {
@@ -4109,6 +4119,12 @@ fn appendNormalizedCompoundEscapes(
                     maximum_bytes,
                 );
             },
+            ':' => try appendNormalizedSimplePseudoEscapes(
+                output,
+                allocator,
+                token,
+                maximum_bytes,
+            ),
             else => try appendNormalizedTypeSelector(
                 output,
                 allocator,
@@ -4118,6 +4134,27 @@ fn appendNormalizedCompoundEscapes(
         }
         cursor = end;
     }
+}
+
+fn appendNormalizedSimplePseudoEscapes(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+) Error!void {
+    if (findUnescapedByte(input, '(') != null) {
+        return appendBounded(output, allocator, input, maximum_bytes);
+    }
+    var name_start: usize = 1;
+    if (name_start < input.len and input[name_start] == ':') name_start += 1;
+    if (name_start >= input.len) return error.InvalidSelector;
+    try appendBounded(output, allocator, input[0..name_start], maximum_bytes);
+    try appendNormalizedIdentifier(
+        output,
+        allocator,
+        input[name_start..],
+        maximum_bytes,
+    );
 }
 
 fn appendNormalizedTypeSelector(
@@ -5124,13 +5161,17 @@ fn attributeValueIsLiteralIdentifier(value: []const u8) bool {
 }
 
 fn findUnescapedPipe(input: []const u8) ?usize {
+    return findUnescapedByte(input, '|');
+}
+
+fn findUnescapedByte(input: []const u8, needle: u8) ?usize {
     var cursor: usize = 0;
     while (cursor < input.len) {
         if (input[cursor] == '\\') {
             cursor = escapeEnd(input, cursor) orelse return null;
             continue;
         }
-        if (input[cursor] == '|') return cursor;
+        if (input[cursor] == needle) return cursor;
         cursor += 1;
     }
     return null;

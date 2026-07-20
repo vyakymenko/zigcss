@@ -3603,6 +3603,69 @@ test "native Sass selector module normalizes bounded escapes" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module normalizes bounded simple pseudos" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\.values {
+        \\  simple: selector.parse(":\\68 over");
+        \\  digit: selector.parse(":\\00003123");
+        \\  unicode: selector.parse(":caf\\e9 ");
+        \\  emoji: selector.parse(":\\1f49a ");
+        \\  punctuation: selector.parse(":foo\\2b bar");
+        \\  escaped-hyphen: selector.parse(":\\2d foo");
+        \\  element: selector.parse("::\\62 efore");
+        \\  element-emoji: selector.parse("::\\1f49a ");
+        \\  relation: selector.is-superselector(":hover", ":\\68 over.foo");
+        \\  relation-element: selector.is-superselector(":before", "::\\62 efore.foo");
+        \\  case-distinct: selector.is-superselector(":HOVER", ":hover");
+        \\  unify: selector.unify(":hover", ":\\68 over");
+        \\  unify-element: selector.unify(":before", "::\\62 efore");
+        \\  extend: selector.extend(".x:hover", ":\\68 over", ".y");
+        \\  replace: selector.replace(".x:hover", ":\\68 over", ".y");
+        \\  extend-context: selector.extend(".x:hover", ".x", ":focus");
+        \\  replace-context: selector.replace(".x:hover", ".x", ":focus");
+        \\  type: meta.type-of(selector.parse(":\\68 over"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-simple-pseudos.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{simple::hover;digit::\\31 23;unicode::café;emoji::💚;punctuation::foo\\+bar;escaped-hyphen::\\-foo;element:::before;element-emoji:::💚;relation:true;relation-element:true;case-distinct:false;unify::hover;unify-element::before;extend:.x:hover,.x.y;replace:.x.y;extend-context:.x:hover,:hover:focus;replace-context::hover:focus;type:list}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  parsed: selector.parse(":\\68 over")
+        \\  element: selector.parse("::\\62 efore")
+        \\  relation: selector.is-superselector(":hover", ":\\68 over.x")
+        \\  unified: selector.unify(":before", "::\\62 efore")
+        \\  extended: selector.extend(".x:hover", ":\\68 over", ".y")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-simple-pseudos.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{parsed::hover;element:::before;relation:true;unified::before;extended:.x:hover,.x.y}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -4149,11 +4212,6 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-superselector-pseudo-escape-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":hover\", \":\\\\68 over\"); }",
-            .expected = error.UnsupportedFeature,
-        },
-        .{
             .name = "selector-parse-surrogate-escape-pending.scss",
             .input = "@use \"sass:selector\"; .a { value: selector.parse(\".\\\\d800 \"); }",
             .expected = error.InvalidExpression,
@@ -4231,11 +4289,6 @@ test "native Sass selector module rejects invalid or unavailable calls" {
         .{
             .name = "selector-unify-long-sibling-weave-pending.scss",
             .input = "@use \"sass:selector\"; .a { value: selector.unify(\".p .a ~ .b\", \".q .c ~ .d\"); }",
-            .expected = error.UnsupportedFeature,
-        },
-        .{
-            .name = "selector-unify-pseudo-escape-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.unify(\":hover\", \":\\\\68 over\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
