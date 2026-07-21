@@ -1496,6 +1496,7 @@ fn validateExtensionCompoundAvailability(
             }
             if (opening != null and
                 try relationSelectorListPseudo(token) == null and
+                !try relationFunctionalPseudoIsAdmittedOpaque(token) and
                 !try relationFunctionalPseudoIsKnownCaseMismatch(token))
             {
                 return error.UnsupportedSelectorExtension;
@@ -3756,7 +3757,8 @@ fn unsupportedUnifyPseudo(token: []const u8) bool {
 fn normalizedPseudoUnavailableForUnify(token: []const u8) bool {
     if (unsupportedUnifyPseudo(token)) return true;
     return findUnescapedByte(token, '(') != null and
-        std.mem.indexOfScalar(u8, token, '\\') != null;
+        std.mem.indexOfScalar(u8, token, '\\') != null and
+        !functionalPseudoHasAdmittedOpaqueName(token);
 }
 
 fn unifySimple(
@@ -4517,8 +4519,18 @@ fn relationSelectorListPseudo(
 
 fn relationFunctionalPseudoIsKnownCaseMismatch(input: []const u8) Error!bool {
     const syntax = try relationFunctionalPseudoSyntax(input) orelse return false;
-    if (selectorListPseudoKind(syntax.name) != null) return false;
-    return selectorListPseudoKindIgnoreCase(syntax.name) != null;
+    if (selectorListPseudoKind(syntax.name) != null or
+        opaqueFunctionalPseudoKind(syntax.name) != null)
+    {
+        return false;
+    }
+    return selectorListPseudoKindIgnoreCase(syntax.name) != null or
+        opaqueFunctionalPseudoKindIgnoreCase(syntax.name) != null;
+}
+
+fn relationFunctionalPseudoIsAdmittedOpaque(input: []const u8) Error!bool {
+    const syntax = try relationFunctionalPseudoSyntax(input) orelse return false;
+    return opaqueFunctionalPseudoKind(syntax.name) != null;
 }
 
 fn relationSelectorListPseudoIsPositive(kind: SelectorListPseudoKind) bool {
@@ -4661,6 +4673,17 @@ const RelationSelectorListIterator = struct {
             if (byte == '\\') {
                 index = escapeEnd(self.input, index) orelse
                     return error.InvalidSelector;
+                continue;
+            }
+            if (byte == '/' and index + 1 < self.input.len and self.input[index + 1] == '*') {
+                const end = commentEnd(self.input, index) orelse
+                    return error.InvalidSelector;
+                if (context) |active| {
+                    const skipped = std.math.cast(u64, end - index - 1) orelse
+                        return error.SelectorLimitExceeded;
+                    try active.consume(skipped);
+                }
+                index = end;
                 continue;
             }
             if (byte == ',' and paren_depth == 0 and square_depth == 0) {
@@ -4988,7 +5011,14 @@ fn relationPseudoElementsEquivalent(left: []const u8, right: []const u8) bool {
 }
 
 fn relationSimpleRequiresInference(input: []const u8) bool {
-    return input[0] == ':' and findUnescapedByte(input, '(') != null;
+    return input[0] == ':' and findUnescapedByte(input, '(') != null and
+        !functionalPseudoHasAdmittedOpaqueName(input);
+}
+
+fn functionalPseudoHasAdmittedOpaqueName(input: []const u8) bool {
+    if (input.len < 4 or input[0] != ':' or input[1] == ':') return false;
+    const opening = findUnescapedByte(input, '(') orelse return false;
+    return opaqueFunctionalPseudoKindIgnoreCase(input[1..opening]) != null;
 }
 
 fn relationSelectorContainsRelativeFunctionalSelector(
@@ -5637,7 +5667,11 @@ fn appendNormalizedSimplePseudoEscapes(
         selectorListPseudoKind(normalized_name.items)
     else
         null;
-    if (kind == null) {
+    const opaque_kind = if (name_start == 1)
+        opaqueFunctionalPseudoKind(normalized_name.items)
+    else
+        null;
+    if (kind == null and opaque_kind == null) {
         try appendPreservedFunctionalPseudoArguments(
             output,
             allocator,
@@ -5645,6 +5679,16 @@ fn appendNormalizedSimplePseudoEscapes(
             maximum_bytes,
             context,
             allow_parent,
+        );
+    } else if (opaque_kind != null) {
+        try context.enterSelectorListPseudo();
+        defer context.leaveSelectorListPseudo();
+        try appendNormalizedOpaqueFunctionalPseudoArguments(
+            output,
+            allocator,
+            input[opening_index + 1 .. input.len - 1],
+            maximum_bytes,
+            context,
         );
     } else if (selectorListPseudoIsNth(kind.?)) {
         try context.enterSelectorListPseudo();
@@ -5732,6 +5776,316 @@ fn appendPreservedFunctionalPseudoArguments(
         index += 1;
     }
     if (quote != null) return error.InvalidSelector;
+}
+
+fn appendNormalizedOpaqueFunctionalPseudoArguments(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+    context: *NormalizationContext,
+) Error!void {
+    if (!std.unicode.utf8ValidateSlice(input)) return error.InvalidSelector;
+    var index: usize = 0;
+    try appendNormalizedOpaqueComponentSequence(
+        output,
+        allocator,
+        input,
+        &index,
+        null,
+        true,
+        maximum_bytes,
+        context,
+    );
+    std.debug.assert(index == input.len);
+}
+
+fn appendNormalizedOpaqueComponentSequence(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    index: *usize,
+    closing: ?u8,
+    trim_edges: bool,
+    maximum_bytes: usize,
+    context: *NormalizationContext,
+) Error!void {
+    var pending_space = false;
+    var has_content = false;
+    while (index.* < input.len) {
+        try context.consume(1);
+        const byte = input[index.*];
+        if (isWhitespace(byte)) {
+            pending_space = true;
+            index.* += 1;
+            continue;
+        }
+        if (byte == '/' and index.* + 1 < input.len and input[index.* + 1] == '*') {
+            const end = commentEnd(input, index.*) orelse return error.InvalidSelector;
+            const operations = std.math.cast(u64, end - index.*) orelse
+                return error.SelectorLimitExceeded;
+            try context.consume(operations);
+            if (trim_edges and !has_content) {
+                pending_space = false;
+                index.* = end;
+                continue;
+            }
+            if (pending_space and (has_content or !trim_edges)) {
+                try appendByteBounded(output, allocator, ' ', maximum_bytes);
+            }
+            pending_space = false;
+            try appendBounded(
+                output,
+                allocator,
+                input[index.*..end],
+                maximum_bytes,
+            );
+            has_content = true;
+            index.* = end;
+            continue;
+        }
+        if (closing) |expected| {
+            if (byte == expected) {
+                if (pending_space and !trim_edges) {
+                    try appendByteBounded(output, allocator, ' ', maximum_bytes);
+                }
+                try appendByteBounded(output, allocator, byte, maximum_bytes);
+                index.* += 1;
+                return;
+            }
+        }
+        if (byte == ')' or byte == ']' or byte == '}') return error.InvalidSelector;
+        if (closing == null and byte == ';') return error.InvalidSelector;
+        if (pending_space and (has_content or !trim_edges)) {
+            try appendByteBounded(output, allocator, ' ', maximum_bytes);
+        }
+        pending_space = false;
+
+        if (byte == '\'' or byte == '"') {
+            try appendNormalizedOpaqueQuoted(
+                output,
+                allocator,
+                input,
+                index,
+                byte,
+                maximum_bytes,
+                context,
+            );
+            has_content = true;
+            continue;
+        }
+        if (byte == '(' or byte == '[' or byte == '{') {
+            const expected: u8 = switch (byte) {
+                '(' => ')',
+                '[' => ']',
+                '{' => '}',
+                else => unreachable,
+            };
+            try appendByteBounded(output, allocator, byte, maximum_bytes);
+            index.* += 1;
+            try context.enterSelectorListPseudo();
+            appendNormalizedOpaqueComponentSequence(
+                output,
+                allocator,
+                input,
+                index,
+                expected,
+                false,
+                maximum_bytes,
+                context,
+            ) catch |err| {
+                context.leaveSelectorListPseudo();
+                return err;
+            };
+            context.leaveSelectorListPseudo();
+            has_content = true;
+            continue;
+        }
+        if (opaqueComponentNameByte(byte)) {
+            const end = try opaqueComponentNameEnd(input, index.*);
+            try appendNormalizedOpaqueComponentName(
+                output,
+                allocator,
+                input[index.*..end],
+                maximum_bytes,
+                context,
+            );
+            index.* = end;
+            has_content = true;
+            continue;
+        }
+        if (byte == 0 or byte < 0x20 or byte == 0x7f) {
+            return error.InvalidSelector;
+        }
+        try appendByteBounded(output, allocator, byte, maximum_bytes);
+        index.* += 1;
+        has_content = true;
+    }
+    if (closing != null) return error.InvalidSelector;
+}
+
+fn appendNormalizedOpaqueQuoted(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    index: *usize,
+    quote: u8,
+    maximum_bytes: usize,
+    context: *NormalizationContext,
+) Error!void {
+    try appendByteBounded(output, allocator, quote, maximum_bytes);
+    index.* += 1;
+    while (index.* < input.len) {
+        try context.consume(1);
+        const byte = input[index.*];
+        if (byte == '\\') {
+            const end = escapeEnd(input, index.*) orelse return error.InvalidSelector;
+            const operations = std.math.cast(u64, end - index.*) orelse
+                return error.SelectorLimitExceeded;
+            try context.consume(operations);
+            try appendBounded(
+                output,
+                allocator,
+                input[index.*..end],
+                maximum_bytes,
+            );
+            index.* = end;
+            continue;
+        }
+        if (byte == 0 or byte == '\n' or byte == '\r' or byte == '\x0c') {
+            return error.InvalidSelector;
+        }
+        try appendByteBounded(output, allocator, byte, maximum_bytes);
+        index.* += 1;
+        if (byte == quote) return;
+    }
+    return error.InvalidSelector;
+}
+
+fn opaqueComponentNameByte(byte: u8) bool {
+    return byte == '\\' or byte == '-' or byte == '_' or byte >= 0x80 or
+        std.ascii.isAlphanumeric(byte);
+}
+
+fn opaqueComponentNameEnd(input: []const u8, start: usize) Error!usize {
+    var cursor = start;
+    while (cursor < input.len and opaqueComponentNameByte(input[cursor])) {
+        if (input[cursor] == '\\') {
+            cursor = (try decodeSelectorEscape(input, cursor)).end;
+            continue;
+        }
+        const length = std.unicode.utf8ByteSequenceLength(input[cursor]) catch
+            return error.InvalidSelector;
+        const end = std.math.add(usize, cursor, length) catch
+            return error.InvalidSelector;
+        if (end > input.len) return error.InvalidSelector;
+        _ = std.unicode.utf8Decode(input[cursor..end]) catch
+            return error.InvalidSelector;
+        cursor = end;
+    }
+    if (cursor == start) return error.InvalidSelector;
+    return cursor;
+}
+
+fn appendNormalizedOpaqueComponentName(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+    context: *NormalizationContext,
+) Error!void {
+    const operations = std.math.cast(u64, input.len) orelse
+        return error.SelectorLimitExceeded;
+    try context.consume(operations);
+    const starts_with_number = std.ascii.isDigit(input[0]);
+    var cursor: usize = 0;
+    var position: usize = 0;
+    var first_scalar: ?u21 = null;
+    var trailing_hex_terminator = false;
+    while (cursor < input.len) {
+        var escaped = false;
+        const scalar: u21 = if (input[cursor] == '\\') blk: {
+            escaped = true;
+            const decoded = try decodeSelectorEscape(input, cursor);
+            cursor = decoded.end;
+            if (decoded.scalar == 0 or decoded.scalar > 0x10ffff or
+                (decoded.scalar >= 0xd800 and decoded.scalar <= 0xdfff))
+            {
+                return error.InvalidSelector;
+            }
+            break :blk @intCast(decoded.scalar);
+        } else blk: {
+            const length = std.unicode.utf8ByteSequenceLength(input[cursor]) catch
+                return error.InvalidSelector;
+            const end = std.math.add(usize, cursor, length) catch
+                return error.InvalidSelector;
+            if (end > input.len) return error.InvalidSelector;
+            const decoded = std.unicode.utf8Decode(input[cursor..end]) catch
+                return error.InvalidSelector;
+            cursor = end;
+            break :blk decoded;
+        };
+
+        const leading_digit = scalar >= '0' and scalar <= '9' and
+            !starts_with_number and
+            (position == 0 or (position == 1 and first_scalar == '-'));
+        if (!escaped) {
+            var encoded: [4]u8 = undefined;
+            const length = std.unicode.utf8Encode(scalar, &encoded) catch
+                return error.InvalidSelector;
+            try appendBounded(output, allocator, encoded[0..length], maximum_bytes);
+            trailing_hex_terminator = false;
+        } else if (scalar < 0x20 or scalar == 0x7f or leading_digit) {
+            try appendSelectorHexEscape(
+                output,
+                allocator,
+                scalar,
+                true,
+                maximum_bytes,
+            );
+            trailing_hex_terminator = true;
+        } else if (scalar >= 0x80) {
+            var encoded: [4]u8 = undefined;
+            const length = std.unicode.utf8Encode(scalar, &encoded) catch
+                return error.InvalidSelector;
+            try appendBounded(output, allocator, encoded[0..length], maximum_bytes);
+            trailing_hex_terminator = false;
+        } else {
+            const normalized: u8 = @intCast(scalar);
+            if (std.ascii.isAlphanumeric(normalized) or
+                normalized == '_' or normalized == '-')
+            {
+                try appendByteBounded(output, allocator, normalized, maximum_bytes);
+            } else {
+                try appendByteBounded(output, allocator, '\\', maximum_bytes);
+                try appendByteBounded(output, allocator, normalized, maximum_bytes);
+            }
+            trailing_hex_terminator = false;
+        }
+        if (first_scalar == null) first_scalar = scalar;
+        position = std.math.add(usize, position, 1) catch
+            return error.SelectorLimitExceeded;
+    }
+    if (trailing_hex_terminator) {
+        std.debug.assert(output.items.len > 0 and output.items[output.items.len - 1] == ' ');
+        output.items.len -= 1;
+    }
+}
+
+const OpaqueFunctionalPseudoKind = enum {
+    lang,
+};
+
+fn opaqueFunctionalPseudoKind(name: []const u8) ?OpaqueFunctionalPseudoKind {
+    if (std.mem.eql(u8, name, "lang")) return .lang;
+    return null;
+}
+
+fn opaqueFunctionalPseudoKindIgnoreCase(
+    name: []const u8,
+) ?OpaqueFunctionalPseudoKind {
+    if (std.ascii.eqlIgnoreCase(name, "lang")) return .lang;
+    return null;
 }
 
 const SelectorListPseudoKind = enum {
@@ -6347,6 +6701,10 @@ fn compoundEnd(input: []const u8, start: usize) Error!usize {
             index = escapeEnd(input, index) orelse return error.InvalidSelector;
             continue;
         }
+        if (byte == '/' and index + 1 < input.len and input[index + 1] == '*') {
+            index = commentEnd(input, index) orelse return error.InvalidSelector;
+            continue;
+        }
         const top_level = paren_depth == 0 and square_depth == 0;
         if (top_level and (isWhitespace(byte) or explicitCombinatorLength(input, index) != 0)) {
             break;
@@ -6497,6 +6855,7 @@ fn matchingParenEnd(input: []const u8, start: usize) Error!usize {
     var index = start + 1;
     var depth: usize = 1;
     var square_depth: usize = 0;
+    var curly_depth: usize = 0;
     var quote: ?u8 = null;
     while (index < input.len) {
         const byte = input[index];
@@ -6513,6 +6872,10 @@ fn matchingParenEnd(input: []const u8, start: usize) Error!usize {
             index = escapeEnd(input, index) orelse return error.InvalidSelector;
             continue;
         }
+        if (byte == '/' and index + 1 < input.len and input[index + 1] == '*') {
+            index = commentEnd(input, index) orelse return error.InvalidSelector;
+            continue;
+        }
         switch (byte) {
             '\'', '"' => quote = byte,
             '[' => square_depth += 1,
@@ -6520,10 +6883,17 @@ fn matchingParenEnd(input: []const u8, start: usize) Error!usize {
                 if (square_depth == 0) return error.InvalidSelector;
                 square_depth -= 1;
             },
-            '(' => if (square_depth == 0) {
+            '{' => if (square_depth == 0) {
+                curly_depth += 1;
+            },
+            '}' => if (square_depth == 0) {
+                if (curly_depth == 0) return error.InvalidSelector;
+                curly_depth -= 1;
+            },
+            '(' => if (square_depth == 0 and curly_depth == 0) {
                 depth += 1;
             },
-            ')' => if (square_depth == 0) {
+            ')' => if (square_depth == 0 and curly_depth == 0) {
                 depth -= 1;
                 if (depth == 0) return index + 1;
             },
@@ -6552,6 +6922,10 @@ fn isSingleCompound(input: []const u8) bool {
         }
         if (byte == '\\') {
             index = escapeEnd(input, index) orelse return false;
+            continue;
+        }
+        if (byte == '/' and index + 1 < input.len and input[index + 1] == '*') {
+            index = commentEnd(input, index) orelse return false;
             continue;
         }
         const top_level = paren_depth == 0 and square_depth == 0;

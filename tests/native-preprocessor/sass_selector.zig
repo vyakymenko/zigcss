@@ -1051,6 +1051,252 @@ test "native Sass selector nth functions preserve grammar relations unification 
     );
 }
 
+test "native Sass selector lang functions preserve opaque grammar relations unification and extension semantics" {
+    const parse_cases = [_]struct {
+        input: []const u8,
+        expected: []const u8,
+    }{
+        .{ .input = ":lang()", .expected = ":lang()" },
+        .{ .input = ":lang( en   US )", .expected = ":lang(en US)" },
+        .{ .input = ":lang( , en , )", .expected = ":lang(, en ,)" },
+        .{ .input = ":lang(123)", .expected = ":lang(123)" },
+        .{ .input = ":lang(*)", .expected = ":lang(*)" },
+        .{ .input = ":lang(en-*)", .expected = ":lang(en-*)" },
+        .{ .input = ":lang(@x #y)", .expected = ":lang(@x #y)" },
+        .{ .input = ":lang(en ,  fr)", .expected = ":lang(en , fr)" },
+        .{ .input = ":lang(/**/en/**/)", .expected = ":lang(en/**/)" },
+        .{ .input = ":lang(/*)*/en)", .expected = ":lang(en)" },
+        .{ .input = ":lang(en/*)>*/)", .expected = ":lang(en/*)>*/)" },
+        .{ .input = ":lang(/**/ /**/)", .expected = ":lang()" },
+        .{ .input = ":lang(\\65 n)", .expected = ":lang(en)" },
+        .{ .input = ":lang(en\\2d US)", .expected = ":lang(en-US)" },
+        .{ .input = ":lang(foo\\2c bar)", .expected = ":lang(foo\\,bar)" },
+        .{ .input = ":lang(\\31 )", .expected = ":lang(\\31)" },
+        .{ .input = ":\\6c ang(en)", .expected = ":lang(en)" },
+        .{ .input = ":lang(foo(  a ,  b  ))", .expected = ":lang(foo( a , b ))" },
+        .{ .input = ":lang([ x = 'y' ])", .expected = ":lang([ x = 'y' ])" },
+        .{ .input = ":lang({ a : b })", .expected = ":lang({ a : b })" },
+        .{ .input = ":lang(&)", .expected = ":lang(&)" },
+        .{ .input = ":lang('en')", .expected = ":lang('en')" },
+        .{ .input = ":LANG( EN )", .expected = ":LANG( EN )" },
+    };
+    for (parse_cases) |case| {
+        var parsed = try selector.parse(std.testing.allocator, case.input, .{});
+        defer parsed.deinit();
+        try expectItems(&.{case.expected}, parsed);
+    }
+
+    var simple = try selector.simpleSelectors(
+        std.testing.allocator,
+        ".root:lang(en/**/, fr):hover",
+        .{},
+    );
+    defer simple.deinit();
+    try expectItems(&.{ ".root", ":lang(en/**/, fr)", ":hover" }, simple);
+
+    const invalid = [_][]const u8{
+        ":lang(en;fr)",
+        ":lang(/*x)",
+        ":lang([en)",
+        ":lang({en)",
+        ":lang(en))",
+    };
+    for (invalid) |input| {
+        try std.testing.expectError(
+            error.InvalidSelector,
+            selector.parse(std.testing.allocator, input, .{}),
+        );
+    }
+
+    const relation_cases = [_]struct {
+        super_selector: []const u8,
+        sub_selector: []const u8,
+        expected: bool,
+    }{
+        .{ .super_selector = ":lang(en   US)", .sub_selector = ":lang(en US)", .expected = true },
+        .{ .super_selector = ":lang(en)", .sub_selector = ":lang(fr)", .expected = false },
+        .{ .super_selector = ":lang(en)", .sub_selector = ":LANG(en)", .expected = false },
+        .{ .super_selector = ":LANG(en)", .sub_selector = ":LANG(en)", .expected = true },
+        .{ .super_selector = ":lang(en)", .sub_selector = ":lang(\\65 n)", .expected = true },
+        .{ .super_selector = ":lang(en/*)>*/)", .sub_selector = ":lang(en/*)>*/)", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ".a:lang(en)", .expected = true },
+        .{ .super_selector = ".a:lang(en)", .sub_selector = ".a", .expected = false },
+        .{ .super_selector = ".a", .sub_selector = ":lang(.a)", .expected = false },
+        .{ .super_selector = ":lang(en), .a", .sub_selector = ":lang(en)", .expected = true },
+        .{ .super_selector = ":lang(en)", .sub_selector = ":lang(en), .a", .expected = false },
+    };
+    for (relation_cases) |case| {
+        try std.testing.expectEqual(
+            case.expected,
+            try selector.isSuperselector(
+                std.testing.allocator,
+                case.super_selector,
+                case.sub_selector,
+                .{},
+            ),
+        );
+    }
+
+    const unify_cases = [_]struct {
+        left: []const u8,
+        right: []const u8,
+        expected: []const []const u8,
+    }{
+        .{ .left = ":lang(en)", .right = ":lang(\\65 n)", .expected = &.{":lang(en)"} },
+        .{ .left = ":lang(en/*)>*/)", .right = ":lang(en/*)>*/)", .expected = &.{":lang(en/*)>*/)"} },
+        .{ .left = ":lang(en)", .right = ":lang(fr)", .expected = &.{":lang(en):lang(fr)"} },
+        .{ .left = ".a", .right = ":lang(en)", .expected = &.{".a:lang(en)"} },
+        .{ .left = ":LANG(en)", .right = ":lang(en)", .expected = &.{":LANG(en):lang(en)"} },
+    };
+    for (unify_cases) |case| {
+        var unified = (try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) orelse return error.TestUnexpectedResult;
+        defer unified.deinit();
+        try expectItems(case.expected, unified);
+    }
+
+    const extension_cases = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+        extended: []const []const u8,
+        replaced: []const []const u8,
+    }{
+        .{
+            .selector_input = ".a:lang(en)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{ ".a:lang(en)", ".x:lang(en)" },
+            .replaced = &.{".x:lang(en)"},
+        },
+        .{
+            .selector_input = ".a:lang(en)",
+            .extendee = ":lang(en)",
+            .extender = ".x",
+            .extended = &.{ ".a:lang(en)", ".a.x" },
+            .replaced = &.{".a.x"},
+        },
+        .{
+            .selector_input = ":is(:lang(en),.a)",
+            .extendee = ":lang(en)",
+            .extender = ".x",
+            .extended = &.{":is(:lang(en), .x, .a)"},
+            .replaced = &.{":is(.x, .a)"},
+        },
+        .{
+            .selector_input = ":lang(.a)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":lang(.a)"},
+            .replaced = &.{":lang(.a)"},
+        },
+        .{
+            .selector_input = ":LANG(en)",
+            .extendee = ":LANG(en)",
+            .extender = ".x",
+            .extended = &.{ ":LANG(en)", ".x" },
+            .replaced = &.{".x"},
+        },
+        .{
+            .selector_input = ":lang(en/*)>*/)",
+            .extendee = ":lang(en/*)>*/)",
+            .extender = ".x",
+            .extended = &.{ ":lang(en/*)>*/)", ".x" },
+            .replaced = &.{".x"},
+        },
+    };
+    for (extension_cases) |case| {
+        var extended = try selector.extend(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer extended.deinit();
+        try expectItems(case.extended, extended);
+
+        var replaced = try selector.replace(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer replaced.deinit();
+        try expectItems(case.replaced, replaced);
+    }
+
+    var exactly_bounded = try selector.parse(
+        std.testing.allocator,
+        ":lang( en   US )",
+        .{ .max_bytes = 12 },
+    );
+    defer exactly_bounded.deinit();
+    try expectItems(&.{":lang(en US)"}, exactly_bounded);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":lang( en   US )",
+            .{ .max_bytes = 11 },
+        ),
+    );
+
+    var exact_normalization_operations: u64 = 1;
+    while (exact_normalization_operations < 10_000) : (exact_normalization_operations += 1) {
+        var bounded = selector.parse(
+            std.testing.allocator,
+            ":lang(foo(  a ,  b  ))",
+            .{ .max_normalization_operations = exact_normalization_operations },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        defer bounded.deinit();
+        try expectItems(&.{":lang(foo( a , b ))"}, bounded);
+        break;
+    }
+    try std.testing.expect(exact_normalization_operations < 10_000);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":lang(foo(  a ,  b  ))",
+            .{ .max_normalization_operations = exact_normalization_operations - 1 },
+        ),
+    );
+
+    var one_below_depth: std.ArrayList(u8) = .empty;
+    defer one_below_depth.deinit(std.testing.allocator);
+    try one_below_depth.appendSlice(std.testing.allocator, ":lang(");
+    for (0..63) |_| try one_below_depth.appendSlice(std.testing.allocator, "f(");
+    try one_below_depth.append(std.testing.allocator, 'x');
+    for (0..64) |_| try one_below_depth.append(std.testing.allocator, ')');
+    var nested = try selector.parse(
+        std.testing.allocator,
+        one_below_depth.items,
+        .{},
+    );
+    defer nested.deinit();
+    try expectItems(&.{one_below_depth.items}, nested);
+
+    var excessive_depth: std.ArrayList(u8) = .empty;
+    defer excessive_depth.deinit(std.testing.allocator);
+    try excessive_depth.appendSlice(std.testing.allocator, ":lang(");
+    for (0..64) |_| try excessive_depth.appendSlice(std.testing.allocator, "f(");
+    try excessive_depth.append(std.testing.allocator, 'x');
+    for (0..65) |_| try excessive_depth.append(std.testing.allocator, ')');
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(std.testing.allocator, excessive_depth.items, .{}),
+    );
+}
+
 test "native Sass selector relations compare bounded selector-list functional pseudos" {
     const cases = [_]struct {
         super_selector: []const u8,
@@ -1750,7 +1996,7 @@ test "native Sass selector relations reject unsupported semantics and limits" {
         super_selector: []const u8,
         sub_selector: []const u8,
     }{
-        .{ .super_selector = ":lang(en)", .sub_selector = ":lang(fr)" },
+        .{ .super_selector = ":dir(ltr)", .sub_selector = ":dir(rtl)" },
         .{ .super_selector = ":host(.a)", .sub_selector = ":host(.a, .b)" },
     };
     for (unsupported) |case| {
@@ -2568,7 +2814,7 @@ test "native Sass selector extension and replacement fail closed and honor limit
         .{ .selector_input = ".a", .extendee = ".x .a", .extender = ".b" },
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
         .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button" },
-        .{ .selector_input = ":lang(en).a", .extendee = ".a", .extender = ".b" },
+        .{ .selector_input = ":dir(ltr).a", .extendee = ".a", .extender = ".b" },
         .{ .selector_input = ".x::before", .extendee = ".x", .extender = ".y" },
         .{ .selector_input = ".x:hover", .extendee = ":hover", .extender = "::before" },
         .{ .selector_input = "svg|a", .extendee = "svg|a", .extender = "button" },
@@ -3620,6 +3866,14 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     defer nth_function.deinit();
     try expectItems(&.{":nth-child(2n+1 of .a, .b)"}, nth_function);
 
+    var lang_function = try selector.parse(
+        allocator,
+        ":\\6c ang( \\65 n , foo(  a  ) )",
+        .{},
+    );
+    defer lang_function.deinit();
+    try expectItems(&.{":lang(en , foo( a ))"}, lang_function);
+
     var simple = try selector.simpleSelectors(
         allocator,
         "a.foo#id:hover[title=\"x\"]",
@@ -3674,6 +3928,12 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
         ":where(.x .a > .b)",
         .{},
     ));
+    try std.testing.expect(try selector.isSuperselector(
+        allocator,
+        ":lang(en   US)",
+        ":lang(en US).more",
+        .{},
+    ));
 
     var unified = (try selector.unify(
         allocator,
@@ -3719,6 +3979,15 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     )) orelse return error.TestUnexpectedResult;
     defer nth_unified.deinit();
     try expectItems(&.{":nth-child(odd):nth-child(2n+1)"}, nth_unified);
+
+    var lang_unified = (try selector.unify(
+        allocator,
+        ":lang(\\65 n)",
+        ":lang(en)",
+        .{},
+    )) orelse return error.TestUnexpectedResult;
+    defer lang_unified.deinit();
+    try expectItems(&.{":lang(en)"}, lang_unified);
 
     var extended = try selector.extend(
         allocator,
@@ -3790,6 +4059,16 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     );
     defer nth_extended.deinit();
     try expectItems(&.{":nth-child(2n+1 of .a, .x, .b)"}, nth_extended);
+
+    var lang_extended = try selector.extend(
+        allocator,
+        ".a:lang(\\65 n)",
+        ".a",
+        ".x",
+        .{},
+    );
+    defer lang_extended.deinit();
+    try expectItems(&.{ ".a:lang(en)", ".x:lang(en)" }, lang_extended);
 
     var replaced = try selector.replace(
         allocator,

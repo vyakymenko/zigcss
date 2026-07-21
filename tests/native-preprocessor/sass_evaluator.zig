@@ -3902,6 +3902,41 @@ test "native Sass selector module supports nth-function grammar relations unific
     );
 }
 
+test "native Sass selector module supports opaque lang-function grammar relations unification and extension" {
+    const input =
+        \\@use "sass:selector";
+        \\.values {
+        \\  parsed: selector.parse(":lang( EN , fr )");
+        \\  simple: selector.simple-selectors(".root:lang(en/**/, fr):hover");
+        \\  exact: selector.is-superselector(":lang(en   US)", ":lang(en US)");
+        \\  distinct: selector.is-superselector(":lang(en)", ":lang(fr)");
+        \\  subject: selector.is-superselector(".a", ".a:lang(en)");
+        \\  reverse-subject: selector.is-superselector(".a:lang(en)", ".a");
+        \\  unified: selector.unify(":lang(en)", ":lang(fr)");
+        \\}
+        \\.extensions {
+        \\  partial: selector.extend(".a:lang(en)", ".a", ".x");
+        \\  replaced: selector.replace(".a:lang(en)", ".a", ".x");
+        \\  whole: selector.extend(".a:lang(en)", ":lang(en)", ".x");
+        \\  nested: selector.extend(":is(:lang(en),.a)", ":lang(en)", ".x");
+        \\  opaque: selector.extend(":lang(.a)", ".a", ".x");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-lang-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{parsed::lang(EN , fr);simple:.root,:lang(en/**/, fr),:hover;exact:true;distinct:false;subject:true;reverse-subject:false;unified::lang(en):lang(fr)}.extensions{partial:.a:lang(en),.x:lang(en);replaced:.x:lang(en);whole:.a:lang(en),.a.x;nested::is(:lang(en), .x, .a);opaque::lang(.a)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -4443,8 +4478,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "selector-superselector-lang-functional-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":lang(en)\", \":lang(fr)\"); }",
+            .name = "selector-superselector-dir-functional-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":dir(ltr)\", \":dir(rtl)\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -8086,6 +8121,7 @@ fn exerciseSelectorAllocationFailures(
         \\.allocation {
         \\  parsed: selector.parse(".a > .b, [ data-x = 'a b' ]#c:hover");
         \\  nth: selector.parse(":nth-child(2N + 1 of .a,.b)");
+        \\  lang: selector.parse(":lang( en , \\65 n )");
         \\  inspected: meta.inspect(selector.parse(".a, .b"));
         \\  simple: selector.simple-selectors("[title=\"x\"].foo:hover");
         \\  from-value: selector.simple-selectors(selector.parse("button.primary"));
@@ -8118,7 +8154,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
