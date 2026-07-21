@@ -909,6 +909,324 @@ test "native Sass selector relations compare bounded selector-list functional ps
     ));
 }
 
+test "native Sass selector extension and replacement rewrite selector-list functional pseudos" {
+    const cases = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+        extended: []const []const u8,
+        replaced: []const []const u8,
+    }{
+        .{
+            .selector_input = ":is(.a, .b)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":is(.a, .x, .b)"},
+            .replaced = &.{":is(.x, .b)"},
+        },
+        .{
+            .selector_input = ".root:where(.a, .b):hover",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{".root:where(.a, .x, .b):hover"},
+            .replaced = &.{".root:where(.x, .b):hover"},
+        },
+        .{
+            .selector_input = ":not(:is(.a, .b), .c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":not(.a, .x, .b, .c)"},
+            .replaced = &.{":not(.x, .b, .c)"},
+        },
+        .{
+            .selector_input = ":not(:is(.a, .b))",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":not(.a):not(.x):not(.b)"},
+            .replaced = &.{":not(.x):not(.b)"},
+        },
+        .{
+            .selector_input = ":matches(.a.b, .c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":matches(.a.b, .b.x, .c)"},
+            .replaced = &.{":matches(.b.x, .c)"},
+        },
+        .{
+            .selector_input = ":any(.a .b, .c)",
+            .extendee = ".b",
+            .extender = ".x",
+            .extended = &.{":any(.a .b, .a .x, .c)"},
+            .replaced = &.{":any(.a .x, .c)"},
+        },
+        .{
+            .selector_input = ":has(> .a, + .b)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":has(> .a, > .x, + .b)"},
+            .replaced = &.{":has(> .x, + .b)"},
+        },
+        .{
+            .selector_input = ":has(> .a, > .x)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":has(> .a, > .x, > .x)"},
+            .replaced = &.{":has(> .x, > .x)"},
+        },
+        .{
+            .selector_input = ".root:-webkit-any(.a, .b)",
+            .extendee = ":-webkit-any(.a, .b)",
+            .extender = ".x",
+            .extended = &.{ ".root:-webkit-any(.a, .b)", ".root.x" },
+            .replaced = &.{".root.x"},
+        },
+        .{
+            .selector_input = ".a:is(.a, .b)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{ ".a:is(.a, .x, .b)", ".x:is(.a, .x, .b)" },
+            .replaced = &.{".x:is(.x, .b)"},
+        },
+        .{
+            .selector_input = ":is(.a, .b)",
+            .extendee = ".a",
+            .extender = ":is(.x, .y)",
+            .extended = &.{":is(.a, .x, .y, .b)"},
+            .replaced = &.{":is(.x, .y, .b)"},
+        },
+        .{
+            .selector_input = ":is(.a, .b)",
+            .extendee = ".a",
+            .extender = ":where(.x, .y)",
+            .extended = &.{":is(.a, .b)"},
+            .replaced = &.{":is(.b)"},
+        },
+        .{
+            .selector_input = ":is(.q:where(.a, .b), .c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":is(.q:where(.a, .x, .b), .c)"},
+            .replaced = &.{":is(.q:where(.x, .b), .c)"},
+        },
+        .{
+            .selector_input = ":where(:where(.a, .b), .c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":where(.a, .x, .b, .c)"},
+            .replaced = &.{":where(.x, .b, .c)"},
+        },
+        .{
+            .selector_input = ":is(:where(.a, .b), .c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":is(.c)"},
+            .replaced = &.{":is(.c)"},
+        },
+        .{
+            .selector_input = ":has(:where(.a, .b), .c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":has(:where(.a, .x, .b), .c)"},
+            .replaced = &.{":has(:where(.x, .b), .c)"},
+        },
+        .{
+            .selector_input = ":IS(.a,.b)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":IS(.a,.b)"},
+            .replaced = &.{":IS(.a,.b)"},
+        },
+        .{
+            .selector_input = ":IS(.a)",
+            .extendee = ":IS(.a)",
+            .extender = ".x",
+            .extended = &.{ ":IS(.a)", ".x" },
+            .replaced = &.{".x"},
+        },
+        .{
+            .selector_input = ":is(.a, .b)",
+            .extendee = ".a",
+            .extender = ":IS(.x,.y)",
+            .extended = &.{":is(.a, :IS(.x,.y), .b)"},
+            .replaced = &.{":is(:IS(.x,.y), .b)"},
+        },
+        .{
+            .selector_input = ":\\69 s(.\\61 , .b)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":is(.a, .x, .b)"},
+            .replaced = &.{":is(.x, .b)"},
+        },
+        .{
+            .selector_input = ":is(.a, .b)",
+            .extendee = ".a, .b",
+            .extender = ".x, .y",
+            .extended = &.{":is(.a, .x, .y, .b)"},
+            .replaced = &.{":is(.x, .y)"},
+        },
+    };
+    for (cases) |case| {
+        var extended = try selector.extend(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer extended.deinit();
+        try expectItems(case.extended, extended);
+
+        var replaced = try selector.replace(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer replaced.deinit();
+        try expectItems(case.replaced, replaced);
+    }
+
+    var exactly_bounded = try selector.extend(
+        std.testing.allocator,
+        ":is(.a, .b)",
+        ".a",
+        ".x",
+        .{ .max_selectors = 9, .max_bytes = 30 },
+    );
+    defer exactly_bounded.deinit();
+    try expectItems(&.{":is(.a, .x, .b)"}, exactly_bounded);
+    try std.testing.expectEqual(@as(usize, 4), exactly_bounded.selector_count);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.extend(
+            std.testing.allocator,
+            ":is(.a, .b)",
+            ".a",
+            ".x",
+            .{ .max_selectors = 8 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.extend(
+            std.testing.allocator,
+            ":is(.a, .b)",
+            ".a",
+            ".x",
+            .{ .max_bytes = 29 },
+        ),
+    );
+
+    try std.testing.expectError(
+        error.InvalidSelector,
+        selector.extend(
+            std.testing.allocator,
+            ":is(:where(.a, .b))",
+            ".a",
+            ".x",
+            .{},
+        ),
+    );
+
+    var exact_component_limit: usize = 1;
+    while (exact_component_limit < 512) : (exact_component_limit += 1) {
+        var bounded = selector.extend(
+            std.testing.allocator,
+            ":has(> .a .b, + .c)",
+            ".b",
+            ".x",
+            .{ .max_complex_components = exact_component_limit },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        bounded.deinit();
+        break;
+    }
+    try std.testing.expect(exact_component_limit < 512);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.extend(
+            std.testing.allocator,
+            ":has(> .a .b, + .c)",
+            ".b",
+            ".x",
+            .{ .max_complex_components = exact_component_limit - 1 },
+        ),
+    );
+
+    var exact_temporary_limit: usize = 1;
+    while (exact_temporary_limit < 16_384) : (exact_temporary_limit += 1) {
+        var bounded = selector.extend(
+            std.testing.allocator,
+            ":has(> .a .b, + .c)",
+            ".b",
+            ".x",
+            .{ .max_temporary_bytes = exact_temporary_limit },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        bounded.deinit();
+        break;
+    }
+    try std.testing.expect(exact_temporary_limit < 16_384);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.extend(
+            std.testing.allocator,
+            ":has(> .a .b, + .c)",
+            ".b",
+            ".x",
+            .{ .max_temporary_bytes = exact_temporary_limit - 1 },
+        ),
+    );
+
+    var exact_operation_limit: u64 = 1;
+    while (exact_operation_limit < 100_000) : (exact_operation_limit += 1) {
+        var bounded = selector.extend(
+            std.testing.allocator,
+            ":has(> .a .b, + .c)",
+            ".b",
+            ".x",
+            .{ .max_relation_operations = exact_operation_limit },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        bounded.deinit();
+        break;
+    }
+    try std.testing.expect(exact_operation_limit < 100_000);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.extend(
+            std.testing.allocator,
+            ":has(> .a .b, + .c)",
+            ".b",
+            ".x",
+            .{ .max_relation_operations = exact_operation_limit - 1 },
+        ),
+    );
+
+    var nested: std.ArrayList(u8) = .empty;
+    defer nested.deinit(std.testing.allocator);
+    for (0..64) |_| try nested.appendSlice(std.testing.allocator, ":has(");
+    try nested.appendSlice(std.testing.allocator, ".a");
+    for (0..64) |_| try nested.append(std.testing.allocator, ')');
+    var nested_result = try selector.extend(
+        std.testing.allocator,
+        nested.items,
+        ".a",
+        ".x",
+        .{},
+    );
+    defer nested_result.deinit();
+    try std.testing.expectEqual(@as(usize, 1), nested_result.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, nested_result.items[0], ".x") != null);
+}
+
 test "native Sass selector composition appends selector lists cartesianly" {
     var basic = try selector.append(
         std.testing.allocator,
@@ -1923,7 +2241,7 @@ test "native Sass selector extension and replacement fail closed and honor limit
         .{ .selector_input = ".a", .extendee = ".x .a", .extender = ".b" },
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
         .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button" },
-        .{ .selector_input = ":is(.a)", .extendee = ".a", .extender = ".b" },
+        .{ .selector_input = ":nth-child(2n of .a)", .extendee = ".a", .extender = ".b" },
         .{ .selector_input = ".x::before", .extendee = ".x", .extender = ".y" },
         .{ .selector_input = ".x:hover", .extendee = ":hover", .extender = "::before" },
         .{ .selector_input = "svg|a", .extendee = "svg|a", .extender = "button" },
@@ -3095,6 +3413,29 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     );
     defer pseudo_extended.deinit();
     try expectItems(&.{ ".x:hover", ".x.y" }, pseudo_extended);
+
+    var functional_extended = try selector.extend(
+        allocator,
+        ".a:is(.a, .b)",
+        ".a",
+        ".x",
+        .{},
+    );
+    defer functional_extended.deinit();
+    try expectItems(
+        &.{ ".a:is(.a, .x, .b)", ".x:is(.a, .x, .b)" },
+        functional_extended,
+    );
+
+    var functional_replaced = try selector.replace(
+        allocator,
+        ":has(> .a, + .b)",
+        ".a",
+        ".x",
+        .{},
+    );
+    defer functional_replaced.deinit();
+    try expectItems(&.{":has(> .x, + .b)"}, functional_replaced);
 
     var replaced = try selector.replace(
         allocator,

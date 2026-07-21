@@ -10790,8 +10790,12 @@ fn selectorExtensionOperationBudget(
 
     var result_bound: u64 = 1;
     if (retains_original_paths) {
-        const denominator = @max(extendee_input.len, 1);
-        const occurrence_bound = selector_input.len / denominator;
+        // Count structural simple selectors, including members nested inside
+        // selector-list pseudos. This remains an upper bound on independently
+        // replaceable compounds without treating every identifier byte as a
+        // separate exponential branch.
+        const occurrence_bound = selectorExtensionSimpleBound(selector_input) orelse
+            return null;
         const maximum = std.math.cast(u64, max_results) orelse return null;
         for (0..occurrence_bound) |_| {
             if (result_bound >= maximum) break;
@@ -10810,6 +10814,99 @@ fn selectorExtensionOperationBudget(
     ) catch return null;
     const work = std.math.mul(u64, width_square, comparison_bound) catch return null;
     return std.math.mul(u64, work, 8) catch return null;
+}
+
+fn selectorExtensionSimpleBound(input: []const u8) ?usize {
+    var count: usize = 0;
+    var index: usize = 0;
+    var compound_start = true;
+    while (index < input.len) {
+        const byte = input[index];
+        if (byte == '\\') {
+            if (index + 1 >= input.len) return null;
+            index += 2;
+            compound_start = false;
+            continue;
+        }
+        if (std.ascii.isWhitespace(byte) or
+            byte == ',' or byte == '>' or byte == '+' or byte == '~' or
+            byte == '(')
+        {
+            compound_start = true;
+            index += 1;
+            continue;
+        }
+        if (byte == ')') {
+            compound_start = false;
+            index += 1;
+            continue;
+        }
+        if (byte == '[') {
+            count = std.math.add(usize, count, 1) catch return null;
+            var depth: usize = 1;
+            var quote: ?u8 = null;
+            index += 1;
+            while (index < input.len and depth != 0) {
+                const nested = input[index];
+                if (quote) |active| {
+                    if (nested == '\\') {
+                        if (index + 1 >= input.len) return null;
+                        index += 2;
+                        continue;
+                    }
+                    if (nested == active) quote = null;
+                    index += 1;
+                    continue;
+                }
+                switch (nested) {
+                    '\'', '"' => quote = nested,
+                    '[' => depth = std.math.add(usize, depth, 1) catch return null,
+                    ']' => depth -= 1,
+                    else => {},
+                }
+                index += 1;
+            }
+            if (depth != 0 or quote != null) return null;
+            compound_start = false;
+            continue;
+        }
+        if (byte == '.' or byte == '#' or byte == '%' or byte == '&') {
+            count = std.math.add(usize, count, 1) catch return null;
+            compound_start = false;
+            index += 1;
+            continue;
+        }
+        if (byte == ':') {
+            count = std.math.add(usize, count, 1) catch return null;
+            index += 1;
+            if (index < input.len and input[index] == ':') index += 1;
+            while (index < input.len) {
+                const name_byte = input[index];
+                if (name_byte == '\\') {
+                    if (index + 1 >= input.len) return null;
+                    index += 2;
+                    continue;
+                }
+                if (name_byte == '(' or name_byte == ')' or name_byte == ',' or
+                    name_byte == '.' or name_byte == '#' or name_byte == '%' or
+                    name_byte == '[' or name_byte == ']' or name_byte == ':' or
+                    name_byte == '>' or name_byte == '+' or name_byte == '~' or
+                    std.ascii.isWhitespace(name_byte))
+                {
+                    break;
+                }
+                index += 1;
+            }
+            compound_start = false;
+            continue;
+        }
+        if (compound_start) {
+            count = std.math.add(usize, count, 1) catch return null;
+            compound_start = false;
+        }
+        index += 1;
+    }
+    return @max(count, 1);
 }
 
 fn selectorUnifyOperationBudget(left: []const u8, right: []const u8) ?u64 {

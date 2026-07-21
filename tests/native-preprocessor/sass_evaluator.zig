@@ -3792,6 +3792,62 @@ test "native Sass selector module compares selector-list functional pseudos" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module extends and replaces selector-list functional pseudos" {
+    const input =
+        \\@use "sass:selector";
+        \\.values {
+        \\  extend: selector.extend(":is(.a,.b)", ".a", ".x");
+        \\  replace: selector.replace(":is(.a,.b)", ".a", ".x");
+        \\  context: selector.extend(".root:where(.a,.b):hover", ".a", ".x");
+        \\  nested: selector.extend(":not(:is(.a,.b),.c)", ".a", ".x");
+        \\  partial: selector.replace(":matches(.a.b,.c)", ".a", ".x");
+        \\  complex: selector.extend(":any(.a .b,.c)", ".b", ".x");
+        \\  relative: selector.replace(":has(> .a,+ .b)", ".a", ".x");
+        \\  whole: selector.extend(".root:-webkit-any(.a,.b)", ":-webkit-any(.a,.b)", ".x");
+        \\  same-component: selector.extend(".a:is(.a,.b)", ".a", ".x");
+        \\  functional-extender: selector.extend(":is(.a,.b)", ".a", ":is(.x,.y)");
+        \\  ignored-extender: selector.replace(":is(.a,.b)", ".a", ":where(.x,.y)");
+        \\  case-distinct: selector.extend(":IS(.a,.b)", ".a", ".x");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-functional-pseudo-extension.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{extend::is(.a, .x, .b);replace::is(.x, .b);context:.root:where(.a, .x, .b):hover;nested::not(.a, .x, .b, .c);partial::matches(.b.x, .c);complex::any(.a .b, .a .x, .c);relative::has(> .x, + .b);whole:.root:-webkit-any(.a, .b),.root.x;same-component:.a:is(.a, .x, .b),.x:is(.a, .x, .b);functional-extender::is(.a, .x, .y, .b);ignored-extender::is(.b);case-distinct::IS(.a,.b)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  extended: selector.extend(":where(.a,.b)", ".a", ".x")
+        \\  replaced: selector.replace(":not(.a,.b)", ".a", ".x")
+        \\  nested: selector.extend(":not(:matches(.a,.b),.c)", ".a", ".x")
+        \\  relative: selector.extend(":has(+ .a, ~ .b)", ".a", ".x")
+        \\  whole: selector.replace(".root:is(.a,.b)", ":is(.a,.b)", ".x")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-functional-pseudo-extension.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{extended::where(.a, .x, .b);replaced::not(.x, .b);nested::not(.a, .x, .b, .c);relative::has(+ .a, + .x, ~ .b);whole:.root.x}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -4368,8 +4424,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.UnsupportedFeature,
         },
         .{
-            .name = "selector-extend-functional-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.extend(\":is(.a)\", \".a\", \".b\"); }",
+            .name = "selector-extend-host-functional-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.extend(\":host(.a)\", \".a\", \".b\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
