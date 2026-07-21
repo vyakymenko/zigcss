@@ -724,6 +724,183 @@ test "native Sass selector parser normalizes bounded selector-list functional ps
     }
 }
 
+test "native Sass selector relations compare bounded selector-list functional pseudos" {
+    const cases = [_]struct {
+        super_selector: []const u8,
+        sub_selector: []const u8,
+        expected: bool,
+    }{
+        .{ .super_selector = ":is(.a, .b)", .sub_selector = ":where(.a)", .expected = true },
+        .{ .super_selector = ":is(.a)", .sub_selector = ":where(.a, .b)", .expected = false },
+        .{ .super_selector = ":matches(.a, .b)", .sub_selector = ":any(.b.x)", .expected = true },
+        .{ .super_selector = ":-webkit-any(.a, .b)", .sub_selector = ":-moz-any(.a)", .expected = true },
+        .{ .super_selector = ":is(.a, .b)", .sub_selector = ":is(.b, .a)", .expected = true },
+        .{ .super_selector = ":is(.a, .b)", .sub_selector = ".a.x", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ":where(.a)", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ":where(.a, .b)", .expected = false },
+        .{ .super_selector = ":where(.a)", .sub_selector = ".a", .expected = true },
+        .{ .super_selector = ":is(*)", .sub_selector = ".a", .expected = true },
+        .{ .super_selector = ".a.x", .sub_selector = ":is(.a.x)", .expected = true },
+        .{ .super_selector = "[x][y]", .sub_selector = ":is([x][y])", .expected = true },
+        .{ .super_selector = ":hover.x", .sub_selector = ":is(:hover.x)", .expected = true },
+        .{ .super_selector = ":is(.a, .b).x", .sub_selector = ":where(.a).x.y", .expected = true },
+        .{ .super_selector = ":is(.a).x", .sub_selector = ":where(.a, .b).x", .expected = false },
+        .{ .super_selector = ":is(.a .b, .c)", .sub_selector = ":where(.x .a > .b)", .expected = true },
+        .{ .super_selector = ":is(.a > .b)", .sub_selector = ":where(.a .b)", .expected = false },
+        .{ .super_selector = ":is(:where(.a, .b), .c)", .sub_selector = ".a", .expected = true },
+        .{ .super_selector = ":not(.a)", .sub_selector = ":not(.a, .b)", .expected = true },
+        .{ .super_selector = ":not(.a, .b)", .sub_selector = ":not(.a)", .expected = false },
+        .{ .super_selector = ":not(.a.b)", .sub_selector = ":not(.a)", .expected = true },
+        .{ .super_selector = ":not(.a .b)", .sub_selector = ":not(.a > .b)", .expected = false },
+        .{ .super_selector = ":not(.a > .b)", .sub_selector = ":not(.a .b)", .expected = true },
+        .{ .super_selector = ":not(.a)", .sub_selector = ":not(:where(.a))", .expected = true },
+        .{ .super_selector = ":not(:where(.a))", .sub_selector = ":not(.a)", .expected = true },
+        .{ .super_selector = ":not(:is(.a, .b))", .sub_selector = ":not(.a, .b)", .expected = false },
+        .{ .super_selector = ":not(.a, .b)", .sub_selector = ":not(:is(.a, .b))", .expected = true },
+        .{ .super_selector = ":has(.a, .b)", .sub_selector = ":has(.a.x)", .expected = true },
+        .{ .super_selector = ":has(.a.x)", .sub_selector = ":has(.a)", .expected = false },
+        .{ .super_selector = ":has(.a .b)", .sub_selector = ":has(.x .a > .b)", .expected = true },
+        .{ .super_selector = ":has(.a > .b)", .sub_selector = ":has(.a .b)", .expected = false },
+        .{ .super_selector = ":has(:is(.a, .b))", .sub_selector = ":has(.a, .b)", .expected = true },
+        .{ .super_selector = ":has(.a, .b)", .sub_selector = ":has(:is(.a, .b))", .expected = false },
+        .{ .super_selector = ":is(:has(.a), .b)", .sub_selector = ":has(.a)", .expected = true },
+        .{ .super_selector = ":has(.a)", .sub_selector = ":is(:has(.a))", .expected = false },
+        .{ .super_selector = ":has(> .a)", .sub_selector = ":has(> .a)", .expected = false },
+        .{ .super_selector = ":is(> .a)", .sub_selector = ":is(> .a)", .expected = false },
+        .{ .super_selector = ":is(:has(> .a))", .sub_selector = ":is(:has(> .a))", .expected = false },
+        .{ .super_selector = ":is(*, :has(> .a))", .sub_selector = ":is(*, :has(> .a))", .expected = true },
+        .{ .super_selector = "*, :has(> .a)", .sub_selector = ":has(> .a)", .expected = true },
+        .{ .super_selector = ":is(.a), .b", .sub_selector = ":is(.a, .b)", .expected = false },
+        .{ .super_selector = ":is(.a, .b)", .sub_selector = ":is(.a), .b", .expected = true },
+        .{ .super_selector = ".a, .b", .sub_selector = ":is(.a, .b)", .expected = false },
+        .{ .super_selector = ":is(.a)", .sub_selector = ":IS(.a)", .expected = false },
+        .{ .super_selector = ":has(.a)", .sub_selector = ":is(.a)", .expected = false },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqual(
+            case.expected,
+            try selector.isSuperselector(
+                std.testing.allocator,
+                case.super_selector,
+                case.sub_selector,
+                .{},
+            ),
+        );
+    }
+
+    try std.testing.expect(try selector.isSuperselector(
+        std.testing.allocator,
+        ":is(.a, .b)",
+        ":where(.a)",
+        .{ .max_selectors = 5 },
+    ));
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ":is(.a, .b)",
+            ":where(.a)",
+            .{ .max_selectors = 4 },
+        ),
+    );
+
+    var exact_component_limit: usize = 1;
+    while (exact_component_limit < 64) : (exact_component_limit += 1) {
+        const related = selector.isSuperselector(
+            std.testing.allocator,
+            ":is(.a .b, .c)",
+            ":where(.x .a > .b)",
+            .{ .max_complex_components = exact_component_limit },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        try std.testing.expect(related);
+        break;
+    }
+    try std.testing.expect(exact_component_limit < 64);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ":is(.a .b, .c)",
+            ":where(.x .a > .b)",
+            .{ .max_complex_components = exact_component_limit - 1 },
+        ),
+    );
+
+    var exact_temporary_limit: usize = 1;
+    while (exact_temporary_limit < 4_096) : (exact_temporary_limit += 1) {
+        const related = selector.isSuperselector(
+            std.testing.allocator,
+            ":is(.a .b, .c)",
+            ":where(.x .a > .b)",
+            .{ .max_temporary_bytes = exact_temporary_limit },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        try std.testing.expect(related);
+        break;
+    }
+    try std.testing.expect(exact_temporary_limit < 4_096);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ":is(.a .b, .c)",
+            ":where(.x .a > .b)",
+            .{ .max_temporary_bytes = exact_temporary_limit - 1 },
+        ),
+    );
+
+    var exact_operation_limit: u64 = 1;
+    while (exact_operation_limit < 100_000) : (exact_operation_limit += 1) {
+        const related = selector.isSuperselector(
+            std.testing.allocator,
+            ":is(.a .b, .c)",
+            ":where(.x .a > .b)",
+            .{ .max_relation_operations = exact_operation_limit },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        try std.testing.expect(related);
+        break;
+    }
+    try std.testing.expect(exact_operation_limit < 100_000);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ":is(.a .b, .c)",
+            ":where(.x .a > .b)",
+            .{ .max_relation_operations = exact_operation_limit - 1 },
+        ),
+    );
+
+    var nested_super: std.ArrayList(u8) = .empty;
+    defer nested_super.deinit(std.testing.allocator);
+    var nested_sub: std.ArrayList(u8) = .empty;
+    defer nested_sub.deinit(std.testing.allocator);
+    for (0..64) |_| {
+        try nested_super.appendSlice(std.testing.allocator, ":is(");
+        try nested_sub.appendSlice(std.testing.allocator, ":where(");
+    }
+    try nested_super.appendSlice(std.testing.allocator, ".a, .b");
+    try nested_sub.appendSlice(std.testing.allocator, ".a");
+    for (0..64) |_| {
+        try nested_super.append(std.testing.allocator, ')');
+        try nested_sub.append(std.testing.allocator, ')');
+    }
+    try std.testing.expect(try selector.isSuperselector(
+        std.testing.allocator,
+        nested_super.items,
+        nested_sub.items,
+        .{},
+    ));
+}
+
 test "native Sass selector composition appends selector lists cartesianly" {
     var basic = try selector.append(
         std.testing.allocator,
@@ -920,8 +1097,8 @@ test "native Sass selector relations reject unsupported semantics and limits" {
         super_selector: []const u8,
         sub_selector: []const u8,
     }{
-        .{ .super_selector = ":is(.a)", .sub_selector = ".a" },
-        .{ .super_selector = ":not(.a)", .sub_selector = ":not(.a, .b)" },
+        .{ .super_selector = ":nth-child(2n)", .sub_selector = ":nth-child(4n)" },
+        .{ .super_selector = ":host(.a)", .sub_selector = ":host(.a, .b)" },
     };
     for (unsupported) |case| {
         try std.testing.expectError(
@@ -2828,6 +3005,12 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
         allocator,
         ":is(.a, .b)",
         ":\\69 s(.\\61 , .b).more",
+        .{},
+    ));
+    try std.testing.expect(try selector.isSuperselector(
+        allocator,
+        ":is(.a .b, .c)",
+        ":where(.x .a > .b)",
         .{},
     ));
 

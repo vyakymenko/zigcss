@@ -24,6 +24,7 @@ pub const Error = std.mem.Allocator.Error || error{
 pub const SelectorList = struct {
     allocator: std.mem.Allocator,
     items: [][]u8,
+    selector_count: usize,
 
     pub fn deinit(self: *SelectorList) void {
         for (self.items) |item| self.allocator.free(item);
@@ -148,6 +149,7 @@ const Builder = struct {
         return .{
             .allocator = self.allocator,
             .items = try self.items.toOwnedSlice(self.allocator),
+            .selector_count = self.bounded_selector_count,
         };
     }
 };
@@ -325,10 +327,12 @@ pub fn nest(
 }
 
 const UnifyContext = struct {
+    allocator: ?std.mem.Allocator = null,
     limits: Limits,
     component_count: usize = 0,
     temporary_bytes: usize = 0,
     operations: u64 = 0,
+    selector_list_pseudo_depth: usize = 0,
 
     fn reserveComponents(self: *UnifyContext, count: usize) Error!void {
         const next = std.math.add(usize, self.component_count, count) catch
@@ -337,6 +341,11 @@ const UnifyContext = struct {
             return error.SelectorLimitExceeded;
         }
         self.component_count = next;
+    }
+
+    fn releaseComponents(self: *UnifyContext, count: usize) void {
+        std.debug.assert(self.component_count >= count);
+        self.component_count -= count;
     }
 
     fn reserveTemporary(self: *UnifyContext, count: usize) Error!void {
@@ -348,6 +357,11 @@ const UnifyContext = struct {
         self.temporary_bytes = next;
     }
 
+    fn releaseTemporary(self: *UnifyContext, count: usize) void {
+        std.debug.assert(self.temporary_bytes >= count);
+        self.temporary_bytes -= count;
+    }
+
     fn consume(self: *UnifyContext, count: u64) Error!void {
         const next = std.math.add(u64, self.operations, count) catch
             return error.SelectorLimitExceeded;
@@ -355,6 +369,18 @@ const UnifyContext = struct {
             return error.SelectorLimitExceeded;
         }
         self.operations = next;
+    }
+
+    fn enterSelectorListPseudo(self: *UnifyContext) Error!void {
+        if (self.selector_list_pseudo_depth >= maximum_selector_list_pseudo_depth) {
+            return error.SelectorLimitExceeded;
+        }
+        self.selector_list_pseudo_depth += 1;
+    }
+
+    fn leaveSelectorListPseudo(self: *UnifyContext) void {
+        std.debug.assert(self.selector_list_pseudo_depth > 0);
+        self.selector_list_pseudo_depth -= 1;
     }
 };
 
@@ -3327,9 +3353,10 @@ const SelectorUsage = struct {
 /// Returns whether every selector matched by `sub_input` is also matched by
 /// `super_input`. This first native slice owns structural selector lists,
 /// compounds, namespaces, and the standard combinators. Relation inference
-/// for non-identical functional pseudos remains explicitly unavailable rather
-/// than guessed. Admitted identifier, simple-pseudo, and attribute escapes are
-/// canonical, including exact selector-list functional-pseudo spellings.
+/// for normalized selector-list functional pseudos is recursive and bounded.
+/// Non-selector functions, host semantics, and functional pseudo-elements
+/// remain explicitly unavailable rather than guessed. Admitted identifier,
+/// simple-pseudo, and attribute escapes are canonical before this stage.
 pub fn isSuperselector(
     allocator: std.mem.Allocator,
     super_input: []const u8,
@@ -3352,7 +3379,7 @@ pub fn isSuperselector(
     var sub_selectors = try parseInternal(allocator, sub_input, sub_limits, false);
     defer sub_selectors.deinit();
 
-    var context = RelationContext{ .limits = limits };
+    var context = RelationContext{ .allocator = allocator, .limits = limits };
     const lists_equal = try relationListsEqual(
         &context,
         &super_selectors,
@@ -3374,7 +3401,7 @@ pub fn isSuperselector(
     if (lists_equal) {
         var requires_coverage_check = false;
         for (super_selectors.items) |selector_item| {
-            if (try relationSelectorContainsRelativeHas(
+            if (try relationSelectorContainsRelativeFunctionalSelector(
                 &context,
                 selector_item,
                 0,
@@ -3416,7 +3443,7 @@ fn selectorUsage(list: *const SelectorList) Error!SelectorUsage {
         bytes = std.math.add(usize, bytes, item.len) catch
             return error.SelectorLimitExceeded;
     }
-    return .{ .selectors = list.items.len, .bytes = bytes };
+    return .{ .selectors = list.selector_count, .bytes = bytes };
 }
 
 fn relationListsEqual(
@@ -3667,60 +3694,331 @@ fn relationCompoundIsSuperselector(
     }
     const super_count = try relationSimpleCount(super_compound);
     const sub_count = try relationSimpleCount(sub_compound);
-    if (super_count > sub_count) return false;
+    const sub_contains_positive_function =
+        try relationCompoundContainsPositiveSelectorListPseudo(sub_compound);
+    if (super_count > sub_count and !sub_contains_positive_function) {
+        return false;
+    }
 
     var super_cursor: usize = 0;
     while (super_cursor < super_compound.len) {
         const super_end = try simpleTokenEnd(super_compound, super_cursor);
         const super_simple = super_compound[super_cursor..super_end];
-        if (try relationFunctionalPseudoContainsRelativeHas(
-            context,
-            super_simple,
-            0,
-        )) return false;
+        const super_function = try relationSelectorListPseudo(super_simple);
+        const requires_functional_coverage = super_function != null and
+            try relationFunctionalPseudoContainsRelativeSelector(
+                context,
+                super_simple,
+                0,
+            );
         var exact = false;
         var sub_cursor: usize = 0;
         while (sub_cursor < sub_compound.len) {
             try context.consume(1);
             const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
-            if (std.mem.eql(u8, super_simple, sub_compound[sub_cursor..sub_end])) {
+            if (!requires_functional_coverage and
+                std.mem.eql(u8, super_simple, sub_compound[sub_cursor..sub_end]))
+            {
                 exact = true;
                 break;
             }
             sub_cursor = sub_end;
         }
         if (!exact) {
-            if (super_simple[0] == '[') {
-                return false;
-            }
-            if (relationSimpleRequiresInference(super_simple)) {
-                return error.UnsupportedSelectorRelation;
-            }
             var semantic_match = false;
             var ambiguous_sub = false;
-            sub_cursor = 0;
-            while (sub_cursor < sub_compound.len) {
-                try context.consume(1);
-                const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
-                ambiguous_sub = ambiguous_sub or
-                    relationSimpleRequiresInference(sub_compound[sub_cursor..sub_end]);
-                if (relationSimpleIsSuperselector(
-                    super_simple,
-                    sub_compound[sub_cursor..sub_end],
-                )) {
-                    semantic_match = true;
-                    break;
+            if (super_function) |functional_super| {
+                sub_cursor = 0;
+                while (sub_cursor < sub_compound.len) {
+                    try context.consume(1);
+                    const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
+                    if (try relationSelectorListPseudo(
+                        sub_compound[sub_cursor..sub_end],
+                    )) |functional_sub| {
+                        if (try relationSelectorListPseudosAreSuperselector(
+                            context,
+                            functional_super,
+                            functional_sub,
+                        )) {
+                            semantic_match = true;
+                            break;
+                        }
+                    }
+                    sub_cursor = sub_end;
                 }
-                sub_cursor = sub_end;
-            }
-            if (!semantic_match) {
-                if (ambiguous_sub) return error.UnsupportedSelectorRelation;
+                if (!semantic_match and
+                    relationSelectorListPseudoIsPositive(functional_super.kind))
+                {
+                    try context.enterSelectorListPseudo();
+                    defer context.leaveSelectorListPseudo();
+                    semantic_match = try relationSelectorListTextIsSuperselector(
+                        context,
+                        functional_super.arguments,
+                        sub_compound,
+                    );
+                }
+            } else if (try relationFunctionalPseudoIsKnownCaseMismatch(super_simple)) {
                 return false;
+            } else if (relationSimpleRequiresInference(super_simple)) {
+                return error.UnsupportedSelectorRelation;
+            } else {
+                if (super_simple[0] == '[' and
+                    !sub_contains_positive_function)
+                {
+                    return false;
+                }
+                sub_cursor = 0;
+                while (sub_cursor < sub_compound.len) {
+                    try context.consume(1);
+                    const sub_end = try simpleTokenEnd(sub_compound, sub_cursor);
+                    const sub_simple = sub_compound[sub_cursor..sub_end];
+                    if (relationSimpleIsSuperselector(super_simple, sub_simple)) {
+                        semantic_match = true;
+                        break;
+                    }
+                    if (try relationSelectorListPseudo(sub_simple)) |functional_sub| {
+                        if (relationSelectorListPseudoIsPositive(functional_sub.kind)) {
+                            try context.enterSelectorListPseudo();
+                            defer context.leaveSelectorListPseudo();
+                            if (try relationSelectorListTextIsSuperselector(
+                                context,
+                                super_simple,
+                                functional_sub.arguments,
+                            )) {
+                                semantic_match = true;
+                                break;
+                            }
+                        }
+                    } else if (!try relationFunctionalPseudoIsKnownCaseMismatch(sub_simple)) {
+                        ambiguous_sub = ambiguous_sub or
+                            relationSimpleRequiresInference(sub_simple);
+                    }
+                    sub_cursor = sub_end;
+                }
             }
+            if (!semantic_match and ambiguous_sub) {
+                return error.UnsupportedSelectorRelation;
+            }
+            if (!semantic_match) return false;
         }
         super_cursor = super_end;
     }
     return true;
+}
+
+const RelationFunctionalPseudoSyntax = struct {
+    name: []const u8,
+    arguments: []const u8,
+};
+
+const RelationSelectorListPseudo = struct {
+    kind: SelectorListPseudoKind,
+    arguments: []const u8,
+};
+
+fn relationFunctionalPseudoSyntax(
+    input: []const u8,
+) Error!?RelationFunctionalPseudoSyntax {
+    if (input.len < 4 or input[0] != ':' or input[1] == ':') return null;
+    const opening = findUnescapedByte(input, '(') orelse return null;
+    if (try matchingParenEnd(input, opening) != input.len) {
+        return error.InvalidSelector;
+    }
+    return .{
+        .name = input[1..opening],
+        .arguments = input[opening + 1 .. input.len - 1],
+    };
+}
+
+fn relationSelectorListPseudo(
+    input: []const u8,
+) Error!?RelationSelectorListPseudo {
+    const syntax = try relationFunctionalPseudoSyntax(input) orelse return null;
+    const kind = selectorListPseudoKind(syntax.name) orelse return null;
+    return .{ .kind = kind, .arguments = syntax.arguments };
+}
+
+fn relationFunctionalPseudoIsKnownCaseMismatch(input: []const u8) Error!bool {
+    const syntax = try relationFunctionalPseudoSyntax(input) orelse return false;
+    if (selectorListPseudoKind(syntax.name) != null) return false;
+    return selectorListPseudoKindIgnoreCase(syntax.name) != null;
+}
+
+fn relationSelectorListPseudoIsPositive(kind: SelectorListPseudoKind) bool {
+    return switch (kind) {
+        .is, .where, .matches, .any, .webkit_any, .moz_any => true,
+        .not, .has => false,
+    };
+}
+
+fn relationSelectorListPseudosAreSuperselector(
+    context: *RelationContext,
+    super_function: RelationSelectorListPseudo,
+    sub_function: RelationSelectorListPseudo,
+) Error!bool {
+    try context.enterSelectorListPseudo();
+    defer context.leaveSelectorListPseudo();
+    if (relationSelectorListPseudoIsPositive(super_function.kind) and
+        relationSelectorListPseudoIsPositive(sub_function.kind))
+    {
+        return relationSelectorListTextIsSuperselector(
+            context,
+            super_function.arguments,
+            sub_function.arguments,
+        );
+    }
+    if (super_function.kind == .has and sub_function.kind == .has) {
+        return relationSelectorListTextIsSuperselector(
+            context,
+            super_function.arguments,
+            sub_function.arguments,
+        );
+    }
+    if (super_function.kind == .not and sub_function.kind == .not) {
+        return relationSelectorListTextIsSuperselector(
+            context,
+            sub_function.arguments,
+            super_function.arguments,
+        );
+    }
+    return false;
+}
+
+fn relationCompoundContainsPositiveSelectorListPseudo(
+    compound: []const u8,
+) Error!bool {
+    var cursor: usize = 0;
+    while (cursor < compound.len) {
+        const end = try simpleTokenEnd(compound, cursor);
+        if (try relationSelectorListPseudo(compound[cursor..end])) |functional| {
+            if (relationSelectorListPseudoIsPositive(functional.kind)) return true;
+        }
+        cursor = end;
+    }
+    return false;
+}
+
+const RelationSelectorListIterator = struct {
+    input: []const u8,
+    cursor: usize = 0,
+
+    fn next(
+        self: *RelationSelectorListIterator,
+        context: *RelationContext,
+    ) Error!?[]const u8 {
+        self.cursor = skipWhitespace(self.input, self.cursor);
+        if (self.cursor == self.input.len) return null;
+        const segment_start = self.cursor;
+        var index = self.cursor;
+        var paren_depth: usize = 0;
+        var square_depth: usize = 0;
+        var quote: ?u8 = null;
+        while (index < self.input.len) {
+            try context.consume(1);
+            const byte = self.input[index];
+            if (quote) |active| {
+                if (byte == '\\') {
+                    index = escapeEnd(self.input, index) orelse
+                        return error.InvalidSelector;
+                    continue;
+                }
+                if (byte == active) quote = null;
+                index += 1;
+                continue;
+            }
+            if (byte == '\\') {
+                index = escapeEnd(self.input, index) orelse
+                    return error.InvalidSelector;
+                continue;
+            }
+            if (byte == ',' and paren_depth == 0 and square_depth == 0) {
+                const segment = trimWhitespace(self.input[segment_start..index]);
+                if (segment.len == 0) return error.InvalidSelector;
+                self.cursor = index + 1;
+                return segment;
+            }
+            switch (byte) {
+                '\'', '"' => quote = byte,
+                '(' => paren_depth += 1,
+                ')' => {
+                    if (paren_depth == 0) return error.InvalidSelector;
+                    paren_depth -= 1;
+                },
+                '[' => square_depth += 1,
+                ']' => {
+                    if (square_depth == 0) return error.InvalidSelector;
+                    square_depth -= 1;
+                },
+                else => {},
+            }
+            index += 1;
+        }
+        if (quote != null or paren_depth != 0 or square_depth != 0) {
+            return error.InvalidSelector;
+        }
+        self.cursor = self.input.len;
+        const segment = trimWhitespace(self.input[segment_start..]);
+        if (segment.len == 0) return error.InvalidSelector;
+        return segment;
+    }
+};
+
+fn relationSelectorListTextIsSuperselector(
+    context: *RelationContext,
+    super_input: []const u8,
+    sub_input: []const u8,
+) Error!bool {
+    var saw_sub = false;
+    var sub_iterator = RelationSelectorListIterator{ .input = sub_input };
+    while (try sub_iterator.next(context)) |sub_selector| {
+        saw_sub = true;
+        var matched = false;
+        var super_iterator = RelationSelectorListIterator{ .input = super_input };
+        while (try super_iterator.next(context)) |super_selector| {
+            if (try relationComplexTextIsSuperselector(
+                context,
+                super_selector,
+                sub_selector,
+            )) {
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) return false;
+    }
+    if (!saw_sub) return error.InvalidSelector;
+    return true;
+}
+
+fn relationComplexTextIsSuperselector(
+    context: *RelationContext,
+    super_input: []const u8,
+    sub_input: []const u8,
+) Error!bool {
+    const allocator = context.allocator orelse
+        return error.UnsupportedSelectorRelation;
+    var super_complex = try buildRelationComplex(allocator, super_input, context);
+    defer releaseRelationComplex(context, allocator, &super_complex);
+    var sub_complex = try buildRelationComplex(allocator, sub_input, context);
+    defer releaseRelationComplex(context, allocator, &sub_complex);
+    return relationComplexIsSuperselector(context, super_complex, sub_complex);
+}
+
+fn releaseRelationComplex(
+    context: *RelationContext,
+    allocator: std.mem.Allocator,
+    complex: *RelationComplex,
+) void {
+    const component_count = complex.components.len;
+    const component_bytes = std.math.mul(
+        usize,
+        component_count,
+        @sizeOf(RelationComponent),
+    ) catch unreachable;
+    allocator.free(complex.components);
+    context.releaseTemporary(component_bytes);
+    context.releaseComponents(component_count);
+    complex.* = undefined;
 }
 
 fn relationPseudoElement(
@@ -3774,7 +4072,7 @@ fn relationSimpleRequiresInference(input: []const u8) bool {
     return input[0] == ':' and findUnescapedByte(input, '(') != null;
 }
 
-fn relationSelectorContainsRelativeHas(
+fn relationSelectorContainsRelativeFunctionalSelector(
     context: *RelationContext,
     input: []const u8,
     depth: usize,
@@ -3794,7 +4092,7 @@ fn relationSelectorContainsRelativeHas(
                 input[cursor..end],
                 simple_cursor,
             );
-            if (try relationFunctionalPseudoContainsRelativeHas(
+            if (try relationFunctionalPseudoContainsRelativeSelector(
                 context,
                 input[cursor + simple_cursor .. cursor + simple_end],
                 depth,
@@ -3808,7 +4106,7 @@ fn relationSelectorContainsRelativeHas(
     return false;
 }
 
-fn relationFunctionalPseudoContainsRelativeHas(
+fn relationFunctionalPseudoContainsRelativeSelector(
     context: *RelationContext,
     input: []const u8,
     depth: usize,
@@ -3822,7 +4120,7 @@ fn relationFunctionalPseudoContainsRelativeHas(
     {
         return error.SelectorLimitExceeded;
     }
-    const kind = selectorListPseudoKind(input[name_start..opening]) orelse return false;
+    if (selectorListPseudoKind(input[name_start..opening]) == null) return false;
     const arguments = input[opening + 1 .. input.len - 1];
 
     var segment_start: usize = 0;
@@ -3849,9 +4147,8 @@ fn relationFunctionalPseudoContainsRelativeHas(
             continue;
         }
         if (byte == ',' and paren_depth == 0 and square_depth == 0) {
-            if (try relationFunctionalPseudoSegmentContainsRelativeHas(
+            if (try relationFunctionalPseudoSegmentContainsRelativeSelector(
                 context,
-                kind,
                 arguments[segment_start..index],
                 depth,
             )) return true;
@@ -3869,26 +4166,26 @@ fn relationFunctionalPseudoContainsRelativeHas(
         }
         index += 1;
     }
-    return relationFunctionalPseudoSegmentContainsRelativeHas(
+    return relationFunctionalPseudoSegmentContainsRelativeSelector(
         context,
-        kind,
         arguments[segment_start..],
         depth,
     );
 }
 
-fn relationFunctionalPseudoSegmentContainsRelativeHas(
+fn relationFunctionalPseudoSegmentContainsRelativeSelector(
     context: *RelationContext,
-    kind: SelectorListPseudoKind,
     raw_segment: []const u8,
     depth: usize,
 ) Error!bool {
     const segment = trimWhitespace(raw_segment);
     if (segment.len == 0) return error.InvalidSelector;
-    if (kind == .has and explicitCombinatorLength(segment, 0) != 0) {
-        return true;
-    }
-    return relationSelectorContainsRelativeHas(context, segment, depth + 1);
+    if (explicitCombinatorLength(segment, 0) != 0) return true;
+    return relationSelectorContainsRelativeFunctionalSelector(
+        context,
+        segment,
+        depth + 1,
+    );
 }
 
 fn relationSimpleCount(input: []const u8) Error!usize {
@@ -4535,6 +4832,26 @@ fn selectorListPseudoKind(name: []const u8) ?SelectorListPseudoKind {
     };
     for (names) |entry| {
         if (std.mem.eql(u8, name, entry.name)) return entry.kind;
+    }
+    return null;
+}
+
+fn selectorListPseudoKindIgnoreCase(name: []const u8) ?SelectorListPseudoKind {
+    const names = [_]struct {
+        name: []const u8,
+        kind: SelectorListPseudoKind,
+    }{
+        .{ .name = "not", .kind = .not },
+        .{ .name = "is", .kind = .is },
+        .{ .name = "where", .kind = .where },
+        .{ .name = "has", .kind = .has },
+        .{ .name = "matches", .kind = .matches },
+        .{ .name = "any", .kind = .any },
+        .{ .name = "-webkit-any", .kind = .webkit_any },
+        .{ .name = "-moz-any", .kind = .moz_any },
+    };
+    for (names) |entry| {
+        if (std.ascii.eqlIgnoreCase(name, entry.name)) return entry.kind;
     }
     return null;
 }

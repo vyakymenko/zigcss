@@ -3729,6 +3729,67 @@ test "native Sass selector module normalizes bounded selector-list functional ps
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module compares selector-list functional pseudos" {
+    const input =
+        \\@use "sass:selector";
+        \\.values {
+        \\  is-subset: selector.is-superselector(":is(.a, .b)", ":where(.a)");
+        \\  is-reverse: selector.is-superselector(":is(.a)", ":where(.a, .b)");
+        \\  legacy-cross: selector.is-superselector(":-webkit-any(.a, .b)", ":-moz-any(.a)");
+        \\  plain-super: selector.is-superselector(".a", ":matches(.a)");
+        \\  positive-super: selector.is-superselector(":any(.a, .b)", ".b.x");
+        \\  not-subset: selector.is-superselector(":not(.a)", ":not(.a, .b)");
+        \\  not-reverse: selector.is-superselector(":not(.a, .b)", ":not(.a)");
+        \\  nested-not: selector.is-superselector(":not(:is(.a, .b))", ":not(.a, .b)");
+        \\  nested-not-reverse: selector.is-superselector(":not(.a, .b)", ":not(:is(.a, .b))");
+        \\  has-subset: selector.is-superselector(":has(.a, .b)", ":has(.a.x)");
+        \\  has-reverse: selector.is-superselector(":has(.a.x)", ":has(.a)");
+        \\  has-nested: selector.is-superselector(":has(.a, .b)", ":has(:is(.a, .b))");
+        \\  has-nested-reverse: selector.is-superselector(":has(:is(.a, .b))", ":has(.a, .b)");
+        \\  relative: selector.is-superselector(":has(> .a)", ":has(> .a)");
+        \\  relative-covered: selector.is-superselector("*, :has(> .a)", ":has(> .a)");
+        \\  list-forward: selector.is-superselector(":is(.a), .b", ":is(.a, .b)");
+        \\  list-reverse: selector.is-superselector(":is(.a, .b)", ":is(.a), .b");
+        \\  case-distinct: selector.is-superselector(":is(.a)", ":IS(.a)");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-functional-pseudo-relations.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{is-subset:true;is-reverse:false;legacy-cross:true;plain-super:true;positive-super:true;not-subset:true;not-reverse:false;nested-not:false;nested-not-reverse:true;has-subset:true;has-reverse:false;has-nested:false;has-nested-reverse:true;relative:false;relative-covered:true;list-forward:false;list-reverse:true;case-distinct:false}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  positive: selector.is-superselector(":where(.a, .b)", ":matches(.b.x)")
+        \\  negated: selector.is-superselector(":not(.a)", ":not(.a, .b)")
+        \\  relational: selector.is-superselector(":has(.a, .b)", ":has(.a.x)")
+        \\  relative: selector.is-superselector(":has(+ .a)", ":has(+ .a)")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-functional-pseudo-relations.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{positive:true;negated:true;relational:true;relative:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -4270,8 +4331,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "selector-superselector-functional-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":is(.a)\", \".a\"); }",
+            .name = "selector-superselector-nth-functional-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":nth-child(2n)\", \":nth-child(4n)\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
