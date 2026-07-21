@@ -724,6 +724,333 @@ test "native Sass selector parser normalizes bounded selector-list functional ps
     }
 }
 
+test "native Sass selector nth functions preserve grammar relations unification and extension semantics" {
+    const parse_cases = [_]struct {
+        input: []const u8,
+        expected: []const u8,
+    }{
+        .{ .input = ":nth-child(odd)", .expected = ":nth-child(odd)" },
+        .{ .input = ":nth-child(EVEN)", .expected = ":nth-child(even)" },
+        .{ .input = ":nth-child(2N + 01)", .expected = ":nth-child(2n+01)" },
+        .{ .input = ":nth-child(-02n - 003 of .\\61 ,, #\\62 )", .expected = ":nth-child(-02n-003 of .a, #b)" },
+        .{ .input = ":\\6e th-child(2n \\6f f.a)", .expected = ":nth-child(2n of .a)" },
+        .{ .input = ":nth-last-child(-n + 4 of .a > .b, :not(.c, .d))", .expected = ":nth-last-child(-n+4 of .a > .b, :not(.c, .d))" },
+        .{ .input = ":nth-child(2 n oF[x])", .expected = ":nth-child(2n of [x])" },
+        .{ .input = ":nth-child(o\\64 d)", .expected = ":nth-child(odd)" },
+        .{ .input = ":nth-child(/**/2/**/n/**/+/**/01/**/ of/**/.a)", .expected = ":nth-child(2n+01 of .a)" },
+        .{ .input = ":NTH-CHILD(ODD OF .a,.b)", .expected = ":NTH-CHILD(ODD OF .a,.b)" },
+    };
+    for (parse_cases) |case| {
+        var parsed = try selector.parse(std.testing.allocator, case.input, .{});
+        defer parsed.deinit();
+        try expectItems(&.{case.expected}, parsed);
+    }
+
+    var simple = try selector.simpleSelectors(
+        std.testing.allocator,
+        ".root:nth-child(2n + 1 of .a,.b):hover",
+        .{},
+    );
+    defer simple.deinit();
+    try expectItems(
+        &.{ ".root", ":nth-child(2n+1 of .a, .b)", ":hover" },
+        simple,
+    );
+
+    const invalid = [_][]const u8{
+        ":nth-child()",
+        ":nth-child(foo)",
+        ":nth-child(var(--n))",
+        ":nth-child(+ 1)",
+        ":nth-child(2n+-1)",
+        ":nth-child(2n of)",
+        ":nth-child(2n of ,.a)",
+        ":nth-child(2n of .a,)",
+        ":nth-child(2n of &)",
+        ":nth-child(2n/**/of/**/.a)",
+        ":nth-child(2n /**/of .a)",
+        ":nth-child(\\6f dd)",
+    };
+    for (invalid) |input| {
+        try std.testing.expectError(
+            error.InvalidSelector,
+            selector.parse(std.testing.allocator, input, .{}),
+        );
+    }
+
+    var exactly_bounded = try selector.parse(
+        std.testing.allocator,
+        ":nth-child(2n + 1 of .a,.b)",
+        .{ .max_bytes = 26, .max_selectors = 3 },
+    );
+    defer exactly_bounded.deinit();
+    try expectItems(&.{":nth-child(2n+1 of .a, .b)"}, exactly_bounded);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":nth-child(2n + 1 of .a,.b)",
+            .{ .max_bytes = 25, .max_selectors = 3 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":nth-child(2n + 1 of .a,.b)",
+            .{ .max_selectors = 2 },
+        ),
+    );
+
+    const relation_cases = [_]struct {
+        super_selector: []const u8,
+        sub_selector: []const u8,
+        expected: bool,
+    }{
+        .{ .super_selector = ":nth-child(2n + 1 of .a)", .sub_selector = ":nth-child(2n+1 of .a)", .expected = true },
+        .{ .super_selector = ":nth-child(odd)", .sub_selector = ":nth-child(2n+1)", .expected = false },
+        .{ .super_selector = ":nth-child(2n+1 of .a, .b)", .sub_selector = ":nth-child(2n+1 of .a.x)", .expected = true },
+        .{ .super_selector = ":nth-child(2n+1 of .a.x)", .sub_selector = ":nth-child(2n+1 of .a)", .expected = false },
+        .{ .super_selector = ".a", .sub_selector = ":nth-child(odd of .a)", .expected = true },
+        .{ .super_selector = ":nth-child(odd of .a)", .sub_selector = ".a", .expected = false },
+        .{ .super_selector = ":nth-child(odd of .a)", .sub_selector = ".a:nth-child(odd of .a)", .expected = true },
+        .{ .super_selector = ".a:nth-child(odd of .a)", .sub_selector = ":nth-child(odd of .a)", .expected = true },
+        .{ .super_selector = ":nth-child(n)", .sub_selector = ":nth-child(n of *)", .expected = false },
+        .{ .super_selector = ":nth-child(n of *)", .sub_selector = ":nth-child(n)", .expected = false },
+        .{ .super_selector = ":nth-child(odd)", .sub_selector = ":nth-last-child(odd)", .expected = false },
+        .{ .super_selector = ":NTH-CHILD(odd)", .sub_selector = ":nth-child(odd)", .expected = false },
+        .{ .super_selector = ":nth-child(2n+1 of .a)", .sub_selector = ":\\6e th-child(2N + 1 OF .a)", .expected = true },
+        .{ .super_selector = ":nth-child(odd of > .a)", .sub_selector = ":nth-child(odd of > .a)", .expected = false },
+        .{ .super_selector = ".a", .sub_selector = ":nth-child(odd of > .a)", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ":nth-child(odd of .a >)", .expected = true },
+    };
+    for (relation_cases) |case| {
+        try std.testing.expectEqual(
+            case.expected,
+            try selector.isSuperselector(
+                std.testing.allocator,
+                case.super_selector,
+                case.sub_selector,
+                .{},
+            ),
+        );
+    }
+
+    var exact_relation_operations: u64 = 1;
+    while (exact_relation_operations < 100_000) : (exact_relation_operations += 1) {
+        const related = selector.isSuperselector(
+            std.testing.allocator,
+            ":nth-child(2n+1 of .a, .b)",
+            ":nth-child(2n+1 of .a.x)",
+            .{ .max_relation_operations = exact_relation_operations },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        try std.testing.expect(related);
+        break;
+    }
+    try std.testing.expect(exact_relation_operations < 100_000);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.isSuperselector(
+            std.testing.allocator,
+            ":nth-child(2n+1 of .a, .b)",
+            ":nth-child(2n+1 of .a.x)",
+            .{ .max_relation_operations = exact_relation_operations - 1 },
+        ),
+    );
+
+    const unify_cases = [_]struct {
+        left: []const u8,
+        right: []const u8,
+        expected: []const []const u8,
+    }{
+        .{ .left = ":nth-child(2n + 1 of .a)", .right = ":nth-child(2n+1 of .a)", .expected = &.{":nth-child(2n+1 of .a)"} },
+        .{ .left = ":nth-child(odd)", .right = ":nth-child(2n+1)", .expected = &.{":nth-child(odd):nth-child(2n+1)"} },
+        .{ .left = ":nth-child(odd of .a)", .right = ":nth-child(odd of .a.x)", .expected = &.{":nth-child(odd of .a):nth-child(odd of .a.x)"} },
+        .{ .left = ".x", .right = ":nth-last-child(-n + 4 of .a,.b)", .expected = &.{".x:nth-last-child(-n+4 of .a, .b)"} },
+        .{ .left = ":nth-child(odd)", .right = ":nth-last-child(odd)", .expected = &.{":nth-child(odd):nth-last-child(odd)"} },
+    };
+    for (unify_cases) |case| {
+        var unified = (try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) orelse return error.TestUnexpectedResult;
+        defer unified.deinit();
+        try expectItems(case.expected, unified);
+    }
+    try std.testing.expectEqual(
+        @as(?selector.SelectorList, null),
+        try selector.unify(
+            std.testing.allocator,
+            ":nth-child(odd of > .a)",
+            ".x",
+            .{},
+        ),
+    );
+    try std.testing.expectEqual(
+        @as(?selector.SelectorList, null),
+        try selector.unify(
+            std.testing.allocator,
+            ":nth-child(odd of .a >)",
+            ":hover",
+            .{},
+        ),
+    );
+
+    const extension_cases = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+        extended: []const []const u8,
+        replaced: []const []const u8,
+    }{
+        .{
+            .selector_input = ":nth-child(2n + 1 of .a,.b)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":nth-child(2n+1 of .a, .x, .b)"},
+            .replaced = &.{":nth-child(2n+1 of .x, .b)"},
+        },
+        .{
+            .selector_input = ".root:nth-last-child(-n + 4 of .a > .b,.c):hover",
+            .extendee = ".b",
+            .extender = ".x",
+            .extended = &.{".root:nth-last-child(-n+4 of .a > .b, .a > .x, .c):hover"},
+            .replaced = &.{".root:nth-last-child(-n+4 of .a > .x, .c):hover"},
+        },
+        .{
+            .selector_input = ":nth-child(odd of :is(.a,.b),.c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":nth-child(odd of .c)"},
+            .replaced = &.{":nth-child(odd of .c)"},
+        },
+        .{
+            .selector_input = ":nth-child(odd of :nth-child(odd of .a,.b),.c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":nth-child(odd of .a, .x, .b, .c)"},
+            .replaced = &.{":nth-child(odd of .x, .b, .c)"},
+        },
+        .{
+            .selector_input = ":nth-child(odd of :nth-child(even of .a,.b),.c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":nth-child(odd of .c)"},
+            .replaced = &.{":nth-child(odd of .c)"},
+        },
+        .{
+            .selector_input = ":is(:nth-child(odd of .a,.b),.c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":is(.c)"},
+            .replaced = &.{":is(.c)"},
+        },
+        .{
+            .selector_input = ":has(:nth-child(odd of .a,.b),.c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":has(:nth-child(odd of .a, .x, .b), .c)"},
+            .replaced = &.{":has(:nth-child(odd of .x, .b), .c)"},
+        },
+        .{
+            .selector_input = ":nth-child(odd of .q:is(.a,.b),.c)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":nth-child(odd of .q:is(.a, .x, .b), .c)"},
+            .replaced = &.{":nth-child(odd of .q:is(.x, .b), .c)"},
+        },
+        .{
+            .selector_input = ".root:nth-child(odd of .a,.b)",
+            .extendee = ":nth-child(odd of .a,.b)",
+            .extender = ".x",
+            .extended = &.{ ".root:nth-child(odd of .a, .b)", ".root.x" },
+            .replaced = &.{".root.x"},
+        },
+        .{
+            .selector_input = ":nth-child(odd)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":nth-child(odd)"},
+            .replaced = &.{":nth-child(odd)"},
+        },
+        .{
+            .selector_input = ":NTH-CHILD(odd OF .a,.b)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":NTH-CHILD(odd OF .a,.b)"},
+            .replaced = &.{":NTH-CHILD(odd OF .a,.b)"},
+        },
+        .{
+            .selector_input = ":nth-child(odd of > .a,.b)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":nth-child(odd of > .a, .b)"},
+            .replaced = &.{":nth-child(odd of > .a, .b)"},
+        },
+        .{
+            .selector_input = ".q:nth-child(odd of .a >)",
+            .extendee = ".q",
+            .extender = ".x",
+            .extended = &.{".q:nth-child(odd of .a >)"},
+            .replaced = &.{".q:nth-child(odd of .a >)"},
+        },
+    };
+    for (extension_cases) |case| {
+        var extended = try selector.extend(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer extended.deinit();
+        try expectItems(case.extended, extended);
+
+        var replaced = try selector.replace(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer replaced.deinit();
+        try expectItems(case.replaced, replaced);
+    }
+
+    var exact_extension_operations: u64 = 1;
+    while (exact_extension_operations < 100_000) : (exact_extension_operations += 1) {
+        var bounded = selector.extend(
+            std.testing.allocator,
+            ":nth-child(2n+1 of .a, .b)",
+            ".a",
+            ".x",
+            .{ .max_relation_operations = exact_extension_operations },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        defer bounded.deinit();
+        try expectItems(&.{":nth-child(2n+1 of .a, .x, .b)"}, bounded);
+        break;
+    }
+    try std.testing.expect(exact_extension_operations < 100_000);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.extend(
+            std.testing.allocator,
+            ":nth-child(2n+1 of .a, .b)",
+            ".a",
+            ".x",
+            .{ .max_relation_operations = exact_extension_operations - 1 },
+        ),
+    );
+}
+
 test "native Sass selector relations compare bounded selector-list functional pseudos" {
     const cases = [_]struct {
         super_selector: []const u8,
@@ -1423,7 +1750,7 @@ test "native Sass selector relations reject unsupported semantics and limits" {
         super_selector: []const u8,
         sub_selector: []const u8,
     }{
-        .{ .super_selector = ":nth-child(2n)", .sub_selector = ":nth-child(4n)" },
+        .{ .super_selector = ":lang(en)", .sub_selector = ":lang(fr)" },
         .{ .super_selector = ":host(.a)", .sub_selector = ":host(.a, .b)" },
     };
     for (unsupported) |case| {
@@ -2241,7 +2568,7 @@ test "native Sass selector extension and replacement fail closed and honor limit
         .{ .selector_input = ".a", .extendee = ".x .a", .extender = ".b" },
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
         .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button" },
-        .{ .selector_input = ":nth-child(2n of .a)", .extendee = ".a", .extender = ".b" },
+        .{ .selector_input = ":lang(en).a", .extendee = ".a", .extender = ".b" },
         .{ .selector_input = ".x::before", .extendee = ".x", .extender = ".y" },
         .{ .selector_input = ".x:hover", .extendee = ":hover", .extender = "::before" },
         .{ .selector_input = "svg|a", .extendee = "svg|a", .extender = "button" },
@@ -3285,6 +3612,14 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     defer functional_pseudo.deinit();
     try expectItems(&.{":not(:is(.a, .b))"}, functional_pseudo);
 
+    var nth_function = try selector.parse(
+        allocator,
+        ":\\6e th-child(2N + 1 \\6f f .a,.b)",
+        .{},
+    );
+    defer nth_function.deinit();
+    try expectItems(&.{":nth-child(2n+1 of .a, .b)"}, nth_function);
+
     var simple = try selector.simpleSelectors(
         allocator,
         "a.foo#id:hover[title=\"x\"]",
@@ -3376,6 +3711,15 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     defer functional_pseudo_unified.deinit();
     try expectItems(&.{":not(:is(.a, .b))"}, functional_pseudo_unified);
 
+    var nth_unified = (try selector.unify(
+        allocator,
+        ":nth-child(odd)",
+        ":nth-child(2n+1)",
+        .{},
+    )) orelse return error.TestUnexpectedResult;
+    defer nth_unified.deinit();
+    try expectItems(&.{":nth-child(odd):nth-child(2n+1)"}, nth_unified);
+
     var extended = try selector.extend(
         allocator,
         "[data-x=\"y\"].c [data-x=y].d",
@@ -3436,6 +3780,16 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     );
     defer functional_replaced.deinit();
     try expectItems(&.{":has(> .x, + .b)"}, functional_replaced);
+
+    var nth_extended = try selector.extend(
+        allocator,
+        ":nth-child(2n+1 of .a, .b)",
+        ".a",
+        ".x",
+        .{},
+    );
+    defer nth_extended.deinit();
+    try expectItems(&.{":nth-child(2n+1 of .a, .x, .b)"}, nth_extended);
 
     var replaced = try selector.replace(
         allocator,

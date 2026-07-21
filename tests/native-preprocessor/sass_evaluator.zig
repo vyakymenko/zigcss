@@ -3848,6 +3848,60 @@ test "native Sass selector module extends and replaces selector-list functional 
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module supports nth-function grammar relations unification and extension" {
+    const input =
+        \\@use "sass:selector";
+        \\.values {
+        \\  parsed: selector.parse(":nth-child(2N + 01 oF .a,.b)");
+        \\  simple: selector.simple-selectors(".root:nth-last-child(-n + 4 of .a,.b):hover");
+        \\  exact: selector.is-superselector(":nth-child(2n + 1 of .a)", ":nth-child(2n+1 of .a)");
+        \\  formula-equivalent: selector.is-superselector(":nth-child(odd)", ":nth-child(2n+1)");
+        \\  selector-subset: selector.is-superselector(":nth-child(odd of .a,.b)", ":nth-child(odd of .a.x)");
+        \\  subject: selector.is-superselector(".a", ":nth-child(odd of .a)");
+        \\  reverse-subject: selector.is-superselector(":nth-child(odd of .a)", ".a");
+        \\  relative: selector.is-superselector(":nth-child(odd of > .a)", ":nth-child(odd of > .a)");
+        \\  unified: selector.unify(":nth-child(odd)", ":nth-child(2n+1)");
+        \\  invalid-unified: selector.unify(":nth-child(odd of > .a)", ".x");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-nth-functions.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{parsed::nth-child(2n+01 of .a, .b);simple:.root,:nth-last-child(-n+4 of .a, .b),:hover;exact:true;formula-equivalent:false;selector-subset:true;subject:true;reverse-subject:false;relative:false;unified::nth-child(odd):nth-child(2n+1)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const extension_input =
+        \\@use "sass:selector";
+        \\.extensions {
+        \\  extend: selector.extend(":nth-child(2n + 1 of .a,.b)", ".a", ".x");
+        \\}
+    ;
+    var extension_result = try compile(
+        std.testing.allocator,
+        "selector-nth-function-extension.scss",
+        extension_input,
+        .scss,
+        .{},
+    );
+    defer extension_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".extensions{extend::nth-child(2n+1 of .a, .x, .b)}",
+        extension_result.css(),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        extension_result.nativeDiagnostics().len,
+    );
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -4389,8 +4443,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "selector-superselector-nth-functional-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":nth-child(2n)\", \":nth-child(4n)\"); }",
+            .name = "selector-superselector-lang-functional-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":lang(en)\", \":lang(fr)\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -8031,6 +8085,7 @@ fn exerciseSelectorAllocationFailures(
         \\@use "sass:meta";
         \\.allocation {
         \\  parsed: selector.parse(".a > .b, [ data-x = 'a b' ]#c:hover");
+        \\  nth: selector.parse(":nth-child(2N + 1 of .a,.b)");
         \\  inspected: meta.inspect(selector.parse(".a, .b"));
         \\  simple: selector.simple-selectors("[title=\"x\"].foo:hover");
         \\  from-value: selector.simple-selectors(selector.parse("button.primary"));
@@ -8063,7 +8118,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

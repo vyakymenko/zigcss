@@ -163,6 +163,7 @@ const expectedImplementations = Object.freeze([
       'built-in-selector-list-functional-pseudo-normalization',
       'built-in-selector-list-functional-pseudo-relations',
       'built-in-selector-list-functional-pseudo-extend-replace',
+      'built-in-selector-nth-function-grammar',
       'built-in-selector-unify-compound',
       'built-in-selector-unify-complex-strict',
       'built-in-selector-unify-complex-weave-disjoint',

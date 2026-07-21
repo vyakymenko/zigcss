@@ -489,7 +489,8 @@ const NamespaceIntersection = union(enum) {
 /// dual-rigid weaving and host-selector semantics remain unavailable. Bounded
 /// identifier, simple-pseudo, attribute, and selector-list functional-pseudo
 /// spellings are canonical before this stage. Non-identical functional-pseudo
-/// inference remains unavailable.
+/// inference remains unavailable except for the admitted selector-list and
+/// formula-exact `:nth-child()`/`:nth-last-child()` relation rules.
 pub fn unify(
     allocator: std.mem.Allocator,
     left_input: []const u8,
@@ -685,8 +686,10 @@ const extension_trim_threshold = 100;
 /// applied sequentially. Duplicate simples, reordered equivalent members, and
 /// bounded attributes, identifier escapes, ordinary simple pseudo-classes, and
 /// the admitted lowercase selector-list functional pseudos normalize for
-/// matching and trimming without rewriting specificity. Functional arguments
-/// recurse under the shared limits, including relative `:has()` branches.
+/// matching and trimming without rewriting specificity. Lowercase nth-child
+/// functions additionally own bounded An+B grammar and optional selector-list
+/// arguments. Functional arguments recurse under the shared limits, including
+/// relative `:has()` branches.
 /// Complex extendees/extenders, namespace inference, non-selector functions,
 /// pseudo-element extension, and host-selector semantics remain unavailable.
 pub fn extend(
@@ -994,6 +997,25 @@ fn emitExtensionListCandidates(
     context: *UnifyContext,
     candidates: *ExtensionCandidates,
 ) Error!bool {
+    if (try relationComplexContainsBogusNth(context, complex)) {
+        if (candidates.items.items.len >= maximum_candidates) {
+            return error.SelectorLimitExceeded;
+        }
+        const rendered = try renderUnchangedExtensionComplex(
+            allocator,
+            complex,
+            context,
+        );
+        try appendExtensionCandidate(
+            allocator,
+            candidates,
+            rendered,
+            source_original,
+            complex.leading_combinator != null,
+            context,
+        );
+        return false;
+    }
     const options_bytes = std.math.mul(
         usize,
         complex.components.len,
@@ -1600,6 +1622,7 @@ fn rewriteExtensionFunctionalPseudo(
 ) Error!?[]u8 {
     try context.enterSelectorListPseudo();
     defer context.leaveSelectorListPseudo();
+    if (function.arguments.len == 0) return null;
     const argument_operations = std.math.cast(u64, function.arguments.len) orelse
         return error.SelectorLimitExceeded;
     const recursive_operations = std.math.add(
@@ -1680,7 +1703,7 @@ fn rewriteExtensionFunctionalPseudo(
     defer segments.deinit(allocator);
     for (extended.items) |item| {
         if (try extensionWholeSelectorListPseudo(item)) |nested| {
-            switch (extensionFunctionalDisposition(function.kind, nested.kind)) {
+            switch (extensionFunctionalDisposition(function, nested)) {
                 .preserve => try appendExtensionFunctionalSegment(
                     allocator,
                     &segments,
@@ -1716,8 +1739,18 @@ fn rewriteExtensionFunctionalPseudo(
     const chains_not = try extensionFunctionalChainsNot(function.kind, &arguments);
     const opening = findUnescapedByte(input, '(') orelse
         return error.InvalidSelector;
-    const prefix_length = std.math.add(usize, opening, 1) catch
+    var prefix_length = std.math.add(usize, opening, 1) catch
         return error.SelectorLimitExceeded;
+    if (function.formula) |formula| {
+        prefix_length = std.math.add(
+            usize,
+            prefix_length,
+            formula.len,
+        ) catch return error.SelectorLimitExceeded;
+        prefix_length = std.math.add(usize, prefix_length, 4) catch
+            return error.SelectorLimitExceeded;
+    }
+    if (prefix_length > input.len - 1) return error.InvalidSelector;
     var output_length: usize = 0;
     if (chains_not) {
         for (segments.items) |segment| {
@@ -1827,15 +1860,26 @@ fn extensionWholeSelectorListPseudo(
 }
 
 fn extensionFunctionalDisposition(
-    outer: SelectorListPseudoKind,
-    inner: SelectorListPseudoKind,
+    outer: RelationSelectorListPseudo,
+    inner: RelationSelectorListPseudo,
 ) ExtensionFunctionalDisposition {
-    if (outer == .has) return .preserve;
-    if (outer == .not) return switch (inner) {
+    if (selectorListPseudoIsNth(outer.kind)) {
+        if (outer.kind != inner.kind or outer.formula == null or
+            inner.formula == null)
+        {
+            return .discard;
+        }
+        return if (std.mem.eql(u8, outer.formula.?, inner.formula.?))
+            .flatten
+        else
+            .discard;
+    }
+    if (outer.kind == .has) return .preserve;
+    if (outer.kind == .not) return switch (inner.kind) {
         .is, .where, .matches => .flatten,
         else => .discard,
     };
-    return if (outer == inner) .flatten else .discard;
+    return if (outer.kind == inner.kind) .flatten else .discard;
 }
 
 fn extensionFunctionalChainsNot(
@@ -1845,7 +1889,7 @@ fn extensionFunctionalChainsNot(
     if (outer != .not or arguments.items.len != 1) return false;
     const nested = try extensionWholeSelectorListPseudo(arguments.items[0]) orelse
         return false;
-    return extensionFunctionalDisposition(outer, nested.kind) == .flatten;
+    return nested.kind == .is or nested.kind == .where or nested.kind == .matches;
 }
 
 fn loadExtensionPattern(
@@ -1902,6 +1946,25 @@ fn emitExtensionCandidates(
 ) Error!bool {
     if (extenders.len != 1 or extenders[0].components.len != 1) {
         return error.UnsupportedSelectorExtension;
+    }
+    if (try relationComplexContainsBogusNth(context, complex)) {
+        if (candidates.items.items.len >= maximum_candidates) {
+            return error.SelectorLimitExceeded;
+        }
+        const rendered = try renderUnchangedExtensionComplex(
+            allocator,
+            complex,
+            context,
+        );
+        try appendExtensionCandidate(
+            allocator,
+            candidates,
+            rendered,
+            true,
+            complex.leading_combinator != null,
+            context,
+        );
+        return false;
     }
     const extender = extenders[0].components[0].compound;
     const replacement_bytes = std.math.mul(
@@ -2191,6 +2254,31 @@ fn renderExtensionCandidate(
     std.debug.assert(offset == output.len);
     try validateComplex(output, false);
     return output;
+}
+
+fn renderUnchangedExtensionComplex(
+    allocator: std.mem.Allocator,
+    complex: RelationComplex,
+    context: *UnifyContext,
+) Error![]u8 {
+    const pointer_bytes = std.math.mul(
+        usize,
+        complex.components.len,
+        @sizeOf(?[]u8),
+    ) catch return error.SelectorLimitExceeded;
+    try context.reserveTemporary(pointer_bytes);
+    const replacements = try allocator.alloc(?[]u8, complex.components.len);
+    defer allocator.free(replacements);
+    @memset(replacements, null);
+    return renderExtensionCandidate(
+        allocator,
+        complex,
+        null,
+        replacements,
+        0,
+        false,
+        context,
+    );
 }
 
 fn extensionCandidateCompound(
@@ -3580,6 +3668,11 @@ fn unifyCompound(
     right_input: []const u8,
     context: *UnifyContext,
 ) Error!?[]u8 {
+    if (try relationCompoundContainsBogusNth(context, left_input, 0) or
+        try relationCompoundContainsBogusNth(context, right_input, 0))
+    {
+        return null;
+    }
     var left = try loadUnifyCompound(allocator, left_input, context);
     defer left.deinit();
     var right = try loadUnifyCompound(allocator, right_input, context);
@@ -3911,9 +4004,11 @@ const SelectorUsage = struct {
 /// `super_input`. This first native slice owns structural selector lists,
 /// compounds, namespaces, and the standard combinators. Relation inference
 /// for normalized selector-list functional pseudos is recursive and bounded.
-/// Non-selector functions, host semantics, and functional pseudo-elements
-/// remain explicitly unavailable rather than guessed. Admitted identifier,
-/// simple-pseudo, and attribute escapes are canonical before this stage.
+/// Formula-exact nth-child functions expose their optional selector subjects
+/// without equating semantically equivalent An+B spellings. Non-selector
+/// functions, host semantics, and functional pseudo-elements remain explicitly
+/// unavailable rather than guessed. Admitted identifier, simple-pseudo, and
+/// attribute escapes are canonical before this stage.
 pub fn isSuperselector(
     allocator: std.mem.Allocator,
     super_input: []const u8,
@@ -4043,6 +4138,7 @@ fn buildRelationComplexList(
 
 const RelationScan = struct {
     leading_combinator: ?RelationCombinator,
+    trailing_combinator: bool,
     component_count: usize,
 };
 
@@ -4064,6 +4160,7 @@ fn buildRelationComplex(
     const filled = try scanRelationComplex(input, components);
     std.debug.assert(filled.component_count == counted.component_count);
     std.debug.assert(filled.leading_combinator == counted.leading_combinator);
+    std.debug.assert(filled.trailing_combinator == counted.trailing_combinator);
     return .{
         .leading_combinator = filled.leading_combinator,
         .components = components,
@@ -4090,6 +4187,7 @@ fn scanRelationComplex(
     }
 
     var count: usize = 0;
+    var trailing_combinator = false;
     while (index < input.len) {
         const end = try compoundEnd(input, index);
         if (end == index) return error.InvalidSelector;
@@ -4121,7 +4219,10 @@ fn scanRelationComplex(
             };
         }
         count += 1;
-        if (next == input.len) break;
+        if (next == input.len) {
+            trailing_combinator = combinator != .none;
+            break;
+        }
         index = next;
     }
     if (count == 0) return error.InvalidSelector;
@@ -4130,6 +4231,7 @@ fn scanRelationComplex(
     }
     return .{
         .leading_combinator = leading_combinator,
+        .trailing_combinator = trailing_combinator,
         .component_count = count,
     };
 }
@@ -4258,9 +4360,9 @@ fn relationCompoundIsSuperselector(
     }
     const super_count = try relationSimpleCount(super_compound);
     const sub_count = try relationSimpleCount(sub_compound);
-    const sub_contains_positive_function =
-        try relationCompoundContainsPositiveSelectorListPseudo(sub_compound);
-    if (super_count > sub_count and !sub_contains_positive_function) {
+    const sub_contains_subject_function =
+        try relationCompoundContainsSubjectSelectorListPseudo(sub_compound);
+    if (super_count > sub_count and !sub_contains_subject_function) {
         return false;
     }
 
@@ -4328,7 +4430,7 @@ fn relationCompoundIsSuperselector(
                 return error.UnsupportedSelectorRelation;
             } else {
                 if (super_simple[0] == '[' and
-                    !sub_contains_positive_function)
+                    !sub_contains_subject_function)
                 {
                     return false;
                 }
@@ -4342,7 +4444,7 @@ fn relationCompoundIsSuperselector(
                         break;
                     }
                     if (try relationSelectorListPseudo(sub_simple)) |functional_sub| {
-                        if (relationSelectorListPseudoIsPositive(functional_sub.kind)) {
+                        if (relationSelectorListPseudoExposesSubject(functional_sub)) {
                             try context.enterSelectorListPseudo();
                             defer context.leaveSelectorListPseudo();
                             if (try relationSelectorListTextIsSuperselector(
@@ -4380,6 +4482,7 @@ const RelationFunctionalPseudoSyntax = struct {
 const RelationSelectorListPseudo = struct {
     kind: SelectorListPseudoKind,
     arguments: []const u8,
+    formula: ?[]const u8 = null,
 };
 
 fn relationFunctionalPseudoSyntax(
@@ -4401,6 +4504,14 @@ fn relationSelectorListPseudo(
 ) Error!?RelationSelectorListPseudo {
     const syntax = try relationFunctionalPseudoSyntax(input) orelse return null;
     const kind = selectorListPseudoKind(syntax.name) orelse return null;
+    if (selectorListPseudoIsNth(kind)) {
+        const parsed = try parseNthSelectorArguments(syntax.arguments);
+        return .{
+            .kind = kind,
+            .arguments = parsed.selector_arguments orelse "",
+            .formula = syntax.arguments[parsed.formula_start..parsed.formula_end],
+        };
+    }
     return .{ .kind = kind, .arguments = syntax.arguments };
 }
 
@@ -4413,8 +4524,15 @@ fn relationFunctionalPseudoIsKnownCaseMismatch(input: []const u8) Error!bool {
 fn relationSelectorListPseudoIsPositive(kind: SelectorListPseudoKind) bool {
     return switch (kind) {
         .is, .where, .matches, .any, .webkit_any, .moz_any => true,
-        .not, .has => false,
+        .not, .has, .nth_child, .nth_last_child => false,
     };
+}
+
+fn relationSelectorListPseudoExposesSubject(
+    function: RelationSelectorListPseudo,
+) bool {
+    return relationSelectorListPseudoIsPositive(function.kind) or
+        (selectorListPseudoIsNth(function.kind) and function.arguments.len != 0);
 }
 
 fn relationSelectorListPseudosAreSuperselector(
@@ -4424,6 +4542,38 @@ fn relationSelectorListPseudosAreSuperselector(
 ) Error!bool {
     try context.enterSelectorListPseudo();
     defer context.leaveSelectorListPseudo();
+    if (selectorListPseudoIsNth(super_function.kind) or
+        selectorListPseudoIsNth(sub_function.kind))
+    {
+        if (super_function.kind != sub_function.kind or
+            super_function.formula == null or sub_function.formula == null or
+            !std.mem.eql(
+                u8,
+                super_function.formula.?,
+                sub_function.formula.?,
+            ) or
+            (super_function.arguments.len == 0) !=
+                (sub_function.arguments.len == 0))
+        {
+            return false;
+        }
+        if (super_function.arguments.len == 0) return true;
+        if (try relationSelectorListPseudoHasBogusCombinator(
+            context,
+            super_function,
+        ) or try relationSelectorListPseudoHasBogusCombinator(
+            context,
+            sub_function,
+        )) {
+            return false;
+        }
+        return relationSelectorListTextIsSuperselector(
+            context,
+            super_function.arguments,
+            sub_function.arguments,
+            .{ .positive_sub_relative_subject = true },
+        );
+    }
     if (relationSelectorListPseudoIsPositive(super_function.kind) and
         relationSelectorListPseudoIsPositive(sub_function.kind))
     {
@@ -4453,14 +4603,14 @@ fn relationSelectorListPseudosAreSuperselector(
     return false;
 }
 
-fn relationCompoundContainsPositiveSelectorListPseudo(
+fn relationCompoundContainsSubjectSelectorListPseudo(
     compound: []const u8,
 ) Error!bool {
     var cursor: usize = 0;
     while (cursor < compound.len) {
         const end = try simpleTokenEnd(compound, cursor);
         if (try relationSelectorListPseudo(compound[cursor..end])) |functional| {
-            if (relationSelectorListPseudoIsPositive(functional.kind)) return true;
+            if (relationSelectorListPseudoExposesSubject(functional)) return true;
         }
         cursor = end;
     }
@@ -4545,6 +4695,102 @@ const RelationSelectorListIterator = struct {
     }
 };
 
+fn relationSelectorListPseudoHasBogusCombinator(
+    context: *RelationContext,
+    function: RelationSelectorListPseudo,
+) Error!bool {
+    if (!selectorListPseudoIsNth(function.kind) or function.arguments.len == 0) {
+        return false;
+    }
+    var iterator = RelationSelectorListIterator{ .input = function.arguments };
+    while (try iterator.next(context)) |selector_text| {
+        const operations = std.math.cast(u64, selector_text.len) orelse
+            return error.SelectorLimitExceeded;
+        try context.consume(operations);
+        const scan = try scanRelationComplex(selector_text, null);
+        if (scan.leading_combinator != null or scan.trailing_combinator) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn relationCompoundContainsBogusNth(
+    context: *RelationContext,
+    compound: []const u8,
+    depth: usize,
+) Error!bool {
+    var cursor: usize = 0;
+    while (cursor < compound.len) {
+        const end = try simpleTokenEnd(compound, cursor);
+        if (try relationSelectorListPseudo(compound[cursor..end])) |function| {
+            if (try relationSelectorListPseudoContainsBogusNth(
+                context,
+                function,
+                depth,
+            )) return true;
+        }
+        cursor = end;
+    }
+    return false;
+}
+
+fn relationComplexContainsBogusNth(
+    context: *RelationContext,
+    complex: RelationComplex,
+) Error!bool {
+    for (complex.components) |component| {
+        if (try relationCompoundContainsBogusNth(
+            context,
+            component.compound,
+            0,
+        )) return true;
+    }
+    return false;
+}
+
+fn relationSelectorListPseudoContainsBogusNth(
+    context: *RelationContext,
+    function: RelationSelectorListPseudo,
+    depth: usize,
+) Error!bool {
+    if (depth >= maximum_selector_list_pseudo_depth) {
+        return error.SelectorLimitExceeded;
+    }
+    if (try relationSelectorListPseudoHasBogusCombinator(context, function)) {
+        return true;
+    }
+    if (function.arguments.len == 0) return false;
+    var iterator = RelationSelectorListIterator{ .input = function.arguments };
+    while (try iterator.next(context)) |selector_text| {
+        var cursor = skipWhitespace(selector_text, 0);
+        const leading = explicitCombinatorLength(selector_text, cursor);
+        if (leading != 0) {
+            cursor = skipWhitespace(selector_text, cursor + leading);
+        }
+        while (cursor < selector_text.len) {
+            const end = try compoundEnd(selector_text, cursor);
+            if (end == cursor) return error.InvalidSelector;
+            if (try relationCompoundContainsBogusNth(
+                context,
+                selector_text[cursor..end],
+                depth + 1,
+            )) return true;
+            const after_space = skipWhitespace(selector_text, end);
+            const saw_space = after_space != end;
+            cursor = after_space;
+            if (cursor == selector_text.len) break;
+            const combinator = explicitCombinatorLength(selector_text, cursor);
+            if (combinator != 0) {
+                cursor = skipWhitespace(selector_text, cursor + combinator);
+            } else if (!saw_space) {
+                return error.InvalidSelector;
+            }
+        }
+    }
+    return false;
+}
+
 fn canonicalSelectorListMemberCount(
     input: []const u8,
     depth: usize,
@@ -4584,12 +4830,14 @@ fn canonicalSelectorNestedMemberCount(
                 if (depth >= maximum_selector_list_pseudo_depth) {
                     return error.SelectorLimitExceeded;
                 }
-                const nested = try canonicalSelectorListMemberCount(
-                    function.arguments,
-                    depth + 1,
-                );
-                count = std.math.add(usize, count, nested) catch
-                    return error.SelectorLimitExceeded;
+                if (function.arguments.len != 0) {
+                    const nested = try canonicalSelectorListMemberCount(
+                        function.arguments,
+                        depth + 1,
+                    );
+                    count = std.math.add(usize, count, nested) catch
+                        return error.SelectorLimitExceeded;
+                }
             }
             simple_cursor = simple_end;
         }
@@ -4661,6 +4909,13 @@ fn relationComplexTextIsSuperselector(
             const subject_start = skipWhitespace(normalized_sub, start + leading);
             if (subject_start == normalized_sub.len) return error.InvalidSelector;
             normalized_sub = normalized_sub[subject_start..];
+        }
+        const scan = try scanRelationComplex(normalized_sub, null);
+        if (scan.trailing_combinator) {
+            normalized_sub = trimWhitespace(
+                normalized_sub[0 .. normalized_sub.len - 1],
+            );
+            if (normalized_sub.len == 0) return error.InvalidSelector;
         }
     }
     var sub_complex = try buildRelationComplex(allocator, normalized_sub, context);
@@ -4776,16 +5031,15 @@ fn relationFunctionalPseudoContainsRelativeSelector(
     depth: usize,
 ) Error!bool {
     if (input.len == 0 or input[0] != ':') return false;
-    const name_start: usize = 1;
-    if (name_start < input.len and input[name_start] == ':') return false;
-    const opening = findUnescapedByte(input, '(') orelse return false;
-    if (depth >= maximum_selector_list_pseudo_depth or
-        try matchingParenEnd(input, opening) != input.len)
-    {
+    if (depth >= maximum_selector_list_pseudo_depth) {
         return error.SelectorLimitExceeded;
     }
-    if (selectorListPseudoKind(input[name_start..opening]) == null) return false;
-    const arguments = input[opening + 1 .. input.len - 1];
+    const function = try relationSelectorListPseudo(input) orelse return false;
+    if (try relationSelectorListPseudoHasBogusCombinator(context, function)) {
+        return true;
+    }
+    const arguments = function.arguments;
+    if (arguments.len == 0) return false;
 
     var segment_start: usize = 0;
     var index: usize = 0;
@@ -5392,6 +5646,17 @@ fn appendNormalizedSimplePseudoEscapes(
             context,
             allow_parent,
         );
+    } else if (selectorListPseudoIsNth(kind.?)) {
+        try context.enterSelectorListPseudo();
+        defer context.leaveSelectorListPseudo();
+        try appendNormalizedNthSelectorArguments(
+            output,
+            allocator,
+            input[opening_index + 1 .. input.len - 1],
+            maximum_bytes,
+            context,
+            allow_parent,
+        );
     } else {
         try context.enterSelectorListPseudo();
         defer context.leaveSelectorListPseudo();
@@ -5478,7 +5743,13 @@ const SelectorListPseudoKind = enum {
     any,
     webkit_any,
     moz_any,
+    nth_child,
+    nth_last_child,
 };
+
+fn selectorListPseudoIsNth(kind: SelectorListPseudoKind) bool {
+    return kind == .nth_child or kind == .nth_last_child;
+}
 
 fn selectorListPseudoKind(name: []const u8) ?SelectorListPseudoKind {
     const names = [_]struct {
@@ -5493,6 +5764,8 @@ fn selectorListPseudoKind(name: []const u8) ?SelectorListPseudoKind {
         .{ .name = "any", .kind = .any },
         .{ .name = "-webkit-any", .kind = .webkit_any },
         .{ .name = "-moz-any", .kind = .moz_any },
+        .{ .name = "nth-child", .kind = .nth_child },
+        .{ .name = "nth-last-child", .kind = .nth_last_child },
     };
     for (names) |entry| {
         if (std.mem.eql(u8, name, entry.name)) return entry.kind;
@@ -5513,11 +5786,261 @@ fn selectorListPseudoKindIgnoreCase(name: []const u8) ?SelectorListPseudoKind {
         .{ .name = "any", .kind = .any },
         .{ .name = "-webkit-any", .kind = .webkit_any },
         .{ .name = "-moz-any", .kind = .moz_any },
+        .{ .name = "nth-child", .kind = .nth_child },
+        .{ .name = "nth-last-child", .kind = .nth_last_child },
     };
     for (names) |entry| {
         if (std.ascii.eqlIgnoreCase(name, entry.name)) return entry.kind;
     }
     return null;
+}
+
+const NthFormulaKind = enum {
+    odd,
+    even,
+    integer,
+    an_plus_b,
+};
+
+const ParsedNthSelectorArguments = struct {
+    formula_kind: NthFormulaKind,
+    formula_start: usize,
+    formula_end: usize,
+    leading_sign: ?u8 = null,
+    coefficient_digits: []const u8 = "",
+    offset_sign: ?u8 = null,
+    offset_digits: []const u8 = "",
+    selector_arguments: ?[]const u8 = null,
+};
+
+fn parseNthSelectorArguments(input: []const u8) Error!ParsedNthSelectorArguments {
+    const formula_start = try skipNthWhitespace(input, 0);
+    if (formula_start == input.len) return error.InvalidSelector;
+
+    if (input[formula_start] == 'o' or input[formula_start] == 'O') {
+        if (try nthAsciiWordEnd(input, formula_start, "odd")) |word_end| {
+            return finishParsedNthSelectorArguments(
+                input,
+                .{
+                    .formula_kind = .odd,
+                    .formula_start = formula_start,
+                    .formula_end = word_end,
+                },
+            );
+        }
+    }
+    if (input[formula_start] == 'e' or input[formula_start] == 'E') {
+        if (try nthAsciiWordEnd(input, formula_start, "even")) |word_end| {
+            return finishParsedNthSelectorArguments(
+                input,
+                .{
+                    .formula_kind = .even,
+                    .formula_start = formula_start,
+                    .formula_end = word_end,
+                },
+            );
+        }
+    }
+
+    var cursor = formula_start;
+    var leading_sign: ?u8 = null;
+    if (input[cursor] == '+' or input[cursor] == '-') {
+        leading_sign = input[cursor];
+        cursor += 1;
+        if (cursor == input.len or isWhitespace(input[cursor])) {
+            return error.InvalidSelector;
+        }
+    }
+
+    const digits_start = cursor;
+    while (cursor < input.len and std.ascii.isDigit(input[cursor])) cursor += 1;
+    const digits_end = cursor;
+    const digits = input[digits_start..digits_end];
+
+    var n_start = cursor;
+    if (digits.len != 0) n_start = try skipNthWhitespace(input, cursor);
+    const n_end = try nthAsciiLetterEnd(input, n_start, 'n');
+    if (n_end == null) {
+        if (digits.len == 0) return error.InvalidSelector;
+        return finishParsedNthSelectorArguments(
+            input,
+            .{
+                .formula_kind = .integer,
+                .formula_start = formula_start,
+                .formula_end = digits_end,
+                .leading_sign = leading_sign,
+                .coefficient_digits = digits,
+            },
+        );
+    }
+
+    cursor = n_end.?;
+    var formula_end = cursor;
+    var offset_sign: ?u8 = null;
+    var offset_digits: []const u8 = "";
+    const after_n = try skipNthWhitespace(input, cursor);
+    if (after_n < input.len and
+        (input[after_n] == '+' or input[after_n] == '-'))
+    {
+        offset_sign = input[after_n];
+        cursor = try skipNthWhitespace(input, after_n + 1);
+        const offset_start = cursor;
+        while (cursor < input.len and std.ascii.isDigit(input[cursor])) cursor += 1;
+        if (cursor == offset_start) return error.InvalidSelector;
+        offset_digits = input[offset_start..cursor];
+        formula_end = cursor;
+    }
+    return finishParsedNthSelectorArguments(
+        input,
+        .{
+            .formula_kind = .an_plus_b,
+            .formula_start = formula_start,
+            .formula_end = formula_end,
+            .leading_sign = leading_sign,
+            .coefficient_digits = digits,
+            .offset_sign = offset_sign,
+            .offset_digits = offset_digits,
+        },
+    );
+}
+
+fn finishParsedNthSelectorArguments(
+    input: []const u8,
+    parsed: ParsedNthSelectorArguments,
+) Error!ParsedNthSelectorArguments {
+    const keyword_start = try skipNthWhitespace(input, parsed.formula_end);
+    if (keyword_start == input.len) return parsed;
+    if (keyword_start == parsed.formula_end or
+        !isWhitespace(input[keyword_start - 1]))
+    {
+        return error.InvalidSelector;
+    }
+    const keyword_end = try nthAsciiWordEnd(input, keyword_start, "of") orelse
+        return error.InvalidSelector;
+    if (keyword_end < input.len and
+        nthIdentifierContinuationStart(input, keyword_end))
+    {
+        return error.InvalidSelector;
+    }
+    const selector_start = try skipNthWhitespace(input, keyword_end);
+    if (selector_start == input.len) return error.InvalidSelector;
+    var result = parsed;
+    result.selector_arguments = input[selector_start..];
+    return result;
+}
+
+fn skipNthWhitespace(input: []const u8, start: usize) Error!usize {
+    var cursor = start;
+    while (cursor < input.len) {
+        if (isWhitespace(input[cursor])) {
+            cursor += 1;
+            continue;
+        }
+        if (input[cursor] == '/' and cursor + 1 < input.len and
+            input[cursor + 1] == '*')
+        {
+            cursor = commentEnd(input, cursor) orelse return error.InvalidSelector;
+            continue;
+        }
+        break;
+    }
+    return cursor;
+}
+
+fn nthAsciiWordEnd(
+    input: []const u8,
+    start: usize,
+    expected: []const u8,
+) Error!?usize {
+    var cursor = start;
+    for (expected) |letter| {
+        const end = try nthAsciiLetterEnd(input, cursor, letter) orelse return null;
+        cursor = end;
+    }
+    return cursor;
+}
+
+fn nthAsciiLetterEnd(
+    input: []const u8,
+    start: usize,
+    expected: u8,
+) Error!?usize {
+    if (start >= input.len) return null;
+    if (input[start] == '\\') {
+        const decoded = try decodeSelectorEscape(input, start);
+        if (decoded.scalar > 0x7f or
+            std.ascii.toLower(@as(u8, @intCast(decoded.scalar))) !=
+                std.ascii.toLower(expected))
+        {
+            return null;
+        }
+        return decoded.end;
+    }
+    if (!std.ascii.isAlphabetic(input[start]) or
+        std.ascii.toLower(input[start]) != std.ascii.toLower(expected))
+    {
+        return null;
+    }
+    return start + 1;
+}
+
+fn nthIdentifierContinuationStart(input: []const u8, start: usize) bool {
+    if (start >= input.len) return false;
+    const byte = input[start];
+    return byte == '\\' or byte == '-' or byte == '_' or byte >= 0x80 or
+        std.ascii.isAlphanumeric(byte);
+}
+
+fn appendNormalizedNthSelectorArguments(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+    context: *NormalizationContext,
+    allow_parent: bool,
+) Error!void {
+    const operations = std.math.cast(u64, input.len) orelse
+        return error.SelectorLimitExceeded;
+    try context.consume(operations);
+    const parsed = try parseNthSelectorArguments(input);
+    switch (parsed.formula_kind) {
+        .odd => try appendBounded(output, allocator, "odd", maximum_bytes),
+        .even => try appendBounded(output, allocator, "even", maximum_bytes),
+        .integer, .an_plus_b => {
+            if (parsed.leading_sign) |sign| {
+                try appendByteBounded(output, allocator, sign, maximum_bytes);
+            }
+            try appendBounded(
+                output,
+                allocator,
+                parsed.coefficient_digits,
+                maximum_bytes,
+            );
+            if (parsed.formula_kind == .an_plus_b) {
+                try appendByteBounded(output, allocator, 'n', maximum_bytes);
+                if (parsed.offset_sign) |sign| {
+                    try appendByteBounded(output, allocator, sign, maximum_bytes);
+                    try appendBounded(
+                        output,
+                        allocator,
+                        parsed.offset_digits,
+                        maximum_bytes,
+                    );
+                }
+            }
+        },
+    }
+    if (parsed.selector_arguments) |arguments| {
+        try appendBounded(output, allocator, " of ", maximum_bytes);
+        try appendNormalizedFunctionalSelectorList(
+            output,
+            allocator,
+            arguments,
+            maximum_bytes,
+            context,
+            allow_parent,
+        );
+    }
 }
 
 fn appendNormalizedFunctionalSelectorList(
