@@ -3755,6 +3755,7 @@ fn relationCompoundIsSuperselector(
                         context,
                         functional_super.arguments,
                         sub_compound,
+                        .{ .positive_sub_relative_subject = true },
                     );
                 }
             } else if (try relationFunctionalPseudoIsKnownCaseMismatch(super_simple)) {
@@ -3784,6 +3785,7 @@ fn relationCompoundIsSuperselector(
                                 context,
                                 super_simple,
                                 functional_sub.arguments,
+                                .{ .positive_sub_relative_subject = true },
                             )) {
                                 semantic_match = true;
                                 break;
@@ -3865,6 +3867,7 @@ fn relationSelectorListPseudosAreSuperselector(
             context,
             super_function.arguments,
             sub_function.arguments,
+            .{ .positive_sub_relative_subject = true },
         );
     }
     if (super_function.kind == .has and sub_function.kind == .has) {
@@ -3872,6 +3875,7 @@ fn relationSelectorListPseudosAreSuperselector(
             context,
             super_function.arguments,
             sub_function.arguments,
+            .{},
         );
     }
     if (super_function.kind == .not and sub_function.kind == .not) {
@@ -3879,6 +3883,7 @@ fn relationSelectorListPseudosAreSuperselector(
             context,
             sub_function.arguments,
             super_function.arguments,
+            .{},
         );
     }
     return false;
@@ -3963,10 +3968,15 @@ const RelationSelectorListIterator = struct {
     }
 };
 
+const RelationSelectorListOptions = struct {
+    positive_sub_relative_subject: bool = false,
+};
+
 fn relationSelectorListTextIsSuperselector(
     context: *RelationContext,
     super_input: []const u8,
     sub_input: []const u8,
+    options: RelationSelectorListOptions,
 ) Error!bool {
     var saw_sub = false;
     var sub_iterator = RelationSelectorListIterator{ .input = sub_input };
@@ -3979,6 +3989,7 @@ fn relationSelectorListTextIsSuperselector(
                 context,
                 super_selector,
                 sub_selector,
+                options,
             )) {
                 matched = true;
                 break;
@@ -3994,12 +4005,26 @@ fn relationComplexTextIsSuperselector(
     context: *RelationContext,
     super_input: []const u8,
     sub_input: []const u8,
+    options: RelationSelectorListOptions,
 ) Error!bool {
     const allocator = context.allocator orelse
         return error.UnsupportedSelectorRelation;
     var super_complex = try buildRelationComplex(allocator, super_input, context);
     defer releaseRelationComplex(context, allocator, &super_complex);
-    var sub_complex = try buildRelationComplex(allocator, sub_input, context);
+    var normalized_sub = sub_input;
+    if (options.positive_sub_relative_subject and
+        !super_complex.leading_combinator and
+        super_complex.components.len == 1)
+    {
+        const start = skipWhitespace(normalized_sub, 0);
+        const leading = explicitCombinatorLength(normalized_sub, start);
+        if (leading != 0) {
+            const subject_start = skipWhitespace(normalized_sub, start + leading);
+            if (subject_start == normalized_sub.len) return error.InvalidSelector;
+            normalized_sub = normalized_sub[subject_start..];
+        }
+    }
+    var sub_complex = try buildRelationComplex(allocator, normalized_sub, context);
     defer releaseRelationComplex(context, allocator, &sub_complex);
     return relationComplexIsSuperselector(context, super_complex, sub_complex);
 }

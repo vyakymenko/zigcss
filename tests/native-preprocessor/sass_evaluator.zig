@@ -3748,6 +3748,8 @@ test "native Sass selector module compares selector-list functional pseudos" {
         \\  has-nested-reverse: selector.is-superselector(":has(:is(.a, .b))", ":has(.a, .b)");
         \\  relative: selector.is-superselector(":has(> .a)", ":has(> .a)");
         \\  relative-covered: selector.is-superselector("*, :has(> .a)", ":has(> .a)");
+        \\  positive-relative: selector.is-superselector(":is(.a)", ":where(> .a)");
+        \\  positive-relative-self: selector.is-superselector(":is(> .a)", ":is(> .a)");
         \\  list-forward: selector.is-superselector(":is(.a), .b", ":is(.a, .b)");
         \\  list-reverse: selector.is-superselector(":is(.a, .b)", ":is(.a), .b");
         \\  case-distinct: selector.is-superselector(":is(.a)", ":IS(.a)");
@@ -3762,7 +3764,7 @@ test "native Sass selector module compares selector-list functional pseudos" {
     );
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".values{is-subset:true;is-reverse:false;legacy-cross:true;plain-super:true;positive-super:true;not-subset:true;not-reverse:false;nested-not:false;nested-not-reverse:true;has-subset:true;has-reverse:false;has-nested:false;has-nested-reverse:true;relative:false;relative-covered:true;list-forward:false;list-reverse:true;case-distinct:false}",
+        ".values{is-subset:true;is-reverse:false;legacy-cross:true;plain-super:true;positive-super:true;not-subset:true;not-reverse:false;nested-not:false;nested-not-reverse:true;has-subset:true;has-reverse:false;has-nested:false;has-nested-reverse:true;relative:false;relative-covered:true;positive-relative:true;positive-relative-self:false;list-forward:false;list-reverse:true;case-distinct:false}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
