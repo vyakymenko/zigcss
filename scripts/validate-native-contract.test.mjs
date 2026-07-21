@@ -92,6 +92,10 @@ test('accepts the closed native Sass implementation contract', () => {
     sassCore.capabilities.includes('built-in-selector-lang-functional-pseudo-grammar'),
     true,
   )
+  assert.equal(
+    sassCore.capabilities.includes('built-in-selector-dir-functional-pseudo-grammar'),
+    true,
+  )
   assert.equal(sassCore.capabilities.includes('built-in-selector-unify-compound'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-unify-complex-strict'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-unify-complex-weave-disjoint'), true)

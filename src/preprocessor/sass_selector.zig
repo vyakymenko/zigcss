@@ -6074,10 +6074,12 @@ fn appendNormalizedOpaqueComponentName(
 
 const OpaqueFunctionalPseudoKind = enum {
     lang,
+    dir,
 };
 
 fn opaqueFunctionalPseudoKind(name: []const u8) ?OpaqueFunctionalPseudoKind {
     if (std.mem.eql(u8, name, "lang")) return .lang;
+    if (std.mem.eql(u8, name, "dir")) return .dir;
     return null;
 }
 
@@ -6085,6 +6087,7 @@ fn opaqueFunctionalPseudoKindIgnoreCase(
     name: []const u8,
 ) ?OpaqueFunctionalPseudoKind {
     if (std.ascii.eqlIgnoreCase(name, "lang")) return .lang;
+    if (std.ascii.eqlIgnoreCase(name, "dir")) return .dir;
     return null;
 }
 

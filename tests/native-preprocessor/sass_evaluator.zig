@@ -3939,6 +3939,43 @@ test "native Sass selector module supports opaque lang-function grammar relation
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module supports opaque dir-function grammar relations unification and extension" {
+    const input =
+        \\@use "sass:selector";
+        \\.values {
+        \\  parsed: selector.parse(":dir( LTR , rtl )");
+        \\  uppercase: selector.parse(":DIR( RTL )");
+        \\  simple: selector.simple-selectors(".root:dir(ltr/**/ rtl):hover");
+        \\  exact: selector.is-superselector(":dir(ltr   rtl)", ":dir(ltr rtl)");
+        \\  distinct: selector.is-superselector(":dir(ltr)", ":dir(rtl)");
+        \\  case-distinct: selector.is-superselector(":DIR(ltr)", ":dir(ltr)");
+        \\  subject: selector.is-superselector(".a", ".a:dir(ltr)");
+        \\  reverse-subject: selector.is-superselector(".a:dir(ltr)", ".a");
+        \\  unified: selector.unify(":dir(ltr)", ":dir(rtl)");
+        \\}
+        \\.extensions {
+        \\  partial: selector.extend(".a:dir(ltr)", ".a", ".x");
+        \\  replaced: selector.replace(".a:dir(ltr)", ".a", ".x");
+        \\  whole: selector.extend(".a:dir(ltr)", ":dir(ltr)", ".x");
+        \\  nested: selector.extend(":is(:dir(ltr),.a)", ":dir(ltr)", ".x");
+        \\  opaque: selector.extend(":dir(.a)", ".a", ".x");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-dir-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{parsed::dir(LTR , rtl);uppercase::DIR(RTL);simple:.root,:dir(ltr/**/ rtl),:hover;exact:true;distinct:false;case-distinct:false;subject:true;reverse-subject:false;unified::dir(ltr):dir(rtl)}.extensions{partial:.a:dir(ltr),.x:dir(ltr);replaced:.x:dir(ltr);whole:.a:dir(ltr),.a.x;nested::is(:dir(ltr), .x, .a);opaque::dir(.a)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";
@@ -4480,8 +4517,8 @@ test "native Sass selector module rejects invalid or unavailable calls" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "selector-superselector-dir-functional-pending.scss",
-            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":dir(ltr)\", \":dir(rtl)\"); }",
+            .name = "selector-superselector-arbitrary-functional-pending.scss",
+            .input = "@use \"sass:selector\"; .a { value: selector.is-superselector(\":foo(ltr)\", \":foo(rtl)\"); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -8124,6 +8161,7 @@ fn exerciseSelectorAllocationFailures(
         \\  parsed: selector.parse(".a > .b, [ data-x = 'a b' ]#c:hover");
         \\  nth: selector.parse(":nth-child(2N + 1 of .a,.b)");
         \\  lang: selector.parse(":lang( en , \\65 n )");
+        \\  dir: selector.parse(":dir( ltr , \\6c tr )");
         \\  inspected: meta.inspect(selector.parse(".a, .b"));
         \\  simple: selector.simple-selectors("[title=\"x\"].foo:hover");
         \\  from-value: selector.simple-selectors(selector.parse("button.primary"));
@@ -8156,7 +8194,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);dir::dir(ltr , ltr);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

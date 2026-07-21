@@ -1298,6 +1298,231 @@ test "native Sass selector lang functions preserve opaque grammar relations unif
     );
 }
 
+test "native Sass selector dir functions preserve opaque grammar relations unification and extension semantics" {
+    const parse_cases = [_]struct {
+        input: []const u8,
+        expected: []const u8,
+    }{
+        .{ .input = ":dir()", .expected = ":dir()" },
+        .{ .input = ":dir( ltr   rtl )", .expected = ":dir(ltr rtl)" },
+        .{ .input = ":dir( , ltr , )", .expected = ":dir(, ltr ,)" },
+        .{ .input = ":dir(/**/ltr/**/)", .expected = ":dir(ltr/**/)" },
+        .{ .input = ":dir(ltr/*)>*/)", .expected = ":dir(ltr/*)>*/)" },
+        .{ .input = ":dir(\\6c tr)", .expected = ":dir(ltr)" },
+        .{ .input = ":\\64 ir(ltr)", .expected = ":dir(ltr)" },
+        .{ .input = ":dir(foo(  ltr ,  rtl  ))", .expected = ":dir(foo( ltr , rtl ))" },
+        .{ .input = ":dir([ x = 'ltr' ])", .expected = ":dir([ x = 'ltr' ])" },
+        .{ .input = ":dir({ a : b })", .expected = ":dir({ a : b })" },
+        .{ .input = ":dir(.a)", .expected = ":dir(.a)" },
+        .{ .input = ":DIR( LTR )", .expected = ":DIR(LTR)" },
+        .{ .input = ":DiR( ltr   rtl )", .expected = ":DiR(ltr rtl)" },
+    };
+    for (parse_cases) |case| {
+        var parsed = try selector.parse(std.testing.allocator, case.input, .{});
+        defer parsed.deinit();
+        try expectItems(&.{case.expected}, parsed);
+    }
+
+    var simple = try selector.simpleSelectors(
+        std.testing.allocator,
+        ".root:dir(ltr/**/ rtl):hover",
+        .{},
+    );
+    defer simple.deinit();
+    try expectItems(&.{ ".root", ":dir(ltr/**/ rtl)", ":hover" }, simple);
+
+    const invalid = [_][]const u8{
+        ":dir(ltr;rtl)",
+        ":dir(/*x)",
+        ":dir([ltr)",
+        ":dir({ltr)",
+        ":dir(ltr))",
+    };
+    for (invalid) |input| {
+        try std.testing.expectError(
+            error.InvalidSelector,
+            selector.parse(std.testing.allocator, input, .{}),
+        );
+    }
+
+    const relation_cases = [_]struct {
+        super_selector: []const u8,
+        sub_selector: []const u8,
+        expected: bool,
+    }{
+        .{ .super_selector = ":dir(ltr   rtl)", .sub_selector = ":dir(ltr rtl)", .expected = true },
+        .{ .super_selector = ":dir(ltr)", .sub_selector = ":dir(rtl)", .expected = false },
+        .{ .super_selector = ":dir(LTR)", .sub_selector = ":dir(ltr)", .expected = false },
+        .{ .super_selector = ":dir(ltr)", .sub_selector = ":DIR(ltr)", .expected = false },
+        .{ .super_selector = ":dir(ltr)", .sub_selector = ":dir(\\6c tr)", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ".a:dir(ltr)", .expected = true },
+        .{ .super_selector = ".a:dir(ltr)", .sub_selector = ".a", .expected = false },
+        .{ .super_selector = ":dir(ltr)", .sub_selector = ".a:dir(ltr)", .expected = true },
+        .{ .super_selector = ".a", .sub_selector = ":dir(.a)", .expected = false },
+        .{ .super_selector = ":dir(.a)", .sub_selector = ":dir(.a.x)", .expected = false },
+    };
+    for (relation_cases) |case| {
+        try std.testing.expectEqual(
+            case.expected,
+            try selector.isSuperselector(
+                std.testing.allocator,
+                case.super_selector,
+                case.sub_selector,
+                .{},
+            ),
+        );
+    }
+
+    const unify_cases = [_]struct {
+        left: []const u8,
+        right: []const u8,
+        expected: []const []const u8,
+    }{
+        .{ .left = ":dir(ltr)", .right = ":dir(\\6c tr)", .expected = &.{":dir(ltr)"} },
+        .{ .left = ":dir(ltr)", .right = ":dir(rtl)", .expected = &.{":dir(ltr):dir(rtl)"} },
+        .{ .left = ".a", .right = ":dir(ltr)", .expected = &.{".a:dir(ltr)"} },
+        .{ .left = ".a", .right = ":dir(.a)", .expected = &.{".a:dir(.a)"} },
+        .{ .left = ":DIR(ltr)", .right = ":dir(ltr)", .expected = &.{":DIR(ltr):dir(ltr)"} },
+    };
+    for (unify_cases) |case| {
+        var unified = (try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) orelse return error.TestUnexpectedResult;
+        defer unified.deinit();
+        try expectItems(case.expected, unified);
+    }
+
+    const extension_cases = [_]struct {
+        selector_input: []const u8,
+        extendee: []const u8,
+        extender: []const u8,
+        extended: []const []const u8,
+        replaced: []const []const u8,
+    }{
+        .{
+            .selector_input = ".a:dir(ltr)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{ ".a:dir(ltr)", ".x:dir(ltr)" },
+            .replaced = &.{".x:dir(ltr)"},
+        },
+        .{
+            .selector_input = ".a:dir(ltr)",
+            .extendee = ":dir(ltr)",
+            .extender = ".x",
+            .extended = &.{ ".a:dir(ltr)", ".a.x" },
+            .replaced = &.{".a.x"},
+        },
+        .{
+            .selector_input = ":is(:dir(ltr),.a)",
+            .extendee = ":dir(ltr)",
+            .extender = ".x",
+            .extended = &.{":is(:dir(ltr), .x, .a)"},
+            .replaced = &.{":is(.x, .a)"},
+        },
+        .{
+            .selector_input = ":dir(.a)",
+            .extendee = ".a",
+            .extender = ".x",
+            .extended = &.{":dir(.a)"},
+            .replaced = &.{":dir(.a)"},
+        },
+        .{
+            .selector_input = ":DIR(ltr)",
+            .extendee = ":DIR(ltr)",
+            .extender = ".x",
+            .extended = &.{ ":DIR(ltr)", ".x" },
+            .replaced = &.{".x"},
+        },
+    };
+    for (extension_cases) |case| {
+        var extended = try selector.extend(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer extended.deinit();
+        try expectItems(case.extended, extended);
+
+        var replaced = try selector.replace(
+            std.testing.allocator,
+            case.selector_input,
+            case.extendee,
+            case.extender,
+            .{},
+        );
+        defer replaced.deinit();
+        try expectItems(case.replaced, replaced);
+    }
+
+    const normalized = ":dir(ltr rtl)";
+    var exactly_bounded = try selector.parse(
+        std.testing.allocator,
+        ":dir( ltr   rtl )",
+        .{ .max_bytes = normalized.len },
+    );
+    defer exactly_bounded.deinit();
+    try expectItems(&.{normalized}, exactly_bounded);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":dir( ltr   rtl )",
+            .{ .max_bytes = normalized.len - 1 },
+        ),
+    );
+
+    var exact_normalization_operations: u64 = 1;
+    while (exact_normalization_operations < 10_000) : (exact_normalization_operations += 1) {
+        var bounded = selector.parse(
+            std.testing.allocator,
+            ":dir(foo(  ltr ,  rtl  ))",
+            .{ .max_normalization_operations = exact_normalization_operations },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        defer bounded.deinit();
+        try expectItems(&.{":dir(foo( ltr , rtl ))"}, bounded);
+        break;
+    }
+    try std.testing.expect(exact_normalization_operations < 10_000);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":dir(foo(  ltr ,  rtl  ))",
+            .{ .max_normalization_operations = exact_normalization_operations - 1 },
+        ),
+    );
+
+    var one_below_depth: std.ArrayList(u8) = .empty;
+    defer one_below_depth.deinit(std.testing.allocator);
+    try one_below_depth.appendSlice(std.testing.allocator, ":dir(");
+    for (0..63) |_| try one_below_depth.appendSlice(std.testing.allocator, "f(");
+    try one_below_depth.append(std.testing.allocator, 'x');
+    for (0..64) |_| try one_below_depth.append(std.testing.allocator, ')');
+    var nested = try selector.parse(std.testing.allocator, one_below_depth.items, .{});
+    defer nested.deinit();
+    try expectItems(&.{one_below_depth.items}, nested);
+
+    var excessive_depth: std.ArrayList(u8) = .empty;
+    defer excessive_depth.deinit(std.testing.allocator);
+    try excessive_depth.appendSlice(std.testing.allocator, ":dir(");
+    for (0..64) |_| try excessive_depth.appendSlice(std.testing.allocator, "f(");
+    try excessive_depth.append(std.testing.allocator, 'x');
+    for (0..65) |_| try excessive_depth.append(std.testing.allocator, ')');
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(std.testing.allocator, excessive_depth.items, .{}),
+    );
+}
+
 test "native Sass selector relations compare bounded selector-list functional pseudos" {
     const cases = [_]struct {
         super_selector: []const u8,
@@ -1997,7 +2222,7 @@ test "native Sass selector relations reject unsupported semantics and limits" {
         super_selector: []const u8,
         sub_selector: []const u8,
     }{
-        .{ .super_selector = ":dir(ltr)", .sub_selector = ":dir(rtl)" },
+        .{ .super_selector = ":foo(ltr)", .sub_selector = ":foo(rtl)" },
         .{ .super_selector = ":host(.a)", .sub_selector = ":host(.a, .b)" },
     };
     for (unsupported) |case| {
@@ -2815,7 +3040,7 @@ test "native Sass selector extension and replacement fail closed and honor limit
         .{ .selector_input = ".a", .extendee = ".x .a", .extender = ".b" },
         .{ .selector_input = ".a", .extendee = ".a", .extender = ".x .b" },
         .{ .selector_input = "a.foo", .extendee = ".foo", .extender = "button" },
-        .{ .selector_input = ":dir(ltr).a", .extendee = ".a", .extender = ".b" },
+        .{ .selector_input = ":foo(ltr).a", .extendee = ".a", .extender = ".b" },
         .{ .selector_input = ".x::before", .extendee = ".x", .extender = ".y" },
         .{ .selector_input = ".x:hover", .extendee = ":hover", .extender = "::before" },
         .{ .selector_input = "svg|a", .extendee = "svg|a", .extender = "button" },
@@ -3875,6 +4100,14 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     defer lang_function.deinit();
     try expectItems(&.{":lang(en , foo( a ))"}, lang_function);
 
+    var dir_function = try selector.parse(
+        allocator,
+        ":\\64 ir( \\6c tr , foo(  a  ) )",
+        .{},
+    );
+    defer dir_function.deinit();
+    try expectItems(&.{":dir(ltr , foo( a ))"}, dir_function);
+
     var simple = try selector.simpleSelectors(
         allocator,
         "a.foo#id:hover[title=\"x\"]",
@@ -3935,6 +4168,12 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
         ":lang(en US).more",
         .{},
     ));
+    try std.testing.expect(try selector.isSuperselector(
+        allocator,
+        ":dir(ltr   rtl)",
+        ":dir(ltr rtl).more",
+        .{},
+    ));
 
     var unified = (try selector.unify(
         allocator,
@@ -3989,6 +4228,15 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     )) orelse return error.TestUnexpectedResult;
     defer lang_unified.deinit();
     try expectItems(&.{":lang(en)"}, lang_unified);
+
+    var dir_unified = (try selector.unify(
+        allocator,
+        ":dir(\\6c tr)",
+        ":dir(ltr)",
+        .{},
+    )) orelse return error.TestUnexpectedResult;
+    defer dir_unified.deinit();
+    try expectItems(&.{":dir(ltr)"}, dir_unified);
 
     var extended = try selector.extend(
         allocator,
@@ -4070,6 +4318,16 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     );
     defer lang_extended.deinit();
     try expectItems(&.{ ".a:lang(en)", ".x:lang(en)" }, lang_extended);
+
+    var dir_extended = try selector.extend(
+        allocator,
+        ".a:dir(\\6c tr)",
+        ".a",
+        ".x",
+        .{},
+    );
+    defer dir_extended.deinit();
+    try expectItems(&.{ ".a:dir(ltr)", ".x:dir(ltr)" }, dir_extended);
 
     var replaced = try selector.replace(
         allocator,
