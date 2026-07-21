@@ -58,6 +58,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('cross-space-color-conversion'), true)
   assert.equal(sassCore.capabilities.includes('modern-color-transforms'), true)
   assert.equal(sassCore.capabilities.includes('built-in-color-transform-aliases'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-existence-queries'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-inspection'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-keywords'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-parse-simple'), true)

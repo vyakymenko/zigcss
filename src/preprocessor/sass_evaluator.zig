@@ -148,9 +148,14 @@ const Builtin = enum {
     math_tan,
     math_unit,
     math_clamp,
+    meta_feature_exists,
+    meta_function_exists,
+    meta_global_variable_exists,
     meta_inspect,
     meta_keywords,
+    meta_mixin_exists,
     meta_type_of,
+    meta_variable_exists,
     selector_append,
     selector_extend,
     selector_is_superselector,
@@ -4301,180 +4306,10 @@ const Engine = struct {
         if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
         const name = raw[0..opening];
         const module_builtin = try self.tryModuleBuiltin(name, span);
-        const builtin: Builtin = if (module_builtin) |resolved|
-            resolved
-        else if (!isSimpleIdentifier(name))
-            return null
-        else if (sassNameEql(name, "map-get"))
-            .map_get
-        else if (sassNameEql(name, "map-has-key"))
-            .map_has_key
-        else if (sassNameEql(name, "map-keys"))
-            .map_keys
-        else if (sassNameEql(name, "map-values"))
-            .map_values
-        else if (sassNameEql(name, "map-merge"))
-            .map_merge
-        else if (sassNameEql(name, "map-remove"))
-            .map_remove
-        else if (sassNameEql(name, "nth"))
-            .nth
-        else if (sassNameEql(name, "length"))
-            .length
-        else if (sassNameEql(name, "index"))
-            .list_index
-        else if (sassNameEql(name, "list-separator"))
-            .list_separator
-        else if (sassNameEql(name, "is-bracketed"))
-            .list_is_bracketed
-        else if (sassNameEql(name, "append"))
-            .list_append
-        else if (sassNameEql(name, "set-nth"))
-            .list_set_nth
-        else if (sassNameEql(name, "join"))
-            .list_join
-        else if (sassNameEql(name, "zip"))
-            .list_zip
-        else if (sassNameEql(name, "abs"))
-            .math_abs
-        else if (sassNameEql(name, "acos"))
-            .math_acos
-        else if (sassNameEql(name, "asin"))
-            .math_asin
-        else if (sassNameEql(name, "atan"))
-            .math_atan
-        else if (sassNameEql(name, "atan2"))
-            .math_atan2
-        else if (sassNameEql(name, "ceil"))
-            .math_ceil
-        else if (sassNameEql(name, "comparable"))
-            .math_compatible
-        else if (sassNameEql(name, "cos"))
-            .math_cos
-        else if (sassNameEql(name, "floor"))
-            .math_floor
-        else if (sassNameEql(name, "unitless"))
-            .math_is_unitless
-        else if (sassNameEql(name, "log"))
-            .math_log
-        else if (sassNameEql(name, "percentage"))
-            .math_percentage
-        else if (sassNameEql(name, "pow"))
-            .math_pow
-        else if (sassNameEql(name, "random"))
-            .math_random
-        else if (sassNameEql(name, "round"))
-            .math_round
-        else if (sassNameEql(name, "sin"))
-            .math_sin
-        else if (sassNameEql(name, "sqrt"))
-            .math_sqrt
-        else if (sassNameEql(name, "tan"))
-            .math_tan
-        else if (sassNameEql(name, "unit"))
-            .math_unit
-        else if (sassNameEql(name, "inspect"))
-            .meta_inspect
-        else if (sassNameEql(name, "type-of"))
-            .meta_type_of
-        else if (sassNameEql(name, "quote"))
-            .quote
-        else if (sassNameEql(name, "unquote"))
-            .unquote
-        else if (sassNameEql(name, "str-length"))
-            .str_length
-        else if (sassNameEql(name, "str-index"))
-            .str_index
-        else if (sassNameEql(name, "str-slice"))
-            .str_slice
-        else if (sassNameEql(name, "str-insert"))
-            .str_insert
-        else if (sassNameEql(name, "to-upper-case"))
-            .to_upper_case
-        else if (sassNameEql(name, "to-lower-case"))
-            .to_lower_case
-        else if (sassNameEql(name, "rgb"))
-            .rgb
-        else if (sassNameEql(name, "rgba"))
-            .rgba
-        else if (sassNameEql(name, "hsl"))
-            .hsl
-        else if (sassNameEql(name, "hsla"))
-            .hsla
-        else if (sassNameEql(name, "hwb"))
-            .hwb
-        else if (sassNameEql(name, "lab"))
-            .lab
-        else if (sassNameEql(name, "lch"))
-            .lch
-        else if (sassNameEql(name, "oklab"))
-            .oklab
-        else if (sassNameEql(name, "oklch"))
-            .oklch
-        else if (sassNameEql(name, "color"))
-            .color
-        else if (sassNameEql(name, "red"))
-            .red
-        else if (sassNameEql(name, "green"))
-            .green
-        else if (sassNameEql(name, "blue"))
-            .blue
-        else if (sassNameEql(name, "alpha"))
-            .alpha
-        else if (sassNameEql(name, "opacity"))
-            .opacity
-        else if (sassNameEql(name, "hue"))
-            .hue
-        else if (sassNameEql(name, "saturation"))
-            .saturation
-        else if (sassNameEql(name, "lightness"))
-            .lightness
-        else if (sassNameEql(name, "mix"))
-            .mix
-        else if (sassNameEql(name, "lighten"))
-            .lighten
-        else if (sassNameEql(name, "darken"))
-            .darken
-        else if (sassNameEql(name, "saturate"))
-            .saturate
-        else if (sassNameEql(name, "desaturate"))
-            .desaturate
-        else if (sassNameEql(name, "adjust-hue"))
-            .adjust_hue
-        else if (sassNameEql(name, "complement"))
-            .complement
-        else if (sassNameEql(name, "grayscale"))
-            .grayscale
-        else if (sassNameEql(name, "invert"))
-            .invert
-        else if (sassNameEql(name, "opacify"))
-            .opacify
-        else if (sassNameEql(name, "fade-in"))
-            .fade_in
-        else if (sassNameEql(name, "transparentize"))
-            .transparentize
-        else if (sassNameEql(name, "fade-out"))
-            .fade_out
-        else if (sassNameEql(name, "ie-hex-str"))
-            .ie_hex_str
-        else if (sassNameEql(name, "adjust-color"))
-            .adjust_color
-        else if (sassNameEql(name, "change-color"))
-            .change_color
-        else if (sassNameEql(name, "scale-color"))
-            .scale_color
-        else if (sassNameEql(name, "calc"))
-            .calculation
-        else if (sassNameEql(name, "min"))
-            .minimum
-        else if (sassNameEql(name, "max"))
-            .maximum
-        else if (sassNameEql(name, "clamp"))
-            .clamp
-        else if (sassNameEql(name, "hypot"))
-            .math_hypot
-        else
-            return null;
+        const builtin = module_builtin orelse blk: {
+            if (!isSimpleIdentifier(name)) return null;
+            break :blk globalBuiltin(name) orelse return null;
+        };
 
         const body = raw[opening + 1 .. raw.len - 1];
         var ranges: std.ArrayList(ExpressionRange) = .empty;
@@ -4570,9 +4405,14 @@ const Engine = struct {
             .math_sqrt,
             .math_tan,
             .math_unit,
+            .meta_feature_exists,
+            .meta_function_exists,
+            .meta_global_variable_exists,
             .meta_inspect,
             .meta_keywords,
+            .meta_mixin_exists,
             .meta_type_of,
+            .meta_variable_exists,
             .selector_extend,
             .selector_is_superselector,
             .selector_replace,
@@ -7580,6 +7420,150 @@ const Engine = struct {
         return error.TemporaryLimitExceeded;
     }
 
+    fn callMetaExistence(
+        self: *Engine,
+        builtin: Builtin,
+        module_owned: bool,
+        arguments: []const *const native_value.Value,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (!module_owned) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        if (builtin == .meta_feature_exists) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "The feature-exists() function is deprecated.",
+                &.{},
+            );
+        }
+        try self.transaction.consumeOperations(1);
+
+        const name_string = try self.metaExistenceString(arguments[0].*, "name", span);
+        const raw_name = native_string.decodeAlloc(
+            self.allocator,
+            name_string.bytes,
+            name_string.quoted,
+            self.limits.max_temporary_bytes,
+        ) catch |err| return self.stringFailure(err, span);
+        defer self.allocator.free(raw_name);
+        if (builtin == .meta_feature_exists) {
+            return self.values.own(.{ .boolean = metaFeatureExists(raw_name) });
+        }
+
+        const module = if (arguments.len == 2)
+            try self.metaExistenceModule(arguments[1].*, span)
+        else
+            null;
+        const normalized = (try self.normalizeMetaExistenceName(raw_name, span)) orelse
+            return self.values.own(.{ .boolean = false });
+        defer self.allocator.free(normalized);
+
+        const exists = switch (builtin) {
+            .meta_function_exists => if (module) |kind|
+                moduleBuiltin(kind, normalized) != null
+            else
+                try self.metaGlobalFunctionExists(normalized, scope),
+            .meta_mixin_exists => if (module != null)
+                false
+            else
+                (try self.lookupUserMixin(normalized, scope)) != null,
+            .meta_variable_exists => (try self.lookupVisibleVariable(scope, normalized)) != null or
+                self.unprefixedMathConstant(normalized) != null,
+            .meta_global_variable_exists => if (module) |kind|
+                kind == .math and mathModuleConstant(normalized) != null
+            else
+                (try self.environment.lookup(self.global_scope, normalized)) != null or
+                    self.unprefixedMathConstant(normalized) != null,
+            else => unreachable,
+        };
+        return self.values.own(.{ .boolean = exists });
+    }
+
+    fn metaExistenceString(
+        self: *Engine,
+        item: native_value.Value,
+        label: []const u8,
+        span: native_source.Span,
+    ) Error!native_value.String {
+        return switch (item) {
+            .string => |string| string,
+            else => {
+                const message = if (std.mem.eql(u8, label, "module"))
+                    "native Sass meta existence module must be null or a string namespace"
+                else
+                    "native Sass meta existence name must be a string";
+                try self.report(.type_mismatch, span, message);
+                return error.InvalidExpression;
+            },
+        };
+    }
+
+    fn metaExistenceModule(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!?BuiltinModule {
+        if (item == .null_value) return null;
+        const module_string = try self.metaExistenceString(item, "module", span);
+        const namespace = native_string.decodeAlloc(
+            self.allocator,
+            module_string.bytes,
+            module_string.quoted,
+            self.limits.max_temporary_bytes,
+        ) catch |err| return self.stringFailure(err, span);
+        defer self.allocator.free(namespace);
+        for (self.modules.items) |binding| {
+            try self.transaction.consumeOperations(1);
+            const loaded = binding.namespace orelse continue;
+            if (std.mem.eql(u8, loaded, namespace)) return binding.kind;
+        }
+        try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
+        return error.InvalidExpression;
+    }
+
+    fn normalizeMetaExistenceName(
+        self: *Engine,
+        raw_name: []const u8,
+        span: native_source.Span,
+    ) Error!?[]u8 {
+        if (raw_name.len > self.limits.max_temporary_bytes) {
+            try self.report(.resource_limit, span, "native Sass meta existence name limit exceeded");
+            return error.TemporaryLimitExceeded;
+        }
+        if (!isSimpleIdentifier(raw_name)) return null;
+        const normalized = try self.allocator.dupe(u8, raw_name);
+        for (normalized) |*byte| {
+            if (byte.* == '_') byte.* = '-';
+        }
+        return normalized;
+    }
+
+    fn metaGlobalFunctionExists(
+        self: *Engine,
+        name: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!bool {
+        if ((try self.lookupUserFunction(name, scope)) != null or globalBuiltin(name) != null) {
+            return true;
+        }
+        for (self.modules.items) |binding| {
+            try self.transaction.consumeOperations(1);
+            if (binding.namespace != null) continue;
+            if (moduleBuiltin(binding.kind, name) != null) return true;
+        }
+        return false;
+    }
+
     fn callMetaInspect(
         self: *Engine,
         arguments: []const *const native_value.Value,
@@ -8691,8 +8675,17 @@ const Engine = struct {
             },
             .math_is_unitless => &.{.{ .name = "number" }},
             .math_unit => &.{.{ .name = "number" }},
+            .meta_feature_exists => &.{.{ .name = "feature" }},
+            .meta_function_exists,
+            .meta_global_variable_exists,
+            .meta_mixin_exists,
+            => &.{
+                .{ .name = "name" },
+                .{ .name = "module", .required = false },
+            },
             .meta_inspect, .meta_type_of => &.{.{ .name = "value" }},
             .meta_keywords => &.{.{ .name = "args" }},
+            .meta_variable_exists => &.{.{ .name = "name" }},
             .selector_is_superselector => &.{
                 .{ .name = "super" },
                 .{ .name = "sub" },
@@ -8914,6 +8907,18 @@ const Engine = struct {
                 span,
             ),
             .math_unit => self.callMathUnit(arguments, span),
+            .meta_feature_exists,
+            .meta_function_exists,
+            .meta_global_variable_exists,
+            .meta_mixin_exists,
+            .meta_variable_exists,
+            => self.callMetaExistence(
+                builtin,
+                module_owned,
+                arguments,
+                scope,
+                span,
+            ),
             .meta_inspect => self.callMetaInspect(arguments, span),
             .meta_keywords => self.callMetaKeywords(arguments, span),
             .meta_type_of => self.callMetaTypeOf(arguments, span),
@@ -10127,6 +10132,32 @@ fn callKeywordNamesEqual(
     return true;
 }
 
+fn moduleBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
+    return switch (kind) {
+        .color => colorModuleBuiltin(name),
+        .list => listModuleBuiltin(name),
+        .map => mapModuleBuiltin(name),
+        .math => mathModuleBuiltin(name),
+        .meta => metaModuleBuiltin(name),
+        .selector => selectorModuleBuiltin(name),
+        .string => stringModuleBuiltin(name),
+    };
+}
+
+fn metaFeatureExists(name: []const u8) bool {
+    const features = [_][]const u8{
+        "global-variable-shadowing",
+        "extend-selector-pseudoclass",
+        "units-level-3",
+        "at-error",
+        "custom-property",
+    };
+    for (features) |feature| {
+        if (std.mem.eql(u8, name, feature)) return true;
+    }
+    return false;
+}
+
 fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "adjust")) return .adjust_color;
     if (sassNameEql(name, "change")) return .change_color;
@@ -10209,10 +10240,116 @@ fn mathModuleOwnsFunction(name: []const u8) bool {
     return false;
 }
 
+fn globalBuiltin(name: []const u8) ?Builtin {
+    const definitions = [_]struct {
+        name: []const u8,
+        builtin: Builtin,
+    }{
+        .{ .name = "map-get", .builtin = .map_get },
+        .{ .name = "map-has-key", .builtin = .map_has_key },
+        .{ .name = "map-keys", .builtin = .map_keys },
+        .{ .name = "map-values", .builtin = .map_values },
+        .{ .name = "map-merge", .builtin = .map_merge },
+        .{ .name = "map-remove", .builtin = .map_remove },
+        .{ .name = "nth", .builtin = .nth },
+        .{ .name = "length", .builtin = .length },
+        .{ .name = "index", .builtin = .list_index },
+        .{ .name = "list-separator", .builtin = .list_separator },
+        .{ .name = "is-bracketed", .builtin = .list_is_bracketed },
+        .{ .name = "append", .builtin = .list_append },
+        .{ .name = "set-nth", .builtin = .list_set_nth },
+        .{ .name = "join", .builtin = .list_join },
+        .{ .name = "zip", .builtin = .list_zip },
+        .{ .name = "abs", .builtin = .math_abs },
+        .{ .name = "acos", .builtin = .math_acos },
+        .{ .name = "asin", .builtin = .math_asin },
+        .{ .name = "atan", .builtin = .math_atan },
+        .{ .name = "atan2", .builtin = .math_atan2 },
+        .{ .name = "ceil", .builtin = .math_ceil },
+        .{ .name = "comparable", .builtin = .math_compatible },
+        .{ .name = "cos", .builtin = .math_cos },
+        .{ .name = "floor", .builtin = .math_floor },
+        .{ .name = "unitless", .builtin = .math_is_unitless },
+        .{ .name = "log", .builtin = .math_log },
+        .{ .name = "percentage", .builtin = .math_percentage },
+        .{ .name = "pow", .builtin = .math_pow },
+        .{ .name = "random", .builtin = .math_random },
+        .{ .name = "round", .builtin = .math_round },
+        .{ .name = "sin", .builtin = .math_sin },
+        .{ .name = "sqrt", .builtin = .math_sqrt },
+        .{ .name = "tan", .builtin = .math_tan },
+        .{ .name = "unit", .builtin = .math_unit },
+        .{ .name = "feature-exists", .builtin = .meta_feature_exists },
+        .{ .name = "function-exists", .builtin = .meta_function_exists },
+        .{ .name = "global-variable-exists", .builtin = .meta_global_variable_exists },
+        .{ .name = "inspect", .builtin = .meta_inspect },
+        .{ .name = "mixin-exists", .builtin = .meta_mixin_exists },
+        .{ .name = "type-of", .builtin = .meta_type_of },
+        .{ .name = "variable-exists", .builtin = .meta_variable_exists },
+        .{ .name = "quote", .builtin = .quote },
+        .{ .name = "unquote", .builtin = .unquote },
+        .{ .name = "str-length", .builtin = .str_length },
+        .{ .name = "str-index", .builtin = .str_index },
+        .{ .name = "str-slice", .builtin = .str_slice },
+        .{ .name = "str-insert", .builtin = .str_insert },
+        .{ .name = "to-upper-case", .builtin = .to_upper_case },
+        .{ .name = "to-lower-case", .builtin = .to_lower_case },
+        .{ .name = "rgb", .builtin = .rgb },
+        .{ .name = "rgba", .builtin = .rgba },
+        .{ .name = "hsl", .builtin = .hsl },
+        .{ .name = "hsla", .builtin = .hsla },
+        .{ .name = "hwb", .builtin = .hwb },
+        .{ .name = "lab", .builtin = .lab },
+        .{ .name = "lch", .builtin = .lch },
+        .{ .name = "oklab", .builtin = .oklab },
+        .{ .name = "oklch", .builtin = .oklch },
+        .{ .name = "color", .builtin = .color },
+        .{ .name = "red", .builtin = .red },
+        .{ .name = "green", .builtin = .green },
+        .{ .name = "blue", .builtin = .blue },
+        .{ .name = "alpha", .builtin = .alpha },
+        .{ .name = "opacity", .builtin = .opacity },
+        .{ .name = "hue", .builtin = .hue },
+        .{ .name = "saturation", .builtin = .saturation },
+        .{ .name = "lightness", .builtin = .lightness },
+        .{ .name = "mix", .builtin = .mix },
+        .{ .name = "lighten", .builtin = .lighten },
+        .{ .name = "darken", .builtin = .darken },
+        .{ .name = "saturate", .builtin = .saturate },
+        .{ .name = "desaturate", .builtin = .desaturate },
+        .{ .name = "adjust-hue", .builtin = .adjust_hue },
+        .{ .name = "complement", .builtin = .complement },
+        .{ .name = "grayscale", .builtin = .grayscale },
+        .{ .name = "invert", .builtin = .invert },
+        .{ .name = "opacify", .builtin = .opacify },
+        .{ .name = "fade-in", .builtin = .fade_in },
+        .{ .name = "transparentize", .builtin = .transparentize },
+        .{ .name = "fade-out", .builtin = .fade_out },
+        .{ .name = "ie-hex-str", .builtin = .ie_hex_str },
+        .{ .name = "adjust-color", .builtin = .adjust_color },
+        .{ .name = "change-color", .builtin = .change_color },
+        .{ .name = "scale-color", .builtin = .scale_color },
+        .{ .name = "calc", .builtin = .calculation },
+        .{ .name = "min", .builtin = .minimum },
+        .{ .name = "max", .builtin = .maximum },
+        .{ .name = "clamp", .builtin = .clamp },
+        .{ .name = "hypot", .builtin = .math_hypot },
+    };
+    for (definitions) |definition| {
+        if (sassNameEql(name, definition.name)) return definition.builtin;
+    }
+    return null;
+}
+
 fn metaModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "feature-exists")) return .meta_feature_exists;
+    if (sassNameEql(name, "function-exists")) return .meta_function_exists;
+    if (sassNameEql(name, "global-variable-exists")) return .meta_global_variable_exists;
     if (sassNameEql(name, "inspect")) return .meta_inspect;
     if (sassNameEql(name, "keywords")) return .meta_keywords;
+    if (sassNameEql(name, "mixin-exists")) return .meta_mixin_exists;
     if (sassNameEql(name, "type-of")) return .meta_type_of;
+    if (sassNameEql(name, "variable-exists")) return .meta_variable_exists;
     return null;
 }
 

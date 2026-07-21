@@ -3021,6 +3021,279 @@ test "native Sass meta inspection reports exact types and canonical representati
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass meta existence queries inspect scope declarations globals and built-in modules" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:selector";
+        \\@use "sass:string";
+        \\$global_name: 1;
+        \\.before {
+        \\  function: meta.function-exists("later_fn");
+        \\  mixin: meta.mixin-exists("later_mix");
+        \\}
+        \\@function later_fn() { @return 1; }
+        \\@mixin later_mix() { $inside: true; }
+        \\@function scope_probe() {
+        \\  $local_name: 2;
+        \\  @return meta.inspect((
+        \\    local: meta.variable-exists("local_name"),
+        \\    local-global: meta.global-variable-exists("local-name"),
+        \\    outer: meta.variable-exists("global-name"),
+        \\    outer-global: meta.global-variable-exists("global_name")
+        \\  ));
+        \\}
+        \\.values {
+        \\  function: meta.function-exists("later_fn");
+        \\  function-hyphen: meta.function-exists("later-fn");
+        \\  function-escaped: meta.function-exists("later\2d fn");
+        \\  function-case: meta.function-exists("LATER-FN");
+        \\  mixin: meta.mixin-exists("later_mix");
+        \\  variable: meta.variable-exists("global_name");
+        \\  global: meta.global-variable-exists("global-name");
+        \\  dollar: meta.variable-exists("$global-name");
+        \\  scope: scope_probe();
+        \\  builtin: meta.function-exists("rgb");
+        \\  module: meta.function-exists("ceil", "numbers");
+        \\  module-missing: meta.function-exists("nope", "numbers");
+        \\  module-variable: meta.global-variable-exists("pi", "numbers");
+        \\  star-function: meta.function-exists("compatible");
+        \\  star-variable: meta.variable-exists("pi");
+        \\  star-global: meta.global-variable-exists("pi");
+        \\  list: meta.function-exists("append", "list");
+        \\  map: meta.function-exists("get", "map");
+        \\  selector: meta.function-exists("parse", "selector");
+        \\  string: meta.function-exists("quote", "string");
+        \\  keyword: meta.function-exists($module: "numbers", $name: "ceil");
+        \\}
+    ;
+    var result = try compile(std.testing.allocator, "meta-existence.scss", input, .scss, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".before{function:false;mixin:false}.values{function:true;function-hyphen:true;function-escaped:true;function-case:false;mixin:true;variable:true;global:true;dollar:false;scope:(local: true, local-global: false, outer: true, outer-global: true);builtin:true;module:true;module-missing:false;module-variable:true;star-function:true;star-variable:true;star-global:true;list:true;map:true;selector:true;string:true;keyword:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$global_name: 1
+        \\@function native_fn()
+        \\  @return 1
+        \\@mixin native_mix()
+        \\  $inside: true
+        \\.sass
+        \\  function: m.function-exists("native_fn")
+        \\  mixin: m.mixin-exists("native_mix")
+        \\  variable: m.variable-exists("global_name")
+        \\  global: m.global-variable-exists("global-name")
+        \\  module: m.function-exists("ceil", "numbers")
+        \\  missing: m.function-exists("nope", "numbers")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-existence.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{function:true;mixin:true;variable:true;global:true;module:true;missing:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass feature existence owns the exact supported set and spelling" {
+    const cases = [_]struct {
+        name: []const u8,
+        expected: bool,
+    }{
+        .{ .name = "global-variable-shadowing", .expected = true },
+        .{ .name = "extend-selector-pseudoclass", .expected = true },
+        .{ .name = "units-level-3", .expected = true },
+        .{ .name = "at-error", .expected = true },
+        .{ .name = "custom-property", .expected = true },
+        .{ .name = "at\\2d error", .expected = true },
+        .{ .name = "at_error", .expected = false },
+        .{ .name = "AT-ERROR", .expected = false },
+        .{ .name = "unknown", .expected = false },
+    };
+    for (cases) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; .feature {{ value: meta.feature-exists(\"{s}\"); }}",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(input);
+        var result = try compile(
+            std.testing.allocator,
+            "meta-feature-exists.scss",
+            input,
+            .scss,
+            .{},
+        );
+        defer result.deinit();
+        try std.testing.expectEqualStrings(
+            if (case.expected) ".feature{value:true}" else ".feature{value:false}",
+            result.css(),
+        );
+        const diagnostics = result.nativeDiagnostics();
+        try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostics[0].severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostics[0].code,
+        );
+        try std.testing.expectEqualStrings(
+            "The feature-exists() function is deprecated.",
+            diagnostics[0].message,
+        );
+    }
+}
+
+test "native Sass meta existence queries preserve feature and legacy deprecation warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\.warnings {
+        \\  module-feature: meta.feature-exists("at-error");
+        \\  module-unknown: meta.feature-exists("unknown");
+        \\  global-feature: feature-exists("custom-property");
+        \\  global-function: function-exists("rgb");
+        \\  global-mixin: mixin-exists("missing");
+        \\  global-variable: variable-exists("missing");
+        \\  global-global: global-variable-exists("missing");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-existence-warnings.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".warnings{module-feature:true;module-unknown:false;global-feature:true;global-function:true;global-mixin:false;global-variable:false;global-global:false}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 8), diagnostics.len);
+    var global_warnings: usize = 0;
+    var feature_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(preprocessor.diagnostics.Severity.warning, diagnostic.severity);
+        try std.testing.expectEqual(preprocessor.diagnostics.Code.invalid_operation, diagnostic.code);
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "The feature-exists() function is deprecated.",
+        )) {
+            feature_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 5), global_warnings);
+    try std.testing.expectEqual(@as(usize, 3), feature_warnings);
+}
+
+test "native Sass meta existence queries reject invalid reflection and preserve resource ceilings" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "meta-function-exists-missing-module.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.function-exists(\"ceil\", \"math\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-function-exists-number-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.function-exists(1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-function-exists-number-module.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.function-exists(\"ceil\", 1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-function-exists-missing-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.function-exists(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-function-exists-too-many.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.function-exists(\"rgb\", null, 1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-function-exists-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.function-exists($function: \"rgb\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-variable-exists-module.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.variable-exists(\"x\", null); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-feature-exists-number.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.feature-exists(1); }",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 3;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-existence-temporary-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.function-exists(\"long-name\"); }",
+            .scss,
+            temporary_limits,
+        ),
+    );
+
+    var transaction_limits = evaluator.Limits{};
+    transaction_limits.diagnostics.max_diagnostics = 1;
+    try std.testing.expectError(
+        error.DiagnosticLimitExceeded,
+        compileWithTransactionLimits(
+            std.testing.allocator,
+            "meta-existence-diagnostic-limit.scss",
+            "@use \"sass:meta\"; .a { one: meta.feature-exists(\"at-error\"); two: meta.feature-exists(\"custom-property\"); }",
+            .scss,
+            .{},
+            transaction_limits,
+        ),
+    );
+}
+
 test "native Sass meta inspection rejects unavailable or invalid calls" {
     const invalid = [_]struct {
         name: []const u8,
@@ -8093,6 +8366,8 @@ fn exerciseMetaInspectionAllocationFailures(
     defer sources.deinit();
     const input =
         \\@use "sass:meta";
+        \\@use "sass:math" as numbers;
+        \\@mixin allocation-mixin() { $inside: true; }
         \\@function inspect-args($args...) {
         \\  $keywords: meta.keywords($args);
         \\  @return meta.inspect($args);
@@ -8102,6 +8377,11 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  type: meta.type-of($calculation);
         \\  inspect: meta.inspect((a: (1, 2)));
         \\  args: inspect-args(1, $tone: red);
+        \\  function: meta.function-exists("inspect_args");
+        \\  mixin: meta.mixin-exists("allocation_mixin");
+        \\  variable: meta.variable-exists("calculation");
+        \\  global: meta.global-variable-exists("calculation");
+        \\  module: meta.function-exists("ceil", "numbers");
         \\}
     ;
     const source_id = try sources.add("meta-inspection-allocation.scss", input);
@@ -8121,7 +8401,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));args:(1,)}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));args:(1,);function:true;mixin:true;variable:true;global:true;module:true}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
