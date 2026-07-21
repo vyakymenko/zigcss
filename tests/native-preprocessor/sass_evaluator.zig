@@ -3666,6 +3666,69 @@ test "native Sass selector module normalizes bounded simple pseudos" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass selector module normalizes bounded selector-list functional pseudos" {
+    const input =
+        \\@use "sass:selector";
+        \\@use "sass:meta";
+        \\.values {
+        \\  not: selector.parse(":not( .\\61 , #\\62 )");
+        \\  is: selector.parse(":\\69 s(.\\61 ,, .b)");
+        \\  where: selector.parse(":where(.a, :\\6e ot( .b , .c ))");
+        \\  has: selector.parse(":has(> .\\61 , + #\\62 )");
+        \\  matches: selector.parse(":\\6d atches(.\\61 , .b)");
+        \\  any: selector.parse(":\\61 ny(.\\61 , .b)");
+        \\  webkit: selector.parse(":-webkit-any(.\\61 , .b)");
+        \\  nested: selector.parse(":not(:\\69 s(.\\61 , :where(.b, .c)))");
+        \\  relation-not: selector.is-superselector(":not(.a, .b)", ":\\6e ot(.\\61 , .b).x");
+        \\  relation-is: selector.is-superselector(":is(.a, .b)", ":\\69 s(.\\61 , .b).x");
+        \\  relation-where: selector.is-superselector(":where(.a, .b)", ":\\77 here(.\\61 , .b).x");
+        \\  relation-has: selector.is-superselector(":has(.a, .b)", ":\\68 as(.\\61 , .b).x");
+        \\  relation-relative: selector.is-superselector(":has(> .a)", ":has(> .a)");
+        \\  relation-covered: selector.is-superselector("*, :has(> .a)", "*, :has(> .a)");
+        \\  unify-not: selector.unify(":not(.a, .b)", ":\\6e ot(.\\61 , .b)");
+        \\  unify-is: selector.unify(":is(.a, .b)", ":\\69 s(.\\61 , .b)");
+        \\  unify-has: selector.unify(":has(> .a, + .b)", ":\\68 as(> .\\61 , + .b)");
+        \\  type: meta.type-of(selector.parse(":\\69 s(.a, .b)"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "selector-functional-pseudos.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{not::not(.a, #b);is::is(.a, .b);where::where(.a, :not(.b, .c));has::has(> .a, + #b);matches::matches(.a, .b);any::any(.a, .b);webkit::-webkit-any(.a, .b);nested::not(:is(.a, :where(.b, .c)));relation-not:true;relation-is:true;relation-where:true;relation-has:true;relation-relative:false;relation-covered:true;unify-not::not(.a, .b);unify-is::is(.a, .b);unify-has::has(> .a, + .b);type:list}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:selector"
+        \\.sass
+        \\  parsed: selector.parse(":\\69 s(.\\61 , .b)")
+        \\  nested: selector.parse(":not(:\\77 here(.\\61 , .b))")
+        \\  relation: selector.is-superselector(":is(.a, .b)", ":\\69 s(.\\61 , .b).x")
+        \\  relative: selector.is-superselector(":has(> .a)", ":has(> .a)")
+        \\  unified: selector.unify(":not(.a, .b)", ":\\6e ot(.\\61 , .b)")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "selector-functional-pseudos.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{parsed::is(.a, .b);nested::not(:where(.a, .b));relation:true;relative:false;unified::not(.a, .b)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass selector module unifies compound selector values" {
     const input =
         \\@use "sass:selector";

@@ -10,6 +10,7 @@ pub const Limits = struct {
     max_complex_components: usize = 200_000,
     max_temporary_bytes: usize = 10 * 1024 * 1024,
     max_relation_operations: u64 = 100_000_000,
+    max_normalization_operations: u64 = 100_000_000,
 };
 
 pub const Error = std.mem.Allocator.Error || error{
@@ -31,12 +32,67 @@ pub const SelectorList = struct {
     }
 };
 
+const maximum_selector_list_pseudo_depth = 64;
+
+const NormalizationContext = struct {
+    limits: Limits,
+    selector_count: *usize,
+    operations: *u64,
+    temporary_bytes: *usize,
+    depth: usize = 0,
+
+    fn reserveSelector(self: *NormalizationContext) Error!void {
+        if (self.selector_count.* >= self.limits.max_selectors) {
+            return error.SelectorLimitExceeded;
+        }
+        self.selector_count.* += 1;
+    }
+
+    fn consume(self: *NormalizationContext, count: u64) Error!void {
+        const next = std.math.add(u64, self.operations.*, count) catch
+            return error.SelectorLimitExceeded;
+        if (next > self.limits.max_normalization_operations) {
+            return error.SelectorLimitExceeded;
+        }
+        self.operations.* = next;
+    }
+
+    fn reserveTemporary(self: *NormalizationContext, count: usize) Error!void {
+        const next = std.math.add(usize, self.temporary_bytes.*, count) catch
+            return error.SelectorLimitExceeded;
+        if (next > self.limits.max_temporary_bytes) {
+            return error.SelectorLimitExceeded;
+        }
+        self.temporary_bytes.* = next;
+    }
+
+    fn releaseTemporary(self: *NormalizationContext, count: usize) void {
+        std.debug.assert(self.temporary_bytes.* >= count);
+        self.temporary_bytes.* -= count;
+    }
+
+    fn enterSelectorListPseudo(self: *NormalizationContext) Error!void {
+        if (self.depth >= maximum_selector_list_pseudo_depth) {
+            return error.SelectorLimitExceeded;
+        }
+        self.depth += 1;
+    }
+
+    fn leaveSelectorListPseudo(self: *NormalizationContext) void {
+        std.debug.assert(self.depth > 0);
+        self.depth -= 1;
+    }
+};
+
 const Builder = struct {
     allocator: std.mem.Allocator,
     limits: Limits,
     allow_parent: bool = false,
     items: std.ArrayList([]u8) = .empty,
     byte_count: usize = 0,
+    bounded_selector_count: usize = 0,
+    normalization_operations: u64 = 0,
+    normalization_temporary_bytes: usize = 0,
 
     fn deinit(self: *Builder) void {
         for (self.items.items) |item| self.allocator.free(item);
@@ -47,11 +103,18 @@ const Builder = struct {
     fn appendSegment(self: *Builder, raw: []const u8) Error!void {
         const trimmed = trimWhitespace(raw);
         if (trimmed.len == 0) return;
+        var context = NormalizationContext{
+            .limits = self.limits,
+            .selector_count = &self.bounded_selector_count,
+            .operations = &self.normalization_operations,
+            .temporary_bytes = &self.normalization_temporary_bytes,
+        };
         const owned = try canonicalize(
             self.allocator,
             trimmed,
             self.limits.max_bytes,
             self.allow_parent,
+            &context,
         );
         self.admitOwned(owned) catch |err| {
             self.allocator.free(owned);
@@ -71,13 +134,13 @@ const Builder = struct {
     }
 
     fn admitOwned(self: *Builder, owned: []u8) Error!void {
-        if (self.items.items.len >= self.limits.max_selectors) {
+        if (self.bounded_selector_count >= self.limits.max_selectors)
             return error.SelectorLimitExceeded;
-        }
         const next = std.math.add(usize, self.byte_count, owned.len) catch
             return error.SelectorLimitExceeded;
         if (next > self.limits.max_bytes) return error.SelectorLimitExceeded;
         try self.items.append(self.allocator, owned);
+        self.bounded_selector_count += 1;
         self.byte_count = next;
     }
 
@@ -103,7 +166,9 @@ fn parseInternal(
     limits: Limits,
     allow_parent: bool,
 ) Error!SelectorList {
-    if (limits.max_selectors == 0 or limits.max_bytes == 0) {
+    if (limits.max_selectors == 0 or limits.max_bytes == 0 or
+        limits.max_normalization_operations == 0)
+    {
         return error.SelectorLimitExceeded;
     }
     var builder = Builder{
@@ -394,8 +459,9 @@ const NamespaceIntersection = union(enum) {
 /// shared descendant anchors with one-sided rigid ancestry suffixes plus
 /// two-component terminal sibling weaving. Partial shared anchors, ambiguous
 /// dual-rigid weaving and host-selector semantics remain unavailable. Bounded
-/// identifier, simple-pseudo, and attribute escapes are canonical before this
-/// stage.
+/// identifier, simple-pseudo, attribute, and selector-list functional-pseudo
+/// spellings are canonical before this stage. Non-identical functional-pseudo
+/// inference remains unavailable.
 pub fn unify(
     allocator: std.mem.Allocator,
     left_input: []const u8,
@@ -3263,7 +3329,7 @@ const SelectorUsage = struct {
 /// compounds, namespaces, and the standard combinators. Relation inference
 /// for non-identical functional pseudos remains explicitly unavailable rather
 /// than guessed. Admitted identifier, simple-pseudo, and attribute escapes are
-/// canonical.
+/// canonical, including exact selector-list functional-pseudo spellings.
 pub fn isSuperselector(
     allocator: std.mem.Allocator,
     super_input: []const u8,
@@ -3306,6 +3372,17 @@ pub fn isSuperselector(
     defer sub_complexes.deinit();
 
     if (lists_equal) {
+        var requires_coverage_check = false;
+        for (super_selectors.items) |selector_item| {
+            if (try relationSelectorContainsRelativeHas(
+                &context,
+                selector_item,
+                0,
+            )) {
+                requires_coverage_check = true;
+                break;
+            }
+        }
         for (super_complexes.items) |complex| {
             if (complex.leading_combinator or
                 complex.components[complex.components.len - 1].combinator != .none)
@@ -3313,7 +3390,7 @@ pub fn isSuperselector(
                 return false;
             }
         }
-        return true;
+        if (!requires_coverage_check) return true;
     }
 
     for (sub_complexes.items) |sub_complex| {
@@ -3596,6 +3673,11 @@ fn relationCompoundIsSuperselector(
     while (super_cursor < super_compound.len) {
         const super_end = try simpleTokenEnd(super_compound, super_cursor);
         const super_simple = super_compound[super_cursor..super_end];
+        if (try relationFunctionalPseudoContainsRelativeHas(
+            context,
+            super_simple,
+            0,
+        )) return false;
         var exact = false;
         var sub_cursor: usize = 0;
         while (sub_cursor < sub_compound.len) {
@@ -3690,6 +3772,123 @@ fn relationPseudoElementsEquivalent(left: []const u8, right: []const u8) bool {
 
 fn relationSimpleRequiresInference(input: []const u8) bool {
     return input[0] == ':' and findUnescapedByte(input, '(') != null;
+}
+
+fn relationSelectorContainsRelativeHas(
+    context: *RelationContext,
+    input: []const u8,
+    depth: usize,
+) Error!bool {
+    if (depth > maximum_selector_list_pseudo_depth) {
+        return error.SelectorLimitExceeded;
+    }
+    var cursor = skipWhitespace(input, 0);
+    const leading = explicitCombinatorLength(input, cursor);
+    if (leading != 0) cursor = skipWhitespace(input, cursor + leading);
+    while (cursor < input.len) {
+        try context.consume(1);
+        const end = try compoundEnd(input, cursor);
+        var simple_cursor: usize = 0;
+        while (simple_cursor < end - cursor) {
+            const simple_end = try simpleTokenEnd(
+                input[cursor..end],
+                simple_cursor,
+            );
+            if (try relationFunctionalPseudoContainsRelativeHas(
+                context,
+                input[cursor + simple_cursor .. cursor + simple_end],
+                depth,
+            )) return true;
+            simple_cursor = simple_end;
+        }
+        cursor = skipWhitespace(input, end);
+        const combinator = explicitCombinatorLength(input, cursor);
+        if (combinator != 0) cursor = skipWhitespace(input, cursor + combinator);
+    }
+    return false;
+}
+
+fn relationFunctionalPseudoContainsRelativeHas(
+    context: *RelationContext,
+    input: []const u8,
+    depth: usize,
+) Error!bool {
+    if (input.len == 0 or input[0] != ':') return false;
+    const name_start: usize = 1;
+    if (name_start < input.len and input[name_start] == ':') return false;
+    const opening = findUnescapedByte(input, '(') orelse return false;
+    if (depth >= maximum_selector_list_pseudo_depth or
+        try matchingParenEnd(input, opening) != input.len)
+    {
+        return error.SelectorLimitExceeded;
+    }
+    const kind = selectorListPseudoKind(input[name_start..opening]) orelse return false;
+    const arguments = input[opening + 1 .. input.len - 1];
+
+    var segment_start: usize = 0;
+    var index: usize = 0;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var quote: ?u8 = null;
+    while (index < arguments.len) {
+        try context.consume(1);
+        const byte = arguments[index];
+        if (quote) |active| {
+            if (byte == '\\') {
+                index = escapeEnd(arguments, index) orelse
+                    return error.InvalidSelector;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\') {
+            index = escapeEnd(arguments, index) orelse
+                return error.InvalidSelector;
+            continue;
+        }
+        if (byte == ',' and paren_depth == 0 and square_depth == 0) {
+            if (try relationFunctionalPseudoSegmentContainsRelativeHas(
+                context,
+                kind,
+                arguments[segment_start..index],
+                depth,
+            )) return true;
+            segment_start = index + 1;
+            index += 1;
+            continue;
+        }
+        switch (byte) {
+            '\'', '"' => quote = byte,
+            '(' => paren_depth += 1,
+            ')' => paren_depth -|= 1,
+            '[' => square_depth += 1,
+            ']' => square_depth -|= 1,
+            else => {},
+        }
+        index += 1;
+    }
+    return relationFunctionalPseudoSegmentContainsRelativeHas(
+        context,
+        kind,
+        arguments[segment_start..],
+        depth,
+    );
+}
+
+fn relationFunctionalPseudoSegmentContainsRelativeHas(
+    context: *RelationContext,
+    kind: SelectorListPseudoKind,
+    raw_segment: []const u8,
+    depth: usize,
+) Error!bool {
+    const segment = trimWhitespace(raw_segment);
+    if (segment.len == 0) return error.InvalidSelector;
+    if (kind == .has and explicitCombinatorLength(segment, 0) != 0) {
+        return true;
+    }
+    return relationSelectorContainsRelativeHas(context, segment, depth + 1);
 }
 
 fn relationSimpleCount(input: []const u8) Error!usize {
@@ -3787,7 +3986,7 @@ fn nestStep(
                     child,
                     parent_count,
                     ordinal,
-                    limits.max_bytes,
+                    limits,
                 );
                 builder.admitOwned(combined) catch |err| {
                     allocator.free(combined);
@@ -3806,8 +4005,9 @@ fn combineNested(
     child: []const u8,
     parent_count: usize,
     ordinal: usize,
-    max_bytes: usize,
+    limits: Limits,
 ) Error![]u8 {
+    const max_bytes = limits.max_bytes;
     var raw: std.ArrayList(u8) = .empty;
     defer raw.deinit(allocator);
     if (parent_count == 0) {
@@ -3868,7 +4068,16 @@ fn combineNested(
         }
         try appendBounded(&raw, allocator, child[start..], max_bytes);
     }
-    return canonicalize(allocator, raw.items, max_bytes, true);
+    var selector_count: usize = 0;
+    var normalization_operations: u64 = 0;
+    var normalization_temporary_bytes: usize = 0;
+    var context = NormalizationContext{
+        .limits = limits,
+        .selector_count = &selector_count,
+        .operations = &normalization_operations,
+        .temporary_bytes = &normalization_temporary_bytes,
+    };
+    return canonicalize(allocator, raw.items, max_bytes, true, &context);
 }
 
 fn countParentSelectors(input: []const u8) usize {
@@ -3932,6 +4141,7 @@ fn canonicalize(
     input: []const u8,
     max_bytes: usize,
     allow_parent: bool,
+    context: *NormalizationContext,
 ) Error![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
@@ -3941,6 +4151,7 @@ fn canonicalize(
     var quote: ?u8 = null;
     var pending_space = false;
     while (index < input.len) {
+        try context.consume(1);
         const byte = input[index];
         if (quote) |active| {
             if (byte == '\\') {
@@ -4009,6 +4220,23 @@ fn canonicalize(
             index = end;
             continue;
         }
+        if (byte == ':') {
+            const compound_end = try compoundEnd(input, index);
+            const end = index + try simpleTokenEnd(
+                input[index..compound_end],
+                0,
+            );
+            try appendNormalizedSimplePseudoEscapes(
+                &output,
+                allocator,
+                input[index..end],
+                max_bytes,
+                context,
+                allow_parent,
+            );
+            index = end;
+            continue;
+        }
         switch (byte) {
             '\'', '"' => quote = byte,
             '(' => paren_depth += 1,
@@ -4040,6 +4268,8 @@ fn canonicalize(
             allocator,
             output.items,
             max_bytes,
+            context,
+            allow_parent,
         );
         output.deinit(allocator);
         output = .empty;
@@ -4055,11 +4285,14 @@ fn normalizeOuterSelectorEscapesAlloc(
     allocator: std.mem.Allocator,
     input: []const u8,
     maximum_bytes: usize,
+    context: *NormalizationContext,
+    allow_parent: bool,
 ) Error![]u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
     var cursor: usize = 0;
     while (cursor < input.len) {
+        try context.consume(1);
         if (isWhitespace(input[cursor])) {
             try appendByteBounded(
                 &output,
@@ -4088,6 +4321,8 @@ fn normalizeOuterSelectorEscapesAlloc(
             allocator,
             input[cursor..end],
             maximum_bytes,
+            context,
+            allow_parent,
         );
         cursor = end;
     }
@@ -4100,12 +4335,17 @@ fn appendNormalizedCompoundEscapes(
     allocator: std.mem.Allocator,
     input: []const u8,
     maximum_bytes: usize,
+    context: *NormalizationContext,
+    allow_parent: bool,
 ) Error!void {
     var cursor: usize = 0;
     while (cursor < input.len) {
+        try context.consume(1);
         const end = try simpleTokenEnd(input, cursor);
         const token = input[cursor..end];
-        if (std.mem.indexOfScalar(u8, token, '\\') == null or
+        const functional_pseudo = token[0] == ':' and
+            findUnescapedByte(token, '(') != null;
+        if (functional_pseudo or std.mem.indexOfScalar(u8, token, '\\') == null or
             token[0] == '[' or token[0] == '&')
         {
             try appendBounded(output, allocator, token, maximum_bytes);
@@ -4124,6 +4364,8 @@ fn appendNormalizedCompoundEscapes(
                 allocator,
                 token,
                 maximum_bytes,
+                context,
+                allow_parent,
             ),
             else => try appendNormalizedTypeSelector(
                 output,
@@ -4141,20 +4383,272 @@ fn appendNormalizedSimplePseudoEscapes(
     allocator: std.mem.Allocator,
     input: []const u8,
     maximum_bytes: usize,
+    context: *NormalizationContext,
+    allow_parent: bool,
 ) Error!void {
-    if (findUnescapedByte(input, '(') != null) {
-        return appendBounded(output, allocator, input, maximum_bytes);
-    }
+    const opening = findUnescapedByte(input, '(');
     var name_start: usize = 1;
     if (name_start < input.len and input[name_start] == ':') name_start += 1;
     if (name_start >= input.len) return error.InvalidSelector;
-    try appendBounded(output, allocator, input[0..name_start], maximum_bytes);
+    if (opening == null) {
+        try appendBounded(output, allocator, input[0..name_start], maximum_bytes);
+        return appendNormalizedIdentifier(
+            output,
+            allocator,
+            input[name_start..],
+            maximum_bytes,
+        );
+    }
+
+    const opening_index = opening.?;
+    if (opening_index <= name_start or
+        try matchingParenEnd(input, opening_index) != input.len)
+    {
+        return error.InvalidSelector;
+    }
+    var normalized_name: std.ArrayList(u8) = .empty;
+    defer normalized_name.deinit(allocator);
     try appendNormalizedIdentifier(
-        output,
+        &normalized_name,
         allocator,
-        input[name_start..],
+        input[name_start..opening_index],
         maximum_bytes,
     );
+    try appendBounded(output, allocator, input[0..name_start], maximum_bytes);
+    try appendBounded(output, allocator, normalized_name.items, maximum_bytes);
+    try appendByteBounded(output, allocator, '(', maximum_bytes);
+
+    const kind = if (name_start == 1)
+        selectorListPseudoKind(normalized_name.items)
+    else
+        null;
+    if (kind == null) {
+        try appendPreservedFunctionalPseudoArguments(
+            output,
+            allocator,
+            input[opening_index + 1 .. input.len - 1],
+            maximum_bytes,
+            context,
+            allow_parent,
+        );
+    } else {
+        try context.enterSelectorListPseudo();
+        defer context.leaveSelectorListPseudo();
+        try appendNormalizedFunctionalSelectorList(
+            output,
+            allocator,
+            input[opening_index + 1 .. input.len - 1],
+            maximum_bytes,
+            context,
+            allow_parent,
+        );
+    }
+    try appendByteBounded(output, allocator, ')', maximum_bytes);
+}
+
+fn appendPreservedFunctionalPseudoArguments(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+    context: *NormalizationContext,
+    allow_parent: bool,
+) Error!void {
+    var index: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) {
+        try context.consume(1);
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\') {
+                const end = escapeEnd(input, index) orelse
+                    return error.InvalidSelector;
+                try appendBounded(
+                    output,
+                    allocator,
+                    input[index..end],
+                    maximum_bytes,
+                );
+                index = end;
+                continue;
+            }
+            try appendByteBounded(output, allocator, byte, maximum_bytes);
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\') {
+            const end = escapeEnd(input, index) orelse return error.InvalidSelector;
+            try appendBounded(
+                output,
+                allocator,
+                input[index..end],
+                maximum_bytes,
+            );
+            index = end;
+            continue;
+        }
+        if (byte == '[') {
+            const end = try matchingSquareEnd(input, index);
+            const attribute = try normalizeAttribute(
+                allocator,
+                input[index..end],
+                maximum_bytes,
+            );
+            defer allocator.free(attribute);
+            try appendBounded(output, allocator, attribute, maximum_bytes);
+            index = end;
+            continue;
+        }
+        if (byte == '&' and !allow_parent) return error.InvalidSelector;
+        try appendByteBounded(output, allocator, byte, maximum_bytes);
+        if (byte == '\'' or byte == '"') quote = byte;
+        index += 1;
+    }
+    if (quote != null) return error.InvalidSelector;
+}
+
+const SelectorListPseudoKind = enum {
+    not,
+    is,
+    where,
+    has,
+    matches,
+    any,
+    webkit_any,
+    moz_any,
+};
+
+fn selectorListPseudoKind(name: []const u8) ?SelectorListPseudoKind {
+    const names = [_]struct {
+        name: []const u8,
+        kind: SelectorListPseudoKind,
+    }{
+        .{ .name = "not", .kind = .not },
+        .{ .name = "is", .kind = .is },
+        .{ .name = "where", .kind = .where },
+        .{ .name = "has", .kind = .has },
+        .{ .name = "matches", .kind = .matches },
+        .{ .name = "any", .kind = .any },
+        .{ .name = "-webkit-any", .kind = .webkit_any },
+        .{ .name = "-moz-any", .kind = .moz_any },
+    };
+    for (names) |entry| {
+        if (std.mem.eql(u8, name, entry.name)) return entry.kind;
+    }
+    return null;
+}
+
+fn appendNormalizedFunctionalSelectorList(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+    context: *NormalizationContext,
+    allow_parent: bool,
+) Error!void {
+    if (trimWhitespace(input).len == 0) return error.InvalidSelector;
+    try context.reserveTemporary(input.len);
+    defer context.releaseTemporary(input.len);
+
+    var segment_start: usize = 0;
+    var index: usize = 0;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var quote: ?u8 = null;
+    var emitted: usize = 0;
+    while (index < input.len) {
+        try context.consume(1);
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\') {
+                index = escapeEnd(input, index) orelse return error.InvalidSelector;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\') {
+            index = escapeEnd(input, index) orelse return error.InvalidSelector;
+            continue;
+        }
+        if (byte == '/' and index + 1 < input.len and input[index + 1] == '*') {
+            index = commentEnd(input, index) orelse return error.InvalidSelector;
+            continue;
+        }
+        switch (byte) {
+            '\'', '"' => quote = byte,
+            '(' => paren_depth += 1,
+            ')' => {
+                if (paren_depth == 0) return error.InvalidSelector;
+                paren_depth -= 1;
+            },
+            '[' => square_depth += 1,
+            ']' => {
+                if (square_depth == 0) return error.InvalidSelector;
+                square_depth -= 1;
+            },
+            ',' => if (paren_depth == 0 and square_depth == 0) {
+                const segment = trimWhitespace(input[segment_start..index]);
+                if (segment.len == 0) {
+                    if (emitted == 0) return error.InvalidSelector;
+                } else {
+                    try appendNormalizedFunctionalSelector(
+                        output,
+                        allocator,
+                        segment,
+                        maximum_bytes,
+                        context,
+                        emitted != 0,
+                        allow_parent,
+                    );
+                    emitted += 1;
+                }
+                segment_start = index + 1;
+            },
+            else => {},
+        }
+        index += 1;
+    }
+    if (quote != null or paren_depth != 0 or square_depth != 0) {
+        return error.InvalidSelector;
+    }
+    const final_segment = trimWhitespace(input[segment_start..]);
+    if (final_segment.len == 0) return error.InvalidSelector;
+    try appendNormalizedFunctionalSelector(
+        output,
+        allocator,
+        final_segment,
+        maximum_bytes,
+        context,
+        emitted != 0,
+        allow_parent,
+    );
+}
+
+fn appendNormalizedFunctionalSelector(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum_bytes: usize,
+    context: *NormalizationContext,
+    prepend_separator: bool,
+    allow_parent: bool,
+) Error!void {
+    try context.reserveSelector();
+    const normalized = try canonicalize(
+        allocator,
+        input,
+        maximum_bytes,
+        allow_parent,
+        context,
+    );
+    defer allocator.free(normalized);
+    if (prepend_separator) {
+        try appendBounded(output, allocator, ", ", maximum_bytes);
+    }
+    try appendBounded(output, allocator, normalized, maximum_bytes);
 }
 
 fn appendNormalizedTypeSelector(

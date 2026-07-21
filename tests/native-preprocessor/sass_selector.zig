@@ -437,6 +437,293 @@ test "native Sass selector parser and relations normalize bounded simple pseudos
     );
 }
 
+test "native Sass selector parser normalizes bounded selector-list functional pseudos" {
+    const cases = [_]struct {
+        input: []const u8,
+        expected: []const u8,
+    }{
+        .{ .input = ":not( .\\61 , #\\62 )", .expected = ":not(.a, #b)" },
+        .{ .input = ":\\69 s(.\\61 ,, .b)", .expected = ":is(.a, .b)" },
+        .{
+            .input = ":where(.a, :\\6e ot( .b , .c ))",
+            .expected = ":where(.a, :not(.b, .c))",
+        },
+        .{
+            .input = ":has(> .\\61 , + #\\62 )",
+            .expected = ":has(> .a, + #b)",
+        },
+        .{
+            .input = ":\\6d atches(.\\61 , .b)",
+            .expected = ":matches(.a, .b)",
+        },
+        .{ .input = ":\\61 ny(.\\61 , .b)", .expected = ":any(.a, .b)" },
+        .{
+            .input = ":-webkit-any(.\\61 , .b)",
+            .expected = ":-webkit-any(.a, .b)",
+        },
+        .{
+            .input = ":-moz-any(.\\61 , .b)",
+            .expected = ":-moz-any(.a, .b)",
+        },
+        .{
+            .input = ":not(:\\69 s(.\\61 , :where(.b, .c)))",
+            .expected = ":not(:is(.a, :where(.b, .c)))",
+        },
+        .{
+            .input = ":is([ \\78 = \\79 ], .a)",
+            .expected = ":is([x=y], .a)",
+        },
+    };
+    for (cases) |case| {
+        var parsed = try selector.parse(std.testing.allocator, case.input, .{});
+        defer parsed.deinit();
+        try expectItems(&.{case.expected}, parsed);
+    }
+
+    var non_selector_function = try selector.parse(
+        std.testing.allocator,
+        ":nth-child(2n of [ x = \"y\" ])",
+        .{},
+    );
+    defer non_selector_function.deinit();
+    try expectItems(&.{":nth-child(2n of [x=y])"}, non_selector_function);
+
+    var simple = try selector.simpleSelectors(
+        std.testing.allocator,
+        "button:\\69 s(.\\61 , .b):hover",
+        .{},
+    );
+    defer simple.deinit();
+    try expectItems(&.{ "button", ":is(.a, .b)", ":hover" }, simple);
+
+    const relation_cases = [_]struct {
+        super_selector: []const u8,
+        sub_selector: []const u8,
+    }{
+        .{
+            .super_selector = ":not(.a, .b)",
+            .sub_selector = ":\\6e ot(.\\61 , .b).x",
+        },
+        .{
+            .super_selector = ":is(.a, .b)",
+            .sub_selector = ":\\69 s(.\\61 , .b).x",
+        },
+        .{
+            .super_selector = ":where(.a, .b)",
+            .sub_selector = ":\\77 here(.\\61 , .b).x",
+        },
+        .{
+            .super_selector = ":has(.a, .b)",
+            .sub_selector = ":\\68 as(.\\61 , .b).x",
+        },
+        .{
+            .super_selector = ":not(:is(.a, .b))",
+            .sub_selector = ":not(:\\69 s(.\\61 , .b)).x",
+        },
+    };
+    for (relation_cases) |case| {
+        try std.testing.expect(try selector.isSuperselector(
+            std.testing.allocator,
+            case.super_selector,
+            case.sub_selector,
+            .{},
+        ));
+    }
+    try std.testing.expect(!try selector.isSuperselector(
+        std.testing.allocator,
+        ":has(> .a)",
+        ":has(> .a)",
+        .{},
+    ));
+    try std.testing.expect(!try selector.isSuperselector(
+        std.testing.allocator,
+        ":has(.a, > .b)",
+        ":has(.a, > .b)",
+        .{},
+    ));
+    try std.testing.expect(!try selector.isSuperselector(
+        std.testing.allocator,
+        ":not(:has(> .a))",
+        ":not(:has(> .a))",
+        .{},
+    ));
+    try std.testing.expect(!try selector.isSuperselector(
+        std.testing.allocator,
+        ":is(:has(.a, + .b))",
+        ":is(:has(.a, + .b))",
+        .{},
+    ));
+    try std.testing.expect(try selector.isSuperselector(
+        std.testing.allocator,
+        "*, :has(> .a)",
+        "*, :has(> .a)",
+        .{},
+    ));
+    try std.testing.expect(try selector.isSuperselector(
+        std.testing.allocator,
+        ".a, .a:has(> .b)",
+        ".a, .a:has(> .b)",
+        .{},
+    ));
+
+    const unify_cases = [_]struct {
+        left: []const u8,
+        right: []const u8,
+        expected: []const u8,
+    }{
+        .{
+            .left = ":not(.a, .b)",
+            .right = ":\\6e ot(.\\61 , .b)",
+            .expected = ":not(.a, .b)",
+        },
+        .{
+            .left = ":is(.a, .b)",
+            .right = ":\\69 s(.\\61 , .b)",
+            .expected = ":is(.a, .b)",
+        },
+        .{
+            .left = ":where(.a, .b)",
+            .right = ":\\77 here(.\\61 , .b)",
+            .expected = ":where(.a, .b)",
+        },
+        .{
+            .left = ":has(> .a, + .b)",
+            .right = ":\\68 as(> .\\61 , + .b)",
+            .expected = ":has(> .a, + .b)",
+        },
+        .{
+            .left = ":not(:is(.a, .b))",
+            .right = ":not(:\\69 s(.\\61 , .b))",
+            .expected = ":not(:is(.a, .b))",
+        },
+    };
+    for (unify_cases) |case| {
+        var unified = (try selector.unify(
+            std.testing.allocator,
+            case.left,
+            case.right,
+            .{},
+        )) orelse return error.TestUnexpectedResult;
+        defer unified.deinit();
+        try expectItems(&.{case.expected}, unified);
+    }
+
+    var exactly_bounded = try selector.parse(
+        std.testing.allocator,
+        ":\\69 s(.\\61 , .b)",
+        .{ .max_bytes = 11, .max_selectors = 3 },
+    );
+    defer exactly_bounded.deinit();
+    try expectItems(&.{":is(.a, .b)"}, exactly_bounded);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":\\69 s(.\\61 , .b)",
+            .{ .max_bytes = 10, .max_selectors = 3 },
+        ),
+    );
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":\\69 s(.\\61 , .b)",
+            .{ .max_selectors = 2 },
+        ),
+    );
+
+    const functional_arguments = ".\\61 , .b";
+    var exactly_temporary_bounded = try selector.parse(
+        std.testing.allocator,
+        ":\\69 s(.\\61 , .b)",
+        .{
+            .max_selectors = 3,
+            .max_temporary_bytes = functional_arguments.len,
+        },
+    );
+    defer exactly_temporary_bounded.deinit();
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":\\69 s(.\\61 , .b)",
+            .{
+                .max_selectors = 3,
+                .max_temporary_bytes = functional_arguments.len - 1,
+            },
+        ),
+    );
+
+    var exact_operation_limit: u64 = 1;
+    while (exact_operation_limit < 1_000) : (exact_operation_limit += 1) {
+        var operation_bounded = selector.parse(
+            std.testing.allocator,
+            ":\\69 s(.\\61 , .b)",
+            .{
+                .max_selectors = 3,
+                .max_normalization_operations = exact_operation_limit,
+            },
+        ) catch |err| switch (err) {
+            error.SelectorLimitExceeded => continue,
+            else => return err,
+        };
+        operation_bounded.deinit();
+        break;
+    }
+    try std.testing.expect(exact_operation_limit < 1_000);
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(
+            std.testing.allocator,
+            ":\\69 s(.\\61 , .b)",
+            .{
+                .max_selectors = 3,
+                .max_normalization_operations = exact_operation_limit - 1,
+            },
+        ),
+    );
+
+    var nested: std.ArrayList(u8) = .empty;
+    defer nested.deinit(std.testing.allocator);
+    var nested_expected: std.ArrayList(u8) = .empty;
+    defer nested_expected.deinit(std.testing.allocator);
+    for (0..64) |_| {
+        try nested.appendSlice(std.testing.allocator, ":not(");
+        try nested_expected.appendSlice(std.testing.allocator, ":not(");
+    }
+    try nested.appendSlice(std.testing.allocator, ".\\61 ");
+    try nested_expected.appendSlice(std.testing.allocator, ".a");
+    for (0..64) |_| {
+        try nested.append(std.testing.allocator, ')');
+        try nested_expected.append(std.testing.allocator, ')');
+    }
+    var bounded_depth = try selector.parse(std.testing.allocator, nested.items, .{});
+    defer bounded_depth.deinit();
+    try expectItems(&.{nested_expected.items}, bounded_depth);
+
+    try nested.insertSlice(std.testing.allocator, 0, ":not(");
+    try nested.append(std.testing.allocator, ')');
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        selector.parse(std.testing.allocator, nested.items, .{}),
+    );
+
+    const invalid = [_][]const u8{
+        ":not()",
+        ":is(.a,)",
+        ":has(> .a,)",
+        ":\\69 s(&)",
+        ":\\d800 (.a)",
+        ":is(.\\d800 )",
+    };
+    for (invalid) |input| {
+        try std.testing.expectError(
+            error.InvalidSelector,
+            selector.parse(std.testing.allocator, input, .{}),
+        );
+    }
+}
+
 test "native Sass selector composition appends selector lists cartesianly" {
     var basic = try selector.append(
         std.testing.allocator,
@@ -634,7 +921,7 @@ test "native Sass selector relations reject unsupported semantics and limits" {
         sub_selector: []const u8,
     }{
         .{ .super_selector = ":is(.a)", .sub_selector = ".a" },
-        .{ .super_selector = ":not(.a)", .sub_selector = ":\\6e ot(.a)" },
+        .{ .super_selector = ":not(.a)", .sub_selector = ":not(.a, .b)" },
     };
     for (unsupported) |case| {
         try std.testing.expectError(
@@ -2071,7 +2358,6 @@ test "native Sass selector unification rejects unavailable semantics and limits"
         .{ .left = ".a >", .right = ".b" },
         .{ .left = ":host", .right = ".b" },
         .{ .left = ":host(.a)", .right = ".b" },
-        .{ .left = ":not(.a)", .right = ":\\6e ot(.a)" },
         .{ .left = "::slotted(.a)", .right = ".b" },
     };
     for (unsupported) |case| {
@@ -2488,6 +2774,14 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     defer pseudo.deinit();
     try expectItems(&.{":hover::before"}, pseudo);
 
+    var functional_pseudo = try selector.parse(
+        allocator,
+        ":not(:\\69 s(.\\61 , .b))",
+        .{},
+    );
+    defer functional_pseudo.deinit();
+    try expectItems(&.{":not(:is(.a, .b))"}, functional_pseudo);
+
     var simple = try selector.simpleSelectors(
         allocator,
         "a.foo#id:hover[title=\"x\"]",
@@ -2530,6 +2824,12 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
         ":\\68 over.more",
         .{},
     ));
+    try std.testing.expect(try selector.isSuperselector(
+        allocator,
+        ":is(.a, .b)",
+        ":\\69 s(.\\61 , .b).more",
+        .{},
+    ));
 
     var unified = (try selector.unify(
         allocator,
@@ -2557,6 +2857,15 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     )) orelse return error.TestUnexpectedResult;
     defer pseudo_unified.deinit();
     try expectItems(&.{":hover"}, pseudo_unified);
+
+    var functional_pseudo_unified = (try selector.unify(
+        allocator,
+        ":not(:is(.a, .b))",
+        ":not(:\\69 s(.\\61 , .b))",
+        .{},
+    )) orelse return error.TestUnexpectedResult;
+    defer functional_pseudo_unified.deinit();
+    try expectItems(&.{":not(:is(.a, .b))"}, functional_pseudo_unified);
 
     var extended = try selector.extend(
         allocator,

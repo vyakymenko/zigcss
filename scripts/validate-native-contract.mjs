@@ -160,6 +160,7 @@ const expectedImplementations = Object.freeze([
       'built-in-selector-attribute-normalization',
       'built-in-selector-escape-normalization',
       'built-in-selector-simple-pseudo-normalization',
+      'built-in-selector-list-functional-pseudo-normalization',
       'built-in-selector-unify-compound',
       'built-in-selector-unify-complex-strict',
       'built-in-selector-unify-complex-weave-disjoint',
