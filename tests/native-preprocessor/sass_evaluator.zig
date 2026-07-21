@@ -3907,9 +3907,11 @@ test "native Sass selector module supports opaque lang-function grammar relation
         \\@use "sass:selector";
         \\.values {
         \\  parsed: selector.parse(":lang( EN , fr )");
+        \\  uppercase: selector.parse(":LANG( EN )");
         \\  simple: selector.simple-selectors(".root:lang(en/**/, fr):hover");
         \\  exact: selector.is-superselector(":lang(en   US)", ":lang(en US)");
         \\  distinct: selector.is-superselector(":lang(en)", ":lang(fr)");
+        \\  case-distinct: selector.is-superselector(":LANG(en)", ":lang(en)");
         \\  subject: selector.is-superselector(".a", ".a:lang(en)");
         \\  reverse-subject: selector.is-superselector(".a:lang(en)", ".a");
         \\  unified: selector.unify(":lang(en)", ":lang(fr)");
@@ -3931,7 +3933,7 @@ test "native Sass selector module supports opaque lang-function grammar relation
     );
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".values{parsed::lang(EN , fr);simple:.root,:lang(en/**/, fr),:hover;exact:true;distinct:false;subject:true;reverse-subject:false;unified::lang(en):lang(fr)}.extensions{partial:.a:lang(en),.x:lang(en);replaced:.x:lang(en);whole:.a:lang(en),.a.x;nested::is(:lang(en), .x, .a);opaque::lang(.a)}",
+        ".values{parsed::lang(EN , fr);uppercase::LANG(EN);simple:.root,:lang(en/**/, fr),:hover;exact:true;distinct:false;case-distinct:false;subject:true;reverse-subject:false;unified::lang(en):lang(fr)}.extensions{partial:.a:lang(en),.x:lang(en);replaced:.x:lang(en);whole:.a:lang(en),.a.x;nested::is(:lang(en), .x, .a);opaque::lang(.a)}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

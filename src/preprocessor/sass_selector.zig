@@ -5668,7 +5668,7 @@ fn appendNormalizedSimplePseudoEscapes(
     else
         null;
     const opaque_kind = if (name_start == 1)
-        opaqueFunctionalPseudoKind(normalized_name.items)
+        opaqueFunctionalPseudoKindIgnoreCase(normalized_name.items)
     else
         null;
     if (kind == null and opaque_kind == null) {

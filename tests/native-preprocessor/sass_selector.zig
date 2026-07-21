@@ -1078,7 +1078,8 @@ test "native Sass selector lang functions preserve opaque grammar relations unif
         .{ .input = ":lang({ a : b })", .expected = ":lang({ a : b })" },
         .{ .input = ":lang(&)", .expected = ":lang(&)" },
         .{ .input = ":lang('en')", .expected = ":lang('en')" },
-        .{ .input = ":LANG( EN )", .expected = ":LANG( EN )" },
+        .{ .input = ":LANG( EN )", .expected = ":LANG(EN)" },
+        .{ .input = ":LaNg( en   US )", .expected = ":LaNg(en US)" },
     };
     for (parse_cases) |case| {
         var parsed = try selector.parse(std.testing.allocator, case.input, .{});
