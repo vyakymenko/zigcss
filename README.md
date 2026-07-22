@@ -20,7 +20,9 @@ The destination is one self-contained compiler for CSS, SCSS, indented Sass, Les
 
 > **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. The green 0.5.0-rc.1 source snapshot adds a canonical five-language reference pipeline, but it is unpublished and should be evaluated before production.
 
-> **Native migration:** publication of the provider-backed 0.5 candidate was cancelled before tagging. Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 now act as pinned development oracles while Zig replacements earn graduation. The target 0.6 release has zero production dependencies, no provider process, and no runtime download.
+## Native dependency-free migration
+
+Publication of the provider-backed 0.5 candidate was cancelled before tagging. Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 now act as pinned development oracles while Zig replacements earn graduation. The target 0.6 release has zero production dependencies, no provider process, and no runtime download.
 
 ## Why ZigCSS
 
