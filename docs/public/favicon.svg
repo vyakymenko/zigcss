@@ -1,5 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ZigCSS">
-  <rect width="64" height="64" fill="#101914"/>
-  <path d="M20 15h-6v12l-6 5 6 5v12h6M44 15h6v12l6 5-6 5v12h-6" fill="none" stroke="#b7f34a" stroke-width="5" stroke-linecap="square"/>
-  <path d="M25 21h17L25 43h17" fill="none" stroke="#f7f3e8" stroke-width="5" stroke-linejoin="bevel"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ZigCSS terminal caret">
+  <style>
+    .caret { animation: blink .9s steps(1,end) infinite; }
+    @keyframes blink { 0%,54% { opacity:1 } 55%,100% { opacity:0 } }
+    @media (prefers-reduced-motion: reduce) { .caret { animation:none } }
+  </style>
+  <rect width="64" height="64" fill="#0b110d"/>
+  <path d="M12 17h27L13 43h27" fill="none" stroke="#eef5ec" stroke-width="7" stroke-linejoin="bevel"/>
+  <rect class="caret" x="44" y="39" width="9" height="9" fill="#b7f34a"/>
 </svg>

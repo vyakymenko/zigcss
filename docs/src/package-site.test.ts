@@ -30,6 +30,34 @@ describe('consumer package website', () => {
     expect(read('docs/vite.config.ts')).toMatch(/base:\s*['"]\/zigcss\/['"]/)
     expect(read('docs/public/404.html')).toContain("pathSegmentsToKeep = 1")
     expect(read('docs/index.html')).toContain("window.history.replaceState")
+    expect(read('docs/public/404.html')).toContain('error: route not found — exit 2')
+  })
+
+  test('ships a readable no-script fallback and self-hosted terminal typography', () => {
+    const html = read('docs/index.html')
+    const theme = read('docs/src/styles/theme.css')
+
+    expect(html).toContain('<noscript>')
+    expect(html).toContain('Exact in. Deterministic out. Denied by default.')
+    expect(theme).toMatch(/font-display:\s*swap/)
+    for (const file of [
+      'docs/src/assets/fonts/archivo-latin-variable.woff2',
+      'docs/src/assets/fonts/jetbrains-mono-latin-variable.woff2',
+    ]) {
+      expect(fs.readFileSync(path.join(repoRoot, file)).subarray(0, 4).toString()).toBe('wOF2')
+    }
+    expect(read('docs/public/favicon.svg')).toMatch(/caret.*animation|animation.*caret/s)
+  })
+
+  test('keeps the landing JavaScript budget executable and fail-closed', () => {
+    const manifest = JSON.parse(read('docs/package.json'))
+    const gate = read('docs/scripts/check-bundle-budget.mjs')
+
+    expect(manifest.scripts.build).toContain('check:bundle')
+    expect(read('docs/vite.config.ts')).toMatch(/manifest:\s*true/)
+    expect(gate).toMatch(/160 \* 1024/)
+    expect(gate).toMatch(/src\/app\/components\/Home\.tsx/)
+    expect(gate).toMatch(/gzipSync/)
   })
 
   test('makes the README a visual front door to the package website', () => {
@@ -37,12 +65,25 @@ describe('consumer package website', () => {
     const installHeading = readme.indexOf('## Install')
 
     expect(readme).toContain(
-      '[![ZigCSS — Compile CSS. Keep the meaning.](https://vyakymenko.github.io/zigcss/og.png)](https://vyakymenko.github.io/zigcss/)',
+      '[![ZigCSS — Native by design. Correct by contract.](https://vyakymenko.github.io/zigcss/og.png)](https://vyakymenko.github.io/zigcss/)',
     )
     expect(readme).toContain('**Compile CSS. Keep the meaning.**')
+    expect(readme).toContain('**Five languages in. One deterministic compiler out.**')
+    expect(readme).toContain('**Native by design. Fast on purpose. Correct by contract.**')
     expect(readme).toContain('[Website](https://vyakymenko.github.io/zigcss/)')
     expect(readme).toContain('[npm](https://www.npmjs.com/package/zigcss)')
     expect(readme.indexOf('[Website]')).toBeLessThan(installHeading)
+  })
+
+  test('presents the benchmark program without inventing speed results', () => {
+    const readme = read('README.md')
+
+    expect(readme).toContain('## Benchmarks')
+    expect(readme).toMatch(/43 ordered series/i)
+    expect(readme).toMatch(/860 raw observations/i)
+    expect(readme).toMatch(/controlled.*Linux x64/i)
+    expect(readme).toMatch(/numbers remain unpublished/i)
+    expect(readme).not.toMatch(/world.?s fastest|\d+x faster/i)
   })
 
   test('states the exact five-language boundary on package surfaces', () => {
@@ -65,7 +106,7 @@ describe('consumer package website', () => {
     expect(read('docs/src/app/components/Home.tsx')).toMatch(/<FormatShowcase\s*\/>/)
     const showcase = read('docs/src/app/components/FormatShowcase.tsx')
     for (const format of ['SCSS', 'Sass', 'Less', 'Stylus']) expect(showcase).toMatch(new RegExp(format, 'i'))
-    expect(showcase).toMatch(/CSS emitted/i)
+    expect(showcase).toMatch(/recorded compiler output/i)
     expect(showcase).toMatch(/format-examples\.json/)
   })
 })

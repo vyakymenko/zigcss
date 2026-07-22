@@ -48,11 +48,11 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
+    manifest: true,
     rollupOptions: {
       output: {
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'react-router'],
-          'markdown': ['react-markdown', 'remark-gfm'],
         },
       },
     },

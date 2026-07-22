@@ -1,127 +1,316 @@
+import { useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router";
-import {
-  ArrowRight,
-  Braces,
-  Layers3,
-  ShieldCheck,
-  Terminal,
-} from "lucide-react";
+import { BootSequence } from "./BootSequence";
+import { Convergence } from "./Convergence";
 import { FormatShowcase } from "./FormatShowcase";
+import { deterministicDigest } from "../lib/compilerEvidence";
+
+const installCommand = "npm install --save-dev zigcss@next";
+const deterministicFixture = ":root{--accent:#b7f34a}.button{color:#101914;background:var(--accent)}";
+
+const deploymentModes = [
+  {
+    id: "npm",
+    label: "npm",
+    code: `${installCommand}\nnpx zigcss input.css -o output.css --minify`,
+    note: "Published next is 0.4.0-rc.3 and exposes the earlier CSS-only surface.",
+  },
+  {
+    id: "source",
+    label: "from source",
+    code: "npm ci\nzig build\nnode index.js input.scss -o output.css --minify",
+    note: "Green main is the 0.5.0-rc.1 five-language source candidate.",
+  },
+  {
+    id: "zig",
+    label: "Zig API",
+    code: "const zigcss = @import(\"zigcss\");\nconst result = try zigcss.compile(allocator, path, css, options);\n// helpers.addCssCompile wires declared build inputs",
+    note: "Built with Zig 0.15.2. The owned result carries CSS, diagnostics, dependencies, maps, and profile data.",
+  },
+] as const;
+
+function CopyInstallCommand() {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "unavailable">("idle");
+
+  const copy = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(installCommand);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1800);
+    } catch {
+      setCopyState("unavailable");
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="install-command scan-button group w-full max-w-3xl border border-[#b7f34a]/55 bg-[#b7f34a] px-5 py-5 text-left text-[#0b110d] shadow-[8px_8px_0_rgba(183,243,74,0.16)] sm:px-7"
+      aria-label={`Copy install command: ${installCommand}`}
+    >
+      <span className="relative z-10 flex flex-col gap-3 font-mono text-xs sm:flex-row sm:items-center sm:justify-between sm:text-sm">
+        <span><span aria-hidden="true">$ </span>{installCommand}</span>
+        <span className="uppercase tracking-[0.16em]">
+          {copyState === "copied" ? "copied" : copyState === "unavailable" ? "select command" : "copy"}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function Manifesto() {
+  const digest = deterministicDigest(deterministicFixture);
+
+  return (
+    <section id="manifesto" className="manifesto bg-[#0b110d] text-[#eef5ec]" aria-label="Compiler manifesto">
+      <article className="manifesto-panel gate-section">
+        <div className="manifesto-inner">
+          <p className="gate-label">── GATE 02 · FAIL-CLOSED SECURITY ──</p>
+          <h2 className="manifesto-statement">Your CSS toolchain should not be able to <span>phone home.</span></h2>
+          <p className="manifesto-detail">Local imports stay root-confined. Executable extension points stay closed unless the contract explicitly admits them.</p>
+          <div className="terminal-ledger" aria-label="Default security policy">
+            <p><span>NETWORK</span><strong>DENIED</strong></p>
+            <p><span>PLUGINS</span><strong>DENIED</strong></p>
+            <p><span>PROJECT CODE</span><strong>DENIED</strong></p>
+            <p><span>IMPORTS</span><strong>ROOT-CONFINED</strong></p>
+          </div>
+        </div>
+      </article>
+
+      <article className="manifesto-panel gate-section">
+        <div className="manifesto-inner">
+          <p className="gate-label">── GATE 03 · DETERMINISM ──</p>
+          <h2 className="manifesto-statement">Same input. Same bytes. <span>Every machine. Every time.</span></h2>
+          <p className="manifesto-detail">Executable gates repeat work across parallel workers, batch order, and watch invalidation.</p>
+          <div className="hash-terminal" aria-label="Repeated deterministic digest">
+            {[1, 2, 3].map(run => <p key={run}>run {run} <span>→</span> <strong>{digest}</strong></p>)}
+            <p className="mt-4 border-t border-[#b7f34a]/20 pt-4 text-[#b7f34a]">run 1 = run 2 = run 3</p>
+          </div>
+        </div>
+      </article>
+
+      <article className="manifesto-panel gate-section">
+        <div className="manifesto-inner">
+          <p className="gate-label">── GATE 04 · ATOMIC OUTPUT ──</p>
+          <h2 className="manifesto-statement">All output. <span>Or no output.</span></h2>
+          <p className="manifesto-detail">A failed compilation returns normalized diagnostics and never attaches partial CSS.</p>
+          <div className="failure-terminal" aria-label="Failed compile with zero CSS output">
+            <p><span>error[parse]</span> expected declaration</p>
+            <p>css bytes <strong>0</strong></p>
+            <p>output file <strong>not written</strong></p>
+            <p>exit <strong>1</strong></p>
+          </div>
+        </div>
+      </article>
+
+      <article className="manifesto-panel gate-section">
+        <div className="manifesto-inner">
+          <p className="gate-label">── GATE 05 · ONE COMPILER PATH ──</p>
+          <h2 className="manifesto-statement">One path. <span>No parser drift.</span></h2>
+          <p className="manifesto-detail">CLI, JS API, Zig API, build helper, profiling, and editor tooling consume the same owned compile result.</p>
+          <div className="path-map" aria-label="Compiler consumers converging on one owned result">
+            {['CLI', 'JS API', 'ZIG API', 'BUILD', 'PROFILE', 'EDITOR'].map(label => <span key={label}>{label}</span>)}
+            <strong>OWNED COMPILE RESULT</strong>
+          </div>
+        </div>
+      </article>
+    </section>
+  );
+}
+
+function BenchmarkLock() {
+  return (
+    <section id="benchmarks" className="benchmark-lock border-y border-[#b7f34a]/15 bg-[#101914] text-[#eef5ec]" aria-labelledby="benchmark-title">
+      <div className="mx-auto grid max-w-[96rem] gap-10 px-5 py-20 sm:px-8 md:py-28 lg:grid-cols-[1.15fr_0.85fr] lg:px-12">
+        <div>
+          <p className="gate-label">EVIDENCE LOCK · PERFORMANCE</p>
+          <h2 id="benchmark-title" className="display-type mt-5 max-w-4xl text-[clamp(2.8rem,5.8vw,6rem)] leading-[0.88] tracking-[-0.065em]">
+            Native is the architecture. <span className="text-[#b7f34a]">Evidence decides the ranking.</span>
+          </h2>
+        </div>
+        <div className="self-end border-l border-[#b7f34a] pl-6 font-mono text-sm leading-7 text-[#91a08f]">
+          <p>Controlled benchmark pipeline required.</p>
+          <p>Comparative ranking locked.</p>
+          <p>Timing multiplier locked.</p>
+          <p>Published claim locked.</p>
+          <p className="mt-5 text-[#eef5ec]">Comparative rankings remain unpublished until the controlled pipeline lands.</p>
+          <a className="terminal-link mt-5 inline-block text-[#b7f34a]" href="https://github.com/vyakymenko/zigcss/blob/main/BENCHMARK_REPORT.md" target="_blank" rel="noopener noreferrer">
+            read benchmark contract →
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Endgame() {
+  return (
+    <section id="endgame" className="endgame-section gate-section relative overflow-hidden bg-[#0b110d] text-[#eef5ec]" aria-labelledby="endgame-title">
+      <div className="perspective-horizon" aria-hidden="true" />
+      <div className="relative mx-auto max-w-[96rem] px-5 py-28 sm:px-8 md:py-44 lg:px-12">
+        <div className="flex flex-wrap items-center justify-between gap-5">
+          <p className="gate-label">── GATE 07 · ADR-013 ──</p>
+          <span className="target-chip">TARGET STATE · NOT SHIPPED</span>
+        </div>
+        <h2 id="endgame-title" className="display-type mt-10 max-w-6xl text-[clamp(3.8rem,9vw,9rem)] leading-[0.8] tracking-[-0.08em]">
+          The providers were <span className="text-[#b7f34a]">scaffolding.</span>
+        </h2>
+        <p className="mt-10 max-w-3xl font-mono text-sm leading-7 text-[#8d9a8b] sm:text-base">
+          The target replaces Dart Sass, Less, and Stylus with native Zig frontends. One self-contained compiler. Zero production package dependencies. No provider process. No runtime download.
+        </p>
+
+        <div className="endgame-corridor mt-16 grid gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr] lg:items-stretch">
+          <article>
+            <span>NOW</span>
+            <strong>PINNED PROVIDERS</strong>
+            <p>Dart Sass 1.101.0 · Less 4.6.7 · Stylus 0.64.0</p>
+          </article>
+          <div className="corridor-arrow" aria-hidden="true">→</div>
+          <article>
+            <span>MIGRATION</span>
+            <strong>NATIVE CONFORMANCE</strong>
+            <p>Parser correctness. Semantic preservation. Fail-closed graduation.</p>
+          </article>
+          <div className="corridor-arrow" aria-hidden="true">→</div>
+          <article className="endgame-target">
+            <span>ADR-013</span>
+            <strong>SELF-CONTAINED ZIGCSS</strong>
+            <p>Five native frontends. One owned result. Zero production dependencies.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Deploy() {
+  const [selectedId, setSelectedId] = useState<(typeof deploymentModes)[number]["id"]>("npm");
+  const tabs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectedIndex = deploymentModes.findIndex(mode => mode.id === selectedId);
+  const selected = deploymentModes[selectedIndex] ?? deploymentModes[0];
+
+  const handleKey = (event: KeyboardEvent<HTMLButtonElement>) => {
+    let next = selectedIndex;
+    if (event.key === "ArrowRight") next += 1;
+    else if (event.key === "ArrowLeft") next -= 1;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = deploymentModes.length - 1;
+    else return;
+    event.preventDefault();
+    next = (next + deploymentModes.length) % deploymentModes.length;
+    setSelectedId(deploymentModes[next].id);
+    tabs.current[next]?.focus();
+  };
+
+  return (
+    <section id="deploy" className="deploy-section gate-section bg-[#101914] text-[#eef5ec]" aria-labelledby="deploy-title">
+      <div className="mx-auto max-w-[96rem] px-5 py-28 sm:px-8 md:py-40 lg:px-12">
+        <p className="gate-label">── GATE 08 · DEPLOY ──</p>
+        <div className="mt-7 grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-end">
+          <h2 id="deploy-title" className="display-type text-[clamp(3.5rem,8vw,8rem)] leading-[0.82] tracking-[-0.075em]">Choose your <span className="text-[#b7f34a]">entry point.</span></h2>
+          <p className="max-w-2xl font-mono text-sm leading-7 text-[#8d9a8b] lg:justify-self-end">
+            Exit 0 on success. Exit 1 on compilation or I/O failure. Exit 2 on invalid usage. The contract does not change with the surface.
+          </p>
+        </div>
+
+        <div className="mt-14 grid gap-8 xl:grid-cols-[1.25fr_0.75fr]">
+          <div className="border border-[#b7f34a]/20 bg-[#0b110d]">
+            <div role="tablist" aria-label="ZigCSS deployment methods" className="flex border-b border-[#b7f34a]/20">
+              {deploymentModes.map((mode, index) => (
+                <button
+                  key={mode.id}
+                  ref={element => { tabs.current[index] = element; }}
+                  id={`deploy-tab-${mode.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode.id === selected.id}
+                  aria-controls="deploy-panel"
+                  tabIndex={mode.id === selected.id ? 0 : -1}
+                  onClick={() => setSelectedId(mode.id)}
+                  onKeyDown={handleKey}
+                  className={`flex-1 border-r border-[#b7f34a]/10 px-3 py-4 font-mono text-[10px] uppercase tracking-[0.14em] sm:px-5 sm:text-xs ${mode.id === selected.id ? "bg-[#b7f34a] text-[#0b110d]" : "text-[#81907f] hover:text-[#eef5ec]"}`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+            <div id="deploy-panel" role="tabpanel" aria-labelledby={`deploy-tab-${selected.id}`} className="p-5 sm:p-8">
+              <pre className="min-h-48 overflow-x-auto font-mono text-xs leading-7 text-[#dfffa0] sm:text-sm"><code data-language="text">{selected.code}</code><span className="block-caret ml-1 inline-block" aria-hidden="true" /></pre>
+              <p className="border-t border-[#b7f34a]/15 pt-5 font-mono text-xs leading-6 text-[#7f8d7d]">{selected.note}</p>
+            </div>
+          </div>
+
+          <aside className="border border-[#b7f34a]/20 p-6 sm:p-8" aria-labelledby="delivery-title">
+            <p className="terminal-label">native delivery</p>
+            <h3 id="delivery-title" className="mt-4 text-2xl font-semibold">Five architecture-matched targets.</h3>
+            <p className="mt-4 font-mono text-xs leading-6 text-[#829080]">Each target is smoke-tested before signed archives.</p>
+            <div className="mt-7 flex flex-wrap gap-2">
+              {['Linux x64', 'Linux arm64', 'macOS x64', 'macOS arm64', 'Windows x64'].map(target => <span key={target} className="terminal-chip">{target}</span>)}
+            </div>
+            <p className="mt-9 terminal-label">interfaces</p>
+            <p className="mt-3 font-mono text-xs leading-6 text-[#a6b2a4]">CLI · JS API · Zig API · helpers.addCssCompile · CSS LSP</p>
+          </aside>
+        </div>
+
+        <nav className="mt-12 grid border-y border-[#b7f34a]/15 sm:grid-cols-2 lg:grid-cols-6" aria-label="Project destinations">
+          <Link className="deploy-link" to="/docs">Docs</Link>
+          <Link className="deploy-link" to="/getting-started">Get started</Link>
+          <a className="deploy-link" href="https://github.com/vyakymenko/zigcss" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a className="deploy-link" href="https://www.npmjs.com/package/zigcss" target="_blank" rel="noopener noreferrer">npm</a>
+          <a className="deploy-link" href="https://marketplace.visualstudio.com/items?itemName=zigcss.zigcss-language-server" target="_blank" rel="noopener noreferrer">VS Code</a>
+          <a className="deploy-link" href="https://github.com/vyakymenko/zigcss/tree/main/neovim-config" target="_blank" rel="noopener noreferrer">Neovim</a>
+        </nav>
+      </div>
+    </section>
+  );
+}
 
 export function Home() {
   return (
-    <div className="w-full bg-[#f3f0e7] text-[#172019]">
-      <section className="site-grid relative overflow-hidden bg-[#101914] text-[#f7f3e8]">
-        <div className="relative mx-auto grid max-w-7xl gap-14 px-5 py-20 sm:px-8 md:py-28 lg:grid-cols-[1.08fr_0.92fr] lg:items-center lg:px-10">
-          <div>
-            <div className="mb-7 inline-flex items-center gap-2 border border-[#b7f34a]/40 bg-[#b7f34a]/10 px-3 py-1.5 font-mono text-xs uppercase tracking-[0.18em] text-[#ccff73]">
-              <span className="size-1.5 rounded-full bg-[#b7f34a]" />
-              0.5 development snapshot · experimental
-            </div>
+    <div className="terminal-site w-full bg-[#0b110d] text-[#eef5ec]">
+      <BootSequence />
 
-            <h1 className="display-type max-w-3xl text-5xl leading-[0.95] tracking-[-0.055em] sm:text-6xl md:text-7xl">
-              Five languages in. One deterministic compiler out.
-            </h1>
-            <p className="mt-7 max-w-2xl text-lg leading-8 text-[#cbd4cc] md:text-xl">
-              CSS, SCSS, Sass, Less, and Stylus enter through exact, confined language engines. Native ZigCSS validates and emits one deterministic CSS result.
-            </p>
-            <p className="mt-4 max-w-2xl text-sm leading-6 text-[#97a59b]">
-              This site tracks the green 0.5.0-rc.1 source candidate. It is experimental: evaluate before production. The currently published npm release candidate, 0.4.0-rc.3, still exposes the earlier CSS-only package surface.
-            </p>
-
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-              <Link
-                to="/getting-started"
-                className="inline-flex items-center justify-center gap-2 bg-[#b7f34a] px-6 py-3.5 font-semibold text-[#101914] transition hover:bg-[#ceff77]"
-              >
-                Get started
-                <ArrowRight className="size-4" />
-              </Link>
-              <Link
-                to="/features"
-                className="inline-flex items-center justify-center gap-2 border border-[#526158] px-6 py-3.5 font-semibold text-[#f7f3e8] transition hover:border-[#b7f34a] hover:text-[#b7f34a]"
-              >
-                Explore language support
-              </Link>
-            </div>
-          </div>
-
-          <div className="border border-[#344139] bg-[#16221b] shadow-[16px_16px_0_0_#0a110d]">
-            <div className="flex items-center justify-between border-b border-[#344139] px-5 py-3 font-mono text-xs text-[#92a096]">
-              <span>terminal</span>
-              <span>npm · native binary</span>
-            </div>
-            <div className="p-5 sm:p-7">
-              <p className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-[#b7f34a]">Published CSS-only prerelease</p>
-              <code className="block overflow-x-auto whitespace-nowrap bg-[#0b120e] px-4 py-4 font-mono text-sm text-[#f7f3e8] sm:text-base">
-                <span className="text-[#708078]">$ </span>npm install --save-dev zigcss@next
-              </code>
-
-              <div className="mt-6 grid gap-px bg-[#344139] sm:grid-cols-2">
-                <div className="bg-[#101914] p-4">
-                  <p className="font-mono text-xs text-[#708078]">input.scss · 0.5 source snapshot</p>
-                  <pre className="mt-3 overflow-x-auto text-sm leading-6 text-[#d9e0da]"><code data-language="text">{`$accent: #b7f34a;
-.notice {
-  color: $accent;
-}`}</code></pre>
-                </div>
-                <div className="bg-[#101914] p-4">
-                  <p className="font-mono text-xs text-[#708078]">output.css</p>
-                  <pre className="mt-3 overflow-x-auto text-sm leading-6 text-[#ccff73]"><code data-language="css">{`.notice{color:#b7f34a}`}</code></pre>
-                </div>
-              </div>
-              <p className="mt-5 font-mono text-xs text-[#92a096]">
-                node index.js input.scss -o output.css --minify
+      <section className="future-hero relative isolate min-h-[calc(100svh-4rem)] overflow-hidden bg-[#0b110d]" aria-labelledby="hero-title">
+        <div className="perspective-horizon" aria-hidden="true" />
+        <div className="hero-glow" aria-hidden="true" />
+        <div className="relative mx-auto flex min-h-[calc(100svh-4rem)] max-w-[96rem] flex-col justify-center px-5 py-20 sm:px-8 md:py-28 lg:px-12">
+          <p className="gate-label">TERMINAL 00 · ZIGCSS SOURCE CANDIDATE</p>
+          <div className="experimental-chip mt-7 w-fit">⚠ 0.5.0-rc.1 · EXPERIMENTAL · evaluate before production</div>
+          <h1 id="hero-title" className="hero-display display-type mt-9 max-w-[90rem] text-[clamp(4.1rem,12vw,12rem)] leading-[0.74] tracking-[-0.085em]">
+            Exact in.<br /><span>Deterministic out.</span><br />Denied by default.
+          </h1>
+          <div className="mt-10 grid gap-8 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
+            <div>
+              <p className="max-w-3xl text-xl leading-8 text-[#cdd6cb] sm:text-2xl">Compile CSS. Keep the meaning.</p>
+              <p className="mt-4 max-w-3xl font-mono text-xs leading-6 text-[#81907f] sm:text-sm">
+                An experimental native CSS compiler written in Zig. Green main is the 0.5.0-rc.1 five-language source candidate. Published zigcss@next is 0.4.0-rc.3 with the earlier CSS-only surface.
               </p>
             </div>
+            <a href="#convergence" className="terminal-link justify-self-start font-mono text-sm uppercase tracking-[0.16em] text-[#b7f34a] lg:justify-self-end">five inputs converge ↓</a>
+          </div>
+          <div className="mt-10">
+            <CopyInstallCommand />
+            <a href="#formats" className="terminal-link mt-6 inline-block font-mono text-xs uppercase tracking-[0.18em] text-[#9dab9b]">enter the lab ↓</a>
           </div>
         </div>
       </section>
 
-      <section className="border-b border-[#c9c5b9] bg-[#e8e4d9]">
-        <div className="mx-auto grid max-w-7xl divide-y divide-[#c9c5b9] px-5 sm:px-8 lg:grid-cols-3 lg:divide-x lg:divide-y-0 lg:px-10">
-          <article className="py-10 lg:pr-9">
-            <ShieldCheck className="size-7 text-[#476f14]" />
-            <h2 className="mt-5 text-xl font-semibold">Semantics before speed</h2>
-            <p className="mt-3 leading-7 text-[#586159]">
-              Transform classes stay disabled until fixtures, independent parsing, and idempotence gates make them safe to expose.
-            </p>
-          </article>
-          <article className="py-10 lg:px-9">
-            <Layers3 className="size-7 text-[#476f14]" />
-            <h2 className="mt-5 text-xl font-semibold">One compiler path</h2>
-            <p className="mt-3 leading-7 text-[#586159]">
-              The CLI, Zig API, build helper, profiling, and editor tooling share the owned compile result instead of parallel parsers.
-            </p>
-          </article>
-          <article className="py-10 lg:pl-9">
-            <Terminal className="size-7 text-[#476f14]" />
-            <h2 className="mt-5 text-xl font-semibold">Native delivery</h2>
-            <p className="mt-3 leading-7 text-[#586159]">
-              Five architecture-matched release targets are smoke-tested before signed archives can be published.
-            </p>
-          </article>
+      <div className="proof-rail border-y border-[#b7f34a]/15 bg-[#101914]" aria-label="Compiler invariants">
+        <div className="mx-auto grid max-w-[96rem] sm:grid-cols-3">
+          <p><strong>DETERMINISTIC</strong><span>same input → same bytes</span></p>
+          <p><strong>ATOMIC</strong><span>failure → zero CSS</span></p>
+          <p><strong>FAIL-CLOSED</strong><span>network + code denied</span></p>
         </div>
-      </section>
+      </div>
 
+      <Convergence />
+      <Manifesto />
       <FormatShowcase />
-
-      <section className="bg-[#b7f34a] text-[#101914]">
-        <div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-14 sm:px-8 md:flex-row md:items-center md:justify-between lg:px-10">
-          <div>
-            <Braces className="size-7" />
-            <h2 className="display-type mt-4 text-3xl tracking-[-0.035em] sm:text-4xl">Inspect the contract, then try the compiler.</h2>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <Link to="/docs/guide/status" className="border border-[#101914] px-5 py-3 text-center font-semibold hover:bg-[#101914] hover:text-[#b7f34a]">
-              Current status
-            </Link>
-            <Link to="/getting-started" className="bg-[#101914] px-5 py-3 text-center font-semibold text-[#f7f3e8] hover:bg-[#263229]">
-              Install ZigCSS
-            </Link>
-          </div>
-        </div>
-      </section>
+      <BenchmarkLock />
+      <Endgame />
+      <Deploy />
     </div>
   );
 }

@@ -47,7 +47,10 @@ test('internal link validation rejects missing targets, bad fragments, and symli
     fs.rmSync(outside, { recursive: true, force: true })
   })
   fs.mkdirSync(path.join(root, 'docs'))
+  fs.mkdirSync(path.join(root, 'docs', 'src', 'app', 'components'), { recursive: true })
   fs.writeFileSync(path.join(root, 'docs', 'page.md'), '# Real heading\n')
+  fs.writeFileSync(path.join(root, 'docs', 'component.tsx'), '<section id="real-panel" />\n')
+  fs.writeFileSync(path.join(root, 'docs', 'src', 'app', 'components', 'Home.tsx'), '<section id="site-panel" />\n')
   fs.writeFileSync(path.join(outside, 'secret.md'), '# Secret\n')
   fs.symlinkSync(outside, path.join(root, 'docs', 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
 
@@ -56,6 +59,10 @@ test('internal link validation rejects missing targets, bad fragments, and symli
   assert.throws(() => validateInternalLink({ source: 'docs/source.md', line: 3, destination: 'page.md#invented' }, root), /missing heading/)
   assert.throws(() => validateInternalLink({ source: 'docs/source.md', line: 4, destination: 'escape/secret.md' }, root), /escapes the repository/)
   assert.throws(() => validateInternalLink({ source: 'docs/source.md', line: 5, destination: '/invented' }, root), /unknown site route/)
+  assert.equal(validateInternalLink({ source: 'docs/component.tsx', line: 6, destination: '#real-panel' }, root), true)
+  assert.throws(() => validateInternalLink({ source: 'docs/component.tsx', line: 7, destination: '#invented-panel' }, root), /missing element id/)
+  assert.equal(validateInternalLink({ source: 'docs/component.tsx', line: 8, destination: '/#site-panel' }, root), true)
+  assert.throws(() => validateInternalLink({ source: 'docs/component.tsx', line: 9, destination: '/#invented-site-panel' }, root), /missing site element id/)
 })
 
 test('documentation policy paths cannot escape the repository', t => {
@@ -79,11 +86,11 @@ test('every tracked internal link and code fence has an owned validation path', 
   assert.ok(summary.fences >= 50)
   assert.ok(summary.internalLinks >= 25)
   assert.ok(summary.literalRoutes >= 10)
-  assert.equal(summary.siteFences, 9)
+  assert.equal(summary.siteFences, 8)
   const siteFences = extractSiteCodeFences(repositoryRoot)
   assert.deepEqual(
     siteFences.map(fence => fence.language),
-    ['text', 'text', 'bash', 'bash', 'bash', 'css', 'bash', 'text', 'css'],
+    ['text', 'text', 'bash', 'bash', 'bash', 'css', 'bash', 'text'],
   )
   assert.equal(siteFences[0].content, '{selected.input}')
   assert.equal(siteFences[1].content, '{selected.output}')

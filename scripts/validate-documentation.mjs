@@ -24,6 +24,27 @@ function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
 
+function literalElementIds(value) {
+  return new Set([...value.matchAll(/\bid\s*=\s*["']([^"']+)["']/g)].map(match => match[1]))
+}
+
+function siteElementIds(root) {
+  const componentRoot = path.join(root, 'docs', 'src', 'app', 'components')
+  if (!fs.existsSync(componentRoot)) return new Set()
+  const ids = new Set()
+  const visit = directory => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name)
+      if (entry.isDirectory()) visit(entryPath)
+      else if (entry.isFile() && /\.[jt]sx?$/.test(entry.name)) {
+        for (const id of literalElementIds(fs.readFileSync(entryPath, 'utf8'))) ids.add(id)
+      }
+    }
+  }
+  visit(componentRoot)
+  return ids
+}
+
 function read(relativePath, root = repositoryRoot) {
   return fs.readFileSync(path.join(root, relativePath), 'utf8')
 }
@@ -253,7 +274,9 @@ export function validateInternalLink(link, root = repositoryRoot) {
     if (!siteRoutes.has(pathname.replace(/\/$/, '') || '/')) {
       fail(`${link.source}:${link.line} references an unknown site route: ${pathname}`)
     }
-    if (fragment.length !== 0) fail(`${link.source}:${link.line} adds an unchecked fragment to site route ${pathname}`)
+    if (fragment.length !== 0 && !siteElementIds(root).has(fragment)) {
+      fail(`${link.source}:${link.line} has a missing site element id: #${fragment}`)
+    }
     return true
   }
 
@@ -268,11 +291,21 @@ export function validateInternalLink(link, root = repositoryRoot) {
   assertInside(canonicalRoot, canonicalTarget, `${link.source}:${link.line} link`)
   if (fragment.length !== 0) {
     const stat = fs.statSync(canonicalTarget)
-    if (!stat.isFile() || !canonicalTarget.endsWith('.md')) {
+    if (!stat.isFile()) {
       fail(`${link.source}:${link.line} has a fragment on a non-Markdown target`)
     }
-    if (!headingAnchors(fs.readFileSync(canonicalTarget, 'utf8')).has(fragment)) {
-      fail(`${link.source}:${link.line} has a missing heading fragment: #${fragment}`)
+    const targetContent = fs.readFileSync(canonicalTarget, 'utf8')
+    if (canonicalTarget.endsWith('.md')) {
+      if (!headingAnchors(targetContent).has(fragment)) {
+        fail(`${link.source}:${link.line} has a missing heading fragment: #${fragment}`)
+      }
+    } else if (/\.(?:html|[jt]sx?)$/.test(canonicalTarget)) {
+      const localIds = literalElementIds(targetContent)
+      if (!localIds.has(fragment) && !siteElementIds(root).has(fragment)) {
+        fail(`${link.source}:${link.line} has a missing element id: #${fragment}`)
+      }
+    } else {
+      fail(`${link.source}:${link.line} has a fragment on a non-Markdown target`)
     }
   }
   return true

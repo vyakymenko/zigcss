@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#101914" />
     <meta
       name="description"
-      content="ZigCSS is an experimental deterministic compiler for CSS, SCSS, Sass, Less, and Stylus."
+      content="ZigCSS is an experimental native CSS compiler written in Zig. Five languages enter one deterministic, fail-closed compiler contract."
     />
     <link rel="canonical" href="https://vyakymenko.github.io/zigcss/" />
     <link rel="icon" href="/zigcss/favicon.svg" type="image/svg+xml" />
@@ -15,10 +15,12 @@
     <meta property="og:title" content="ZigCSS — Five languages. One compiler contract." />
     <meta
       property="og:description"
-      content="Five stylesheet languages in. One deterministic, semantics-preserving CSS compiler out."
+      content="Compile CSS. Keep the meaning. Deterministic output, fail-closed execution, and atomic writes."
     />
     <meta property="og:url" content="https://vyakymenko.github.io/zigcss/" />
     <meta property="og:image" content="https://vyakymenko.github.io/zigcss/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="ZigCSS — Five languages. One compiler contract." />
     <meta name="twitter:image" content="https://vyakymenko.github.io/zigcss/og.png" />
@@ -37,6 +39,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <main style="min-height:100vh;background:#0b110d;color:#eef5ec;padding:8vw;font-family:monospace">
+        <p style="color:#b7f34a;letter-spacing:.14em">ZIGCSS 0.5.0-RC.1 · EXPERIMENTAL</p>
+        <h1 style="max-width:16ch;font-family:system-ui,sans-serif;font-size:clamp(3rem,10vw,8rem);line-height:.82;letter-spacing:-.07em">Exact in. Deterministic out. Denied by default.</h1>
+        <p style="font-size:1.25rem">Compile CSS. Keep the meaning.</p>
+        <p style="max-width:58rem;line-height:1.8;color:#91a08f">CSS, SCSS, indented Sass, Less, and Stylus enter one fail-closed compiler contract. The green 0.5.0-rc.1 source candidate remains experimental. Published zigcss@next is 0.4.0-rc.3 with the earlier CSS-only surface. Evaluate before production.</p>
+        <pre style="margin-top:2rem;border:1px solid #50672d;background:#080d0a;padding:1.25rem;overflow:auto;color:#b7f34a">npm install --save-dev zigcss@next</pre>
+        <p style="margin-top:2rem"><a style="color:#b7f34a" href="/zigcss/docs">Docs</a> · <a style="color:#b7f34a" href="/zigcss/getting-started">Get started</a> · <a style="color:#b7f34a" href="https://github.com/vyakymenko/zigcss">GitHub</a> · <a style="color:#b7f34a" href="https://www.npmjs.com/package/zigcss">npm</a></p>
+      </main>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

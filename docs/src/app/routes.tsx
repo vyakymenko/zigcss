@@ -1,12 +1,5 @@
 import { createBrowserRouter, Navigate } from "react-router";
 import { Root } from "./components/Root";
-import { Home } from "./components/Home";
-import { Playground } from "./components/Playground";
-import { GettingStarted } from "./components/GettingStarted";
-import { Features } from "./components/Features";
-import { NotFound } from "./components/NotFound";
-import { DocsLayout } from "./components/docs/DocsLayout";
-import { DocView } from "./components/docs/DocView";
 
 export const router = createBrowserRouter(
   [
@@ -14,19 +7,37 @@ export const router = createBrowserRouter(
       path: "/",
       Component: Root,
       children: [
-        { index: true, Component: Home },
-        { path: "playground", Component: Playground },
+        {
+          index: true,
+          lazy: async () => ({ Component: (await import("./components/Home")).Home }),
+        },
+        {
+          path: "playground",
+          lazy: async () => ({ Component: (await import("./components/Playground")).Playground }),
+        },
         {
           path: "docs",
-          Component: DocsLayout,
+          lazy: async () => ({ Component: (await import("./components/docs/DocsLayout")).DocsLayout }),
           children: [
             { index: true, element: <Navigate to="guide/status" replace /> },
-            { path: "*", Component: DocView },
+            {
+              path: "*",
+              lazy: async () => ({ Component: (await import("./components/docs/DocView")).DocView }),
+            },
           ],
         },
-        { path: "getting-started", Component: GettingStarted },
-        { path: "features", Component: Features },
-        { path: "*", Component: NotFound },
+        {
+          path: "getting-started",
+          lazy: async () => ({ Component: (await import("./components/GettingStarted")).GettingStarted }),
+        },
+        {
+          path: "features",
+          lazy: async () => ({ Component: (await import("./components/Features")).Features }),
+        },
+        {
+          path: "*",
+          lazy: async () => ({ Component: (await import("./components/NotFound")).NotFound }),
+        },
       ],
     },
   ],

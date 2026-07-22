@@ -1,36 +1,71 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { BrowserRouter } from 'react-router'
 import { Home } from './Home'
 
 function renderHome() {
-  render(<BrowserRouter><Home /></BrowserRouter>)
+  return render(<BrowserRouter><Home /></BrowserRouter>)
 }
 
 describe('Home', () => {
-  it('introduces the five-language compiler and identifies the source snapshot honestly', () => {
+  beforeEach(() => window.sessionStorage.clear())
+
+  it('opens as a terminal manifesto with an unavoidable release boundary', () => {
     renderHome()
+
+    expect(screen.getByRole('dialog', { name: /zigcss boot sequence/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /exact in\. deterministic out\. denied by default/i })).toBeInTheDocument()
+    expect(screen.getByText('Compile CSS. Keep the meaning.')).toBeInTheDocument()
+    expect(screen.getByText(/0\.5\.0-rc\.1.*experimental.*evaluate before production/i)).toBeInTheDocument()
+    expect(screen.getByText(/green main is the 0\.5\.0-rc\.1 five-language source candidate/i)).toBeInTheDocument()
+    expect(screen.getByText(/published zigcss@next is 0\.4\.0-rc\.3.*css-only surface/i)).toBeInTheDocument()
+  })
+
+  it('puts the real install command and lab entry in the hero', () => {
+    renderHome()
+
+    expect(screen.getByRole('button', { name: /copy install command: npm install --save-dev zigcss@next/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /enter the lab/i })).toHaveAttribute('href', '#formats')
+    expect(screen.getByRole('link', { name: /five inputs converge/i })).toHaveAttribute('href', '#convergence')
+  })
+
+  it('builds the eight-movement story from the five load-bearing truths', () => {
+    const { container } = renderHome()
+
     expect(screen.getByRole('heading', { name: /five languages in\. one deterministic compiler out/i })).toBeInTheDocument()
-    expect(screen.getByText(/0\.5 development snapshot.*experimental/i)).toBeInTheDocument()
-    expect(screen.getByText(/evaluate before production/i)).toBeInTheDocument()
-    expect(screen.getByText(/css, scss, sass, less, and stylus/i)).toBeInTheDocument()
+    expect(container.querySelector('canvas[aria-hidden="true"]')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /your css toolchain should not be able to phone home/i })).toBeInTheDocument()
+    expect(screen.getByText('NETWORK')).toBeInTheDocument()
+    expect(screen.getAllByText('DENIED')).toHaveLength(3)
+    expect(screen.getByRole('heading', { name: /same input\. same bytes\. every machine\. every time/i })).toBeInTheDocument()
+    expect(screen.getByText('run 1 = run 2 = run 3')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /all output\. or no output/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /one path\. no parser drift/i })).toBeInTheDocument()
+    expect(screen.getByText('OWNED COMPILE RESULT')).toBeInTheDocument()
   })
 
-  it('leads with installation and links to package documentation', () => {
+  it('marks the native endgame as unshipped and exposes real deployment surfaces', () => {
     renderHome()
-    expect(screen.getByText('npm install --save-dev zigcss@next')).toBeInTheDocument()
-    expect(screen.getByText('node index.js input.scss -o output.css --minify')).toBeInTheDocument()
-    expect(screen.queryByText('npx zigcss input.scss -o output.css --minify')).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /get started/i })).toHaveAttribute('href', '/getting-started')
-    expect(screen.getByRole('link', { name: /explore language support/i })).toHaveAttribute('href', '/features')
-  })
 
-  it('publishes the five canonical input tabs and exact boundary', () => {
-    renderHome()
-    expect(screen.getByRole('heading', { name: /five syntaxes\. one compiler contract/i })).toBeInTheDocument()
-    for (const format of ['CSS', 'SCSS', 'Sass', 'Less', 'Stylus']) {
-      expect(screen.getByRole('tab', { name: format })).toBeInTheDocument()
+    expect(screen.getByText('TARGET STATE · NOT SHIPPED')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /the providers were scaffolding/i })).toBeInTheDocument()
+    expect(screen.getByText(/one self-contained compiler\. zero production package dependencies/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /choose your entry point/i })).toBeInTheDocument()
+    for (const target of ['Linux x64', 'Linux arm64', 'macOS x64', 'macOS arm64', 'Windows x64']) {
+      expect(screen.getByText(target)).toBeInTheDocument()
     }
-    expect(screen.getByText(/semantics before speed/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs')
+    expect(screen.getByRole('link', { name: 'npm' })).toHaveAttribute('href', 'https://www.npmjs.com/package/zigcss')
+  })
+
+  it('keeps benchmark hype evidence-locked and bans inflated marketing copy', () => {
+    renderHome()
+    const copy = document.body.textContent ?? ''
+
+    expect(screen.getByRole('heading', { name: /native is the architecture\. evidence decides the ranking/i })).toBeInTheDocument()
+    expect(copy).toMatch(/comparative rankings remain unpublished until the controlled pipeline lands/i)
+    expect(copy).not.toMatch(/world.?s fastest|\d+\s*[x×]\s*faster/i)
+    expect(copy).not.toMatch(/blazingly|supercharge|seamless|effortless|next-generation|game-changing|revolutionize/i)
+    expect(copy).not.toContain('!')
   })
 })

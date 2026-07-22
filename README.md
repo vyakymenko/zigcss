@@ -1,57 +1,91 @@
-[![ZigCSS — Compile CSS. Keep the meaning.](https://vyakymenko.github.io/zigcss/og.png)](https://vyakymenko.github.io/zigcss/)
+[![ZigCSS — Native by design. Correct by contract.](https://vyakymenko.github.io/zigcss/og.png)](https://vyakymenko.github.io/zigcss/)
 
 # ZigCSS
 
 [![Build](https://github.com/vyakymenko/zigcss/actions/workflows/build.yml/badge.svg)](https://github.com/vyakymenko/zigcss/actions/workflows/build.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-17201b.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/zigcss?color=c8ff55&label=npm&labelColor=101914)](https://www.npmjs.com/package/zigcss)
+[![License: MIT](https://img.shields.io/badge/license-MIT-c8ff55.svg?labelColor=101914)](LICENSE)
+
+**Native by design. Fast on purpose. Correct by contract.**
 
 **Compile CSS. Keep the meaning.**
 
-## Five languages in. One deterministic compiler out.
+**Five languages in. One deterministic compiler out.**
 
-ZigCSS is an experimental native CSS compiler with canonical SCSS, indented Sass, Less, and Stylus frontends. Exact language engines handle their own grammars; the Zig core then reparses, validates, transforms, and emits the result through one fail-closed contract.
+ZigCSS is an experimental native Zig CSS compiler built for low-overhead builds, deterministic output, and semantics-preserving transforms. It treats CSS like a language—not a string to rewrite until it looks smaller.
 
-**This is where preprocessor convenience meets compiler discipline:** confined imports, owned diagnostics and dependencies, composed source maps, atomic output, deterministic batches, and no partial CSS after failure.
+The destination is one self-contained compiler for CSS, SCSS, indented Sass, Less, and Stylus. CSS is native today; the four preprocessor frontends are moving through private native conformance gates before ZigCSS makes a public dependency-free claim.
 
-[Website](https://vyakymenko.github.io/zigcss/) · [Interactive input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
+[Website](https://vyakymenko.github.io/zigcss/) · [Input/output lab](https://vyakymenko.github.io/zigcss/#formats) · [Get started](https://vyakymenko.github.io/zigcss/getting-started) · [Documentation](https://vyakymenko.github.io/zigcss/docs) · [npm](https://www.npmjs.com/package/zigcss) · [Releases](https://github.com/vyakymenko/zigcss/releases)
 
-> **Experimental release candidate notice:** the green `main` branch is the unpublished ZigCSS 0.5.0-rc.1 source candidate described below. The currently published npm package, ZigCSS 0.4.0-rc.3, exposes the earlier CSS-only surface. Five-language npm publication and release artifacts remain pending the explicit release step. Evaluate both before production.
+> **Experimental release candidate:** npm currently serves ZigCSS 0.4.0-rc.3 with the tested CSS-only package surface. The green 0.5.0-rc.1 source snapshot adds a canonical five-language reference pipeline, but it is unpublished and should be evaluated before production.
 
-> **Native dependency-free migration:** publication of the prepared provider-backed candidate was cancelled before tag creation. Its canonical engines remain development reference oracles while ADR-013 replaces them with native Zig frontends. The target release is one self-contained compiler with zero production package dependencies; native SCSS/Sass/Less/Stylus claims remain unavailable until their new conformance gates pass.
+> **Native migration:** publication of the provider-backed 0.5 candidate was cancelled before tagging. Dart Sass 1.101.0, Less 4.6.7, and Stylus 0.64.0 now act as pinned development oracles while Zig replacements earn graduation. The target 0.6 release has zero production dependencies, no provider process, and no runtime download.
 
-## Why ZigCSS feels different
+## Why ZigCSS
 
-- **Canonical language behavior.** SCSS and Sass use Dart Sass 1.101.0, Less uses Less 4.6.7, and Stylus uses Stylus 0.64.0. ZigCSS does not pretend a hand-written approximation is the language.
-- **One hard output boundary.** Provider output must survive the recovery-disabled ZigCSS parser before any CSS is returned or committed.
-- **Security is part of the API.** Local imports are root-confined. Network access and executable project extensions are denied by default.
-- **Determinism is tested, not implied.** Repetition, parallel workers, batch ordering, watch invalidation, maps, diagnostics, packages, and five native targets have executable gates.
-- **Semantics before speed.** Stable transforms cross equivalence, idempotence, and independent-parser gates. Unsupported authority stays unavailable.
+| What matters | ZigCSS contract |
+|---|---|
+| Native execution | The direct CSS path is a Zig binary and library with no language-provider startup. |
+| Semantic safety | Transform classes stay unavailable until equivalence, idempotence, and independent-parser gates pass. |
+| Failure behavior | Compilation is atomic. An error, cancellation, limit, or allocation failure returns no partial CSS. |
+| Determinism | Replay, batch order, parallel workers, source maps, diagnostics, and packaging have executable checks. |
+| Ownership | CSS, diagnostics, dependencies, source maps, module exports, and profile data share one explicit result lifetime. |
+| Delivery | Linux x64/arm64, macOS x64/arm64, and Windows x64 archive paths are tested. |
+
+Your CSS deserves a real compiler: bounded input, a recovery-disabled parser, explicit transforms, strict output validation, and an atomic write at the end.
 
 ## Install
 
-The public prerelease channel currently installs the CSS-only ZigCSS 0.4.0-rc.3 candidate:
+Install the public CSS-only prerelease:
 
 ```bash
 npm install --save-dev zigcss@next
 ```
 
-To evaluate the five-language 0.5.0-rc.1 source candidate today:
+Compile CSS:
+
+```bash
+npx zigcss input.css -o dist/output.css --minify
+```
+
+Input:
+
+```css
+.button {
+  color: #08100b;
+  background: #c8ff55;
+}
+```
+
+Output:
+
+```css
+.button{color:#08100b;background:#c8ff55}
+```
+
+Successful commands exit `0`; compilation and I/O failures exit `1`; usage or configuration failures exit `2`.
+
+## Five syntaxes, one CSS destination
+
+The current repository snapshot keeps native availability and reference behavior deliberately separate.
+
+| Input | Current execution path | Native target |
+|---|---|---|
+| CSS (`.css`) | Native ZigCSS | Graduated |
+| SCSS (`.scss`) | Dart Sass 1.101.0 → ZigCSS validation | Private Zig parser/evaluator in progress |
+| Sass (`.sass`) | Dart Sass 1.101.0 → ZigCSS validation | Private Zig parser/evaluator in progress |
+| Less (`.less`) | Less 4.6.7 → ZigCSS validation | Planned after Sass graduation |
+| Stylus (`.styl`) | Stylus 0.64.0 → ZigCSS validation | Planned after Less graduation |
+
+To evaluate the unpublished five-language source snapshot:
 
 ```bash
 git clone https://github.com/vyakymenko/zigcss.git
 cd zigcss
 npm ci
 zig build
-node index.js --help
-```
 
-The package selects a matching native core for Linux x64/arm64, macOS x64/arm64, or Windows x64. The 0.5 source snapshot's package manifest also carries its exact canonical providers and reviewed runtime closure; it does not discover language engines from ambient project dependencies.
-
-## Use five input languages
-
-The npm launcher detects syntax by extension, or accepts `--syntax <css|scss|sass|less|stylus>` for stdin and explicit selection.
-
-```bash
 node index.js styles.css -o dist/styles.css --minify
 node index.js styles.scss -o dist/styles.css --minify
 node index.js styles.sass -o dist/styles.css --minify
@@ -59,48 +93,56 @@ node index.js styles.less -o dist/styles.css --minify
 node index.js styles.styl -o dist/styles.css --minify
 ```
 
-For installed 0.5 package bytes, the same commands use `npx zigcss` rather than `node index.js`.
-
-Imports stay inside the entry directory and any explicit load paths:
+The canonical reference pipeline disables arbitrary plugins, custom functions, custom importers, Less JavaScript, custom file managers, Stylus evaluator hooks, and executable project code by default. Imports stay inside the entry directory and explicitly admitted load paths.
 
 ```bash
-node index.js src/app.scss --load-path src/tokens -o dist/app.css --source-map
+node index.js src/app.scss \
+  --load-path src/tokens \
+  --source-map \
+  --minify \
+  -o dist/app.css
 ```
 
-Standard input requires an explicit syntax for preprocessors:
+See the [format compatibility matrix](docs/src/content/docs/guide/format-compatibility.md), [CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md), and [current capability status](docs/src/content/docs/guide/status.md).
 
-```bash
-printf '$accent: red; .notice { color: $accent; }' | node index.js - --syntax scss -o - --minify
+## Benchmarks
+
+ZigCSS is engineered for a low-overhead native path, but this project does not turn a laptop stopwatch into a marketing multiplier.
+
+The benchmark program is already executable and publication-gated:
+
+| Evidence gate | Required proof |
+|---|---|
+| Semantic equivalence | Every timed output must pass independent CSS admission before its timing is accepted. |
+| Workload coverage | Small, medium, and large deterministic corpora are versioned and checksum-bound. |
+| Execution modes | Cold CLI, warm CLI, in-process API, allocator memory, and throughput stay separately labeled. |
+| Statistics | 43 ordered series and 860 raw observations are retained—never only the winning median. |
+| Hardware | The publishable archive must come from dedicated, non-emulated, controlled Linux x64 hardware. |
+| Reproduction | Source SHA, runner identity, tool versions, raw report, manifest, digest, and artifact link are sealed together. |
+
+**Current status:** the pipeline is ready, but the final controlled runner archive does not exist yet. Timing, ranking, throughput, memory, and ratio numbers remain unpublished until that evidence lands.
+
+Read the [benchmark report and publication contract](BENCHMARK_REPORT.md). When the controlled archive passes, the report and this section can be generated from retained evidence instead of hand-edited hype.
+
+## Compiler pipeline
+
+```text
+source bytes
+    ↓
+bounded lexer and parser
+    ↓
+typed, safety-classed transforms
+    ↓
+recovery-disabled CSS validation
+    ↓
+owned result + atomic output
 ```
 
-The result is:
-
-```css
-.notice{color:red}
-```
-
-Run `node index.js --help` for the combined contract. Successful commands exit `0`, compilation or I/O failures exit `1`, and usage/configuration failures exit `2`.
-
-## Language contract
-
-| Input | Canonical engine | Public 0.5 surface | Deliberate boundary |
-|---|---|---|---|
-| CSS (`.css`) | Native ZigCSS | npm CLI and API | Experimental, matrix-tested CSS grammar |
-| SCSS (`.scss`) | Dart Sass 1.101.0 | npm CLI and API | Exact provider language; no arbitrary plugins, custom functions, or custom importers |
-| Indented Sass (`.sass`) | Dart Sass 1.101.0 | npm CLI and API | Source bytes stay indented Sass; same executable-extension boundary |
-| Less (`.less`) | Less 4.6.7 | npm CLI and API | JavaScript, plugins, and custom file managers remain disabled |
-| Stylus (`.styl`) | Stylus 0.64.0 | npm CLI and API | Project plugins, custom functions, and evaluator hooks remain disabled |
-| CSS Modules (`.module.css`) | ZigCSS native subset | Experimental Zig library only | Closed documented subset; not npm CLI or LSP input |
-
-“Canonical support” means behavior owned by those exact provider versions plus the documented ZigCSS integration options. It does **not** mean parity with every third-party plugin, custom function, custom importer, JavaScript hook, future provider version, or framework toolchain. CSS-in-JS, PostCSS plugin hosts, and Tailwind-like adapters remain outside the public contract.
-
-See the [format compatibility matrix](docs/src/content/docs/guide/format-compatibility.md), [CSS compatibility matrix](docs/src/content/docs/guide/css-compatibility.md), and [complete capability status](docs/src/content/docs/guide/status.md).
-
-The dependency-free migration contract is defined by [ADR-013](docs/adr/ADR-013-self-contained-native-frontends.md) and enforced by `npm run check:native-contract`.
+The CSS-only native executable is written to `zig-out/bin/zigcss`. In the 0.5 source snapshot, the root npm launcher composes that core with the exact canonical development providers. The 0.6 target removes that host boundary after all native language rows graduate.
 
 ## JavaScript API
 
-The npm API exposes the same five syntax values and returns owned CSS, diagnostics, ordered dependencies, and an optional composed source map.
+The source snapshot exposes the same five syntax values through `zigcss/api` and returns CSS, diagnostics, ordered dependencies, and an optional composed source map.
 
 ```text
 import { compileFile, compileString } from 'zigcss/api';
@@ -111,17 +153,17 @@ const file = await compileFile('src/app.scss', {
   sourceMap: true,
 });
 
-const inline = await compileString('@accent: red; .a { color: @accent; }', {
-  syntax: 'less',
+const inline = await compileString('.notice { color: red; }', {
+  syntax: 'css',
   format: 'minified',
 });
 ```
 
-Failures throw `ZigCssCompileError` with normalized diagnostics and never attach partial CSS. Option schemas are closed before a provider process starts.
+Failures throw `ZigCssCompileError` with normalized diagnostics and never attach partial CSS. Option schemas are closed before any provider process can start.
 
 ## Zig API
 
-The native Zig API remains the CSS core. It returns one owned result containing CSS, diagnostics, ordered imports, optional source maps, optional module exports, and optional profiling metrics. Call `deinit` exactly once.
+The native Zig API returns one owned compile result. Call `deinit` exactly once.
 
 <!-- api-example:start -->
 ```zig
@@ -149,11 +191,11 @@ pub fn main() !void {
 ```
 <!-- api-example:end -->
 
-`build.zig.zon` gives the source package stable identity `zigcss` and a minimal allowlist. The build module exposes `helpers.addCssCompile` for declared CSS inputs and generated outputs. See [examples/build-integration](examples/build-integration).
+`build.zig.zon` gives the source package the stable identity `zigcss`. The build module exposes `helpers.addCssCompile` for declared CSS inputs and generated outputs. See [examples/build-integration](examples/build-integration).
 
 ## Build and verify
 
-Use Zig 0.15.2:
+ZigCSS currently pins Zig 0.15.2.
 
 ```bash
 npm ci
@@ -164,30 +206,44 @@ npm run test:preprocessor-product
 npm run test:formats
 ```
 
-The CSS-only native executable is written to `zig-out/bin/zigcss`; the root npm launcher composes it with the canonical frontend host.
+The native migration boundary is machine-readable and fail-closed:
+
+```bash
+npm run test:native-contract
+npm run check:native-contract
+```
+
+ADR-013 defines the [self-contained native frontend contract](docs/adr/ADR-013-self-contained-native-frontends.md).
 
 ## Editor integration
 
-The experimental CSS LSP covers bounded JSON-RPC framing, full document sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features. Its stress tests pass large-document, Unicode, malformed-request, leak, and editor-integration gates.
+The experimental CSS LSP covers bounded JSON-RPC framing, full document sync, UTF-16 positions, pull diagnostics, and syntax-aware open-document features.
 
-- The VS Code preview uses Marketplace version 0.5.0 for the current core mapping and requires a separately installed ZigCSS binary.
+Its release checks pass large-document, Unicode, malformed-request, leak, and editor-integration gates.
+
+- The VS Code preview uses Marketplace version 0.5.0 for the current CSS core mapping and requires a separately installed ZigCSS binary.
 - The [Neovim configuration](neovim-config/README.md) uses the built-in LSP client and an explicit trusted executable path.
 
 Neither integration bundles a compiler binary.
 
-Editor integrations remain CSS-only today; they do not silently execute preprocessor plugins or project code.
+Editor integrations remain CSS-only today. They do not silently execute preprocessor plugins or project code.
 
-## Release and performance status
+## Project status
 
-The source tree is release-gated, but 0.5 packages and artifacts have not been published. Publication is a separate authorized operation, not an automatic consequence of a green branch.
+- CSS core: native and graduated.
+- SCSS/Sass: native parser complete; semantic core under active conformance development.
+- Less and Stylus: exact reference suites retained; native implementations pending in dependency order.
+- Native package routing and zero-dependency cutover: gated behind all language graduations.
+- Controlled comparative benchmark: waiting for the dedicated Linux x64 archive.
+- Publication: always a separate authorized, fail-closed operation.
 
-ZigCSS currently publishes no comparative speed ranking or multiplier. The benchmark pipeline requires equivalent output, pinned modes, complete statistics, controlled Linux x64 provenance, and a retained scheduled archive before it can update [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md).
+The [development plan](DEVELOPMENT_PLAN.md) and [durable execution ledger](DEVELOPMENT_STATUS.md) remain in the repository until the native roadmap, release, and benchmark gates close.
 
 ## Contributing
 
-Open a focused issue or pull request with a minimal source input, expected semantics, actual diagnostics/output, and provider version where relevant. Run the focused language gate plus Debug and ReleaseSafe core gates.
+Bring a minimal source input, expected semantics, actual output or diagnostic, and the relevant language-engine version. Run the focused language gate plus Debug and ReleaseSafe before opening a pull request.
 
-The internal [development plan](DEVELOPMENT_PLAN.md) and [execution ledger](DEVELOPMENT_STATUS.md) remain until the roadmap, release, and controlled benchmark gates close.
+High-value contributions include reduced compatibility cases, independent CSS validation, fuzz seeds, controlled benchmark runner capacity, and integrations that preserve the closed execution boundary.
 
 ## License
 

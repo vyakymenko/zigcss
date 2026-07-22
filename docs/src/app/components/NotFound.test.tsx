@@ -10,16 +10,16 @@ describe('NotFound', () => {
         <NotFound />
       </BrowserRouter>
     )
-    expect(screen.getByText('404')).toBeInTheDocument()
+    expect(screen.getByText(/404 · invalid route/i)).toBeInTheDocument()
   })
 
-  it('renders Page Not Found heading', () => {
+  it('renders the route failure as a compiler diagnostic', () => {
     render(
       <BrowserRouter>
         <NotFound />
       </BrowserRouter>
     )
-    expect(screen.getByRole('heading', { name: /page not found/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /error: route not found — exit 2/i })).toBeInTheDocument()
   })
 
   it('has Go Home link', () => {

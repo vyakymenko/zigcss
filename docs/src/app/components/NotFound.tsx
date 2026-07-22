@@ -1,32 +1,23 @@
 import { Link } from "react-router";
-import { Home, ArrowLeft } from "lucide-react";
 
 export function NotFound() {
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="text-center max-w-md">
-        <div className="text-8xl mb-4">404</div>
-        <h1 className="text-3xl mb-4">Page Not Found</h1>
-        <p className="text-xl text-slate-600 mb-8">
-          Oops! The page you're looking for doesn't exist.
-        </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link
-            to="/"
-            className="flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:shadow-lg hover:scale-105 transition-all"
-          >
-            <Home className="size-5" />
-            Go Home
-          </Link>
-          <button
-            onClick={() => window.history.back()}
-            className="flex items-center justify-center gap-2 px-6 py-3 bg-white border border-slate-300 text-slate-900 rounded-lg hover:border-indigo-300 hover:shadow-md transition-all"
-          >
-            <ArrowLeft className="size-5" />
-            Go Back
-          </button>
+    <section className="site-grid flex min-h-[calc(100svh-4rem)] items-center bg-[#0b110d] px-5 py-20 text-[#eef5ec] sm:px-8" aria-labelledby="not-found-title">
+      <div className="mx-auto w-full max-w-4xl border border-[#b7f34a]/20 bg-[#080d0a] font-mono shadow-[16px_16px_0_rgba(183,243,74,0.06)]">
+        <div className="flex items-center justify-between border-b border-[#b7f34a]/20 px-5 py-4 text-[10px] uppercase tracking-[0.16em] text-[#71806f]">
+          <span>zigcss router</span>
+          <span className="text-[#b7f34a]">exit 2</span>
+        </div>
+        <div className="p-6 sm:p-10">
+          <p className="text-xs uppercase tracking-[0.16em] text-[#687666]">404 · invalid route</p>
+          <h1 id="not-found-title" className="mt-7 text-2xl leading-9 text-[#b7f34a] sm:text-4xl">error: route not found — exit 2</h1>
+          <p className="mt-6 max-w-2xl text-sm leading-7 text-[#8b9989]">The requested path is outside the admitted route graph. No partial page was emitted.</p>
+          <div className="mt-10 flex flex-wrap gap-3">
+            <Link to="/" className="scan-button bg-[#b7f34a] px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-[#0b110d]">Go home</Link>
+            <button type="button" onClick={() => window.history.back()} className="border border-[#b7f34a]/25 px-5 py-3 text-xs uppercase tracking-[0.12em] text-[#a8b4a6] hover:border-[#b7f34a]/60 hover:text-[#b7f34a]">Go back</button>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
