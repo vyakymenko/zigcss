@@ -193,11 +193,11 @@ pub fn main() !void {
 ```
 <!-- api-example:end -->
 
-`build.zig.zon` gives the source package the stable identity `zigcss`. The build module exposes `helpers.addCssCompile` for declared CSS inputs and generated outputs. See [examples/build-integration](examples/build-integration).
+`build.zig.zon` gives the source package stable identity `zigcss`. The build module exposes `helpers.addCssCompile` for declared CSS inputs and generated outputs. See [examples/build-integration](examples/build-integration).
 
 ## Build and verify
 
-ZigCSS currently pins Zig 0.15.2.
+Use Zig 0.15.2:
 
 ```bash
 npm ci
