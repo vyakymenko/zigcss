@@ -230,6 +230,7 @@ Editor integrations remain CSS-only today. They do not silently execute preproce
 
 ## Project status
 
+- Source candidate: 0.5.0-rc.1 on green main; experimental and unpublished.
 - CSS core: native and graduated.
 - SCSS/Sass: native parser complete; semantic core under active conformance development.
 - Less and Stylus: exact reference suites retained; native implementations pending in dependency order.

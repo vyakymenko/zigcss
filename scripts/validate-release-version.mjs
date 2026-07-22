@@ -213,7 +213,7 @@ export function validateReleaseSources(sources) {
   expectLiteralCount(status, version, 5, 'status guide release claims')
   expectLiteralCount(sources.get('docs/src/content/docs/guide/build-from-source.md'), version, 1, 'build guide release claims')
   expectLiteralCount(sources.get('docs/src/app/components/GettingStarted.tsx'), version, 1, 'getting-started release claims')
-  expectLiteralCount(sources.get('docs/src/app/components/Home.tsx'), version, 1, 'homepage release claims')
+  expectLiteralCount(sources.get('docs/src/app/components/Home.tsx'), version, 3, 'homepage release claims')
   expectLiteralCount(sources.get('neovim-config/README.md'), version, 2, 'Neovim release claims')
   expectContains(readme, `Marketplace version ${vscodeVersion}`, 'README VS Code mapping')
   expectContains(status, `Marketplace version ${vscodeVersion}`, 'status VS Code mapping')

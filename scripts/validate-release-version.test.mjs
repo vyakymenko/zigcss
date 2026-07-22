@@ -102,7 +102,7 @@ test('Homebrew, Docker, changelog, and public claim drift fails closed', () => {
   assert.throws(() => validateReleaseSources(changelog), /unreleased changelog target/)
 
   const docs = cloneSources()
-  replace(docs, 'README.md', 'ZigCSS 0.5.0-rc.1', 'ZigCSS 9.9.9')
+  replace(docs, 'README.md', 'Source candidate: 0.5.0-rc.1', 'Source candidate: 9.9.9')
   assert.throws(() => validateReleaseSources(docs), /README release claims/)
 
   const npmGuide = cloneSources()
