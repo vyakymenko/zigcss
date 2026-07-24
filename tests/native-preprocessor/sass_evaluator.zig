@@ -3839,6 +3839,185 @@ test "native Sass meta mixin references reject invalid or unavailable reflection
     );
 }
 
+test "native Sass evaluates plain CSS function arguments before serialization" {
+    const input =
+        \\@use "sass:meta";
+        \\$evaluations: 0;
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\$name: outer;
+        \\.values {
+        \\  arithmetic: outer(1px + 2px);
+        \\  module: outer(meta.type-of(1));
+        \\  user: outer(mark(3));
+        \\  nested: outer(inner(mark(4)));
+        \\  spread: outer((a, b)...);
+        \\  interpolated: #{$name}(mark(5));
+        \\  escaped: o\75 ter(mark(6));
+        \\  nulls: outer(null, 1, null);
+        \\  empty: outer();
+        \\  trailing: outer(1,);
+        \\  var-empty: var(--missing,);
+        \\  url-data: url(data:image/svg+xml,%3Csvg%3E);
+        \\  literal: outer("mark(8)");
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "plain-css-function-arguments.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{arithmetic:outer(3px);module:outer(number);user:outer(3);nested:outer(inner(4));spread:outer(a, b);interpolated:outer(5);escaped:outer(6);nulls:outer(, 1, );empty:outer();trailing:outer(1);var-empty:var(--missing, );url-data:url(data:image/svg+xml,%3Csvg%3E);literal:outer(\"mark(8)\");evaluations:4}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$evaluations: 0
+        \\@function mark($value)
+        \\  $evaluations: $evaluations + 1 !global
+        \\  @return $value
+        \\.sass
+        \\  arithmetic: outer(1px + 2px)
+        \\  module: outer(m.type-of(1))
+        \\  user: outer(mark(3))
+        \\  evaluations: $evaluations
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "plain-css-function-arguments.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{arithmetic:outer(3px);module:outer(number);user:outer(3);evaluations:1}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass rejects non-CSS values in plain CSS function arguments" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "plain-css-callable-user.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: outer(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-builtin.scss",
+            .input = "@use \"sass:meta\"; .a { value: outer(meta.get-mixin(\"load-css\", \"meta\")); }",
+        },
+        .{
+            .name = "plain-css-callable-alias.scss",
+            .input = "@use \"sass:meta\" as reflect; @mixin local {} .a { value: outer(reflect.get_mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-star.scss",
+            .input = "@use \"sass:meta\" as *; @mixin local {} .a { value: outer(get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-nested.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: outer(inner(meta.get-mixin(\"local\"))); }",
+        },
+        .{
+            .name = "plain-css-callable-later-argument.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: outer(1, meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-user-function.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} @function reflected() { @return meta.get-mixin(\"local\"); } .a { value: outer(reflected()); }",
+        },
+        .{
+            .name = "plain-css-callable-var.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: var(--fallback, meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-url.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: url(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-rgb.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: rgb(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-lab.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: lab(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-color.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: color(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-calc.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: calc(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-min.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: min(meta.get-mixin(\"local\"), 1px); }",
+        },
+        .{
+            .name = "plain-css-callable-sin.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: sin(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-callable-opacity.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: opacity(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "plain-css-map.scss",
+            .input = ".a { value: outer((a: 1)); }",
+        },
+        .{
+            .name = "plain-css-keyword.scss",
+            .input = ".a { value: outer($value: 1); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "plain-css-function-argument-limit.scss",
+            ".a { value: outer(1, 2); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 4;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "plain-css-function-temporary-limit.scss",
+            ".a { value: outer(1); }",
+            .scss,
+            temporary_limits,
+        ),
+    );
+}
+
 test "native Sass meta accepts content reflects stable user and built-in mixin references" {
     const input =
         \\@use "sass:meta";
@@ -8834,6 +9013,7 @@ fn exerciseAllocationFailures(
         \\  list-zipped: $list-zipped;
         \\  list-slashed: $list-slashed;
         \\  function-value: allocation_value(2);
+        \\  plain-function: outer(allocation-value(2));
         \\  rest-function: allocation-rest(1, (2, 3)...);
         \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
         \\  inspected-keyword: allocation-keyword($value: 4);
@@ -8927,7 +9107,7 @@ fn exerciseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;math-pow:8;math-sqrt:9;math-log:3;math-pow-css:pow(var(--base),2);math-sin:.5;math-asin:30deg;math-atan2:45deg;math-sin-css:sin(var(--angle));math-min:1px;math-max:3px;math-clamp:2px;math-hypot:5px;math-hypot-frequency:2000.00025Hz;math-min-css:min(var(--minimum),2px);math-max-css:max(var(--maximum),2px);math-clamp-css:clamp(1px,var(--number),3px);math-hypot-css:hypot(var(--leg),4px);reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
+        ".card{width:6px;color:blue;gap:2px;enabled:true;list-appended:1px,2px,3px,4px;list-replaced:1px,5px,3px,4px;list-joined:1px,2px,3px,4px,6px,7px;list-zipped:1px a,2px b,3px c;list-slashed:1px 2px 3px/a b c;function-value:3;plain-function:outer(3);rest-function:2;forwarded-function:5;inspected-keyword:4;mixin-value:3;mixin-content:yes;content-item:a 1;content-item:b 1;conditional:2px;ephemeral:yes;for-loop:1;each-loop:only;while-loop:2;loop-after:2;flow-after:2px;converted:2in;cancelled:1;math-compatible:true;math-unitless:true;math-unit:\"in/s\";math-round:2px;math-percentage:12.5%;math-div:1;math-div-string:foo/bar;math-pow:8;math-sqrt:9;math-log:3;math-pow-css:pow(var(--base),2);math-sin:.5;math-asin:30deg;math-atan2:45deg;math-sin-css:sin(var(--angle));math-min:1px;math-max:3px;math-clamp:2px;math-hypot:5px;math-hypot-frequency:2000.00025Hz;math-min-css:min(var(--minimum),2px);math-max-css:max(var(--maximum),2px);math-clamp-css:clamp(1px,var(--number),3px);math-hypot-css:hypot(var(--leg),4px);reduced-calc:4px;deferred-calc:calc(100% - 2px);color:rgba(0,255,255,.4);red-channel:18;mixed-color:rgb(63.75,0,191.25);adjusted-color:rgb(26.8269230769,77.5,128.1730769231);keyword-color:#1c3456;hwb-keyword:#126fcc;modern-transform:lab(50 15 20);module-transform:lab(50 15 20);fixed-keyword:rgb(63.75,0,191.25);nth-keyword:b;constructor-keyword:rgba(255,0,0,.5);modern-color:oklab(.5 .04 -0.04/.5);wide-color:color(display-p3 1 0 -0.1/.5);map-keyword:blue;module-map:blue;map-has:true;map-first-key:tone;map-first-value:blue;map-merged:red;map-removed:false;map-set:green;map-nested-merged:3;map-nested-set:4;map-deep-merged:6;map-deep-removed:false;string-length:2;string-slice:\"lo\";string-quote:\"foo\";string-unquote:foo bar;string-index:2;string-insert:\"aXb\";string-upper:\"ABC-é\"}.card:hover{margin:3px}",
         result.css(),
     );
 }

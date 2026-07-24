@@ -3479,6 +3479,9 @@ const Engine = struct {
             var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
             return self.values.own(.{ .number = try numeric.toNumber(&numerator, &denominator) });
         }
+        if (try self.tryPlainCssFunctionCall(trimmed, scope, diagnostic_span)) |item| {
+            return item;
+        }
         if (try self.tryCollection(trimmed, scope, diagnostic_span)) |item| return item;
         const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
         defer self.allocator.free(rendered);
@@ -6006,6 +6009,121 @@ const Engine = struct {
             if (index != 0) try self.appendTemporary(&rendered, ",");
             try self.appendValue(&rendered, argument.*, false);
         }
+        try self.appendTemporary(&rendered, ")");
+        return self.values.own(.{ .string = .{ .bytes = rendered.items } });
+    }
+
+    fn tryPlainCssFunctionCall(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const opening = findTopLevelByte(raw, '(') orelse return null;
+        if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
+
+        const rendered_name = try self.renderBytes(raw[0..opening], scope, span, false);
+        defer self.allocator.free(rendered_name);
+        const name = (try self.decodeCssFunctionName(trimWhitespace(rendered_name))) orelse
+            return null;
+        defer self.allocator.free(name);
+
+        const body = raw[opening + 1 .. raw.len - 1];
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        if (std.ascii.eqlIgnoreCase(name, "url")) {
+            if (trimWhitespace(body).len != 0) {
+                try ranges.append(self.allocator, .{ .start = 0, .end = body.len });
+            }
+        } else {
+            _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        }
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+
+        var empty_var_fallback = false;
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) {
+                empty_var_fallback = std.ascii.eqlIgnoreCase(name, "var") and
+                    ranges.items.len > 1;
+                ranges.items.len -= 1;
+            }
+        }
+
+        var evaluated = try self.evaluateCallArguments(
+            body,
+            ranges.items,
+            scope,
+            span,
+        );
+        defer evaluated.deinit();
+        if (evaluated.keywords.items.len != 0) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "plain CSS functions do not accept Sass keyword arguments",
+            );
+            return error.InvalidExpression;
+        }
+        for (evaluated.positional.items) |argument| {
+            try self.ensureCssValue(argument.*, span);
+        }
+        return self.preservePlainCssFunction(
+            name,
+            evaluated.positional.items,
+            empty_var_fallback,
+        );
+    }
+
+    fn decodeCssFunctionName(
+        self: *Engine,
+        raw: []const u8,
+    ) Error!?[]u8 {
+        if (raw.len == 0) return null;
+        var decoded: std.ArrayList(u8) = .empty;
+        errdefer decoded.deinit(self.allocator);
+        var index: usize = 0;
+        var ordinal: usize = 0;
+        while (index < raw.len) : (ordinal += 1) {
+            const escaped = raw[index] == '\\';
+            const scalar = decodeCalculationIdentifierScalar(raw, index) orelse {
+                decoded.deinit(self.allocator);
+                return null;
+            };
+            if (!cssFunctionNameScalarAllowed(scalar.scalar, ordinal, escaped)) {
+                decoded.deinit(self.allocator);
+                return null;
+            }
+            if (escaped and !cssFunctionNameScalarAllowed(scalar.scalar, ordinal, false)) {
+                try self.appendTemporary(&decoded, raw[index..scalar.end]);
+            } else {
+                var encoded: [4]u8 = undefined;
+                const encoded_length = std.unicode.utf8Encode(scalar.scalar, &encoded) catch {
+                    decoded.deinit(self.allocator);
+                    return null;
+                };
+                try self.appendTemporary(&decoded, encoded[0..encoded_length]);
+            }
+            index = scalar.end;
+        }
+        return try decoded.toOwnedSlice(self.allocator);
+    }
+
+    fn preservePlainCssFunction(
+        self: *Engine,
+        name: []const u8,
+        arguments: []const *const native_value.Value,
+        empty_var_fallback: bool,
+    ) Error!*const native_value.Value {
+        var rendered: std.ArrayList(u8) = .empty;
+        defer rendered.deinit(self.allocator);
+        try self.appendTemporary(&rendered, name);
+        try self.appendTemporary(&rendered, "(");
+        for (arguments, 0..) |argument, index| {
+            if (index != 0) try self.appendTemporary(&rendered, ", ");
+            try self.appendValue(&rendered, argument.*, false);
+        }
+        if (empty_var_fallback) try self.appendTemporary(&rendered, ", ");
         try self.appendTemporary(&rendered, ")");
         return self.values.own(.{ .string = .{ .bytes = rendered.items } });
     }
@@ -11003,6 +11121,14 @@ fn calculationIdentifierEql(input: []const u8, expected: []const u8) bool {
         expected_index += 1;
     }
     return expected_index == expected.len;
+}
+
+fn cssFunctionNameScalarAllowed(scalar: u21, ordinal: usize, escaped: bool) bool {
+    if (scalar >= 0x80) return true;
+    const byte: u8 = @intCast(scalar);
+    if (escaped) return byte != 0;
+    if (std.ascii.isAlphabetic(byte) or byte == '_' or byte == '-') return true;
+    return ordinal > 0 and std.ascii.isDigit(byte);
 }
 
 fn decodeCalculationIdentifierScalar(
