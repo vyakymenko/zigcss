@@ -6591,6 +6591,153 @@ test "native Sass predefined colors reject unknown and ambiguous descriptions" {
     );
 }
 
+test "native Sass legacy if function binds and evaluates only the selected branch" {
+    const input =
+        \\@use "sass:meta";
+        \\$evaluations: 0;
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\@function if($condition, $if-true, $if-false) {
+        \\  @return overridden;
+        \\}
+        \\.values {
+        \\  truthy: if(true, 1, $missing);
+        \\  falsey: if(false, $missing, 2);
+        \\  nullish: if(null, $missing, 3);
+        \\  zero: if(0, 4, $missing);
+        \\  keyword-order: if($if-false: $missing, $condition: mark(true), $if-true: mark($evaluations));
+        \\  escaped: \69 f(true, 6, $missing);
+        \\  commented-false: if(false /* condition */, $missing, 7 /* selected */);
+        \\  trailing: if(true, 8, $missing,);
+        \\  selected-map: meta.type-of(if(true, (a: b), $missing));
+        \\  selected-null: if(true, null, $missing);
+        \\  nested: if(true, if(false, $missing, 5), $missing);
+        \\  arithmetic: if(true, 1, $missing) + 2;
+        \\  calculation: calc(if(true, 1px, $missing) + 1px);
+        \\  minimum: min(if(false, $missing, 2px), 3px);
+        \\  plain-nested: outer(if(true, 9, $missing));
+        \\  modern-css: if(style(--scheme: dark): white; else: black);
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-if-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{truthy:1;falsey:2;nullish:3;zero:4;keyword-order:1;escaped:6;commented-false:7;trailing:8;selected-map:map;nested:5;arithmetic:3;calculation:2px;minimum:2px;plain-nested:outer(9);modern-css:if(style(--scheme: dark): white; else: #000);evaluations:2}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), diagnostics.len);
+    for (diagnostics[0..5]) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "The Sass if() syntax is deprecated in favor of the modern CSS syntax.",
+            diagnostic.message,
+        );
+    }
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[5].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[5].code,
+    );
+    try std.testing.expectEqualStrings(
+        "11 repetitive deprecation warnings omitted.",
+        diagnostics[5].message,
+    );
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\.sass
+        \\  truthy: if(true, yes, $missing)
+        \\  falsey: if(false, $missing, no)
+        \\  reflected: m.function-exists("if")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-if-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{truthy:yes;falsey:no;reflected:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass legacy if function rejects malformed and unsupported calls within limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{ .name = "legacy-if-missing.scss", .input = ".a { value: if(true, 1); }" },
+        .{ .name = "legacy-if-extra.scss", .input = ".a { value: if(true, 1, 2, 3); }" },
+        .{ .name = "legacy-if-unknown.scss", .input = ".a { value: if($condition: true, $if-true: 1, $if-false: 2, $unknown: 3); }" },
+        .{ .name = "legacy-if-duplicate.scss", .input = ".a { value: if($condition: true, $if_true: 1, $if-true: 2, $if-false: 3); }" },
+        .{ .name = "legacy-if-order.scss", .input = ".a { value: if($condition: true, 1, 2); }" },
+        .{ .name = "legacy-if-invalid-clause.scss", .input = ".a { value: if(foo: red; else: blue); }" },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.UndefinedVariable,
+        compile(
+            std.testing.allocator,
+            "legacy-if-separated-name.scss",
+            ".a { value: if (true, 1, $missing); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-if-splat.scss",
+            ".a { value: if((true, 1, 2)...); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-if-argument-limit.scss",
+            ".a { value: if(true, 1, 2); }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass lazily evaluates bounded conditional chains" {
     const input =
         \\$enabled: true;
@@ -9125,6 +9272,69 @@ test "native Sass semantic core handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         backing.allocator(),
         exerciseAllocationFailures,
+        .{&context},
+    );
+}
+
+fn exerciseLegacyIfAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const AllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input =
+        \\@use "sass:meta";
+        \\$evaluations: 0;
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\.allocation {
+        \\  value: if($if-false: mark(9), $condition: mark(false), $if-true: $missing);
+        \\  evaluations: $evaluations;
+        \\  reflected: meta.function-exists("if");
+        \\}
+    ;
+    const source_id = try sources.add("legacy-if-allocation.scss", input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:9;evaluations:2;reflected:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), result.nativeDiagnostics().len);
+}
+
+test "native Sass legacy if function handles every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const context = AllocationContext{ .root = root };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLegacyIfAllocationFailures,
         .{&context},
     );
 }

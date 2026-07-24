@@ -628,6 +628,7 @@ const Engine = struct {
     expression_depth: u16 = 0,
     selector_count: usize = 0,
     selector_bytes: usize = 0,
+    legacy_if_deprecation_count: usize = 0,
     random_state: u64,
 
     fn init(
@@ -682,6 +683,7 @@ const Engine = struct {
             .parent = null,
         };
         try self.executeRootChildren(children, &scope, 1);
+        try self.reportLegacyIfDeprecationSummary(root.span);
         self.global_scope = scope.cursor;
     }
 
@@ -2093,6 +2095,7 @@ const Engine = struct {
         const opening = std.mem.indexOfScalar(u8, raw, '(') orelse return null;
         if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
         const raw_name = raw[0..opening];
+        if (legacyIfIdentifierEql(raw_name)) return null;
         if (!isSimpleIdentifier(raw_name)) return null;
         const function_id = try self.lookupUserFunction(raw_name, caller_scope) orelse return null;
         const body = raw[opening + 1 .. raw.len - 1];
@@ -3463,6 +3466,9 @@ const Engine = struct {
             defer self.allocator.free(rendered);
             return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = true } });
         }
+        if (try self.tryLegacyIfFunctionCall(trimmed, scope, diagnostic_span)) |item| {
+            return item;
+        }
         if (try self.tryUserFunctionCall(trimmed, scope, diagnostic_span)) |item| return item;
         if (try self.tryBuiltinCall(trimmed, scope, diagnostic_span)) |item| return item;
         if (sassCalculationValue(trimmed) != null) {
@@ -3486,6 +3492,160 @@ const Engine = struct {
         const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
         defer self.allocator.free(rendered);
         return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = false } });
+    }
+
+    fn tryLegacyIfFunctionCall(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const opening = findTopLevelByte(raw, '(') orelse return null;
+        if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
+        if (!legacyIfIdentifierEql(raw[0..opening])) return null;
+
+        const body = raw[opening + 1 .. raw.len - 1];
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(
+            self.allocator,
+            body,
+            .comma,
+            &ranges,
+        );
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+
+        // Modern CSS if() clauses put their first top-level colon before any
+        // comma. Legacy keyword calls instead begin that clause with `$`.
+        if (findTopLevelByte(body, ':')) |colon| {
+            const comma = findTopLevelByte(body, ',');
+            if (comma == null or colon < comma.?) {
+                const clause = trimWhitespace(body[0..colon]);
+                if (clause.len > 0 and clause[0] != '$' and isModernCssIfClause(clause)) {
+                    return null;
+                }
+            }
+        }
+
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if ((try self.expressionWithoutOuterTrivia(
+                body[final.start..final.end],
+            )).len == 0) {
+                ranges.items.len -= 1;
+            }
+        }
+
+        try self.reportLegacyIfDeprecation(span);
+        if (ranges.items.len > self.limits.max_function_arguments) {
+            return self.argumentsFailure(error.ArgumentLimitExceeded, span);
+        }
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges.items,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        for (parsed.items) |argument| {
+            if (argument.splat) return self.argumentsFailure(error.SplatUnsupported, span);
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "condition" },
+            .{ .name = "if-true" },
+            .{ .name = "if-false" },
+        };
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            &parameters,
+            parameters.len,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        const condition_range = bound.values[0].?;
+        const condition_source = try self.expressionWithoutOuterTrivia(
+            body[condition_range.start..condition_range.end],
+        );
+        if (condition_source.len == 0) {
+            try self.report(.syntax, span, "legacy Sass if() condition is empty");
+            return error.InvalidExpression;
+        }
+        const condition = try self.evaluateExpressionBytes(
+            condition_source,
+            scope,
+            span,
+        );
+        const selected_range = bound.values[if (sassTruthy(condition.*)) 1 else 2].?;
+        const selected_source = try self.expressionWithoutOuterTrivia(
+            body[selected_range.start..selected_range.end],
+        );
+        if (selected_source.len == 0) {
+            try self.report(.syntax, span, "selected legacy Sass if() branch is empty");
+            return error.InvalidExpression;
+        }
+        return try self.evaluateExpressionBytes(
+            selected_source,
+            scope,
+            span,
+        );
+    }
+
+    fn reportLegacyIfDeprecation(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error!void {
+        self.legacy_if_deprecation_count +|= 1;
+        if (self.legacy_if_deprecation_count > 5) return;
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "The Sass if() syntax is deprecated in favor of the modern CSS syntax.",
+            &.{},
+        );
+    }
+
+    fn reportLegacyIfDeprecationSummary(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error!void {
+        if (self.legacy_if_deprecation_count <= 5) return;
+        var buffer: [96]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &buffer,
+            "{d} repetitive deprecation warnings omitted.",
+            .{self.legacy_if_deprecation_count - 5},
+        ) catch unreachable;
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            message,
+            &.{},
+        );
+    }
+
+    fn expressionWithoutOuterTrivia(
+        self: *Engine,
+        raw: []const u8,
+    ) Error![]const u8 {
+        if (trimWhitespace(raw).len == 0) return "";
+        var options = native_lexer.Options{};
+        options.max_input_bytes = @max(raw.len, 1);
+        options.max_tokens = self.limits.max_expression_tokens;
+        const tokens = try native_lexer.tokenizeAlloc(self.allocator, raw, .scss, options);
+        defer self.allocator.free(tokens);
+
+        var start: ?usize = null;
+        var end: usize = 0;
+        for (tokens) |token| {
+            if (token.kind == .eof or isExpressionTrivia(token.kind)) continue;
+            if (start == null) start = token.span.start;
+            end = token.span.end;
+        }
+        return if (start) |offset| raw[offset..end] else "";
     }
 
     fn hasTopLevelListStructure(self: *Engine, raw: []const u8) Error!bool {
@@ -7995,7 +8155,10 @@ const Engine = struct {
         name: []const u8,
         scope: native_environment.ScopeId,
     ) Error!bool {
-        if ((try self.lookupUserFunction(name, scope)) != null or globalBuiltin(name) != null) {
+        if (std.mem.eql(u8, name, "if") or
+            (try self.lookupUserFunction(name, scope)) != null or
+            globalBuiltin(name) != null)
+        {
             return true;
         }
         for (self.modules.items) |binding| {
@@ -10326,11 +10489,27 @@ const ArithmeticParser = struct {
                 }
                 const closing = closing_index orelse return error.InvalidExpression;
                 const call = self.raw[token.span.start..self.tokens[closing].span.end];
-                _ = try self.engine.lookupUserFunction(token.raw(self.raw), self.scope) orelse
-                    return error.InvalidExpression;
                 self.cursor = closing + 1;
-                const item = (try self.engine.tryUserFunctionCall(call, self.scope, self.span)) orelse
-                    return error.InvalidExpression;
+                const item = if (try self.engine.tryLegacyIfFunctionCall(
+                    call,
+                    self.scope,
+                    self.span,
+                )) |selected|
+                    selected
+                else blk: {
+                    if (legacyIfIdentifierEql(token.raw(self.raw))) {
+                        return error.InvalidExpression;
+                    }
+                    _ = try self.engine.lookupUserFunction(
+                        token.raw(self.raw),
+                        self.scope,
+                    ) orelse return error.InvalidExpression;
+                    break :blk (try self.engine.tryUserFunctionCall(
+                        call,
+                        self.scope,
+                        self.span,
+                    )) orelse return error.InvalidExpression;
+                };
                 return switch (item.*) {
                     .number => |number| native_numeric.Numeric.fromNumber(number),
                     else => error.InvalidExpression,
@@ -11106,6 +11285,36 @@ const DecodedCalculationScalar = struct {
     scalar: u21,
     end: usize,
 };
+
+fn legacyIfIdentifierEql(input: []const u8) bool {
+    var input_index: usize = 0;
+    for ("if") |expected| {
+        const decoded = decodeCalculationIdentifierScalar(input, input_index) orelse
+            return false;
+        if (decoded.scalar != expected) return false;
+        input_index = decoded.end;
+    }
+    return input_index == input.len;
+}
+
+fn isModernCssIfClause(input: []const u8) bool {
+    var clause = trimWhitespace(input);
+    while (std.mem.startsWith(u8, clause, "not") and clause.len > "not".len and
+        isExpressionWhitespace(clause["not".len]))
+    {
+        clause = trimWhitespace(clause["not".len..]);
+    }
+    while (fullyWrapped(clause, '(', ')')) {
+        clause = trimWhitespace(clause[1 .. clause.len - 1]);
+    }
+    const opening = std.mem.indexOfScalar(u8, clause, '(') orelse return false;
+    const name = clause[0..opening];
+    const functions = [_][]const u8{ "sass", "style", "media", "supports" };
+    for (functions) |function| {
+        if (calculationIdentifierEql(name, function)) return true;
+    }
+    return false;
+}
 
 fn calculationIdentifierEql(input: []const u8, expected: []const u8) bool {
     var input_index: usize = 0;
