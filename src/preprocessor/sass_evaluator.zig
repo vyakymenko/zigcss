@@ -8423,11 +8423,15 @@ const Engine = struct {
                 self.invokeUserFunction(callable.id, &forwarded, span)
             else
                 self.metaCallFunctionFailure(span),
-            .builtin_function => (try self.invokeListFunction(
-                callable,
-                &forwarded,
-                span,
-            )) orelse return self.metaCallFunctionFailure(span),
+            .builtin_function => blk: {
+                if (try self.invokeListFunction(callable, &forwarded, span)) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeMapQueryFunction(callable, &forwarded, span)) |value| {
+                    break :blk value;
+                }
+                break :blk self.metaCallFunctionFailure(span);
+            },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
         };
     }
@@ -8529,6 +8533,103 @@ const Engine = struct {
         };
     }
 
+    fn invokeMapQueryFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null and reference.owner.? != .map) return null;
+        switch (reference.builtin) {
+            .map_get,
+            .map_has_key,
+            .map_keys,
+            .map_values,
+            => {},
+            else => return null,
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        return switch (reference.builtin) {
+            .map_get, .map_has_key => self.invokeMapLookupFunction(
+                reference.builtin,
+                arguments,
+                span,
+            ),
+            .map_keys, .map_values => self.invokeMapEntriesFunction(
+                reference.builtin,
+                arguments,
+                span,
+            ),
+            else => unreachable,
+        };
+    }
+
+    fn invokeMapLookupFunction(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.keywords.items.len == 0) {
+            return switch (builtin) {
+                .map_get => self.callMapGet(arguments.positional.items, span),
+                .map_has_key => self.callMapHasKey(arguments.positional.items, span),
+                else => unreachable,
+            };
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "map" },
+            .{ .name = "key" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+            bound.values[1].?,
+        };
+        return switch (builtin) {
+            .map_get => self.callMapGet(&ordered, span),
+            .map_has_key => self.callMapHasKey(&ordered, span),
+            else => unreachable,
+        };
+    }
+
+    fn invokeMapEntriesFunction(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const parameters = [_]native_arguments.Parameter{.{ .name = "map" }};
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{bound.values[0].?};
+        return self.callMapEntries(builtin, &ordered, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -8536,7 +8637,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user or list function reference",
+            "native Sass meta.call() requires an available user, list, or map query function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
