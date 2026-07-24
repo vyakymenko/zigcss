@@ -153,6 +153,7 @@ const Builtin = enum {
     meta_content_exists,
     meta_feature_exists,
     meta_function_exists,
+    meta_get_mixin,
     meta_global_variable_exists,
     meta_inspect,
     meta_keywords,
@@ -502,6 +503,11 @@ const BuiltinModule = enum {
     meta,
     selector,
     string,
+};
+
+const BuiltinMixin = enum(u32) {
+    meta_load_css,
+    meta_apply,
 };
 
 const max_random_limit: u64 = 1 << 32;
@@ -4437,6 +4443,7 @@ const Engine = struct {
             .meta_content_exists,
             .meta_feature_exists,
             .meta_function_exists,
+            .meta_get_mixin,
             .meta_global_variable_exists,
             .meta_inspect,
             .meta_keywords,
@@ -7620,6 +7627,76 @@ const Engine = struct {
         return self.values.own(.{ .boolean = self.active_content != null });
     }
 
+    fn callMetaGetMixin(
+        self: *Engine,
+        module_owned: bool,
+        arguments: []const *const native_value.Value,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (!module_owned) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.consumeOperations(1);
+
+        const name_string = try self.metaExistenceString(arguments[0].*, "name", span);
+        const raw_name = native_string.decodeAlloc(
+            self.allocator,
+            name_string.bytes,
+            name_string.quoted,
+            self.limits.max_temporary_bytes,
+        ) catch |err| return self.stringFailure(err, span);
+        defer self.allocator.free(raw_name);
+        const normalized = (try self.normalizeMetaExistenceName(raw_name, span)) orelse {
+            try self.report(.invalid_operation, span, "native Sass mixin reference was not found");
+            return error.InvalidExpression;
+        };
+        defer self.allocator.free(normalized);
+
+        const callable: native_value.Callable = if (arguments.len == 2) blk: {
+            const module = try self.metaExistenceModule(arguments[1].*, span) orelse {
+                const mixin_id = try self.lookupUserMixin(normalized, scope) orelse {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "native Sass mixin reference was not found",
+                    );
+                    return error.InvalidExpression;
+                };
+                break :blk .{ .kind = .mixin, .id = mixin_id };
+            };
+            const builtin = moduleBuiltinMixin(module, normalized) orelse {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass mixin reference was not found",
+                );
+                return error.InvalidExpression;
+            };
+            break :blk .{
+                .kind = .builtin_mixin,
+                .id = @intFromEnum(builtin),
+            };
+        } else blk: {
+            const mixin_id = try self.lookupUserMixin(normalized, scope) orelse {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass mixin reference was not found",
+                );
+                return error.InvalidExpression;
+            };
+            break :blk .{ .kind = .mixin, .id = mixin_id };
+        };
+        return self.values.own(.{ .callable = callable });
+    }
+
     fn callMetaExistence(
         self: *Engine,
         builtin: Builtin,
@@ -7673,8 +7750,8 @@ const Engine = struct {
                 moduleBuiltin(kind, normalized) != null
             else
                 try self.metaGlobalFunctionExists(normalized, scope),
-            .meta_mixin_exists => if (module != null)
-                false
+            .meta_mixin_exists => if (module) |kind|
+                moduleBuiltinMixin(kind, normalized) != null
             else
                 (try self.lookupUserMixin(normalized, scope)) != null,
             .meta_variable_exists => (try self.lookupVisibleVariable(scope, normalized)) != null or
@@ -7806,7 +7883,10 @@ const Engine = struct {
             .selector, .list => "list",
             .map => "map",
             .argument_list => "arglist",
-            .callable => |callable| if (callable.kind == .mixin) "mixin" else "function",
+            .callable => |callable| switch (callable.kind) {
+                .builtin_mixin, .mixin => "mixin",
+                .builtin_function, .user_function => "function",
+            },
         };
         return self.values.own(.{ .string = .{ .bytes = name } });
     }
@@ -8879,6 +8959,7 @@ const Engine = struct {
             .meta_content_exists => &.{},
             .meta_feature_exists => &.{.{ .name = "feature" }},
             .meta_function_exists,
+            .meta_get_mixin,
             .meta_global_variable_exists,
             .meta_mixin_exists,
             => &.{
@@ -9112,6 +9193,12 @@ const Engine = struct {
             .meta_calc_args => self.callMetaCalcArgs(arguments, scope, span),
             .meta_calc_name => self.callMetaCalcName(arguments, span),
             .meta_content_exists => self.callMetaContentExists(module_owned, span),
+            .meta_get_mixin => self.callMetaGetMixin(
+                module_owned,
+                arguments,
+                scope,
+                span,
+            ),
             .meta_feature_exists,
             .meta_function_exists,
             .meta_global_variable_exists,
@@ -10453,6 +10540,13 @@ fn moduleBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     };
 }
 
+fn moduleBuiltinMixin(kind: BuiltinModule, name: []const u8) ?BuiltinMixin {
+    if (kind != .meta) return null;
+    if (sassNameEql(name, "load-css")) return .meta_load_css;
+    if (sassNameEql(name, "apply")) return .meta_apply;
+    return null;
+}
+
 fn metaFeatureExists(name: []const u8) bool {
     const features = [_][]const u8{
         "global-variable-shadowing",
@@ -10591,6 +10685,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
         .{ .name = "content-exists", .builtin = .meta_content_exists },
         .{ .name = "feature-exists", .builtin = .meta_feature_exists },
         .{ .name = "function-exists", .builtin = .meta_function_exists },
+        .{ .name = "get-mixin", .builtin = .meta_get_mixin },
         .{ .name = "global-variable-exists", .builtin = .meta_global_variable_exists },
         .{ .name = "inspect", .builtin = .meta_inspect },
         .{ .name = "mixin-exists", .builtin = .meta_mixin_exists },
@@ -10657,6 +10752,7 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "content-exists")) return .meta_content_exists;
     if (sassNameEql(name, "feature-exists")) return .meta_feature_exists;
     if (sassNameEql(name, "function-exists")) return .meta_function_exists;
+    if (sassNameEql(name, "get-mixin")) return .meta_get_mixin;
     if (sassNameEql(name, "global-variable-exists")) return .meta_global_variable_exists;
     if (sassNameEql(name, "inspect")) return .meta_inspect;
     if (sassNameEql(name, "keywords")) return .meta_keywords;

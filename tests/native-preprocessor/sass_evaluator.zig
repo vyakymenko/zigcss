@@ -3653,6 +3653,192 @@ test "native Sass meta content existence rejects calls outside a mixin body" {
     }
 }
 
+test "native Sass meta mixin references preserve callable identity and module ownership" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\$evaluations: 0;
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\@mixin first_name {}
+        \\@mixin second {}
+        \\$first: meta.get-mixin("first-name");
+        \\$escaped: meta.get-mixin("\66 irst-name");
+        \\$marked: meta.get-mixin(mark("first_name"), mark(null));
+        \\@mixin first-name {}
+        \\$replacement: meta.get-mixin("first-name");
+        \\.values {
+        \\  type: meta.type-of($first);
+        \\  same: $first == $escaped;
+        \\  redefined: $first == $replacement;
+        \\  different: $first == meta.get-mixin("second");
+        \\  alias: reflect.type-of(reflect.get_mixin("second"));
+        \\  star: type-of(get-mixin("second"));
+        \\  builtin: meta.type-of(meta.get-mixin("load-css", "meta"));
+        \\  builtin-alias: meta.get-mixin("load_css", "meta") == reflect.get-mixin("load-css", "reflect");
+        \\  builtin-apply: meta.type-of(meta.get-mixin("apply", "meta"));
+        \\  builtin-distinct: meta.get-mixin("load-css", "meta") == meta.get-mixin("apply", "meta");
+        \\  builtin-reflected: meta.mixin-exists("load-css", "meta");
+        \\  apply-reflected: meta.mixin-exists("apply", "meta");
+        \\  reflected: meta.function-exists("get-mixin", "meta");
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-mixin-references.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{type:mixin;same:true;redefined:false;different:false;alias:mixin;star:mixin;builtin:mixin;builtin-alias:true;builtin-apply:mixin;builtin-distinct:false;builtin-reflected:true;apply-reflected:true;reflected:true;evaluations:2}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@mixin first_name
+        \\  $inside: true
+        \\.sass
+        \\  type: m.type-of(m.get-mixin("first-name"))
+        \\  same: m.get-mixin("first_name") == m.get-mixin("first-name")
+        \\  builtin: m.type-of(m.get-mixin("load-css", "m"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-mixin-references.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:mixin;same:true;builtin:mixin}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta mixin references preserve the legacy warning" {
+    const input =
+        \\@use "sass:meta";
+        \\@mixin legacy_probe {}
+        \\.legacy { type: meta.type-of(get-mixin("legacy-probe")); }
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-mixin-reference-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".legacy{type:mixin}", result.css());
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta mixin references reject invalid or unavailable reflection" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-get-mixin-before-declaration.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-mixin(\"later\"); @mixin later {}",
+        },
+        .{
+            .name = "meta-get-mixin-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-mixin(\"missing\")); }",
+        },
+        .{
+            .name = "meta-get-mixin-case.scss",
+            .input = "@use \"sass:meta\"; @mixin Mixed {} .a { value: meta.type-of(meta.get-mixin(\"mixed\")); }",
+        },
+        .{
+            .name = "meta-get-mixin-local-builtin.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-mixin(\"load-css\")); }",
+        },
+        .{
+            .name = "meta-get-mixin-user-from-module.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.type-of(meta.get-mixin(\"local\", \"meta\")); }",
+        },
+        .{
+            .name = "meta-get-mixin-loaded-module-missing.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.type-of(meta.get-mixin(\"ceil\", \"math\")); }",
+        },
+        .{
+            .name = "meta-get-mixin-unloaded-module.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-mixin(\"load-css\", \"reflect\")); }",
+        },
+        .{
+            .name = "meta-get-mixin-number-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-mixin(1)); }",
+        },
+        .{
+            .name = "meta-get-mixin-number-module.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.type-of(meta.get-mixin(\"local\", 1)); }",
+        },
+        .{
+            .name = "meta-get-mixin-missing-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-mixin()); }",
+        },
+        .{
+            .name = "meta-get-mixin-too-many.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.type-of(meta.get-mixin(\"local\", null, 1)); }",
+        },
+        .{
+            .name = "meta-get-mixin-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.type-of(meta.get-mixin($mixin: \"local\")); }",
+        },
+        .{
+            .name = "meta-get-mixin-callable-inspection.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.inspect(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "meta-get-mixin-callable-css.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.get-mixin(\"local\"); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 3;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-get-mixin-temporary-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-mixin(\"long-name\")); }",
+            .scss,
+            temporary_limits,
+        ),
+    );
+}
+
 test "native Sass meta inspection rejects unavailable or invalid calls" {
     const invalid = [_]struct {
         name: []const u8,
@@ -8747,6 +8933,8 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  variable: meta.variable-exists("calculation");
         \\  global: meta.global-variable-exists("calculation");
         \\  module: meta.function-exists("ceil", "numbers");
+        \\  mixin-reference: meta.type-of(meta.get-mixin("allocation-mixin"));
+        \\  builtin-mixin-reference: meta.type-of(meta.get-mixin("load-css", "meta"));
         \\}
         \\@include content-probe { .payload { ok: yes; } }
     ;
@@ -8767,7 +8955,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;mixin-reference:mixin;builtin-mixin-reference:mixin}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

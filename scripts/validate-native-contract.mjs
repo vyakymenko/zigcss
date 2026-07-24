@@ -154,6 +154,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-existence-queries',
       'built-in-meta-inspection',
       'built-in-meta-keywords',
+      'built-in-meta-mixin-references',
       'built-in-selector-parse-simple',
       'built-in-selector-composition',
       'built-in-selector-relations',

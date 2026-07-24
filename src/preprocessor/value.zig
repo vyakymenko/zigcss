@@ -28,6 +28,7 @@ pub const ColorSpace = enum {
 
 pub const CallableKind = enum {
     builtin_function,
+    builtin_mixin,
     user_function,
     mixin,
 };
