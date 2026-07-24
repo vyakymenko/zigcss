@@ -148,6 +148,7 @@ const Builtin = enum {
     math_tan,
     math_unit,
     math_clamp,
+    meta_accepts_content,
     meta_calc_args,
     meta_calc_name,
     meta_content_exists,
@@ -4438,6 +4439,7 @@ const Engine = struct {
             .math_sqrt,
             .math_tan,
             .math_unit,
+            .meta_accepts_content,
             .meta_calc_args,
             .meta_calc_name,
             .meta_content_exists,
@@ -7627,6 +7629,51 @@ const Engine = struct {
         return self.values.own(.{ .boolean = self.active_content != null });
     }
 
+    fn callMetaAcceptsContent(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "meta.accepts-content() requires exactly one argument",
+            );
+            return error.InvalidExpression;
+        }
+        try self.transaction.consumeOperations(1);
+        const callable = switch (arguments[0].*) {
+            .callable => |value| value,
+            else => return self.metaAcceptsContentTypeFailure(span),
+        };
+        const accepts_content = switch (callable.kind) {
+            .mixin => if (callable.id < self.user_mixins.items.len)
+                self.user_mixins.items[callable.id].accepts_content
+            else
+                return self.metaAcceptsContentTypeFailure(span),
+            .builtin_mixin => switch (std.meta.intToEnum(BuiltinMixin, callable.id) catch
+                return self.metaAcceptsContentTypeFailure(span)) {
+                .meta_load_css => false,
+                .meta_apply => true,
+            },
+            .builtin_function, .user_function => return self.metaAcceptsContentTypeFailure(span),
+        };
+        return self.values.own(.{ .boolean = accepts_content });
+    }
+
+    fn metaAcceptsContentTypeFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "meta.accepts-content() requires a mixin reference",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
     fn callMetaGetMixin(
         self: *Engine,
         module_owned: bool,
@@ -8955,6 +9002,7 @@ const Engine = struct {
             },
             .math_is_unitless => &.{.{ .name = "number" }},
             .math_unit => &.{.{ .name = "number" }},
+            .meta_accepts_content => &.{.{ .name = "mixin" }},
             .meta_calc_args, .meta_calc_name => &.{.{ .name = "calc" }},
             .meta_content_exists => &.{},
             .meta_feature_exists => &.{.{ .name = "feature" }},
@@ -9190,6 +9238,7 @@ const Engine = struct {
                 span,
             ),
             .math_unit => self.callMathUnit(arguments, span),
+            .meta_accepts_content => self.callMetaAcceptsContent(arguments, span),
             .meta_calc_args => self.callMetaCalcArgs(arguments, scope, span),
             .meta_calc_name => self.callMetaCalcName(arguments, span),
             .meta_content_exists => self.callMetaContentExists(module_owned, span),
@@ -10747,6 +10796,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
 }
 
 fn metaModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "accepts-content")) return .meta_accepts_content;
     if (sassNameEql(name, "calc-args")) return .meta_calc_args;
     if (sassNameEql(name, "calc-name")) return .meta_calc_name;
     if (sassNameEql(name, "content-exists")) return .meta_content_exists;

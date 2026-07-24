@@ -3839,6 +3839,118 @@ test "native Sass meta mixin references reject invalid or unavailable reflection
     );
 }
 
+test "native Sass meta accepts content reflects stable user and built-in mixin references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\$evaluations: 0;
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  @return $value;
+        \\}
+        \\@mixin none {}
+        \\$old: meta.get-mixin("none");
+        \\@mixin none { @content; }
+        \\$new: meta.get-mixin("none");
+        \\@mixin direct { @content; }
+        \\@mixin nested { @if true { @content; } }
+        \\.values {
+        \\  old: meta.accepts-content($old);
+        \\  new: meta.accepts-content($new);
+        \\  direct: meta.accepts-content(meta.get-mixin("direct"));
+        \\  nested: meta.accepts-content(meta.get-mixin("nested"));
+        \\  marked: meta.accepts-content(mark(meta.get-mixin("direct")));
+        \\  keyword: meta.accepts-content($mixin: meta.get-mixin("direct"));
+        \\  alias: reflect.accepts_content(reflect.get_mixin("direct"));
+        \\  star: accepts-content(get-mixin("direct"));
+        \\  load: meta.accepts-content(meta.get-mixin("load-css", "meta"));
+        \\  load-alias: reflect.accepts-content(reflect.get-mixin("load_css", "reflect"));
+        \\  apply: meta.accepts-content(meta.get-mixin("apply", "meta"));
+        \\  reflected: meta.function-exists("accepts-content", "meta");
+        \\  evaluations: $evaluations;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-accepts-content.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{old:false;new:true;direct:true;nested:true;marked:true;keyword:true;alias:true;star:true;load:false;load-alias:false;apply:true;reflected:true;evaluations:1}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@mixin contentful
+        \\  @content
+        \\.sass
+        \\  user: m.accepts-content(m.get-mixin("contentful"))
+        \\  load: m.accepts-content(m.get-mixin("load-css", "m"))
+        \\  apply: m.accepts-content(m.get-mixin("apply", "m"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-accepts-content.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{user:true;load:false;apply:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta accepts content rejects invalid or unavailable calls" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-accepts-content-missing-module.scss",
+            .input = "@mixin local {} .a { value: meta.accepts-content(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "meta-accepts-content-case-module.scss",
+            .input = "@use \"sass:meta\" as Meta; @mixin local {} .a { value: meta.accepts-content(Meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "meta-accepts-content-string.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.accepts-content(\"local\"); }",
+        },
+        .{
+            .name = "meta-accepts-content-number.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.accepts-content(1); }",
+        },
+        .{
+            .name = "meta-accepts-content-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.accepts-content(); }",
+        },
+        .{
+            .name = "meta-accepts-content-too-many.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.accepts-content(meta.get-mixin(\"local\"), 1); }",
+        },
+        .{
+            .name = "meta-accepts-content-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.accepts-content($value: meta.get-mixin(\"local\")); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass meta inspection rejects unavailable or invalid calls" {
     const invalid = [_]struct {
         name: []const u8,
@@ -8935,6 +9047,9 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  module: meta.function-exists("ceil", "numbers");
         \\  mixin-reference: meta.type-of(meta.get-mixin("allocation-mixin"));
         \\  builtin-mixin-reference: meta.type-of(meta.get-mixin("load-css", "meta"));
+        \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
+        \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
+        \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
         \\}
         \\@include content-probe { .payload { ok: yes; } }
     ;
@@ -8955,7 +9070,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;mixin-reference:mixin;builtin-mixin-reference:mixin}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;mixin-reference:mixin;builtin-mixin-reference:mixin;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
