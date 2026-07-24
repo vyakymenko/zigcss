@@ -3810,10 +3810,6 @@ test "native Sass meta mixin references reject invalid or unavailable reflection
             .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.type-of(meta.get-mixin($mixin: \"local\")); }",
         },
         .{
-            .name = "meta-get-mixin-callable-inspection.scss",
-            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.inspect(meta.get-mixin(\"local\")); }",
-        },
-        .{
             .name = "meta-get-mixin-callable-css.scss",
             .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.get-mixin(\"local\"); }",
         },
@@ -3956,6 +3952,80 @@ test "native Sass meta function references preserve the legacy warning" {
     );
 }
 
+test "native Sass meta inspection renders function and mixin references canonically" {
+    const input =
+        \\@use "sass:color";
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:math";
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\@use "sass:string";
+        \\@function first_name($value) { @return $value; }
+        \\@mixin first_mixin {}
+        \\$user-function: meta.get-function("first_name");
+        \\$user-mixin: meta.get-mixin("first_mixin");
+        \\.values {
+        \\  user-function: meta.inspect($user-function);
+        \\  global-map: meta.inspect(meta.get-function("map_get"));
+        \\  global-list: meta.inspect(meta.get-function("index"));
+        \\  global-math: meta.inspect(meta.get-function("comparable"));
+        \\  global-string: meta.inspect(meta.get-function("str_length"));
+        \\  module-color: meta.inspect(meta.get-function("adjust", $module: "color"));
+        \\  module-list: meta.inspect(meta.get-function("is_bracketed", $module: "list"));
+        \\  module-map: meta.inspect(meta.get-function("deep_merge", $module: "map"));
+        \\  module-math: meta.inspect(meta.get-function("is_unitless", $module: "math"));
+        \\  module-meta: meta.inspect(meta.get-function("accepts_content", $module: "meta"));
+        \\  module-selector: meta.inspect(meta.get-function("simple_selectors", $module: "selector"));
+        \\  module-string: meta.inspect(meta.get-function("to_upper_case", $module: "string"));
+        \\  conditional: meta.inspect(meta.get-function("if"));
+        \\  user-mixin: meta.inspect($user-mixin);
+        \\  builtin-mixin: meta.inspect(meta.get-mixin("load_css", "meta"));
+        \\  nested: meta.inspect(($user-function, (kind: $user-mixin)));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-callable-inspection.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{user-function:get-function(\"first-name\");global-map:get-function(\"map-get\");global-list:get-function(\"index\");global-math:get-function(\"comparable\");global-string:get-function(\"str-length\");module-color:get-function(\"adjust\");module-list:get-function(\"is-bracketed\");module-map:get-function(\"deep-merge\");module-math:get-function(\"is-unitless\");module-meta:get-function(\"accepts-content\");module-selector:get-function(\"simple-selectors\");module-string:get-function(\"to-upper-case\");conditional:get-function(\"if\");user-mixin:get-mixin(\"first-mixin\");builtin-mixin:get-mixin(\"load-css\");nested:get-function(\"first-name\"), (kind: get-mixin(\"first-mixin\"))}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math"
+        \\@function first_name($value)
+        \\  @return $value
+        \\@mixin first_mixin
+        \\  $inside: true
+        \\.sass
+        \\  function: m.inspect(m.get-function("first_name"))
+        \\  module: m.inspect(m.get-function("ceil", $module: "math"))
+        \\  mixin: m.inspect(m.get-mixin("first_mixin"))
+        \\  builtin-mixin: m.inspect(m.get-mixin("apply", "m"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-callable-inspection.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{function:get-function(\"first-name\");module:get-function(\"ceil\");mixin:get-mixin(\"first-mixin\");builtin-mixin:get-mixin(\"apply\")}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass meta function references reject invalid or unavailable reflection" {
     const invalid = [_]struct {
         name: []const u8,
@@ -4020,10 +4090,6 @@ test "native Sass meta function references reject invalid or unavailable reflect
         .{
             .name = "meta-get-function-invalid-name.scss",
             .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"not valid\")); }",
-        },
-        .{
-            .name = "meta-get-function-callable-inspection.scss",
-            .input = "@use \"sass:meta\"; @function local() { @return 1; } .a { value: meta.inspect(meta.get-function(\"local\")); }",
         },
         .{
             .name = "meta-get-function-callable-invocation.scss",
@@ -9982,6 +10048,11 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  same-function-reference: meta.get-function("ceil", $module: "numbers") == meta.get-function("ceil", $module: "numbers");
         \\  mixin-reference: meta.type-of(meta.get-mixin("allocation-mixin"));
         \\  builtin-mixin-reference: meta.type-of(meta.get-mixin("load-css", "meta"));
+        \\  user-function-inspect: meta.inspect(meta.get-function("allocation-function"));
+        \\  global-function-inspect: meta.inspect(meta.get-function("length"));
+        \\  module-function-inspect: meta.inspect(meta.get-function("ceil", $module: "numbers"));
+        \\  mixin-inspect: meta.inspect(meta.get-mixin("allocation-mixin"));
+        \\  builtin-mixin-inspect: meta.inspect(meta.get-mixin("load-css", "meta"));
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -10005,7 +10076,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

@@ -65,6 +65,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-keywords'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-mixin-references'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-sass-function-references'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-callable-inspection'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-content-acceptance'), true)
   assert.equal(sassCore.capabilities.includes('plain-css-function-argument-evaluation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-parse-simple'), true)

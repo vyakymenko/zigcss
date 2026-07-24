@@ -8460,7 +8460,7 @@ const Engine = struct {
         defer rendered.deinit(self.allocator);
         self.appendInspectedValue(&rendered, arguments[0].*, .root) catch |err| switch (err) {
             error.InvalidExpression => {
-                try self.report(.type_mismatch, span, "native Sass callable inspection is not yet available");
+                try self.report(.type_mismatch, span, "native Sass callable reference is invalid");
                 return error.InvalidExpression;
             },
             else => return err,
@@ -10482,8 +10482,49 @@ const Engine = struct {
                 }
                 if (parenthesized) try self.appendTemporary(output, ",)");
             },
-            .callable => return error.InvalidExpression,
+            .callable => |callable| try self.appendInspectedCallable(output, callable),
         }
+    }
+
+    fn appendInspectedCallable(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        callable: native_value.Callable,
+    ) Error!void {
+        const kind: []const u8 = switch (callable.kind) {
+            .builtin_function, .user_function => "function",
+            .builtin_mixin, .mixin => "mixin",
+        };
+        const name: []const u8 = switch (callable.kind) {
+            .user_function => if (callable.id < self.user_functions.items.len)
+                self.user_functions.items[callable.id].name
+            else
+                return error.InvalidExpression,
+            .mixin => if (callable.id < self.user_mixins.items.len)
+                self.user_mixins.items[callable.id].name
+            else
+                return error.InvalidExpression,
+            .builtin_function => builtinFunctionCallableName(callable.id) orelse
+                return error.InvalidExpression,
+            .builtin_mixin => switch (std.meta.intToEnum(BuiltinMixin, callable.id) catch
+                return error.InvalidExpression) {
+                .meta_load_css => "load-css",
+                .meta_apply => "apply",
+            },
+        };
+
+        try self.appendTemporary(output, "get-");
+        try self.appendTemporary(output, kind);
+        try self.appendTemporary(output, "(\"");
+        var segment_start: usize = 0;
+        for (name, 0..) |byte, index| {
+            if (byte != '_') continue;
+            try self.appendTemporary(output, name[segment_start..index]);
+            try self.appendTemporary(output, "-");
+            segment_start = index + 1;
+        }
+        try self.appendTemporary(output, name[segment_start..]);
+        try self.appendTemporary(output, "\")");
     }
 
     fn appendInspectedCalculation(
@@ -11206,6 +11247,79 @@ fn builtinIfFunctionCallable() native_value.Callable {
         .kind = .builtin_function,
         .id = builtin_function_member_mask,
     };
+}
+
+fn builtinFunctionCallableName(id: u32) ?[]const u8 {
+    if (id == builtin_function_member_mask) return "if";
+
+    const member = std.meta.intToEnum(Builtin, id & builtin_function_member_mask) catch
+        return null;
+    const encoded_origin = id >> builtin_function_origin_shift;
+    if (encoded_origin == 0) return globalBuiltinCallableName(member);
+
+    const owner = std.meta.intToEnum(BuiltinModule, encoded_origin - 1) catch
+        return null;
+    return moduleBuiltinCallableName(owner, member);
+}
+
+fn globalBuiltinCallableName(builtin: Builtin) ?[]const u8 {
+    const tag_name = @tagName(builtin);
+    const candidate: []const u8 = switch (builtin) {
+        .math_compatible => "comparable",
+        .math_is_unitless => "unitless",
+        .minimum => "min",
+        .maximum => "max",
+        .calculation => "calc",
+        .list_index,
+        .list_is_bracketed,
+        .list_append,
+        .list_set_nth,
+        .list_join,
+        .list_zip,
+        => tag_name["list_".len..],
+        else => if (std.mem.startsWith(u8, tag_name, "math_"))
+            tag_name["math_".len..]
+        else if (std.mem.startsWith(u8, tag_name, "meta_"))
+            tag_name["meta_".len..]
+        else
+            tag_name,
+    };
+    return if (globalBuiltin(candidate) == builtin) candidate else null;
+}
+
+fn moduleBuiltinCallableName(owner: BuiltinModule, builtin: Builtin) ?[]const u8 {
+    const tag_name = @tagName(builtin);
+    const candidate: []const u8 = switch (owner) {
+        .color => if (std.mem.endsWith(u8, tag_name, "_color"))
+            tag_name[0 .. tag_name.len - "_color".len]
+        else
+            return null,
+        .list => if (std.mem.startsWith(u8, tag_name, "list_"))
+            tag_name["list_".len..]
+        else
+            tag_name,
+        .map => if (std.mem.startsWith(u8, tag_name, "map_"))
+            tag_name["map_".len..]
+        else
+            return null,
+        .math => if (std.mem.startsWith(u8, tag_name, "math_"))
+            tag_name["math_".len..]
+        else
+            return null,
+        .meta => if (std.mem.startsWith(u8, tag_name, "meta_"))
+            tag_name["meta_".len..]
+        else
+            return null,
+        .selector => if (std.mem.startsWith(u8, tag_name, "selector_"))
+            tag_name["selector_".len..]
+        else
+            return null,
+        .string => if (std.mem.startsWith(u8, tag_name, "str_"))
+            tag_name["str_".len..]
+        else
+            tag_name,
+    };
+    return if (moduleBuiltin(owner, candidate) == builtin) candidate else null;
 }
 
 fn moduleBuiltinMixin(kind: BuiltinModule, name: []const u8) ?BuiltinMixin {
