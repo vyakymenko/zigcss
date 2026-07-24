@@ -204,6 +204,7 @@ const expectedImplementations = Object.freeze([
       'lazy-conditional-emission',
       'lazy-legacy-if-function',
       'legacy-if-final-splat-expansion',
+      'legacy-if-single-misplaced-rest-expansion',
       'flow-control-variable-scope',
       'bounded-control-flow-loops',
       'bounded-user-functions',

@@ -629,6 +629,7 @@ const Engine = struct {
     selector_count: usize = 0,
     selector_bytes: usize = 0,
     legacy_if_deprecation_count: usize = 0,
+    misplaced_rest_deprecation_count: usize = 0,
     random_state: u64,
 
     fn init(
@@ -3544,7 +3545,6 @@ const Engine = struct {
             }
         }
 
-        try self.reportLegacyIfDeprecation(span);
         if (ranges.items.len > self.limits.max_function_arguments) {
             return self.argumentsFailure(error.ArgumentLimitExceeded, span);
         }
@@ -3558,25 +3558,34 @@ const Engine = struct {
         var splat_index: ?usize = null;
         for (parsed.items, 0..) |argument, index| {
             if (!argument.splat) continue;
-            if (splat_index != null or index + 1 != parsed.items.len) {
+            if (splat_index != null) {
                 try self.report(
                     .unsupported_feature,
                     span,
-                    "non-final or multiple legacy if() splats are not implemented by the native evaluator yet",
+                    "multiple legacy if() splats are not implemented by the native evaluator yet",
                 );
                 return error.UnsupportedFeature;
             }
             splat_index = index;
         }
-        if (splat_index != null) {
+        if (splat_index) |index| {
+            if (index + 1 != parsed.items.len) {
+                try self.reportMisplacedRestDeprecation(
+                    parsed.items[index + 1].name != null,
+                    span,
+                );
+            }
+            try self.reportLegacyIfDeprecation(span);
             return try self.evaluateLegacyIfSplatCall(
                 body,
                 parsed.items,
+                index,
                 scope,
                 span,
             );
         }
 
+        try self.reportLegacyIfDeprecation(span);
         const parameters = [_]native_arguments.Parameter{
             .{ .name = "condition" },
             .{ .name = "if-true" },
@@ -3622,11 +3631,12 @@ const Engine = struct {
         self: *Engine,
         body: []const u8,
         arguments: []const native_arguments.Argument,
+        splat_index: usize,
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        std.debug.assert(arguments.len > 0 and arguments[arguments.len - 1].splat);
-        const splat = arguments[arguments.len - 1];
+        std.debug.assert(splat_index < arguments.len and arguments[splat_index].splat);
+        const splat = arguments[splat_index];
         const splat_item = try self.evaluateExpressionBytes(
             body[splat.value.start..splat.value.end],
             scope,
@@ -3638,7 +3648,8 @@ const Engine = struct {
 
         var evaluated = EvaluatedCallArguments{ .allocator = self.allocator };
         defer evaluated.deinit();
-        for (arguments[0 .. arguments.len - 1]) |argument| {
+        for (arguments, 0..) |argument, index| {
+            if (index == splat_index) continue;
             const item = try self.evaluateExpressionBytes(
                 body[argument.value.start..argument.value.end],
                 scope,
@@ -3689,6 +3700,25 @@ const Engine = struct {
         return bound.values[if (sassTruthy(condition.*)) 1 else 2].?;
     }
 
+    fn reportMisplacedRestDeprecation(
+        self: *Engine,
+        named: bool,
+        span: native_source.Span,
+    ) Error!void {
+        self.misplaced_rest_deprecation_count +|= 1;
+        if (self.misplaced_rest_deprecation_count > 5) return;
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            if (named)
+                "Named arguments must come before rest arguments. This will be an error in Dart Sass 2.0.0."
+            else
+                "Positional arguments must come before rest arguments. This will be an error in Dart Sass 2.0.0.",
+            &.{},
+        );
+    }
+
     fn reportLegacyIfDeprecation(
         self: *Engine,
         span: native_source.Span,
@@ -3708,12 +3738,14 @@ const Engine = struct {
         self: *Engine,
         span: native_source.Span,
     ) Error!void {
-        if (self.legacy_if_deprecation_count <= 5) return;
+        const omitted = (self.legacy_if_deprecation_count -| 5) +|
+            (self.misplaced_rest_deprecation_count -| 5);
+        if (omitted == 0) return;
         var buffer: [96]u8 = undefined;
         const message = std.fmt.bufPrint(
             &buffer,
             "{d} repetitive deprecation warnings omitted.",
-            .{self.legacy_if_deprecation_count - 5},
+            .{omitted},
         ) catch unreachable;
         try self.transaction.report(
             .warning,

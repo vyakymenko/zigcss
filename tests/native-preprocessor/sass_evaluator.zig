@@ -6770,6 +6770,104 @@ test "native Sass legacy if function expands one final splat eagerly" {
     try std.testing.expectEqual(@as(usize, 3), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass legacy if function preserves one misplaced rest argument" {
+    const input =
+        \\$trace: "";
+        \\@function mark($tag, $value) {
+        \\  $trace: "#{$trace}#{$tag}," !global;
+        \\  @return $value;
+        \\}
+        \\$map: ("condition": false);
+        \\.values {
+        \\  scalar: if(true..., 1, 2);
+        \\  list: if((true, 3)..., 4);
+        \\  middle: if(mark(condition, true), mark(rest, 5)..., mark(false-branch, 6));
+        \\  map: if($map..., $if-true: 7, $if-false: 8);
+        \\  mixed: if(true..., 9, $if-false: 10);
+        \\  named: if(false..., $if-true: yes, $if-false: no);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-if-misplaced-rest.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{scalar:2;list:true;middle:6;map:8;mixed:true;named:no;trace:\"rest,condition,false-branch,\"}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 11), diagnostics.len);
+    for (0..5) |index| {
+        const misplaced = diagnostics[index * 2];
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            misplaced.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            misplaced.code,
+        );
+        try std.testing.expectEqualStrings(
+            if (index == 3)
+                "Named arguments must come before rest arguments. This will be an error in Dart Sass 2.0.0."
+            else
+                "Positional arguments must come before rest arguments. This will be an error in Dart Sass 2.0.0.",
+            misplaced.message,
+        );
+
+        const legacy_if = diagnostics[index * 2 + 1];
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            legacy_if.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            legacy_if.code,
+        );
+        try std.testing.expectEqualStrings(
+            "The Sass if() syntax is deprecated in favor of the modern CSS syntax.",
+            legacy_if.message,
+        );
+    }
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[10].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[10].code,
+    );
+    try std.testing.expectEqualStrings(
+        "2 repetitive deprecation warnings omitted.",
+        diagnostics[10].message,
+    );
+
+    const indented =
+        \\$arg: false
+        \\.sass
+        \\  positional: if($arg..., yes, no)
+        \\  named: if($arg..., $if-true: yes, $if-false: no)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-if-misplaced-rest.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{positional:no;named:no}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 4), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass legacy if function rejects malformed and unsupported calls within limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -6806,8 +6904,8 @@ test "native Sass legacy if function rejects malformed and unsupported calls wit
         error.UnsupportedFeature,
         compile(
             std.testing.allocator,
-            "legacy-if-splat.scss",
-            ".a { value: if(true..., 1, 2); }",
+            "legacy-if-multiple-splats.scss",
+            "$positional: true, 1; $keywords: (\"if-false\": 2); .a { value: if($positional..., $keywords...); }",
             .scss,
             .{},
         ),
@@ -9406,6 +9504,7 @@ fn exerciseLegacyIfAllocationFailures(
         \\.allocation {
         \\  value: if($if-false: mark(9), $condition: mark(false), $if-true: $missing);
         \\  splat: if((false, mark(8), mark(9))...);
+        \\  misplaced: if(mark(false)..., mark(10), mark(11));
         \\  evaluations: $evaluations;
         \\  reflected: meta.function-exists("if");
         \\}
@@ -9427,10 +9526,10 @@ fn exerciseLegacyIfAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{value:9;splat:9;evaluations:4;reflected:true}",
+        ".allocation{value:9;splat:9;misplaced:11;evaluations:7;reflected:true}",
         result.css(),
     );
-    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 4), result.nativeDiagnostics().len);
 }
 
 test "native Sass legacy if function handles every allocation failure" {
