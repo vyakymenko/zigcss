@@ -4097,6 +4097,115 @@ test "native Sass meta call invokes user function references" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass meta call invokes list function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\@use "sass:list" as seq;
+        \\@use "sass:list" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward($function, $args...) {
+        \\  @return meta.call($function, $args...);
+        \\}
+        \\$nth: meta.get-function("nth", $module: "seq");
+        \\$length: meta.get-function("length", $module: "seq");
+        \\$index: meta.get-function("index", $module: "seq");
+        \\$separator: meta.get-function("separator", $module: "seq");
+        \\$append: meta.get-function("append", $module: "seq");
+        \\$set-nth: meta.get-function("set-nth", $module: "seq");
+        \\$join: meta.get-function("join", $module: "seq");
+        \\$zip: meta.get-function("zip", $module: "seq");
+        \\$slash: meta.get-function("slash", $module: "seq");
+        \\.values {
+        \\  nth: meta.call($nth, $n: 2, $list: (a, b));
+        \\  length: reflect.call($function: $length, $list: [a b c]);
+        \\  index: meta.call($index, (a, b), b);
+        \\  separator: meta.call($separator, (a b));
+        \\  append: meta.inspect(meta.call($append, (list: (a, b), val: c, separator: space)...));
+        \\  set-nth: meta.inspect(meta.call($set-nth, (a, b, c), 2, x));
+        \\  join: meta.inspect(meta.call($join, (a, b), (c, d), $bracketed: true));
+        \\  zip: meta.inspect(meta.call($zip, ((a, b), (1, 2))...));
+        \\  slash: meta.inspect(meta.call($slash, 10px, 2s, 3));
+        \\  ordered: meta.call(mark(1, $nth), $list: mark(2, (x, y)), $n: mark(3, 2));
+        \\  forwarded: forward($nth, $list: (p, q), $n: 2);
+        \\  trace: $trace;
+        \\  star: call(meta.get-function("is-bracketed"), [x]);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-list-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{nth:b;length:3;index:2;separator:space;append:a b c;set-nth:a, x, c;join:[a, b, c, d];zip:a 1, b 2;slash:10px / 2s / 3;ordered:y;forwarded:q;trace:123;star:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:list" as seq
+        \\$nth: m.get-function("nth", $module: "seq")
+        \\$slash: m.get-function("slash", $module: "seq")
+        \\.sass
+        \\  named: m.call($nth, $list: (a, b), $n: 2)
+        \\  slash: m.inspect(m.call($slash, 4px, 2s))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-list-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{named:b;slash:4px / 2s}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves list function origin warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\$length: meta.get-function("length");
+        \\.legacy { value: meta.call($length, (a, b)); }
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-list-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".legacy{value:2}", result.css());
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
 test "native Sass meta call preserves the legacy warning" {
     const input =
         \\@use "sass:meta";
@@ -4142,8 +4251,20 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
             .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.call(meta.get-mixin(\"local\")); }",
         },
         .{
-            .name = "meta-call-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"length\"), (a, b)); }",
+            .name = "meta-call-unavailable-builtin.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"abs\", $module: \"math\"), -1); }",
+        },
+        .{
+            .name = "meta-call-list-missing-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:list\"; .a { value: meta.call(meta.get-function(\"nth\", $module: \"list\"), (a, b)); }",
+        },
+        .{
+            .name = "meta-call-list-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:list\"; .a { value: meta.call(meta.get-function(\"length\", $module: \"list\"), $other: (a, b)); }",
+        },
+        .{
+            .name = "meta-call-list-zip-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:list\"; .a { value: meta.call(meta.get-function(\"zip\", $module: \"list\"), $lists: (a, b)); }",
         },
         .{
             .name = "meta-call-missing-user-argument.scss",
@@ -4239,10 +4360,6 @@ test "native Sass meta function references reject invalid or unavailable reflect
         .{
             .name = "meta-get-function-invalid-name.scss",
             .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"not valid\")); }",
-        },
-        .{
-            .name = "meta-get-function-callable-invocation.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"length\"), (a, b)); }",
         },
         .{
             .name = "meta-get-function-callable-css.scss",
@@ -10168,6 +10285,7 @@ fn exerciseMetaInspectionAllocationFailures(
     defer sources.deinit();
     const input =
         \\@use "sass:meta";
+        \\@use "sass:list" as sequences;
         \\@use "sass:math" as numbers;
         \\@mixin allocation-mixin() { $inside: true; }
         \\@mixin content-probe() {
@@ -10203,6 +10321,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  mixin-inspect: meta.inspect(meta.get-mixin("allocation-mixin"));
         \\  builtin-mixin-inspect: meta.inspect(meta.get-mixin("load-css", "meta"));
         \\  user-function-call: meta.call(meta.get-function("allocation-function"), 7);
+        \\  list-function-call: meta.inspect(meta.call(meta.get-function("join", $module: "sequences"), (a, b), (c, d), $bracketed: true));
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -10226,7 +10345,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

@@ -454,6 +454,16 @@ const BoundCallableArguments = struct {
     }
 };
 
+const BoundEvaluatedArguments = struct {
+    allocator: std.mem.Allocator,
+    values: []?*const native_value.Value,
+
+    fn deinit(self: *BoundEvaluatedArguments) void {
+        if (self.values.len > 0) self.allocator.free(self.values);
+        self.* = undefined;
+    }
+};
+
 const IncludePrelude = struct {
     call: []const u8,
     content_parameter_body: ?[]const u8,
@@ -1810,6 +1820,58 @@ const Engine = struct {
             .allocator = self.allocator,
             .values = values,
             .rest_value = rest_value,
+        };
+    }
+
+    fn bindEvaluatedArguments(
+        self: *Engine,
+        parameters: []const native_arguments.Parameter,
+        maximum_positional: usize,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!BoundEvaluatedArguments {
+        if (maximum_positional > parameters.len) {
+            return self.argumentsFailure(error.InvalidLimits, span);
+        }
+        const values = try self.allocator.alloc(
+            ?*const native_value.Value,
+            parameters.len,
+        );
+        errdefer if (values.len > 0) self.allocator.free(values);
+        @memset(values, null);
+
+        for (arguments.positional.items, 0..) |item, index| {
+            if (index >= maximum_positional) {
+                return self.argumentsFailure(error.PositionalLimitExceeded, span);
+            }
+            values[index] = item;
+        }
+        for (arguments.keywords.items) |keyword| {
+            var matched: ?usize = null;
+            for (parameters, 0..) |parameter, index| {
+                const matches = if (keyword.normalize_name)
+                    native_arguments.nameEql(keyword.name, parameter.name)
+                else
+                    std.mem.eql(u8, keyword.name, parameter.name);
+                if (!matches) continue;
+                matched = index;
+                break;
+            }
+            const index = matched orelse
+                return self.argumentsFailure(error.UnknownArgument, span);
+            if (values[index] != null) {
+                return self.argumentsFailure(error.DuplicateArgument, span);
+            }
+            values[index] = keyword.value;
+        }
+        for (parameters, values) |parameter, value| {
+            if (parameter.required and value == null) {
+                return self.argumentsFailure(error.MissingArgument, span);
+            }
+        }
+        return .{
+            .allocator = self.allocator,
+            .values = values,
         };
     }
 
@@ -8337,11 +8399,8 @@ const Engine = struct {
 
         const callable = switch (bound.values[0].?.*) {
             .callable => |value| value,
-            else => return self.metaCallUserFunctionFailure(span),
+            else => return self.metaCallFunctionFailure(span),
         };
-        if (callable.kind != .user_function or callable.id >= self.user_functions.items.len) {
-            return self.metaCallUserFunctionFailure(span);
-        }
         const arguments = switch (bound.rest_value.?.*) {
             .argument_list => |value| value,
             else => return error.InvalidSassSyntax,
@@ -8359,17 +8418,125 @@ const Engine = struct {
                 .normalize_name = keyword.normalize_name,
             }, span);
         }
-        return self.invokeUserFunction(callable.id, &forwarded, span);
+        return switch (callable.kind) {
+            .user_function => if (callable.id < self.user_functions.items.len)
+                self.invokeUserFunction(callable.id, &forwarded, span)
+            else
+                self.metaCallFunctionFailure(span),
+            .builtin_function => (try self.invokeListFunction(
+                callable,
+                &forwarded,
+                span,
+            )) orelse return self.metaCallFunctionFailure(span),
+            .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
+        };
     }
 
-    fn metaCallUserFunctionFailure(
+    fn invokeListFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null and reference.owner.? != .list) return null;
+        switch (reference.builtin) {
+            .nth,
+            .length,
+            .list_index,
+            .list_separator,
+            .list_is_bracketed,
+            .list_append,
+            .list_set_nth,
+            .list_join,
+            .list_zip,
+            .list_slash,
+            => {},
+            else => return null,
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        return switch (reference.builtin) {
+            .list_zip => blk: {
+                if (arguments.keywords.items.len != 0) {
+                    return self.argumentsFailure(error.UnknownArgument, span);
+                }
+                break :blk try self.callListZip(arguments.positional.items, span);
+            },
+            .list_slash => blk: {
+                if (arguments.positional.items.len < 2) {
+                    break :blk try self.callListSlash(arguments.positional.items, span);
+                }
+                if (arguments.keywords.items.len != 0) {
+                    return self.argumentsFailure(error.UnknownArgument, span);
+                }
+                break :blk try self.callListSlash(arguments.positional.items, span);
+            },
+            else => try self.invokeFixedListFunction(
+                reference.builtin,
+                arguments,
+                span,
+            ),
+        };
+    }
+
+    fn invokeFixedListFunction(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const parameters = fixedListBuiltinParameters(builtin) orelse unreachable;
+        var bound = try self.bindEvaluatedArguments(
+            parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const automatic = native_value.Value{ .string = .{ .bytes = "auto" } };
+        var ordered: [4]*const native_value.Value = undefined;
+        if (builtin == .list_join) {
+            ordered[2] = &automatic;
+            ordered[3] = &automatic;
+        }
+        var count: usize = 0;
+        for (bound.values, 0..) |value, index| {
+            const item = value orelse continue;
+            ordered[index] = item;
+            count = index + 1;
+        }
+        const values = ordered[0..count];
+        return switch (builtin) {
+            .nth => self.callNth(values, span),
+            .length => self.callLength(values, span),
+            .list_index => self.callListIndex(values, span),
+            .list_separator => self.callListSeparator(values, span),
+            .list_is_bracketed => self.callListIsBracketed(values, span),
+            .list_append => self.callListAppend(values, span),
+            .list_set_nth => self.callListSetNth(values, span),
+            .list_join => self.callListJoin(values, span),
+            else => unreachable,
+        };
+    }
+
+    fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
     ) Error {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user function reference",
+            "native Sass meta.call() requires an available user or list function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -9588,33 +9755,7 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        const parameters: []const native_arguments.Parameter = switch (builtin) {
-            .nth => &.{
-                .{ .name = "list" },
-                .{ .name = "n" },
-            },
-            .length => &.{.{ .name = "list" }},
-            .list_index => &.{
-                .{ .name = "list" },
-                .{ .name = "value" },
-            },
-            .list_separator, .list_is_bracketed => &.{.{ .name = "list" }},
-            .list_append => &.{
-                .{ .name = "list" },
-                .{ .name = "val" },
-                .{ .name = "separator", .required = false },
-            },
-            .list_set_nth => &.{
-                .{ .name = "list" },
-                .{ .name = "n" },
-                .{ .name = "value" },
-            },
-            .list_join => &.{
-                .{ .name = "list1" },
-                .{ .name = "list2" },
-                .{ .name = "separator", .required = false },
-                .{ .name = "bracketed", .required = false },
-            },
+        const parameters: []const native_arguments.Parameter = fixedListBuiltinParameters(builtin) orelse switch (builtin) {
             .map_keys, .map_values => &.{.{ .name = "map" }},
             .math_abs,
             .math_acos,
@@ -11306,6 +11447,40 @@ fn callKeywordNamesEqual(
     return true;
 }
 
+fn fixedListBuiltinParameters(
+    builtin: Builtin,
+) ?[]const native_arguments.Parameter {
+    return switch (builtin) {
+        .nth => &.{
+            .{ .name = "list" },
+            .{ .name = "n" },
+        },
+        .length => &.{.{ .name = "list" }},
+        .list_index => &.{
+            .{ .name = "list" },
+            .{ .name = "value" },
+        },
+        .list_separator, .list_is_bracketed => &.{.{ .name = "list" }},
+        .list_append => &.{
+            .{ .name = "list" },
+            .{ .name = "val" },
+            .{ .name = "separator", .required = false },
+        },
+        .list_set_nth => &.{
+            .{ .name = "list" },
+            .{ .name = "n" },
+            .{ .name = "value" },
+        },
+        .list_join => &.{
+            .{ .name = "list1" },
+            .{ .name = "list2" },
+            .{ .name = "separator", .required = false },
+            .{ .name = "bracketed", .required = false },
+        },
+        else => null,
+    };
+}
+
 fn moduleBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     return switch (kind) {
         .color => colorModuleBuiltin(name),
@@ -11323,6 +11498,11 @@ fn moduleBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
 // Reserve origin zero's largest member for the special legacy `if()` function.
 const builtin_function_member_mask: u32 = 0x0fff_ffff;
 const builtin_function_origin_shift: u5 = 28;
+
+const BuiltinFunctionReference = struct {
+    builtin: Builtin,
+    owner: ?BuiltinModule,
+};
 
 fn builtinFunctionCallable(
     builtin: Builtin,
@@ -11347,14 +11527,28 @@ fn builtinIfFunctionCallable() native_value.Callable {
 fn builtinFunctionCallableName(id: u32) ?[]const u8 {
     if (id == builtin_function_member_mask) return "if";
 
+    const reference = decodeBuiltinFunctionCallable(id) orelse return null;
+    return if (reference.owner) |owner|
+        moduleBuiltinCallableName(owner, reference.builtin)
+    else
+        globalBuiltinCallableName(reference.builtin);
+}
+
+fn decodeBuiltinFunctionCallable(id: u32) ?BuiltinFunctionReference {
+    if (id == builtin_function_member_mask) return null;
+
     const member = std.meta.intToEnum(Builtin, id & builtin_function_member_mask) catch
         return null;
     const encoded_origin = id >> builtin_function_origin_shift;
-    if (encoded_origin == 0) return globalBuiltinCallableName(member);
+    if (encoded_origin == 0) {
+        _ = globalBuiltinCallableName(member) orelse return null;
+        return .{ .builtin = member, .owner = null };
+    }
 
     const owner = std.meta.intToEnum(BuiltinModule, encoded_origin - 1) catch
         return null;
-    return moduleBuiltinCallableName(owner, member);
+    _ = moduleBuiltinCallableName(owner, member) orelse return null;
+    return .{ .builtin = member, .owner = owner };
 }
 
 fn globalBuiltinCallableName(builtin: Builtin) ?[]const u8 {
