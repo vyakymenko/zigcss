@@ -8430,6 +8430,9 @@ const Engine = struct {
                 if (try self.invokeMapQueryFunction(callable, &forwarded, span)) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMapMutationFunction(callable, &forwarded, span)) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -8630,6 +8633,91 @@ const Engine = struct {
         return self.callMapEntries(builtin, &ordered, span);
     }
 
+    fn invokeMapMutationFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null and reference.owner.? != .map) return null;
+        switch (reference.builtin) {
+            .map_merge,
+            .map_remove,
+            .map_set,
+            .map_deep_merge,
+            .map_deep_remove,
+            => {},
+            else => return null,
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        if (arguments.keywords.items.len == 0) {
+            return try self.callMapMutation(
+                reference.builtin,
+                arguments.positional.items,
+                span,
+            );
+        }
+        return try self.invokeKeywordMapMutationFunction(
+            reference.builtin,
+            arguments,
+            span,
+        );
+    }
+
+    fn invokeKeywordMapMutationFunction(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const parameters: []const native_arguments.Parameter = switch (builtin) {
+            .map_merge, .map_deep_merge => &.{
+                .{ .name = "map1" },
+                .{ .name = "map2" },
+            },
+            .map_remove => &.{
+                .{ .name = "map" },
+                .{ .name = "key", .required = false },
+            },
+            .map_set => &.{
+                .{ .name = "map" },
+                .{ .name = "key" },
+                .{ .name = "value" },
+            },
+            .map_deep_remove => &.{
+                .{ .name = "map" },
+                .{ .name = "key" },
+            },
+            else => unreachable,
+        };
+        var bound = try self.bindEvaluatedArguments(
+            parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        var ordered: [3]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values, 0..) |value, index| {
+            const item = value orelse continue;
+            ordered[index] = item;
+            count = index + 1;
+        }
+        return self.callMapMutation(builtin, ordered[0..count], span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -8637,7 +8725,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, or map query function reference",
+            "native Sass meta.call() requires an available user, list, or map function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }

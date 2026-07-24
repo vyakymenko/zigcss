@@ -4312,6 +4312,144 @@ test "native Sass meta call preserves map query function origin warnings" {
     );
 }
 
+test "native Sass meta call invokes map mutation function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:map" as maps;
+        \\@use "sass:map" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward($function, $args...) {
+        \\  @return meta.call($function, $args...);
+        \\}
+        \\$merge: meta.get-function("merge", $module: "maps");
+        \\$remove: meta.get-function("remove", $module: "maps");
+        \\$set: meta.get-function("set", $module: "maps");
+        \\$deep-merge: meta.get-function("deep-merge", $module: "maps");
+        \\$deep-remove: meta.get-function("deep-remove", $module: "maps");
+        \\$star: meta.get-function("set");
+        \\$base: (theme: (tone: red, keep: true), old: 1);
+        \\$nested: meta.call($merge, $base, theme, (tone: blue, added: 2));
+        \\$removed: meta.call($remove, $nested, old, absent);
+        \\$setted: meta.call($set, $removed, theme, tone, green);
+        \\$deep: meta.call($deep-merge, $setted, (theme: (extra: 3), root: 4));
+        \\$pruned: meta.call($deep-remove, $deep, theme, keep);
+        \\$named: meta.call($merge, $map2: (b: 2), $map1: (a: 1));
+        \\$named-remove: meta.call($remove, $key: a, $map: (a: 1, b: 2));
+        \\$named-set: meta.call($set, $value: 2, $key: a, $map: (a: 1));
+        \\$named-deep-remove: meta.call($deep-remove, $key: b, $map: (a: 1, b: 2));
+        \\$remove-args: ((a: 1, b: 2), a);
+        \\$list-splat: meta.call($remove, $remove-args...);
+        \\$map-splat: meta.call($deep-merge, (map1: (a: 1), map2: (b: 2))...);
+        \\$forwarded: forward($remove, (a: 1, b: 2), a);
+        \\$ordered: meta.call(mark(1, $merge), $map2: mark(2, (b: 2)), $map1: mark(3, (a: 1)));
+        \\.values {
+        \\  nested: maps.get($nested, theme, added);
+        \\  removed: maps.has-key($removed, old);
+        \\  set: maps.get($setted, theme, tone);
+        \\  deep: maps.get($deep, theme, extra);
+        \\  pruned: maps.has-key(maps.get($pruned, theme), keep);
+        \\  named: meta.inspect($named);
+        \\  named-remove: meta.inspect($named-remove);
+        \\  named-set: meta.inspect($named-set);
+        \\  named-deep-remove: meta.inspect($named-deep-remove);
+        \\  list-splat: meta.inspect($list-splat);
+        \\  map-splat: meta.inspect($map-splat);
+        \\  forwarded: meta.inspect($forwarded);
+        \\  ordered: meta.inspect($ordered);
+        \\  trace: $trace;
+        \\  star: maps.get(meta.call($star, (), z, 9), z);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-map-mutation-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{nested:2;removed:false;set:green;deep:3;pruned:false;named:(a: 1, b: 2);named-remove:(b: 2);named-set:(a: 2);named-deep-remove:(a: 1);list-splat:(b: 2);map-splat:(a: 1, b: 2);forwarded:(b: 2);ordered:(a: 1, b: 2);trace:123;star:9}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:map" as dictionaries
+        \\$merge: m.get-function("merge", $module: "dictionaries")
+        \\$set: m.get-function("set", $module: "dictionaries")
+        \\$remove: m.get-function("deep-remove", $module: "dictionaries")
+        \\$base: (a: (b: 1), keep: 2)
+        \\$merged: m.call($merge, $base, (c: 3))
+        \\$setted: m.call($set, $merged, a, d, 4)
+        \\$removed: m.call($remove, $setted, a, b)
+        \\.sass
+        \\  merged: dictionaries.get($merged, c)
+        \\  set: dictionaries.get($setted, a, d)
+        \\  removed: dictionaries.has-key(dictionaries.get($removed, a), b)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-map-mutation-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{merged:3;set:4;removed:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves map mutation function origin warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\$merge: meta.get-function("map-merge");
+        \\$remove: meta.get-function("map-remove");
+        \\$merged: meta.call($merge, (a: 1), (b: 2));
+        \\$removed: meta.call($remove, $merged, a);
+        \\.legacy {
+        \\  merged: meta.inspect($merged);
+        \\  removed: meta.inspect($removed);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-map-mutation-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{merged:(a: 1, b: 2);removed:(b: 2)}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+}
+
 test "native Sass meta call preserves the legacy warning" {
     const input =
         \\@use "sass:meta";
@@ -4389,8 +4527,28 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
             .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"keys\", $module: \"map\"), (a: 1), a); }",
         },
         .{
-            .name = "meta-call-map-mutation-unavailable.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"merge\", $module: \"map\"), (a: 1), (b: 2)); }",
+            .name = "meta-call-map-merge-missing-map.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"merge\", $module: \"map\"), (a: 1)); }",
+        },
+        .{
+            .name = "meta-call-map-merge-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"merge\", $module: \"map\"), $map1: (a: 1), $other: (b: 2)); }",
+        },
+        .{
+            .name = "meta-call-map-remove-rest-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"remove\", $module: \"map\"), $map: (a: 1), $keys: a); }",
+        },
+        .{
+            .name = "meta-call-map-set-rest-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"set\", $module: \"map\"), $map: (a: 1), $keys: a, $value: 2); }",
+        },
+        .{
+            .name = "meta-call-map-deep-merge-extra-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"deep-merge\", $module: \"map\"), (a: 1), (b: 2), (c: 3)); }",
+        },
+        .{
+            .name = "meta-call-map-deep-remove-missing-key.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"deep-remove\", $module: \"map\"), (a: 1)); }",
         },
         .{
             .name = "meta-call-missing-user-argument.scss",
@@ -10450,6 +10608,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  user-function-call: meta.call(meta.get-function("allocation-function"), 7);
         \\  list-function-call: meta.inspect(meta.call(meta.get-function("join", $module: "sequences"), (a, b), (c, d), $bracketed: true));
         \\  map-query-function-call: meta.call(meta.get-function("get", $module: "dictionaries"), (map: (a: 8), key: a)...);
+        \\  map-mutation-function-call: meta.inspect(meta.call(meta.get-function("set", $module: "dictionaries"), (a: 1), b, 9));
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -10473,7 +10632,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
