@@ -132,6 +132,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('lazy-legacy-if-function'), true)
   assert.equal(sassCore.capabilities.includes('legacy-if-final-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('legacy-if-single-misplaced-rest-expansion'), true)
+  assert.equal(sassCore.capabilities.includes('legacy-if-dual-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('flow-control-variable-scope'), true)
   assert.equal(sassCore.capabilities.includes('bounded-control-flow-loops'), true)
   assert.equal(sassCore.capabilities.includes('bounded-user-functions'), true)

@@ -1601,26 +1601,7 @@ const Engine = struct {
                     try self.appendEvaluatedPositional(output, value, span);
                 }
             },
-            .map => |map| {
-                for (map.entries) |*entry| {
-                    const name = switch (entry.key) {
-                        .string, .selector => |string| string.bytes,
-                        else => {
-                            try self.report(
-                                .type_mismatch,
-                                span,
-                                "native Sass keyword splat map requires string keys",
-                            );
-                            return error.InvalidExpression;
-                        },
-                    };
-                    try self.appendEvaluatedSplatKeyword(output, .{
-                        .name = name,
-                        .value = &entry.value,
-                        .normalize_name = false,
-                    }, span);
-                }
-            },
+            .map => try self.expandCallKeywordSplat(output, item, span),
             .argument_list => |argument_list| {
                 argument_list.state.keywords_accessed = true;
                 for (argument_list.positional) |*value| {
@@ -1635,6 +1616,43 @@ const Engine = struct {
                 }
             },
             else => try self.appendEvaluatedPositional(output, item, span),
+        }
+    }
+
+    fn expandCallKeywordSplat(
+        self: *Engine,
+        output: *EvaluatedCallArguments,
+        item: *const native_value.Value,
+        span: native_source.Span,
+    ) Error!void {
+        const map = switch (item.*) {
+            .map => |map| map,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native Sass variable keyword arguments require a map",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        for (map.entries) |*entry| {
+            const name = switch (entry.key) {
+                .string, .selector => |string| string.bytes,
+                else => {
+                    try self.report(
+                        .type_mismatch,
+                        span,
+                        "native Sass keyword splat map requires string keys",
+                    );
+                    return error.InvalidExpression;
+                },
+            };
+            try self.appendEvaluatedSplatKeyword(output, .{
+                .name = name,
+                .value = &entry.value,
+                .normalize_name = false,
+            }, span);
         }
     }
 
@@ -3556,17 +3574,45 @@ const Engine = struct {
         ) catch |err| return self.argumentsFailure(err, span);
         defer parsed.deinit();
         var splat_index: ?usize = null;
+        var keyword_splat_index: ?usize = null;
         for (parsed.items, 0..) |argument, index| {
             if (!argument.splat) continue;
-            if (splat_index != null) {
+            if (splat_index == null) {
+                splat_index = index;
+                continue;
+            }
+            if (keyword_splat_index == null) {
+                keyword_splat_index = index;
+                continue;
+            }
+            try self.report(
+                .unsupported_feature,
+                span,
+                "three or more legacy if() splats are not implemented by the native evaluator",
+            );
+            return error.UnsupportedFeature;
+        }
+        if (keyword_splat_index) |keyword_index| {
+            const positional_index = splat_index.?;
+            if (positional_index + 1 != keyword_index or
+                keyword_index + 1 != parsed.items.len)
+            {
                 try self.report(
                     .unsupported_feature,
                     span,
-                    "multiple legacy if() splats are not implemented by the native evaluator yet",
+                    "only a terminal positional and keyword legacy if() splat pair is implemented by the native evaluator",
                 );
                 return error.UnsupportedFeature;
             }
-            splat_index = index;
+            try self.reportLegacyIfDeprecation(span);
+            return try self.evaluateLegacyIfSplatCall(
+                body,
+                parsed.items,
+                positional_index,
+                keyword_index,
+                scope,
+                span,
+            );
         }
         if (splat_index) |index| {
             if (index + 1 != parsed.items.len) {
@@ -3580,6 +3626,7 @@ const Engine = struct {
                 body,
                 parsed.items,
                 index,
+                null,
                 scope,
                 span,
             );
@@ -3632,10 +3679,14 @@ const Engine = struct {
         body: []const u8,
         arguments: []const native_arguments.Argument,
         splat_index: usize,
+        keyword_splat_index: ?usize,
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
         std.debug.assert(splat_index < arguments.len and arguments[splat_index].splat);
+        std.debug.assert(keyword_splat_index == null or
+            (keyword_splat_index.? < arguments.len and
+                arguments[keyword_splat_index.?].splat));
         const splat = arguments[splat_index];
         const splat_item = try self.evaluateExpressionBytes(
             body[splat.value.start..splat.value.end],
@@ -3645,11 +3696,21 @@ const Engine = struct {
         var expanded = EvaluatedCallArguments{ .allocator = self.allocator };
         defer expanded.deinit();
         try self.expandCallSplat(&expanded, splat_item, span);
+        if (keyword_splat_index) |index| {
+            const keyword_splat = arguments[index];
+            const keyword_item = try self.evaluateExpressionBytes(
+                body[keyword_splat.value.start..keyword_splat.value.end],
+                scope,
+                span,
+            );
+            try self.expandCallKeywordSplat(&expanded, keyword_item, span);
+        }
 
         var evaluated = EvaluatedCallArguments{ .allocator = self.allocator };
         defer evaluated.deinit();
         for (arguments, 0..) |argument, index| {
             if (index == splat_index) continue;
+            if (keyword_splat_index != null and index == keyword_splat_index.?) continue;
             const item = try self.evaluateExpressionBytes(
                 body[argument.value.start..argument.value.end],
                 scope,

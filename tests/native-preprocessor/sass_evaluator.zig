@@ -6868,6 +6868,92 @@ test "native Sass legacy if function preserves one misplaced rest argument" {
     try std.testing.expectEqual(@as(usize, 4), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass legacy if function expands terminal positional and keyword splats eagerly" {
+    const input =
+        \\$trace: "";
+        \\@function mark($tag, $value) {
+        \\  $trace: "#{$trace}#{$tag}," !global;
+        \\  @return $value;
+        \\}
+        \\@function relay($args...) { @return if($args..., ("if-false": 13)...); }
+        \\$positional: false, 1;
+        \\$keywords: ("if-false": 2);
+        \\$first-map: ("condition": false, "if-true": 3);
+        \\$last-map: ("condition": true, "if-true": 4, "if-false": 5);
+        \\.values {
+        \\  list-map: if($positional..., $keywords...);
+        \\  scalar-map: if(true..., ("if-true": 6, "if-false": 7)...);
+        \\  two-maps: if($first-map..., ("if-false": 8)...);
+        \\  overrides: if($condition: false, $if-true: 9, $if-false: 10, $first-map..., $last-map...);
+        \\  first-arglist: relay(false, $if-true: 12);
+        \\  before-eager: $trace;
+        \\  eager: if(mark(direct, false), mark(positional, (mark(if-true, 14),))..., mark(keywords, ("if-false": mark(if-false, 15)))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-if-dual-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list-map:2;scalar-map:6;two-maps:8;overrides:4;first-arglist:13;before-eager:\"\";eager:15;trace:\"if-true,positional,if-false,keywords,direct,\"}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), diagnostics.len);
+    for (diagnostics[0..5]) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "The Sass if() syntax is deprecated in favor of the modern CSS syntax.",
+            diagnostic.message,
+        );
+    }
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[5].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[5].code,
+    );
+    try std.testing.expectEqualStrings(
+        "1 repetitive deprecation warnings omitted.",
+        diagnostics[5].message,
+    );
+
+    const indented =
+        \\$positional: false, yes
+        \\$keywords: ("if-false": no)
+        \\.sass
+        \\  list-map: if($positional..., $keywords...)
+        \\  scalar-map: if(true..., ("if-true": chosen, "if-false": skipped)...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-if-dual-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list-map:no;scalar-map:chosen}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass legacy if function rejects malformed and unsupported calls within limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -6883,6 +6969,13 @@ test "native Sass legacy if function rejects malformed and unsupported calls wit
         .{ .name = "legacy-if-splat-extra.scss", .input = ".a { value: if((true, 1, 2, 3)...); }" },
         .{ .name = "legacy-if-splat-map-name.scss", .input = ".a { value: if((condition: true, if_true: 1, if_false: 2)...); }" },
         .{ .name = "legacy-if-splat-map-key.scss", .input = ".a { value: if((1: true, if-true: 1, if-false: 2)...); }" },
+        .{ .name = "legacy-if-dual-keyword-list.scss", .input = ".safe { value: 1; } .a { value: if((true, 1)..., (2, 3)...); }" },
+        .{ .name = "legacy-if-dual-keyword-scalar.scss", .input = ".a { value: if((true, 1)..., 2...); }" },
+        .{ .name = "legacy-if-dual-keyword-empty.scss", .input = ".a { value: if((true, 1, 2)..., ()...); }" },
+        .{ .name = "legacy-if-dual-keyword-arglist.scss", .input = "@function relay($positional, $keywords...) { @return if($positional..., $keywords...); } .a { value: relay((false, 1), $if-false: 2); }" },
+        .{ .name = "legacy-if-dual-keyword-map-key.scss", .input = ".a { value: if((true, 1)..., (1: 2)...); }" },
+        .{ .name = "legacy-if-dual-keyword-map-name.scss", .input = ".a { value: if((true, 1)..., (\"if_false\": 2)...); }" },
+        .{ .name = "legacy-if-dual-duplicate.scss", .input = ".a { value: if(true, (\"if-true\": 1)..., (\"condition\": false, \"if-false\": 2)...); }" },
     };
     for (invalid) |case| {
         try std.testing.expectError(
@@ -6904,8 +6997,18 @@ test "native Sass legacy if function rejects malformed and unsupported calls wit
         error.UnsupportedFeature,
         compile(
             std.testing.allocator,
-            "legacy-if-multiple-splats.scss",
-            "$positional: true, 1; $keywords: (\"if-false\": 2); .a { value: if($positional..., $keywords...); }",
+            "legacy-if-nonterminal-dual-splat.scss",
+            ".a { value: if(true..., (\"if-true\": 1)..., 2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-if-three-splats.scss",
+            ".a { value: if(true..., 1..., (\"if-false\": 2)...); }",
             .scss,
             .{},
         ),
@@ -6940,6 +7043,16 @@ test "native Sass legacy if function rejects malformed and unsupported calls wit
             std.testing.allocator,
             "legacy-if-expanded-argument-limit.scss",
             ".a { value: if((true, 1, 2, 3)...); }",
+            .scss,
+            limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-if-dual-expanded-argument-limit.scss",
+            ".a { value: if((true, 1)..., (\"if-false\": 2, \"extra\": 3)...); }",
             .scss,
             limits,
         ),
@@ -9505,6 +9618,7 @@ fn exerciseLegacyIfAllocationFailures(
         \\  value: if($if-false: mark(9), $condition: mark(false), $if-true: $missing);
         \\  splat: if((false, mark(8), mark(9))...);
         \\  misplaced: if(mark(false)..., mark(10), mark(11));
+        \\  dual: if((false, mark(12))..., ("if-false": mark(13))...);
         \\  evaluations: $evaluations;
         \\  reflected: meta.function-exists("if");
         \\}
@@ -9526,10 +9640,10 @@ fn exerciseLegacyIfAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{value:9;splat:9;misplaced:11;evaluations:7;reflected:true}",
+        ".allocation{value:9;splat:9;misplaced:11;dual:13;evaluations:9;reflected:true}",
         result.css(),
     );
-    try std.testing.expectEqual(@as(usize, 4), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 5), result.nativeDiagnostics().len);
 }
 
 test "native Sass legacy if function handles every allocation failure" {
