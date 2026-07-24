@@ -150,6 +150,7 @@ const expectedImplementations = Object.freeze([
       'modern-color-transforms',
       'built-in-color-transform-aliases',
       'built-in-meta-calculation-introspection',
+      'built-in-meta-content-existence',
       'built-in-meta-existence-queries',
       'built-in-meta-inspection',
       'built-in-meta-keywords',

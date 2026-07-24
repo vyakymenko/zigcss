@@ -3497,6 +3497,162 @@ test "native Sass meta existence queries reject invalid reflection and preserve 
     );
 }
 
+test "native Sass meta content existence reflects only the active mixin invocation" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\@mixin child {
+        \\  .child { present: meta.content-exists(); }
+        \\}
+        \\@mixin sink($label, $exists) {
+        \\  .argument-#{$label} { value: $exists; }
+        \\}
+        \\@mixin probe($label) {
+        \\  .#{$label} {
+        \\    module: meta.content-exists();
+        \\    alias: reflect.content_exists();
+        \\    star: content-exists();
+        \\    reflected: meta.function-exists("content-exists", "meta");
+        \\  }
+        \\  @include sink($label, meta.content-exists());
+        \\  @include child;
+        \\  @if meta.content-exists() { @content; }
+        \\}
+        \\@include probe(empty);
+        \\@include probe(filled) { .payload { ok: yes; } }
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-content-existence.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".empty{module:false;alias:false;star:false;reflected:true}.argument-empty{value:false}.child{present:false}.filled{module:true;alias:true;star:true;reflected:true}.argument-filled{value:true}.child{present:false}.payload{ok:yes}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@mixin probe
+        \\  .sass
+        \\    value: m.content-exists()
+        \\  @if m.content-exists()
+        \\    @content
+        \\@include probe
+        \\@include probe
+        \\  .payload
+        \\    ok: yes
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-content-existence.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{value:false}.sass{value:true}.payload{ok:yes}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta content existence preserves the legacy warning" {
+    const input =
+        \\@mixin legacy-probe {
+        \\  .legacy { value: content-exists(); }
+        \\  @content;
+        \\}
+        \\@include legacy-probe { .legacy-content { ok: yes; } }
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-content-existence-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{value:true}.legacy-content{ok:yes}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta content existence rejects calls outside a mixin body" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-content-exists-at-root.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.content-exists(); }",
+        },
+        .{
+            .name = "global-content-exists-at-root.scss",
+            .input = ".a { value: content-exists(); }",
+        },
+        .{
+            .name = "meta-content-exists-in-function.scss",
+            .input = "@use \"sass:meta\"; @function probe() { @return meta.content-exists(); } @mixin outer { .a { value: probe(); } } @include outer;",
+        },
+        .{
+            .name = "meta-content-exists-in-caller-content.scss",
+            .input = "@use \"sass:meta\"; @mixin outer { @content; } @include outer { .a { value: meta.content-exists(); } }",
+        },
+        .{
+            .name = "meta-content-exists-in-mixin-default.scss",
+            .input = "@use \"sass:meta\"; @mixin inner($exists: meta.content-exists()) { .a { value: $exists; } } @mixin outer { @include inner; @content; } @include outer { .b { ok: yes; } }",
+        },
+        .{
+            .name = "meta-content-exists-in-content-default.scss",
+            .input = "@use \"sass:meta\"; @mixin supply { @content; } @include supply using ($exists: meta.content-exists()) { .a { value: $exists; } }",
+        },
+        .{
+            .name = "meta-content-exists-missing-module.scss",
+            .input = "@mixin probe { .a { value: meta.content-exists(); } } @include probe;",
+        },
+        .{
+            .name = "meta-content-exists-case-namespace.scss",
+            .input = "@use \"sass:meta\" as Meta; @mixin probe { .a { value: meta.content-exists(); } } @include probe;",
+        },
+        .{
+            .name = "meta-content-exists-too-many.scss",
+            .input = "@use \"sass:meta\"; @mixin probe { .a { value: meta.content-exists(1); } } @include probe;",
+        },
+        .{
+            .name = "meta-content-exists-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @mixin probe { .a { value: meta.content-exists($other: 1); } } @include probe;",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+}
+
 test "native Sass meta inspection rejects unavailable or invalid calls" {
     const invalid = [_]struct {
         name: []const u8,
@@ -8571,6 +8727,10 @@ fn exerciseMetaInspectionAllocationFailures(
         \\@use "sass:meta";
         \\@use "sass:math" as numbers;
         \\@mixin allocation-mixin() { $inside: true; }
+        \\@mixin content-probe() {
+        \\  .content { exists: meta.content-exists(); }
+        \\  @content;
+        \\}
         \\@function inspect-args($args...) {
         \\  $keywords: meta.keywords($args);
         \\  @return meta.inspect($args);
@@ -8588,6 +8748,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  global: meta.global-variable-exists("calculation");
         \\  module: meta.function-exists("ceil", "numbers");
         \\}
+        \\@include content-probe { .payload { ok: yes; } }
     ;
     const source_id = try sources.add("meta-inspection-allocation.scss", input);
     var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
@@ -8606,7 +8767,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

@@ -150,6 +150,7 @@ const Builtin = enum {
     math_clamp,
     meta_calc_args,
     meta_calc_name,
+    meta_content_exists,
     meta_feature_exists,
     meta_function_exists,
     meta_global_variable_exists,
@@ -616,6 +617,7 @@ const Engine = struct {
     user_mixins: std.ArrayList(UserMixin) = .empty,
     modules: std.ArrayList(ModuleBinding) = .empty,
     active_content: ?*const ContentInvocation = null,
+    active_mixin_body: bool = false,
     expression_depth: u16 = 0,
     selector_count: usize = 0,
     selector_bytes: usize = 0,
@@ -1849,6 +1851,10 @@ const Engine = struct {
         var bound = try self.bindCallableArguments(mixin.parameters, &evaluated, span);
         defer bound.deinit();
 
+        const previous_mixin_body = self.active_mixin_body;
+        self.active_mixin_body = false;
+        defer self.active_mixin_body = previous_mixin_body;
+
         try self.transaction.enterCall();
         var active_call = true;
         defer if (active_call) self.transaction.leaveCall() catch {};
@@ -1879,6 +1885,7 @@ const Engine = struct {
         } else null;
         defer self.active_content = previous_content;
 
+        self.active_mixin_body = true;
         const children = self.document.children(mixin.block) catch return error.InvalidSassSyntax;
         try self.executeLoopBody(children, &call_scope, depth + 1, context);
         try self.ensureRestKeywordsConsumed(bound.rest_value, span);
@@ -1947,6 +1954,10 @@ const Engine = struct {
             content_node.span,
         );
         defer bound.deinit();
+
+        const previous_mixin_body = self.active_mixin_body;
+        self.active_mixin_body = false;
+        defer self.active_mixin_body = previous_mixin_body;
 
         try self.transaction.enterCall();
         var active_call = true;
@@ -2137,6 +2148,10 @@ const Engine = struct {
         defer evaluated.deinit();
         var bound = try self.bindCallableArguments(function.parameters, &evaluated, span);
         defer bound.deinit();
+
+        const previous_mixin_body = self.active_mixin_body;
+        self.active_mixin_body = false;
+        defer self.active_mixin_body = previous_mixin_body;
 
         try self.transaction.enterCall();
         var active_call = true;
@@ -4419,6 +4434,7 @@ const Engine = struct {
             .math_unit,
             .meta_calc_args,
             .meta_calc_name,
+            .meta_content_exists,
             .meta_feature_exists,
             .meta_function_exists,
             .meta_global_variable_exists,
@@ -7578,6 +7594,32 @@ const Engine = struct {
         return error.TemporaryLimitExceeded;
     }
 
+    fn callMetaContentExists(
+        self: *Engine,
+        module_owned: bool,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (!module_owned) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.consumeOperations(1);
+        if (!self.active_mixin_body) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "content-exists() may only be called within a mixin.",
+            );
+            return error.InvalidExpression;
+        }
+        return self.values.own(.{ .boolean = self.active_content != null });
+    }
+
     fn callMetaExistence(
         self: *Engine,
         builtin: Builtin,
@@ -8834,6 +8876,7 @@ const Engine = struct {
             .math_is_unitless => &.{.{ .name = "number" }},
             .math_unit => &.{.{ .name = "number" }},
             .meta_calc_args, .meta_calc_name => &.{.{ .name = "calc" }},
+            .meta_content_exists => &.{},
             .meta_feature_exists => &.{.{ .name = "feature" }},
             .meta_function_exists,
             .meta_global_variable_exists,
@@ -9068,6 +9111,7 @@ const Engine = struct {
             .math_unit => self.callMathUnit(arguments, span),
             .meta_calc_args => self.callMetaCalcArgs(arguments, scope, span),
             .meta_calc_name => self.callMetaCalcName(arguments, span),
+            .meta_content_exists => self.callMetaContentExists(module_owned, span),
             .meta_feature_exists,
             .meta_function_exists,
             .meta_global_variable_exists,
@@ -10544,6 +10588,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
         .{ .name = "sqrt", .builtin = .math_sqrt },
         .{ .name = "tan", .builtin = .math_tan },
         .{ .name = "unit", .builtin = .math_unit },
+        .{ .name = "content-exists", .builtin = .meta_content_exists },
         .{ .name = "feature-exists", .builtin = .meta_feature_exists },
         .{ .name = "function-exists", .builtin = .meta_function_exists },
         .{ .name = "global-variable-exists", .builtin = .meta_global_variable_exists },
@@ -10609,6 +10654,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
 fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "calc-args")) return .meta_calc_args;
     if (sassNameEql(name, "calc-name")) return .meta_calc_name;
+    if (sassNameEql(name, "content-exists")) return .meta_content_exists;
     if (sassNameEql(name, "feature-exists")) return .meta_feature_exists;
     if (sassNameEql(name, "function-exists")) return .meta_function_exists;
     if (sassNameEql(name, "global-variable-exists")) return .meta_global_variable_exists;
