@@ -3275,6 +3275,14 @@ const Engine = struct {
     ) Error!ArithmeticProbe {
         if (raw.len == 0) return .none;
         if (try self.hasTopLevelListStructure(raw)) return .none;
+        if (fullyWrapped(raw, '(', ')') and
+            try self.hasTopLevelListStructure(trimWhitespace(raw[1 .. raw.len - 1])))
+        {
+            // Collection parsing owns parenthesized comma, map, and space
+            // lists. Arithmetic probing may execute numeric user functions,
+            // so it must not speculatively evaluate a list's first item.
+            return .none;
+        }
         var options = native_lexer.Options{};
         options.max_input_bytes = @max(raw.len, 1);
         options.max_tokens = self.limits.max_expression_tokens;
@@ -3547,8 +3555,26 @@ const Engine = struct {
             self.limits.max_function_arguments,
         ) catch |err| return self.argumentsFailure(err, span);
         defer parsed.deinit();
-        for (parsed.items) |argument| {
-            if (argument.splat) return self.argumentsFailure(error.SplatUnsupported, span);
+        var splat_index: ?usize = null;
+        for (parsed.items, 0..) |argument, index| {
+            if (!argument.splat) continue;
+            if (splat_index != null or index + 1 != parsed.items.len) {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "non-final or multiple legacy if() splats are not implemented by the native evaluator yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            splat_index = index;
+        }
+        if (splat_index != null) {
+            return try self.evaluateLegacyIfSplatCall(
+                body,
+                parsed.items,
+                scope,
+                span,
+            );
         }
 
         const parameters = [_]native_arguments.Parameter{
@@ -3590,6 +3616,77 @@ const Engine = struct {
             scope,
             span,
         );
+    }
+
+    fn evaluateLegacyIfSplatCall(
+        self: *Engine,
+        body: []const u8,
+        arguments: []const native_arguments.Argument,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        std.debug.assert(arguments.len > 0 and arguments[arguments.len - 1].splat);
+        const splat = arguments[arguments.len - 1];
+        const splat_item = try self.evaluateExpressionBytes(
+            body[splat.value.start..splat.value.end],
+            scope,
+            span,
+        );
+        var expanded = EvaluatedCallArguments{ .allocator = self.allocator };
+        defer expanded.deinit();
+        try self.expandCallSplat(&expanded, splat_item, span);
+
+        var evaluated = EvaluatedCallArguments{ .allocator = self.allocator };
+        defer evaluated.deinit();
+        for (arguments[0 .. arguments.len - 1]) |argument| {
+            const item = try self.evaluateExpressionBytes(
+                body[argument.value.start..argument.value.end],
+                scope,
+                span,
+            );
+            if (argument.name) |name| {
+                try self.appendEvaluatedKeyword(&evaluated, .{
+                    .name = name,
+                    .value = item,
+                    .normalize_name = true,
+                }, span);
+            } else {
+                try self.appendEvaluatedPositional(&evaluated, item, span);
+            }
+        }
+        for (expanded.positional.items) |item| {
+            try self.appendEvaluatedPositional(&evaluated, item, span);
+        }
+        for (expanded.keywords.items) |keyword| {
+            try self.appendEvaluatedSplatKeyword(&evaluated, keyword, span);
+        }
+        for (expanded.splat_keywords.items) |keyword| {
+            try self.appendEvaluatedSplatKeyword(&evaluated, keyword, span);
+        }
+        try self.mergeEvaluatedSplatKeywords(&evaluated);
+
+        var condition_name = [_]u8{ 'c', 'o', 'n', 'd', 'i', 't', 'i', 'o', 'n' };
+        var if_true_name = [_]u8{ 'i', 'f', '-', 't', 'r', 'u', 'e' };
+        var if_false_name = [_]u8{ 'i', 'f', '-', 'f', 'a', 'l', 's', 'e' };
+        const parameters = [_]CallableParameter{
+            .{
+                .name = condition_name[0..],
+                .default_value = null,
+            },
+            .{
+                .name = if_true_name[0..],
+                .default_value = null,
+            },
+            .{
+                .name = if_false_name[0..],
+                .default_value = null,
+            },
+        };
+        var bound = try self.bindCallableArguments(&parameters, &evaluated, span);
+        defer bound.deinit();
+
+        const condition = bound.values[0].?;
+        return bound.values[if (sassTruthy(condition.*)) 1 else 2].?;
     }
 
     fn reportLegacyIfDeprecation(

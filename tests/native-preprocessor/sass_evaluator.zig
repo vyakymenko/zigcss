@@ -6685,6 +6685,91 @@ test "native Sass legacy if function binds and evaluates only the selected branc
     try std.testing.expectEqual(@as(usize, 2), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass legacy if function expands one final splat eagerly" {
+    const input =
+        \\$evaluations: 0;
+        \\$trace: "";
+        \\@function mark($value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  $trace: "#{$trace}#{$value}," !global;
+        \\  @return $value;
+        \\}
+        \\@function relay($args...) { @return if($args...); }
+        \\$list: true, 1, 2;
+        \\$map: ("condition": false, "if-true": 3, "if-false": 4);
+        \\.values {
+        \\  inline: if((true, 5, 6)...);
+        \\  variable: if($list...);
+        \\  prefixed: if(false, (7, 8)...);
+        \\  map: if($map...);
+        \\  map-override: if($condition: true, $map...);
+        \\  rest: relay(false, $if-true: 11, $if-false: 12);
+        \\  before-eager: $evaluations;
+        \\  eager: if(mark(true), (mark(13), mark(14))...);
+        \\  after-eager: $evaluations;
+        \\  scalar: if(false, 15, 16...);
+        \\  space: if((mark(true) mark(17) mark(18))...);
+        \\  evaluations: $evaluations;
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-if-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{inline:5;variable:1;prefixed:8;map:4;map-override:4;rest:12;before-eager:0;eager:13;after-eager:3;scalar:16;space:17;evaluations:6;trace:\"13,14,true,true,17,18,\"}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), diagnostics.len);
+    for (diagnostics[0..5]) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "The Sass if() syntax is deprecated in favor of the modern CSS syntax.",
+            diagnostic.message,
+        );
+    }
+    try std.testing.expectEqualStrings(
+        "4 repetitive deprecation warnings omitted.",
+        diagnostics[5].message,
+    );
+
+    const indented =
+        \\@function relay($args...)
+        \\  @return if($args...)
+        \\$list: false, yes, no
+        \\.sass
+        \\  list: if($list...)
+        \\  rest: relay(true, chosen, skipped)
+        \\  scalar: if(false, wrong, right...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-if-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:no;rest:chosen;scalar:right}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass legacy if function rejects malformed and unsupported calls within limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -6696,6 +6781,10 @@ test "native Sass legacy if function rejects malformed and unsupported calls wit
         .{ .name = "legacy-if-duplicate.scss", .input = ".a { value: if($condition: true, $if_true: 1, $if-true: 2, $if-false: 3); }" },
         .{ .name = "legacy-if-order.scss", .input = ".a { value: if($condition: true, 1, 2); }" },
         .{ .name = "legacy-if-invalid-clause.scss", .input = ".a { value: if(foo: red; else: blue); }" },
+        .{ .name = "legacy-if-splat-missing.scss", .input = ".a { value: if((true, 1)...); }" },
+        .{ .name = "legacy-if-splat-extra.scss", .input = ".a { value: if((true, 1, 2, 3)...); }" },
+        .{ .name = "legacy-if-splat-map-name.scss", .input = ".a { value: if((condition: true, if_true: 1, if_false: 2)...); }" },
+        .{ .name = "legacy-if-splat-map-key.scss", .input = ".a { value: if((1: true, if-true: 1, if-false: 2)...); }" },
     };
     for (invalid) |case| {
         try std.testing.expectError(
@@ -6718,7 +6807,17 @@ test "native Sass legacy if function rejects malformed and unsupported calls wit
         compile(
             std.testing.allocator,
             "legacy-if-splat.scss",
-            ".a { value: if((true, 1, 2)...); }",
+            ".a { value: if(true..., 1, 2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UndefinedVariable,
+        compile(
+            std.testing.allocator,
+            "legacy-if-splat-eager.scss",
+            ".a { value: if(true, (1, $missing)...); }",
             .scss,
             .{},
         ),
@@ -6732,6 +6831,17 @@ test "native Sass legacy if function rejects malformed and unsupported calls wit
             std.testing.allocator,
             "legacy-if-argument-limit.scss",
             ".a { value: if(true, 1, 2); }",
+            .scss,
+            limits,
+        ),
+    );
+    limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-if-expanded-argument-limit.scss",
+            ".a { value: if((true, 1, 2, 3)...); }",
             .scss,
             limits,
         ),
@@ -9295,6 +9405,7 @@ fn exerciseLegacyIfAllocationFailures(
         \\}
         \\.allocation {
         \\  value: if($if-false: mark(9), $condition: mark(false), $if-true: $missing);
+        \\  splat: if((false, mark(8), mark(9))...);
         \\  evaluations: $evaluations;
         \\  reflected: meta.function-exists("if");
         \\}
@@ -9316,10 +9427,10 @@ fn exerciseLegacyIfAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{value:9;evaluations:2;reflected:true}",
+        ".allocation{value:9;splat:9;evaluations:4;reflected:true}",
         result.css(),
     );
-    try std.testing.expectEqual(@as(usize, 1), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
 }
 
 test "native Sass legacy if function handles every allocation failure" {
