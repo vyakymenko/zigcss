@@ -180,6 +180,7 @@ case "$COMMAND" in
       printf '\nlast pushed:\n'
       printf 'HEAD=%s\n' "$(cat "$AUTODEVELOP_STATE_DIR/last-pushed-head")"
       printf 'BRANCH=%s\n' "$(cat "$AUTODEVELOP_STATE_DIR/last-pushed-branch" 2>/dev/null || printf 'unknown')"
+      printf 'MAIN=%s\n' "$(cat "$AUTODEVELOP_STATE_DIR/last-pushed-main-head" 2>/dev/null || printf 'unknown')"
     fi
     ;;
   logs)

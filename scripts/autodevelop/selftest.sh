@@ -64,6 +64,15 @@ assert_equal "$(if autodevelop_valid_blocker_code "$LONG_BLOCKER_CODE"; then pri
 fixture complete 'ZIGCSS-AUTODEVELOP-STATUS: COMPLETE'
 assert_equal "$(autodevelop_classify_pass 0 "$TMP/complete")" COMPLETE 'complete classification'
 
+PROMPT_OUTPUT="$TMP/run-pass-prompt"
+bash "$HERE/run-pass.sh" --print-prompt > "$PROMPT_OUTPUT"
+assert_equal "$(grep -Fc 'Milestone 10 self-contained native stylesheet frontend work is active.' "$PROMPT_OUTPUT")" 1 'prompt selects active native milestone'
+assert_equal "$(grep -Fc 'NSASS-010 through NSASS-012' "$PROMPT_OUTPUT")" 1 'prompt retains native Sass dependency order'
+assert_equal "$(grep -Fc 'NLESS-010 through NLESS-012' "$PROMPT_OUTPUT")" 1 'prompt retains native Less dependency order'
+assert_equal "$(grep -Fc 'NSTYLUS-010 through NSTYLUS-012' "$PROMPT_OUTPUT")" 1 'prompt retains native Stylus dependency order'
+assert_equal "$(grep -Fc 'NATIVE-006 through NATIVE-009' "$PROMPT_OUTPUT")" 1 'prompt retains native graduation dependency order'
+assert_equal "$(if grep -Fq 'Milestone 9 canonical frontend work is active.' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes stale provider milestone'
+
 fixture prompt-echo 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <stable-code>: <reason>'
 assert_equal "$(autodevelop_classify_pass 1 "$TMP/prompt-echo")" ERROR 'prompt marker ignored'
 
@@ -148,8 +157,22 @@ ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$PUSH_STATE" \
   bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" > "$TMP/push.log" 2>&1
 PUSH_HEAD="$(git -C "$PUSH_REPO" rev-parse HEAD)"
 assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/vale/selftest)" "$PUSH_HEAD" 'green checkpoint pushed to exact branch'
+assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/main)" "$PUSH_HEAD" 'green checkpoint atomically integrated to main'
 assert_equal "$(cat "$PUSH_STATE/state/last-pushed-head")" "$PUSH_HEAD" 'pushed head recorded'
 assert_equal "$(cat "$PUSH_STATE/state/last-pushed-branch")" vale/selftest 'pushed branch recorded'
+assert_equal "$(cat "$PUSH_STATE/state/last-pushed-main-head")" "$PUSH_HEAD" 'integrated main head recorded'
+
+DIVERGED_HEAD="$(printf 'independent remote main\n' | git -C "$PUSH_REPO" commit-tree "$PUSH_HEAD^{tree}")"
+git -C "$PUSH_REPO" push -q --force "$PUSH_REMOTE" "$DIVERGED_HEAD:refs/heads/main"
+printf 'next checkpoint\n' >> "$PUSH_REPO/DEVELOPMENT_STATUS.md"
+git -C "$PUSH_REPO" add DEVELOPMENT_STATUS.md
+git -C "$PUSH_REPO" commit -q -m 'next checkpoint'
+ATOMIC_REJECT_RC=0
+ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$PUSH_STATE" \
+  bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" > "$TMP/atomic-reject.log" 2>&1 || ATOMIC_REJECT_RC=$?
+assert_equal "$ATOMIC_REJECT_RC" 1 'diverged main rejects automatic integration'
+assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/vale/selftest)" "$PUSH_HEAD" 'atomic rejection leaves recovery branch unchanged'
+assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/main)" "$DIVERGED_HEAD" 'atomic rejection leaves diverged main unchanged'
 
 OVERRIDE_RC=0
 ZIGCSS_AUTODEVELOP_TEST_MODE=0 ZIGCSS_AUTODEVELOP_STATE_DIR="$TMP/forbidden-state" \

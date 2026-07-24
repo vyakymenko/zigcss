@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Push one already-green checkpoint to the single approved branch and verify it.
+# Atomically push one already-green checkpoint to the approved branch and main.
 set -euo pipefail
 
 HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
@@ -7,6 +7,7 @@ HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
 . "$HERE/lib.sh"
 
 REMOTE=origin
+MAIN_BRANCH=main
 MODE="${1:-push}"
 if [ "$#" -gt 1 ] || { [ "$MODE" != push ] && [ "$MODE" != --check ]; }; then
   autodevelop_die "usage: push-checkpoint.sh [--check]"
@@ -38,7 +39,8 @@ if [ -z "$REMOTE_URL" ] || ! approved_remote_url "$REMOTE_URL"; then
 fi
 
 if [ "$MODE" = --check ]; then
-  printf 'push: %s -> refs/heads/%s (validated)\n' "$REMOTE" "$BRANCH"
+  printf 'push: %s -> refs/heads/%s + refs/heads/%s (atomic non-force; validated)\n' \
+    "$REMOTE" "$BRANCH" "$MAIN_BRANCH"
   exit 0
 fi
 
@@ -48,12 +50,14 @@ if ! autodevelop_git_clean; then
 fi
 
 HEAD="$(git -C "$AUTODEVELOP_ROOT" rev-parse HEAD)"
-autodevelop_log INFO "push start remote=$REMOTE branch=$BRANCH head=${HEAD%????????????????????????????????}"
+autodevelop_log INFO "push start remote=$REMOTE branch=$BRANCH main=$MAIN_BRANCH head=${HEAD%????????????????????????????????}"
 PUSH_RC=0
 GIT_TERMINAL_PROMPT=0 autodevelop_run_with_timeout "$AUTODEVELOP_PUSH_TIMEOUT_SECS" \
-  git -C "$AUTODEVELOP_ROOT" push --porcelain "$REMOTE" "HEAD:refs/heads/$BRANCH" || PUSH_RC=$?
+  git -C "$AUTODEVELOP_ROOT" push --porcelain --atomic "$REMOTE" \
+    "HEAD:refs/heads/$BRANCH" \
+    "HEAD:refs/heads/$MAIN_BRANCH" || PUSH_RC=$?
 if [ "$PUSH_RC" -ne 0 ]; then
-  autodevelop_die "checkpoint push failed or exceeded ${AUTODEVELOP_PUSH_TIMEOUT_SECS}s"
+  autodevelop_die "atomic checkpoint/main push failed or exceeded ${AUTODEVELOP_PUSH_TIMEOUT_SECS}s"
   exit 1
 fi
 
@@ -61,7 +65,9 @@ REMOTE_TMP="$AUTODEVELOP_STATE_DIR/.remote-head.$$"
 rm -f "$REMOTE_TMP"
 READ_RC=0
 GIT_TERMINAL_PROMPT=0 autodevelop_run_with_timeout "$AUTODEVELOP_PUSH_TIMEOUT_SECS" \
-  git -C "$AUTODEVELOP_ROOT" ls-remote --exit-code --heads "$REMOTE" "refs/heads/$BRANCH" \
+  git -C "$AUTODEVELOP_ROOT" ls-remote --exit-code --heads "$REMOTE" \
+    "refs/heads/$BRANCH" \
+    "refs/heads/$MAIN_BRANCH" \
   > "$REMOTE_TMP" || READ_RC=$?
 if [ "$READ_RC" -ne 0 ]; then
   rm -f "$REMOTE_TMP"
@@ -70,9 +76,10 @@ if [ "$READ_RC" -ne 0 ]; then
 fi
 REMOTE_LIST="$(cat "$REMOTE_TMP")"
 rm -f "$REMOTE_TMP"
-REMOTE_HEAD="$(printf '%s\n' "$REMOTE_LIST" | awk 'NR == 1 { print $1 }')"
-if [ "$REMOTE_HEAD" != "$HEAD" ]; then
-  autodevelop_die "origin branch does not match the pushed checkpoint"
+REMOTE_BRANCH_HEAD="$(printf '%s\n' "$REMOTE_LIST" | awk -v ref="refs/heads/$BRANCH" '$2 == ref { print $1 }')"
+REMOTE_MAIN_HEAD="$(printf '%s\n' "$REMOTE_LIST" | awk -v ref="refs/heads/$MAIN_BRANCH" '$2 == ref { print $1 }')"
+if [ "$REMOTE_BRANCH_HEAD" != "$HEAD" ] || [ "$REMOTE_MAIN_HEAD" != "$HEAD" ]; then
+  autodevelop_die "origin recovery branch and main do not both match the pushed checkpoint"
   exit 1
 fi
 if [ "$(git -C "$AUTODEVELOP_ROOT" branch --show-current)" != "$BRANCH" ] \
@@ -84,4 +91,5 @@ fi
 
 autodevelop_state_set last-pushed-head "$HEAD"
 autodevelop_state_set last-pushed-branch "$BRANCH"
-autodevelop_log INFO "push verified remote=$REMOTE branch=$BRANCH head=${HEAD%????????????????????????????????}"
+autodevelop_state_set last-pushed-main-head "$HEAD"
+autodevelop_log INFO "push verified remote=$REMOTE branch=$BRANCH main=$MAIN_BRANCH head=${HEAD%????????????????????????????????}"

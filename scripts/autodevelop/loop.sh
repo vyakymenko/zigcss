@@ -92,13 +92,13 @@ while :; do
       autodevelop_state_set consecutive-errors 0
       autodevelop_state_set blocked-count 0
       autodevelop_state_set blocked-code ''
-      write_loop_status PROGRESS "checkpoint pushed and verified; continuing"
+      write_loop_status PROGRESS "checkpoint atomically pushed to recovery and main; continuing"
       autodevelop_sleep_interruptible "$AUTODEVELOP_INTER_PASS_SECS" || true
       ;;
     COMPLETE)
       push_green_checkpoint || break
       touch "$AUTODEVELOP_COMPLETE_FILE"
-      write_loop_status COMPLETE "roadmap completion reported; final checkpoint pushed"
+      write_loop_status COMPLETE "roadmap completion reported; final checkpoint atomically pushed to recovery and main"
       autodevelop_notify_local "ZigCSS autodevelop complete" "The runner reported complete; review DEVELOPMENT_STATUS.md and local commits."
       break
       ;;
