@@ -151,6 +151,7 @@ const Builtin = enum {
     meta_accepts_content,
     meta_calc_args,
     meta_calc_name,
+    meta_call,
     meta_content_exists,
     meta_feature_exists,
     meta_function_exists,
@@ -2168,7 +2169,6 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         if (function_id >= self.user_functions.items.len) return error.InvalidSassSyntax;
-        const function = &self.user_functions.items[function_id];
         var evaluated = try self.evaluateCallArguments(
             body,
             ranges,
@@ -2176,7 +2176,18 @@ const Engine = struct {
             span,
         );
         defer evaluated.deinit();
-        var bound = try self.bindCallableArguments(function.parameters, &evaluated, span);
+        return self.invokeUserFunction(function_id, &evaluated, span);
+    }
+
+    fn invokeUserFunction(
+        self: *Engine,
+        function_id: u32,
+        evaluated: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (function_id >= self.user_functions.items.len) return error.InvalidSassSyntax;
+        const function = &self.user_functions.items[function_id];
+        var bound = try self.bindCallableArguments(function.parameters, evaluated, span);
         defer bound.deinit();
 
         const previous_mixin_body = self.active_mixin_body;
@@ -4716,6 +4727,13 @@ const Engine = struct {
         }
 
         switch (builtin) {
+            .meta_call => return try self.callMetaCallRaw(
+                module_builtin != null,
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
             .map_get, .map_has_key => return try self.callMapQueryRaw(
                 builtin,
                 body,
@@ -8279,6 +8297,83 @@ const Engine = struct {
         return self.values.own(.{ .callable = callable });
     }
 
+    fn callMetaCallRaw(
+        self: *Engine,
+        module_owned: bool,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+
+        var function_name = [_]u8{ 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n' };
+        var arguments_name = [_]u8{ 'a', 'r', 'g', 's' };
+        const parameters = [_]CallableParameter{
+            .{
+                .name = function_name[0..],
+                .default_value = null,
+            },
+            .{
+                .name = arguments_name[0..],
+                .default_value = null,
+                .rest = true,
+            },
+        };
+        var bound = try self.bindCallableArguments(&parameters, &evaluated, span);
+        defer bound.deinit();
+
+        if (!module_owned) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.consumeOperations(1);
+
+        const callable = switch (bound.values[0].?.*) {
+            .callable => |value| value,
+            else => return self.metaCallUserFunctionFailure(span),
+        };
+        if (callable.kind != .user_function or callable.id >= self.user_functions.items.len) {
+            return self.metaCallUserFunctionFailure(span);
+        }
+        const arguments = switch (bound.rest_value.?.*) {
+            .argument_list => |value| value,
+            else => return error.InvalidSassSyntax,
+        };
+
+        var forwarded = EvaluatedCallArguments{ .allocator = self.allocator };
+        defer forwarded.deinit();
+        for (arguments.positional) |*item| {
+            try self.appendEvaluatedPositional(&forwarded, item, span);
+        }
+        for (arguments.keywords) |*keyword| {
+            try self.appendEvaluatedKeyword(&forwarded, .{
+                .name = keyword.name,
+                .value = &keyword.value,
+                .normalize_name = keyword.normalize_name,
+            }, span);
+        }
+        return self.invokeUserFunction(callable.id, &forwarded, span);
+    }
+
+    fn metaCallUserFunctionFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "native Sass meta.call() requires an available user function reference",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
     fn metaGlobalFunctionReference(
         self: *Engine,
         name: []const u8,
@@ -11465,6 +11560,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
         .{ .name = "tan", .builtin = .math_tan },
         .{ .name = "unit", .builtin = .math_unit },
         .{ .name = "content-exists", .builtin = .meta_content_exists },
+        .{ .name = "call", .builtin = .meta_call },
         .{ .name = "feature-exists", .builtin = .meta_feature_exists },
         .{ .name = "function-exists", .builtin = .meta_function_exists },
         .{ .name = "get-function", .builtin = .meta_get_function },
@@ -11533,6 +11629,7 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "accepts-content")) return .meta_accepts_content;
     if (sassNameEql(name, "calc-args")) return .meta_calc_args;
     if (sassNameEql(name, "calc-name")) return .meta_calc_name;
+    if (sassNameEql(name, "call")) return .meta_call;
     if (sassNameEql(name, "content-exists")) return .meta_content_exists;
     if (sassNameEql(name, "feature-exists")) return .meta_feature_exists;
     if (sassNameEql(name, "function-exists")) return .meta_function_exists;

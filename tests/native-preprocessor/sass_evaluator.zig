@@ -4026,6 +4026,155 @@ test "native Sass meta inspection renders function and mixin references canonica
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass meta call invokes user function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function collect($first, $second: 2, $rest...) {
+        \\  @return meta.inspect(($first, $second, $rest, meta.keywords($rest)));
+        \\}
+        \\@function forward($fn, $args...) {
+        \\  @return meta.call($fn, $args...);
+        \\}
+        \\@function choice($value) { @return $value; }
+        \\$old-choice: meta.get-function("choice");
+        \\@function choice($value) { @return $value + 100; }
+        \\$new-choice: meta.get-function("choice");
+        \\$collector: meta.get-function("collect");
+        \\.values {
+        \\  direct: meta.call($collector, 1);
+        \\  named: reflect.call($collector, $second: 4, $first: 3);
+        \\  list-splat: call($collector, (5, 6)...);
+        \\  map-splat: meta.call($collector, (first: 7, second: 8, named: 9)...);
+        \\  forwarded: forward($collector, 10, $second: 11, $named: 12);
+        \\  ordered: meta.call(mark(1, $collector), mark(2, 13), $second: mark(3, 14));
+        \\  trace: $trace;
+        \\  old: meta.call($old-choice, 1);
+        \\  new: meta.call($new-choice, 1);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-user-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{direct:1, 2, (), ();named:3, 4, (), ();list-splat:5, 6, (), ();map-splat:7, 8, (), (named: 9);forwarded:10, 11, (), (named: 12);ordered:13, 14, (), ();trace:123;old:1;new:101}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@function double($value)
+        \\  @return $value * 2
+        \\$fn: m.get-function("double")
+        \\.sass
+        \\  direct: m.call($fn, 4)
+        \\  named: m.call($function: $fn, $value: 5)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-user-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{direct:8;named:10}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves the legacy warning" {
+    const input =
+        \\@use "sass:meta";
+        \\@function identity($value) { @return $value; }
+        \\.legacy { value: call(meta.get-function("identity"), ok); }
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".legacy{value:ok}", result.css());
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta call rejects unavailable callable kinds and invalid binding" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-call-non-callable.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(1, ok); }",
+        },
+        .{
+            .name = "meta-call-mixin.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.call(meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "meta-call-builtin.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"length\"), (a, b)); }",
+        },
+        .{
+            .name = "meta-call-missing-user-argument.scss",
+            .input = "@use \"sass:meta\"; @function local($value) { @return $value; } .a { value: meta.call(meta.get-function(\"local\")); }",
+        },
+        .{
+            .name = "meta-call-unknown-user-keyword.scss",
+            .input = "@use \"sass:meta\"; @function local($value) { @return $value; } .a { value: meta.call(meta.get-function(\"local\"), $other: 1); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-argument-limit.scss",
+            "@use \"sass:meta\"; @function local($args...) { @return 1; } .a { value: meta.call(meta.get-function(\"local\"), 1, 2); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta function references reject invalid or unavailable reflection" {
     const invalid = [_]struct {
         name: []const u8,
@@ -10053,6 +10202,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  module-function-inspect: meta.inspect(meta.get-function("ceil", $module: "numbers"));
         \\  mixin-inspect: meta.inspect(meta.get-mixin("allocation-mixin"));
         \\  builtin-mixin-inspect: meta.inspect(meta.get-mixin("load-css", "meta"));
+        \\  user-function-call: meta.call(meta.get-function("allocation-function"), 7);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -10076,7 +10226,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
