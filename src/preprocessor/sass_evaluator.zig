@@ -154,6 +154,7 @@ const Builtin = enum {
     meta_content_exists,
     meta_feature_exists,
     meta_function_exists,
+    meta_get_function,
     meta_get_mixin,
     meta_global_variable_exists,
     meta_inspect,
@@ -4798,6 +4799,7 @@ const Engine = struct {
             .meta_content_exists,
             .meta_feature_exists,
             .meta_function_exists,
+            .meta_get_function,
             .meta_get_mixin,
             .meta_global_variable_exists,
             .meta_inspect,
@@ -8212,6 +8214,92 @@ const Engine = struct {
         return self.values.own(.{ .callable = callable });
     }
 
+    fn callMetaGetFunction(
+        self: *Engine,
+        module_owned: bool,
+        arguments: []const *const native_value.Value,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (!module_owned) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.consumeOperations(1);
+
+        const name_string = try self.metaExistenceString(arguments[0].*, "name", span);
+        const raw_name = native_string.decodeAlloc(
+            self.allocator,
+            name_string.bytes,
+            name_string.quoted,
+            self.limits.max_temporary_bytes,
+        ) catch |err| return self.stringFailure(err, span);
+        defer self.allocator.free(raw_name);
+        const normalized = (try self.normalizeMetaExistenceName(raw_name, span)) orelse {
+            try self.report(.invalid_operation, span, "native Sass function reference was not found");
+            return error.InvalidExpression;
+        };
+        defer self.allocator.free(normalized);
+
+        if (arguments.len >= 2 and sassTruthy(arguments[1].*)) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "native Sass CSS function references are not yet available",
+            );
+            return error.InvalidExpression;
+        }
+        const module = if (arguments.len == 3)
+            try self.metaExistenceModule(arguments[2].*, span)
+        else
+            null;
+        const callable = if (module) |kind| blk: {
+            const builtin = moduleBuiltin(kind, normalized) orelse {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass function reference was not found",
+                );
+                return error.InvalidExpression;
+            };
+            break :blk builtinFunctionCallable(builtin, kind);
+        } else (try self.metaGlobalFunctionReference(normalized, scope)) orelse {
+            try self.report(
+                .invalid_operation,
+                span,
+                "native Sass function reference was not found",
+            );
+            return error.InvalidExpression;
+        };
+        return self.values.own(.{ .callable = callable });
+    }
+
+    fn metaGlobalFunctionReference(
+        self: *Engine,
+        name: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!?native_value.Callable {
+        if (try self.lookupUserFunction(name, scope)) |function_id| {
+            return .{ .kind = .user_function, .id = function_id };
+        }
+        if (std.mem.eql(u8, name, "if")) return builtinIfFunctionCallable();
+
+        for (self.modules.items) |binding| {
+            try self.transaction.consumeOperations(1);
+            if (binding.namespace != null) continue;
+            if (moduleBuiltin(binding.kind, name)) |builtin| {
+                return builtinFunctionCallable(builtin, binding.kind);
+            }
+        }
+        const builtin = globalBuiltin(name) orelse return null;
+        return builtinFunctionCallable(builtin, null);
+    }
+
     fn callMetaExistence(
         self: *Engine,
         builtin: Builtin,
@@ -9485,6 +9573,11 @@ const Engine = struct {
                 .{ .name = "name" },
                 .{ .name = "module", .required = false },
             },
+            .meta_get_function => &.{
+                .{ .name = "name" },
+                .{ .name = "css", .required = false },
+                .{ .name = "module", .required = false },
+            },
             .meta_inspect, .meta_type_of => &.{.{ .name = "value" }},
             .meta_keywords => &.{.{ .name = "args" }},
             .meta_variable_exists => &.{.{ .name = "name" }},
@@ -9608,6 +9701,8 @@ const Engine = struct {
         }
 
         const automatic_list_option = native_value.Value{ .string = .{ .bytes = "auto" } };
+        const false_option = native_value.Value{ .boolean = false };
+        const null_option = native_value.Value{ .null_value = {} };
         var ordered: [4]*const native_value.Value = undefined;
         if (builtin == .list_join) {
             // `$bracketed` may be supplied by name while `$separator` is omitted.
@@ -9615,6 +9710,11 @@ const Engine = struct {
             // never expose undefined stack memory to the evaluator.
             ordered[2] = &automatic_list_option;
             ordered[3] = &automatic_list_option;
+        } else if (builtin == .meta_get_function) {
+            // `$module` may be supplied by name while `$css` is omitted.
+            // Materialize both canonical defaults before filling bound slots.
+            ordered[1] = &false_option;
+            ordered[2] = &null_option;
         }
         var count: usize = 0;
         for (bound.values, 0..) |value_range, parameter_index| {
@@ -9713,6 +9813,12 @@ const Engine = struct {
             .meta_calc_args => self.callMetaCalcArgs(arguments, scope, span),
             .meta_calc_name => self.callMetaCalcName(arguments, span),
             .meta_content_exists => self.callMetaContentExists(module_owned, span),
+            .meta_get_function => self.callMetaGetFunction(
+                module_owned,
+                arguments,
+                scope,
+                span,
+            ),
             .meta_get_mixin => self.callMetaGetMixin(
                 module_owned,
                 arguments,
@@ -11076,6 +11182,32 @@ fn moduleBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     };
 }
 
+// Built-in function identity includes its owner: a legacy global and the
+// corresponding module member are distinct, while module aliases are equal.
+// Reserve origin zero's largest member for the special legacy `if()` function.
+const builtin_function_member_mask: u32 = 0x0fff_ffff;
+const builtin_function_origin_shift: u5 = 28;
+
+fn builtinFunctionCallable(
+    builtin: Builtin,
+    owner: ?BuiltinModule,
+) native_value.Callable {
+    const member: u32 = @intCast(@intFromEnum(builtin));
+    std.debug.assert(member < builtin_function_member_mask);
+    const origin: u32 = if (owner) |kind| @as(u32, @intFromEnum(kind)) + 1 else 0;
+    return .{
+        .kind = .builtin_function,
+        .id = (origin << builtin_function_origin_shift) | member,
+    };
+}
+
+fn builtinIfFunctionCallable() native_value.Callable {
+    return .{
+        .kind = .builtin_function,
+        .id = builtin_function_member_mask,
+    };
+}
+
 fn moduleBuiltinMixin(kind: BuiltinModule, name: []const u8) ?BuiltinMixin {
     if (kind != .meta) return null;
     if (sassNameEql(name, "load-css")) return .meta_load_css;
@@ -11221,6 +11353,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
         .{ .name = "content-exists", .builtin = .meta_content_exists },
         .{ .name = "feature-exists", .builtin = .meta_feature_exists },
         .{ .name = "function-exists", .builtin = .meta_function_exists },
+        .{ .name = "get-function", .builtin = .meta_get_function },
         .{ .name = "get-mixin", .builtin = .meta_get_mixin },
         .{ .name = "global-variable-exists", .builtin = .meta_global_variable_exists },
         .{ .name = "inspect", .builtin = .meta_inspect },
@@ -11289,6 +11422,7 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "content-exists")) return .meta_content_exists;
     if (sassNameEql(name, "feature-exists")) return .meta_feature_exists;
     if (sassNameEql(name, "function-exists")) return .meta_function_exists;
+    if (sassNameEql(name, "get-function")) return .meta_get_function;
     if (sassNameEql(name, "get-mixin")) return .meta_get_mixin;
     if (sassNameEql(name, "global-variable-exists")) return .meta_global_variable_exists;
     if (sassNameEql(name, "inspect")) return .meta_inspect;

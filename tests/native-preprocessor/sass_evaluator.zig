@@ -3839,6 +3839,222 @@ test "native Sass meta mixin references reject invalid or unavailable reflection
     );
 }
 
+test "native Sass meta function references preserve callable identity and module ownership" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as arithmetic;
+        \\@use "sass:selector" as selectors;
+        \\@use "sass:selector" as *;
+        \\$evaluations: 0;
+        \\$trace: 0;
+        \\@function mark($tag, $value) {
+        \\  $evaluations: $evaluations + 1 !global;
+        \\  $trace: $trace * 10 + $tag !global;
+        \\  @return $value;
+        \\}
+        \\@function first_name($value) { @return $value; }
+        \\@function second($value) { @return $value; }
+        \\$first: meta.get-function("first-name");
+        \\$escaped: meta.get-function("\66 irst_name");
+        \\$marked: meta.get-function(mark(1, "first_name"), $css: mark(2, false), $module: mark(3, null));
+        \\@function first-name($value) { @return $value; }
+        \\$replacement: meta.get-function("first-name");
+        \\.values {
+        \\  type: meta.type-of($first);
+        \\  same: $first == $escaped;
+        \\  marked: $first == $marked;
+        \\  redefined: $first == $replacement;
+        \\  different: $first == meta.get-function("second");
+        \\  alias: reflect.type-of(reflect.get_function("second"));
+        \\  star: type-of(get-function("second"));
+        \\  global: meta.type-of(meta.get-function("length", $css: false));
+        \\  global-alias: meta.get-function("str_length") == meta.get-function("str-length", $css: null);
+        \\  module: meta.type-of(meta.get-function("ceil", $module: "numbers"));
+        \\  module-alias: meta.get-function("ceil", $module: "numbers") == reflect.get-function("ceil", $module: "arithmetic");
+        \\  star-module: meta.get-function("parse") == meta.get-function("parse", $module: "selectors");
+        \\  global-distinct: meta.get-function("ceil") == meta.get-function("ceil", $module: "numbers");
+        \\  own: meta.type-of(meta.get-function("type-of", $module: "meta"));
+        \\  own-alias: meta.get-function("type_of", $module: "meta") == reflect.get-function("type-of", $module: "reflect");
+        \\  conditional: meta.type-of(meta.get-function("if"));
+        \\  conditional-same: meta.get-function("if") == meta.get-function("if");
+        \\  reflected: meta.function-exists("get-function", "meta");
+        \\  evaluations: $evaluations;
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-function-references.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{type:function;same:true;marked:true;redefined:false;different:false;alias:function;star:function;global:function;global-alias:true;module:function;module-alias:true;star-module:true;global-distinct:false;own:function;own-alias:true;conditional:function;conditional-same:true;reflected:true;evaluations:3;trace:123}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\@function first_name($value)
+        \\  @return $value
+        \\.sass
+        \\  user: m.type-of(m.get-function("first-name"))
+        \\  same: m.get-function("first_name") == m.get-function("first-name")
+        \\  module: m.type-of(m.get-function("ceil", $module: "numbers"))
+        \\  global-distinct: m.get-function("ceil") == m.get-function("ceil", $module: "numbers")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-function-references.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{user:function;same:true;module:function;global-distinct:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta function references preserve the legacy warning" {
+    const input =
+        \\@use "sass:meta";
+        \\@function legacy_probe($value) { @return $value; }
+        \\.legacy { type: meta.type-of(get-function("legacy-probe")); }
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-function-reference-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".legacy{type:function}", result.css());
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta function references reject invalid or unavailable reflection" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-get-function-before-declaration.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"later\"); @function later() { @return 1; }",
+        },
+        .{
+            .name = "meta-get-function-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"missing\")); }",
+        },
+        .{
+            .name = "meta-get-function-case.scss",
+            .input = "@use \"sass:meta\"; @function Mixed() { @return 1; } .a { value: meta.type-of(meta.get-function(\"mixed\")); }",
+        },
+        .{
+            .name = "meta-get-function-user-from-module.scss",
+            .input = "@use \"sass:meta\"; @function local() { @return 1; } .a { value: meta.type-of(meta.get-function(\"local\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-get-function-loaded-module-missing.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.type-of(meta.get-function(\"type-of\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-get-function-unloaded-module.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"ceil\", $module: \"numbers\")); }",
+        },
+        .{
+            .name = "meta-get-function-number-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(1)); }",
+        },
+        .{
+            .name = "meta-get-function-number-module.scss",
+            .input = "@use \"sass:meta\"; @function local() { @return 1; } .a { value: meta.type-of(meta.get-function(\"local\", $module: 1)); }",
+        },
+        .{
+            .name = "meta-get-function-missing-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function()); }",
+        },
+        .{
+            .name = "meta-get-function-too-many.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"length\", false, null, 1)); }",
+        },
+        .{
+            .name = "meta-get-function-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function($function: \"length\")); }",
+        },
+        .{
+            .name = "meta-get-function-css-reference.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"custom\", true)); }",
+        },
+        .{
+            .name = "meta-get-function-truthy-css-reference.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"custom\", 0)); }",
+        },
+        .{
+            .name = "meta-get-function-css-module.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.type-of(meta.get-function(\"ceil\", true, \"math\")); }",
+        },
+        .{
+            .name = "meta-get-function-invalid-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"not valid\")); }",
+        },
+        .{
+            .name = "meta-get-function-callable-inspection.scss",
+            .input = "@use \"sass:meta\"; @function local() { @return 1; } .a { value: meta.inspect(meta.get-function(\"local\")); }",
+        },
+        .{
+            .name = "meta-get-function-callable-invocation.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"length\"), (a, b)); }",
+        },
+        .{
+            .name = "meta-get-function-callable-css.scss",
+            .input = "@use \"sass:meta\"; @function local() { @return 1; } .a { value: meta.get-function(\"local\"); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 3;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-get-function-temporary-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"long-name\")); }",
+            .scss,
+            temporary_limits,
+        ),
+    );
+}
+
 test "native Sass evaluates plain CSS function arguments before serialization" {
     const input =
         \\@use "sass:meta";
@@ -9747,6 +9963,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  $keywords: meta.keywords($args);
         \\  @return meta.inspect($args);
         \\}
+        \\@function allocation-function($value) { @return $value; }
         \\$calculation: calc(1px + var(--x));
         \\.allocation {
         \\  type: meta.type-of($calculation);
@@ -9759,6 +9976,10 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  variable: meta.variable-exists("calculation");
         \\  global: meta.global-variable-exists("calculation");
         \\  module: meta.function-exists("ceil", "numbers");
+        \\  user-function-reference: meta.type-of(meta.get-function("allocation-function"));
+        \\  global-function-reference: meta.type-of(meta.get-function("length"));
+        \\  module-function-reference: meta.type-of(meta.get-function("ceil", $module: "numbers"));
+        \\  same-function-reference: meta.get-function("ceil", $module: "numbers") == meta.get-function("ceil", $module: "numbers");
         \\  mixin-reference: meta.type-of(meta.get-mixin("allocation-mixin"));
         \\  builtin-mixin-reference: meta.type-of(meta.get-mixin("load-css", "meta"));
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
@@ -9784,7 +10005,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;mixin-reference:mixin;builtin-mixin-reference:mixin;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
