@@ -3021,6 +3021,209 @@ test "native Sass meta inspection reports exact types and canonical representati
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass meta calculation introspection names and materializes retained arguments" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as introspect;
+        \\@use "sass:meta" as *;
+        \\@use "sass:list";
+        \\$calc-args: meta.calc-args(calc(1px + var(--x)));
+        \\$min-args: meta.calc-args(min(var(--x, 1px), max(2px, var(--y, 3px))));
+        \\$round-args: meta.calc-args(round(to-zero, var(--x), 1px));
+        \\$spaced: EXP(  var(--x)  );
+        \\$commented: min(1px/**/,/**/var(--x));
+        \\.values {
+        \\  calc: meta.calc-name(calc(1px + var(--x)));
+        \\  min: meta.calc-name(min(1px, var(--x)));
+        \\  max: meta.calc-name(max(1px, var(--x)));
+        \\  clamp: meta.calc-name(clamp(1px, var(--x), 3px));
+        \\  round: meta.calc-name(round(var(--x), 1px));
+        \\  mod: meta.calc-name(mod(var(--x), 3px));
+        \\  rem: meta.calc-name(rem(var(--x), 3px));
+        \\  sin: meta.calc-name(sin(var(--x)));
+        \\  cos: meta.calc-name(cos(var(--x)));
+        \\  tan: meta.calc-name(tan(var(--x)));
+        \\  asin: meta.calc-name(asin(var(--x)));
+        \\  acos: meta.calc-name(acos(var(--x)));
+        \\  atan: meta.calc-name(atan(var(--x)));
+        \\  atan2: meta.calc-name(atan2(var(--x), 1));
+        \\  pow: meta.calc-name(pow(var(--x), 2));
+        \\  sqrt: meta.calc-name(sqrt(var(--x)));
+        \\  hypot: meta.calc-name(hypot(var(--x), 4px));
+        \\  log: meta.calc-name(log(var(--x), 2));
+        \\  exp: meta.calc-name(exp(var(--x)));
+        \\  abs: meta.calc-name(abs(var(--x)));
+        \\  sign: meta.calc-name(sign(var(--x)));
+        \\  uppercase: meta.calc-name(CALC(1px + var(--x)));
+        \\  escaped: meta.calc-name(c\61 lc(1px + var(--x)));
+        \\  simple-escaped: meta.calc-name(ca\lc(1px + var(--x)));
+        \\  escaped-type: meta.type-of(c\61 lc(1px + var(--x)));
+        \\  escaped-inspect: meta.inspect(ca\lc(1px + var(--x)));
+        \\  spaced-inspect: meta.inspect($spaced);
+        \\  commented-inspect: meta.inspect($commented);
+        \\  commented-args: meta.inspect(meta.calc-args($commented));
+        \\  calc-args: meta.inspect($calc-args);
+        \\  calc-count: list.length($calc-args);
+        \\  calc-first-type: meta.type-of(list.nth($calc-args, 1));
+        \\  min-args: meta.inspect($min-args);
+        \\  min-count: list.length($min-args);
+        \\  min-first-type: meta.type-of(list.nth($min-args, 1));
+        \\  min-second-type: meta.type-of(list.nth($min-args, 2));
+        \\  round-args: meta.inspect($round-args);
+        \\  round-first-type: meta.type-of(list.nth($round-args, 1));
+        \\  round-third-type: meta.type-of(list.nth($round-args, 3));
+        \\  keyword: introspect.calc-name($calc: max(1px, var(--x)));
+        \\  underscore: meta.calc_name(calc(1px + var(--x)));
+        \\  alias-args: introspect.inspect(introspect.calc-args(clamp(1px, var(--x), 3px)));
+        \\  star: calc-name(min(1px, var(--x)));
+        \\  star-args: inspect(calc-args(max(1px, var(--x))));
+        \\  reflected: meta.function-exists("calc-name", "meta");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-calculation-introspection.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{calc:\"calc\";min:\"min\";max:\"max\";clamp:\"clamp\";round:\"round\";mod:\"mod\";rem:\"rem\";sin:\"sin\";cos:\"cos\";tan:\"tan\";asin:\"asin\";acos:\"acos\";atan:\"atan\";atan2:\"atan2\";pow:\"pow\";sqrt:\"sqrt\";hypot:\"hypot\";log:\"log\";exp:\"exp\";abs:\"abs\";sign:\"sign\";uppercase:\"calc\";escaped:\"calc\";simple-escaped:\"calc\";escaped-type:calculation;escaped-inspect:calc(1px + var(--x));spaced-inspect:exp(var(--x));commented-inspect:min(1px, var(--x));commented-args:1px, var(--x);calc-args:(1px + var(--x),);calc-count:1;calc-first-type:string;min-args:var(--x, 1px), max(2px, var(--y, 3px));min-count:2;min-first-type:string;min-second-type:calculation;round-args:to-zero, var(--x), 1px;round-first-type:string;round-third-type:number;keyword:\"max\";underscore:\"calc\";alias-args:1px, var(--x), 3px;star:\"min\";star-args:1px, var(--x);reflected:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\.sass
+        \\  name: m.calc-name(calc(1px + var(--x)))
+        \\  args: m.inspect(m.calc-args(min(1px, var(--x))))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-calculation-introspection.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{name:\"calc\";args:1px, var(--x)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var unowned = try compile(
+        std.testing.allocator,
+        "meta-calculation-unowned.scss",
+        ".unowned { value: calc-name(calc(1px + var(--x))); }",
+        .scss,
+        .{},
+    );
+    defer unowned.deinit();
+    try std.testing.expectEqualStrings(
+        ".unowned{value:calc-name(calc(1px + var(--x)))}",
+        unowned.css(),
+    );
+}
+
+test "native Sass meta calculation introspection rejects non-calculations and preserves ceilings" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "meta-calc-name-missing-module.scss",
+            .input = ".a { value: meta.calc-name(calc(1px + var(--x))); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-name-case-namespace.scss",
+            .input = "@use \"sass:meta\" as Meta; .a { value: meta.calc-name(calc(1px + var(--x))); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-name-number.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-name(1px); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-name-reduced.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-name(calc(1px + 2px)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-name-quoted.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-name(\"calc(1px)\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-args-map.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-args((a: 1)); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-args-composite.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-args(foo calc(1px + var(--x))); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-name-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-name(); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-args-too-many.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-args(calc(1px + var(--x)), 1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-name-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-name($value: calc(1px + var(--x))); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "meta-calc-name-duplicate.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.calc-name(calc(1px + var(--x)), $calc: calc(2px + var(--y))); }",
+            .expected = error.InvalidExpression,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 16;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-calc-temporary-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.calc-name(calc(1px + var(--long-name))); }",
+            .scss,
+            temporary_limits,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-calc-argument-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.calc-args(mod(var(--x), 1px)); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta existence queries inspect scope declarations globals and built-in modules" {
     const input =
         \\@use "sass:meta";
@@ -8376,6 +8579,8 @@ fn exerciseMetaInspectionAllocationFailures(
         \\.allocation {
         \\  type: meta.type-of($calculation);
         \\  inspect: meta.inspect((a: (1, 2)));
+        \\  calc-name: meta.calc-name($calculation);
+        \\  calc-args: meta.inspect(meta.calc-args(min(1px, var(--y))));
         \\  args: inspect-args(1, $tone: red);
         \\  function: meta.function-exists("inspect_args");
         \\  mixin: meta.mixin-exists("allocation_mixin");
@@ -8401,7 +8606,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));args:(1,);function:true;mixin:true;variable:true;global:true;module:true}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

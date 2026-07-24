@@ -148,6 +148,8 @@ const Builtin = enum {
     math_tan,
     math_unit,
     math_clamp,
+    meta_calc_args,
+    meta_calc_name,
     meta_feature_exists,
     meta_function_exists,
     meta_global_variable_exists,
@@ -535,6 +537,11 @@ const QualifiedName = struct {
 const CalculationArgument = union(enum) {
     number: *const native_value.Value,
     deferred: *const native_value.Value,
+};
+
+const SassCalculationValue = struct {
+    name: []const u8,
+    body: []const u8,
 };
 
 const CalculationDimension = enum {
@@ -3436,6 +3443,11 @@ const Engine = struct {
         }
         if (try self.tryUserFunctionCall(trimmed, scope, diagnostic_span)) |item| return item;
         if (try self.tryBuiltinCall(trimmed, scope, diagnostic_span)) |item| return item;
+        if (sassCalculationValue(trimmed) != null) {
+            const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
+            defer self.allocator.free(rendered);
+            return self.values.own(.{ .string = .{ .bytes = rendered } });
+        }
         if (native_color.parseLiteral(trimmed)) |color| {
             return self.values.own(.{ .color = color });
         }
@@ -4405,6 +4417,8 @@ const Engine = struct {
             .math_sqrt,
             .math_tan,
             .math_unit,
+            .meta_calc_args,
+            .meta_calc_name,
             .meta_feature_exists,
             .meta_function_exists,
             .meta_global_variable_exists,
@@ -7420,6 +7434,150 @@ const Engine = struct {
         return error.TemporaryLimitExceeded;
     }
 
+    fn callMetaCalcName(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const calculation = try self.metaCalculationValue(arguments, span);
+        try self.transaction.consumeOperations(1);
+        return self.values.own(.{ .string = .{
+            .bytes = calculation.name,
+            .quoted = true,
+        } });
+    }
+
+    fn callMetaCalcArgs(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const calculation = try self.metaCalculationValue(arguments, span);
+        const argument_count = calculationArgumentCount(calculation.body);
+        if (argument_count == 0) {
+            try self.report(.invalid_operation, span, "native Sass calculation has no arguments");
+            return error.InvalidExpression;
+        }
+        if (argument_count > self.limits.max_function_arguments) {
+            try self.report(.resource_limit, span, "native Sass function argument limit exceeded");
+            return error.FunctionArgumentLimitExceeded;
+        }
+        const canonical_capacity = std.math.add(
+            usize,
+            calculation.body.len,
+            argument_count - 1,
+        ) catch return self.metaCalculationTemporaryFailure(span);
+        const range_bytes = std.math.mul(
+            usize,
+            argument_count,
+            @sizeOf(ExpressionRange),
+        ) catch return self.metaCalculationTemporaryFailure(span);
+        const value_bytes = std.math.mul(
+            usize,
+            argument_count,
+            @sizeOf(native_value.Value),
+        ) catch return self.metaCalculationTemporaryFailure(span);
+        const metadata_bytes = std.math.add(usize, range_bytes, value_bytes) catch
+            return self.metaCalculationTemporaryFailure(span);
+        const temporary_bytes = std.math.add(usize, canonical_capacity, metadata_bytes) catch
+            return self.metaCalculationTemporaryFailure(span);
+        if (temporary_bytes > self.limits.max_temporary_bytes) {
+            return self.metaCalculationTemporaryFailure(span);
+        }
+
+        var canonical_body: std.ArrayList(u8) = .empty;
+        defer canonical_body.deinit(self.allocator);
+        try canonical_body.ensureTotalCapacityPrecise(self.allocator, canonical_capacity);
+        try self.appendCanonicalCalculationBody(&canonical_body, calculation.body);
+
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        try ranges.ensureTotalCapacityPrecise(self.allocator, argument_count);
+        _ = try splitTopLevelRanges(
+            self.allocator,
+            canonical_body.items,
+            .comma,
+            &ranges,
+        );
+        if (ranges.items.len != argument_count) {
+            try self.report(.invalid_operation, span, "malformed native Sass calculation arguments");
+            return error.InvalidExpression;
+        }
+
+        const items = try self.allocator.alloc(native_value.Value, argument_count);
+        defer self.allocator.free(items);
+        for (ranges.items, 0..) |range, index| {
+            try self.transaction.consumeOperations(1);
+            const raw = trimWhitespace(canonical_body.items[range.start..range.end]);
+            if (raw.len == 0) {
+                try self.report(.invalid_operation, span, "empty native Sass calculation argument");
+                return error.InvalidExpression;
+            }
+            items[index] = if (sassCalculationValue(raw) != null)
+                .{ .string = .{ .bytes = raw } }
+            else switch (try self.probeArithmetic(raw, scope, span, .sass)) {
+                .numeric => (try self.evaluateExpressionBytes(raw, scope, span)).*,
+                .none, .incompatible, .invalid => .{ .string = .{ .bytes = raw } },
+            };
+        }
+        return self.values.own(.{ .list = .{
+            .items = items,
+            .separator = .comma,
+        } });
+    }
+
+    fn metaCalculationValue(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!SassCalculationValue {
+        if (arguments.len != 1) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "meta calculation introspection requires exactly one argument",
+            );
+            return error.InvalidExpression;
+        }
+        const string = switch (arguments[0].*) {
+            .string => |value| if (!value.quoted) value else return self.metaCalculationTypeFailure(span),
+            else => return self.metaCalculationTypeFailure(span),
+        };
+        if (string.bytes.len > self.limits.max_temporary_bytes) {
+            return self.metaCalculationTemporaryFailure(span);
+        }
+        const operation_count = std.math.cast(u64, string.bytes.len) orelse
+            std.math.maxInt(u64);
+        try self.transaction.consumeOperations(operation_count);
+        return sassCalculationValue(string.bytes) orelse
+            return self.metaCalculationTypeFailure(span);
+    }
+
+    fn metaCalculationTypeFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "meta calculation introspection requires a calculation",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
+    fn metaCalculationTemporaryFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .resource_limit,
+            span,
+            "native Sass meta calculation temporary limit exceeded",
+        ) catch |err| return err;
+        return error.TemporaryLimitExceeded;
+    }
+
     fn callMetaExistence(
         self: *Engine,
         builtin: Builtin,
@@ -8675,6 +8833,7 @@ const Engine = struct {
             },
             .math_is_unitless => &.{.{ .name = "number" }},
             .math_unit => &.{.{ .name = "number" }},
+            .meta_calc_args, .meta_calc_name => &.{.{ .name = "calc" }},
             .meta_feature_exists => &.{.{ .name = "feature" }},
             .meta_function_exists,
             .meta_global_variable_exists,
@@ -8907,6 +9066,8 @@ const Engine = struct {
                 span,
             ),
             .math_unit => self.callMathUnit(arguments, span),
+            .meta_calc_args => self.callMetaCalcArgs(arguments, scope, span),
+            .meta_calc_name => self.callMetaCalcName(arguments, span),
             .meta_feature_exists,
             .meta_function_exists,
             .meta_global_variable_exists,
@@ -9508,7 +9669,16 @@ const Engine = struct {
         try self.transaction.consumeOperations(1);
         switch (item) {
             .null_value => try self.appendTemporary(output, "null"),
-            .boolean, .number, .color, .string, .selector => try self.appendValue(output, item, false),
+            .boolean, .number, .color, .selector => try self.appendValue(output, item, false),
+            .string => |string| if (!string.quoted) {
+                if (sassCalculationValue(string.bytes)) |calculation| {
+                    try self.appendInspectedCalculation(output, calculation);
+                } else {
+                    try self.appendValue(output, item, false);
+                }
+            } else {
+                try self.appendValue(output, item, false);
+            },
             .list => |list| {
                 if (list.items.len == 0 and !list.bracketed) {
                     try self.appendTemporary(output, "()");
@@ -9556,6 +9726,101 @@ const Engine = struct {
                 if (parenthesized) try self.appendTemporary(output, ",)");
             },
             .callable => return error.InvalidExpression,
+        }
+    }
+
+    fn appendInspectedCalculation(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        calculation: SassCalculationValue,
+    ) Error!void {
+        try self.transaction.consumeOperations(1);
+        try self.appendTemporary(output, calculation.name);
+        try self.appendTemporary(output, "(");
+        try self.appendCanonicalCalculationBody(output, calculation.body);
+        try self.appendTemporary(output, ")");
+    }
+
+    fn appendCanonicalCalculationBody(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        body: []const u8,
+    ) Error!void {
+        const operation_count = std.math.cast(u64, body.len) orelse
+            std.math.maxInt(u64);
+        try self.transaction.consumeOperations(operation_count);
+        var index: usize = 0;
+        var quote: ?u8 = null;
+        var pending_whitespace = false;
+        while (index < body.len) {
+            const byte = body[index];
+            if (quote) |active| {
+                try self.appendTemporary(output, body[index .. index + 1]);
+                index += 1;
+                if (byte == '\\' and index < body.len) {
+                    try self.appendTemporary(output, body[index .. index + 1]);
+                    index += 1;
+                } else if (byte == active) {
+                    quote = null;
+                }
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                if (pending_whitespace and output.items.len > 0 and
+                    output.items[output.items.len - 1] != '(' and
+                    output.items[output.items.len - 1] != '[' and
+                    output.items[output.items.len - 1] != ' ')
+                {
+                    try self.appendTemporary(output, " ");
+                }
+                pending_whitespace = false;
+                quote = byte;
+                try self.appendTemporary(output, body[index .. index + 1]);
+                index += 1;
+                continue;
+            }
+            if (byte == '\\' and index + 1 < body.len) {
+                if (pending_whitespace and output.items.len > 0 and output.items[output.items.len - 1] != '(') {
+                    try self.appendTemporary(output, " ");
+                }
+                pending_whitespace = false;
+                try self.appendTemporary(output, body[index .. index + 2]);
+                index += 2;
+                continue;
+            }
+            if (commentEnd(body, index)) |end| {
+                pending_whitespace = true;
+                index = end;
+                continue;
+            }
+            if (isExpressionWhitespace(byte)) {
+                pending_whitespace = true;
+                index += 1;
+                continue;
+            }
+            if (byte != ',') {
+                const closes_group = byte == ')' or byte == ']';
+                if (pending_whitespace and !closes_group and output.items.len > 0 and
+                    output.items[output.items.len - 1] != '(' and
+                    output.items[output.items.len - 1] != '[' and
+                    output.items[output.items.len - 1] != ' ')
+                {
+                    try self.appendTemporary(output, " ");
+                }
+                pending_whitespace = false;
+                try self.appendTemporary(output, body[index .. index + 1]);
+                index += 1;
+                continue;
+            }
+            while (output.items.len > 0 and isExpressionWhitespace(output.items[output.items.len - 1])) {
+                output.items.len -= 1;
+            }
+            try self.appendTemporary(output, ", ");
+            pending_whitespace = false;
+            index += 1;
+            while (index < body.len and isExpressionWhitespace(body[index])) {
+                index += 1;
+            }
         }
     }
 
@@ -10342,6 +10607,8 @@ fn globalBuiltin(name: []const u8) ?Builtin {
 }
 
 fn metaModuleBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "calc-args")) return .meta_calc_args;
+    if (sassNameEql(name, "calc-name")) return .meta_calc_name;
     if (sassNameEql(name, "feature-exists")) return .meta_feature_exists;
     if (sassNameEql(name, "function-exists")) return .meta_function_exists;
     if (sassNameEql(name, "global-variable-exists")) return .meta_global_variable_exists;
@@ -10500,19 +10767,162 @@ fn containsDeferredCssCalculation(input: []const u8) bool {
     return false;
 }
 
-fn isSassCalculationValue(input: []const u8) bool {
-    const opening = std.mem.indexOfScalar(u8, input, '(') orelse return false;
-    if (opening == 0 or !fullyWrapped(input[opening..], '(', ')')) return false;
-    const name = input[0..opening];
-    const functions = [_][]const u8{
-        "calc", "min",  "max",   "clamp", "round", "mod",  "rem",
-        "sin",  "cos",  "tan",   "asin",  "acos",  "atan", "atan2",
-        "pow",  "sqrt", "hypot", "log",   "exp",   "abs",  "sign",
-    };
-    for (functions) |function| {
-        if (std.ascii.eqlIgnoreCase(name, function)) return true;
+const sass_calculation_names = [_][]const u8{
+    "calc", "min",  "max",   "clamp", "round", "mod",  "rem",
+    "sin",  "cos",  "tan",   "asin",  "acos",  "atan", "atan2",
+    "pow",  "sqrt", "hypot", "log",   "exp",   "abs",  "sign",
+};
+
+fn sassCalculationValue(input: []const u8) ?SassCalculationValue {
+    const opening = std.mem.indexOfScalar(u8, input, '(') orelse return null;
+    if (opening == 0 or !fullyWrapped(input[opening..], '(', ')')) return null;
+    const raw_name = input[0..opening];
+    for (sass_calculation_names) |name| {
+        if (calculationIdentifierEql(raw_name, name)) {
+            return .{
+                .name = name,
+                .body = input[opening + 1 .. input.len - 1],
+            };
+        }
     }
-    return false;
+    return null;
+}
+
+fn isSassCalculationValue(input: []const u8) bool {
+    return sassCalculationValue(input) != null;
+}
+
+const DecodedCalculationScalar = struct {
+    scalar: u21,
+    end: usize,
+};
+
+fn calculationIdentifierEql(input: []const u8, expected: []const u8) bool {
+    var input_index: usize = 0;
+    var expected_index: usize = 0;
+    while (input_index < input.len) {
+        const decoded = decodeCalculationIdentifierScalar(input, input_index) orelse return false;
+        input_index = decoded.end;
+        if (decoded.scalar > std.math.maxInt(u8) or expected_index >= expected.len) {
+            return false;
+        }
+        const byte: u8 = @intCast(decoded.scalar);
+        if (std.ascii.toLower(byte) != expected[expected_index]) return false;
+        expected_index += 1;
+    }
+    return expected_index == expected.len;
+}
+
+fn decodeCalculationIdentifierScalar(
+    input: []const u8,
+    start: usize,
+) ?DecodedCalculationScalar {
+    if (start >= input.len) return null;
+    if (input[start] != '\\') {
+        const length = std.unicode.utf8ByteSequenceLength(input[start]) catch return null;
+        const end = std.math.add(usize, start, length) catch return null;
+        if (end > input.len) return null;
+        return .{
+            .scalar = std.unicode.utf8Decode(input[start..end]) catch return null,
+            .end = end,
+        };
+    }
+    var cursor = start + 1;
+    if (cursor >= input.len or input[cursor] == 0 or input[cursor] == '\n' or
+        input[cursor] == '\r' or input[cursor] == '\x0c')
+    {
+        return null;
+    }
+    if (std.ascii.isHex(input[cursor])) {
+        var scalar: u32 = 0;
+        var digits: usize = 0;
+        while (cursor < input.len and digits < 6 and std.ascii.isHex(input[cursor])) {
+            scalar = scalar * 16 + calculationHexValue(input[cursor]);
+            cursor += 1;
+            digits += 1;
+        }
+        if (cursor < input.len and isExpressionWhitespace(input[cursor])) {
+            if (input[cursor] == '\r' and cursor + 1 < input.len and input[cursor + 1] == '\n') {
+                cursor += 2;
+            } else {
+                cursor += 1;
+            }
+        }
+        const normalized: u21 = if (scalar == 0 or scalar > 0x10ffff or
+            (scalar >= 0xd800 and scalar <= 0xdfff))
+            0xfffd
+        else
+            @intCast(scalar);
+        return .{ .scalar = normalized, .end = cursor };
+    }
+    const length = std.unicode.utf8ByteSequenceLength(input[cursor]) catch return null;
+    const end = std.math.add(usize, cursor, length) catch return null;
+    if (end > input.len) return null;
+    return .{
+        .scalar = std.unicode.utf8Decode(input[cursor..end]) catch return null,
+        .end = end,
+    };
+}
+
+fn calculationHexValue(byte: u8) u32 {
+    if (byte >= '0' and byte <= '9') return byte - '0';
+    if (byte >= 'a' and byte <= 'f') return byte - 'a' + 10;
+    return byte - 'A' + 10;
+}
+
+fn calculationArgumentCount(input: []const u8) usize {
+    if (trimWhitespace(input).len == 0) return 0;
+    var count: usize = 1;
+    var index: usize = 0;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var curly_depth: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 2;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 2;
+            continue;
+        }
+        if (commentEnd(input, index)) |end| {
+            index = end;
+            continue;
+        }
+        switch (byte) {
+            '(' => paren_depth += 1,
+            ')' => if (paren_depth > 0) {
+                paren_depth -= 1;
+            },
+            '[' => square_depth += 1,
+            ']' => if (square_depth > 0) {
+                square_depth -= 1;
+            },
+            '{' => curly_depth += 1,
+            '}' => if (curly_depth > 0) {
+                curly_depth -= 1;
+            },
+            ',' => if (paren_depth == 0 and square_depth == 0 and curly_depth == 0) {
+                count +|= 1;
+            },
+            else => {},
+        }
+        index += 1;
+    }
+    return count;
 }
 
 fn minifyCalculationArgumentCommas(input: []u8) []const u8 {
