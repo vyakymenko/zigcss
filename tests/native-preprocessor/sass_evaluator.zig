@@ -4450,6 +4450,113 @@ test "native Sass meta call preserves map mutation function origin warnings" {
     }
 }
 
+test "native Sass meta call invokes meta inspection function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward($function, $args...) {
+        \\  @return meta.call($function, $args...);
+        \\}
+        \\$inspect: meta.get-function("inspect", $module: "reflect");
+        \\$type: meta.get-function("type-of", $module: "reflect");
+        \\$star: get-function("type-of");
+        \\$list-args: ((a: (1, 2)),);
+        \\.values {
+        \\  inspected: meta.call($inspect, (a: (1, 2)));
+        \\  typed: meta.call($type, $value: calc(1px + var(--x)));
+        \\  callable: meta.call($inspect, meta.get-function("length"));
+        \\  list-splat: meta.call($inspect, $list-args...);
+        \\  map-splat: meta.call($type, (value: (a: 1))...);
+        \\  forwarded: forward($type, #abc);
+        \\  ordered: meta.call(mark(1, $inspect), $value: mark(2, (x, y)));
+        \\  trace: $trace;
+        \\  star: meta.call($star, true);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-inspection-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{inspected:(a: (1, 2));typed:calculation;callable:get-function(\"length\");list-splat:(a: (1, 2));map-splat:map;forwarded:color;ordered:x, y;trace:12;star:bool}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:meta" as reflection
+        \\$inspect: m.get-function("inspect", $module: "reflection")
+        \\$type: m.get-function("type-of", $module: "reflection")
+        \\.sass
+        \\  inspected: m.call($inspect, (a: 1))
+        \\  typed: m.call($type, 2px)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-inspection-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{inspected:(a: 1);typed:number}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves meta inspection function origin warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\$inspect: meta.get-function("inspect");
+        \\$type: meta.get-function("type-of");
+        \\.legacy {
+        \\  inspected: meta.call($inspect, (a: 1));
+        \\  typed: meta.call($type, 1px);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-inspection-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{inspected:(a: 1);typed:number}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+}
+
 test "native Sass meta call preserves the legacy warning" {
     const input =
         \\@use "sass:meta";
@@ -4549,6 +4656,18 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-map-deep-remove-missing-key.scss",
             .input = "@use \"sass:meta\"; @use \"sass:map\"; .a { value: meta.call(meta.get-function(\"deep-remove\", $module: \"map\"), (a: 1)); }",
+        },
+        .{
+            .name = "meta-call-meta-inspect-missing-value.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"inspect\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-call-meta-type-extra-value.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"type-of\", $module: \"meta\"), 1, 2); }",
+        },
+        .{
+            .name = "meta-call-meta-inspect-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"inspect\", $module: \"meta\"), $other: 1); }",
         },
         .{
             .name = "meta-call-missing-user-argument.scss",
@@ -10609,6 +10728,8 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  list-function-call: meta.inspect(meta.call(meta.get-function("join", $module: "sequences"), (a, b), (c, d), $bracketed: true));
         \\  map-query-function-call: meta.call(meta.get-function("get", $module: "dictionaries"), (map: (a: 8), key: a)...);
         \\  map-mutation-function-call: meta.inspect(meta.call(meta.get-function("set", $module: "dictionaries"), (a: 1), b, 9));
+        \\  meta-inspect-function-call: meta.call(meta.get-function("inspect", $module: "meta"), (a: (1, 2)));
+        \\  meta-type-function-call: meta.call(meta.get-function("type-of", $module: "meta"), $value: $calculation);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -10632,7 +10753,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
