@@ -5855,6 +5855,97 @@ test "native Sass meta call rejects global math cos reflection" {
     );
 }
 
+test "native Sass meta call invokes math tan function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("tan", $module: "numbers");
+        \\$default: meta.get-function("tan", $module: "math");
+        \\$star: meta.get-function("tan");
+        \\$list-args: (30deg,);
+        \\$map-args: (number: -30deg);
+        \\.values {
+        \\  zero: meta.call($custom, 0);
+        \\  named: meta.call($default, $number: 45deg);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  unitless: meta.call($default, 1);
+        \\  grad: meta.call($default, 50grad);
+        \\  turn: meta.call($default, .125turn);
+        \\  rad: meta.call($default, 1rad);
+        \\  ordered: meta.call(mark(1, $star), $number: mark(2, 30deg));
+        \\  trace: $trace;
+        \\  star: meta.call($star, -30deg);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-tan-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{zero:0;named:1;list-splat:.5773502692;map-splat:-.5773502692;unitless:1.5574077247;grad:1;turn:1;rad:1.5574077247;ordered:.5773502692;trace:12;star:-.5773502692}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$tan: m.get-function("tan", $module: "numbers")
+        \\.sass
+        \\  one: m.call($tan, 45deg)
+        \\  named: m.call($tan, $number: -45deg)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-tan-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{one:1;named:-1}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects global math tan reflection" {
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-tan-global-exists.scss",
+        "@use \"sass:meta\"; .a { exists: meta.function-exists(\"tan\"); }",
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{exists:false}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-tan-global-reference.scss",
+            "@use \"sass:meta\"; $tan: meta.get-function(\"tan\");",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -5968,7 +6059,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\"), 1); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -6205,6 +6296,34 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-math-cos-unit.scss",
             .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"cos\", $module: \"math\"), 1px); }",
+        },
+        .{
+            .name = "meta-call-math-tan-missing-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-call-math-tan-extra-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\"), 1, 2); }",
+        },
+        .{
+            .name = "meta-call-math-tan-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\"), $other: 1); }",
+        },
+        .{
+            .name = "meta-call-math-tan-duplicate-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\"), 1, $number: 2); }",
+        },
+        .{
+            .name = "meta-call-math-tan-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\"), \"1\"); }",
+        },
+        .{
+            .name = "meta-call-math-tan-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\"), (1, 2)); }",
+        },
+        .{
+            .name = "meta-call-math-tan-unit.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\"), 1px); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -12474,6 +12593,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-atan2-function-call: meta.call(meta.get-function("atan2", $module: "numbers"), 1, 1);
         \\  math-sin-function-call: meta.call(meta.get-function("sin", $module: "numbers"), 30deg);
         \\  math-cos-function-call: meta.call(meta.get-function("cos", $module: "numbers"), 60deg);
+        \\  math-tan-function-call: meta.call(meta.get-function("tan", $module: "numbers"), 45deg);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -12497,7 +12617,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
