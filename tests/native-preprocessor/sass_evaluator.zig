@@ -5017,6 +5017,108 @@ test "native Sass meta call preserves unary math function origin warnings" {
     }
 }
 
+test "native Sass meta call invokes math compatibility function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("compatible", $module: "numbers");
+        \\$default: meta.get-function("compatible", $module: "math");
+        \\$star: meta.get-function("compatible");
+        \\$list-args: (1px, 1in);
+        \\$map-args: (number1: 1px, number2: 1s);
+        \\.values {
+        \\  compatible: meta.call($custom, 1px, 1in);
+        \\  incompatible: meta.call($default, $number2: 1s, $number1: 1px);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  compound: meta.call($star, 1px * 1s, 2in * 1ms);
+        \\  ordered: meta.call(mark(1, $custom), $number2: mark(2, 1in), $number1: mark(3, 1px));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-compatibility-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{compatible:true;incompatible:false;list-splat:true;map-splat:false;compound:true;ordered:true;trace:123}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$compatible: m.get-function("compatible", $module: "numbers")
+        \\.sass
+        \\  compatible: m.call($compatible, 1px, 1in)
+        \\  named: m.call($compatible, $number2: 1s, $number1: 1px)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-compatibility-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{compatible:true;named:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves math compatibility function origin warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\$comparable: meta.get-function("comparable");
+        \\.legacy {
+        \\  compatible: meta.call($comparable, 1px, 1in);
+        \\  incompatible: meta.call($comparable, 1px, 1s);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-compatibility-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{compatible:true;incompatible:false}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -5130,7 +5232,31 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"compatible\", $module: \"math\"), 1px, 1in); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"is-unitless\", $module: \"math\"), 1); }",
+        },
+        .{
+            .name = "meta-call-math-compatible-missing-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"compatible\", $module: \"math\"), 1px); }",
+        },
+        .{
+            .name = "meta-call-math-compatible-extra-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"compatible\", $module: \"math\"), 1px, 1in, 1cm); }",
+        },
+        .{
+            .name = "meta-call-math-compatible-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"compatible\", $module: \"math\"), $number1: 1px, $number2: 1in, $other: 1cm); }",
+        },
+        .{
+            .name = "meta-call-math-compatible-duplicate-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"compatible\", $module: \"math\"), 1px, $number1: 1in, $number2: 1cm); }",
+        },
+        .{
+            .name = "meta-call-math-compatible-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"compatible\", $module: \"math\"), \"1px\", 1in); }",
+        },
+        .{
+            .name = "meta-call-math-compatible-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"compatible\", $module: \"math\"), (1px, 1in), 1cm); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -11371,6 +11497,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  meta-module-function-exists-call: meta.call(meta.get-function("function-exists", $module: "meta"), "ceil", "numbers");
         \\  math-abs-function-call: meta.call(meta.get-function("abs", $module: "numbers"), -7px);
         \\  math-percentage-function-call: meta.call(meta.get-function("percentage", $module: "numbers"), .125);
+        \\  math-compatibility-function-call: meta.call(meta.get-function("compatible", $module: "numbers"), 1px, 1in);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -11394,7 +11521,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
