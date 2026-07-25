@@ -9042,23 +9042,34 @@ const Engine = struct {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
         if (reference.owner == null or reference.owner.? != .math) return null;
         switch (reference.builtin) {
-            .math_acos, .math_asin, .math_atan => {},
+            .math_acos, .math_asin, .math_atan, .math_atan2 => {},
             else => return null,
         }
 
-        const parameters = [_]native_arguments.Parameter{.{ .name = "number" }};
+        const parameters: []const native_arguments.Parameter = switch (reference.builtin) {
+            .math_atan2 => &.{
+                .{ .name = "y" },
+                .{ .name = "x" },
+            },
+            else => &.{.{ .name = "number" }},
+        };
         var bound = try self.bindEvaluatedArguments(
-            &parameters,
+            parameters,
             parameters.len,
             arguments,
             span,
         );
         defer bound.deinit();
 
-        const ordered = [_]*const native_value.Value{bound.values[0].?};
+        var ordered: [2]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values, 0..) |value, index| {
+            ordered[index] = value orelse continue;
+            count = index + 1;
+        }
         return try self.callMathTrigonometric(
             reference.builtin,
-            &ordered,
+            ordered[0..count],
             span,
         );
     }
@@ -12364,7 +12375,7 @@ fn globalCallableBuiltin(name: []const u8) ?Builtin {
     // without being a legacy Sass function that reflection may construct.
     // Keep this list evidence-driven rather than inferring sibling functions.
     return switch (builtin) {
-        .math_acos, .math_asin, .math_atan => null,
+        .math_acos, .math_asin, .math_atan, .math_atan2 => null,
         else => builtin,
     };
 }

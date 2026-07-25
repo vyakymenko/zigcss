@@ -5584,6 +5584,95 @@ test "native Sass meta call rejects global math atan reflection" {
     );
 }
 
+test "native Sass meta call invokes math atan2 function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("atan2", $module: "numbers");
+        \\$default: meta.get-function("atan2", $module: "math");
+        \\$star: meta.get-function("atan2");
+        \\$list-args: (1, 1);
+        \\$map-args: (y: -1, x: 1);
+        \\.values {
+        \\  diagonal: meta.call($custom, 1, 1);
+        \\  named: meta.call($default, $x: -1, $y: 0);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  units: meta.call($default, 1in, 96px);
+        \\  percent: meta.call($default, 1%, 2%);
+        \\  ordered: meta.call(mark(1, $star), $x: mark(2, 1), $y: mark(3, 1));
+        \\  trace: $trace;
+        \\  star: meta.call($star, -1, -1);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-atan2-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{diagonal:45deg;named:180deg;list-splat:45deg;map-splat:-45deg;units:45deg;percent:26.5650511771deg;ordered:45deg;trace:123;star:-135deg}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$atan2: m.get-function("atan2", $module: "numbers")
+        \\.sass
+        \\  diagonal: m.call($atan2, 1, 1)
+        \\  named: m.call($atan2, $x: 1, $y: -1)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-atan2-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{diagonal:45deg;named:-45deg}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects global math atan2 reflection" {
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-atan2-global-exists.scss",
+        "@use \"sass:meta\"; .a { exists: meta.function-exists(\"atan2\"); }",
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{exists:false}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-atan2-global-reference.scss",
+            "@use \"sass:meta\"; $atan2: meta.get-function(\"atan2\");",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -5697,7 +5786,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), 1, 1); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\"), 1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -5854,6 +5943,30 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-math-atan-unit.scss",
             .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan\", $module: \"math\"), 1deg); }",
+        },
+        .{
+            .name = "meta-call-math-atan2-missing-x.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), 1); }",
+        },
+        .{
+            .name = "meta-call-math-atan2-extra-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), 1, 2, 3); }",
+        },
+        .{
+            .name = "meta-call-math-atan2-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), $y: 1, $x: 1, $other: 2); }",
+        },
+        .{
+            .name = "meta-call-math-atan2-duplicate-y.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), 1, $y: 2, $x: 1); }",
+        },
+        .{
+            .name = "meta-call-math-atan2-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), \"1\", 1); }",
+        },
+        .{
+            .name = "meta-call-math-atan2-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), (1, 2), 1); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -6031,6 +6144,26 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
     for (invalid) |case| {
         try std.testing.expectError(
             error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    const incompatible_units = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-call-math-atan2-mixed-units.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), 1px, 1); }",
+        },
+        .{
+            .name = "meta-call-math-atan2-incompatible-units.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), 1px, 1s); }",
+        },
+    };
+    for (incompatible_units) |case| {
+        try std.testing.expectError(
+            error.IncompatibleUnits,
             compile(std.testing.allocator, case.name, case.input, .scss, .{}),
         );
     }
@@ -12100,6 +12233,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-acos-function-call: meta.call(meta.get-function("acos", $module: "numbers"), .5);
         \\  math-asin-function-call: meta.call(meta.get-function("asin", $module: "numbers"), .5);
         \\  math-atan-function-call: meta.call(meta.get-function("atan", $module: "numbers"), 1);
+        \\  math-atan2-function-call: meta.call(meta.get-function("atan2", $module: "numbers"), 1, 1);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -12123,7 +12257,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
