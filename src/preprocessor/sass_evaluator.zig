@@ -8480,6 +8480,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMathTrigonometricFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -9026,6 +9033,36 @@ const Engine = struct {
         };
     }
 
+    fn invokeMathTrigonometricFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .math) return null;
+        switch (reference.builtin) {
+            .math_acos => {},
+            else => return null,
+        }
+
+        const parameters = [_]native_arguments.Parameter{.{ .name = "number" }};
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{bound.values[0].?};
+        return try self.callMathTrigonometric(
+            reference.builtin,
+            &ordered,
+            span,
+        );
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -9033,7 +9070,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, or math unit function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, or math trigonometric function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -12322,7 +12359,14 @@ fn globalBuiltin(name: []const u8) ?Builtin {
 
 fn globalCallableBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "keywords")) return .meta_keywords;
-    return globalBuiltin(name);
+    const builtin = globalBuiltin(name) orelse return null;
+    // A CSS-compatible calculation name can have native direct-call behavior
+    // without being a legacy Sass function that reflection may construct.
+    // Keep this list evidence-driven rather than inferring sibling functions.
+    return switch (builtin) {
+        .math_acos => null,
+        else => builtin,
+    };
 }
 
 fn metaModuleBuiltin(name: []const u8) ?Builtin {
