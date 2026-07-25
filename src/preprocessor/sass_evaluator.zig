@@ -8473,7 +8473,7 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
-                if (try self.invokeMathUnitPredicateFunction(
+                if (try self.invokeMathUnitFunction(
                     callable,
                     &forwarded,
                     span,
@@ -8975,7 +8975,7 @@ const Engine = struct {
         return try self.callMathUnary(reference.builtin, &ordered, span);
     }
 
-    fn invokeMathUnitPredicateFunction(
+    fn invokeMathUnitFunction(
         self: *Engine,
         callable: native_value.Callable,
         arguments: *const EvaluatedCallArguments,
@@ -8988,7 +8988,7 @@ const Engine = struct {
                 .{ .name = "number1" },
                 .{ .name = "number2" },
             },
-            .math_is_unitless => &.{.{ .name = "number" }},
+            .math_is_unitless, .math_unit => &.{.{ .name = "number" }},
             else => return null,
         };
         if (reference.owner == null) {
@@ -9015,11 +9015,15 @@ const Engine = struct {
             ordered[index] = value orelse continue;
             count = index + 1;
         }
-        return try self.callMathUnitPredicate(
-            reference.builtin,
-            ordered[0..count],
-            span,
-        );
+        return switch (reference.builtin) {
+            .math_compatible, .math_is_unitless => try self.callMathUnitPredicate(
+                reference.builtin,
+                ordered[0..count],
+                span,
+            ),
+            .math_unit => try self.callMathUnit(ordered[0..count], span),
+            else => unreachable,
+        };
     }
 
     fn metaCallFunctionFailure(
@@ -9029,7 +9033,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, or math unit predicate function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, or math unit function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }

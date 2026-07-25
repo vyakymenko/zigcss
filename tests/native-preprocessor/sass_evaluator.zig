@@ -5221,6 +5221,108 @@ test "native Sass meta call preserves math unitless function origin warnings" {
     }
 }
 
+test "native Sass meta call invokes math unit function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("unit", $module: "numbers");
+        \\$default: meta.get-function("unit", $module: "math");
+        \\$star: meta.get-function("unit");
+        \\$list-args: (1px * 1s,);
+        \\$map-args: (number: math.div(1px, 1s));
+        \\.values {
+        \\  unitless: meta.call($custom, 1);
+        \\  single: meta.call($default, $number: 1px);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  ordered: meta.call(mark(1, $star), $number: mark(2, math.div(1deg, 1s)));
+        \\  trace: $trace;
+        \\  star: meta.call($star, math.div(1em, 1ms));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-unit-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{unitless:\"\";single:\"px\";list-splat:\"px*s\";map-splat:\"px/s\";ordered:\"deg/s\";trace:12;star:\"em/ms\"}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$unit: m.get-function("unit", $module: "numbers")
+        \\.sass
+        \\  unitless: m.call($unit, 1)
+        \\  named: m.call($unit, $number: numbers.div(1px, 1s))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-unit-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{unitless:\"\";named:\"px/s\"}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves math unit function origin warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\$unit: meta.get-function("unit");
+        \\.legacy {
+        \\  unitless: meta.call($unit, 1);
+        \\  unitful: meta.call($unit, 1foo);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-unit-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{unitless:\"\";unitful:\"foo\"}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -5334,7 +5436,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"unit\", $module: \"math\"), 1px); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"acos\", $module: \"math\"), 1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -5383,6 +5485,30 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-math-unitless-list.scss",
             .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"is-unitless\", $module: \"math\"), (1, 2)); }",
+        },
+        .{
+            .name = "meta-call-math-unit-missing-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"unit\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-call-math-unit-extra-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"unit\", $module: \"math\"), 1px, 2px); }",
+        },
+        .{
+            .name = "meta-call-math-unit-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"unit\", $module: \"math\"), $other: 1px); }",
+        },
+        .{
+            .name = "meta-call-math-unit-duplicate-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"unit\", $module: \"math\"), 1px, $number: 2px); }",
+        },
+        .{
+            .name = "meta-call-math-unit-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"unit\", $module: \"math\"), \"1px\"); }",
+        },
+        .{
+            .name = "meta-call-math-unit-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"unit\", $module: \"math\"), (1px, 2px)); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -11625,6 +11751,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-percentage-function-call: meta.call(meta.get-function("percentage", $module: "numbers"), .125);
         \\  math-compatibility-function-call: meta.call(meta.get-function("compatible", $module: "numbers"), 1px, 1in);
         \\  math-unitless-function-call: meta.call(meta.get-function("is-unitless", $module: "numbers"), 1);
+        \\  math-unit-function-call: meta.call(meta.get-function("unit", $module: "numbers"), 1px);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -11648,7 +11775,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
