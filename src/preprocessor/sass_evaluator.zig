@@ -8473,7 +8473,7 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
-                if (try self.invokeMathCompatibilityFunction(
+                if (try self.invokeMathUnitPredicateFunction(
                     callable,
                     &forwarded,
                     span,
@@ -8975,7 +8975,7 @@ const Engine = struct {
         return try self.callMathUnary(reference.builtin, &ordered, span);
     }
 
-    fn invokeMathCompatibilityFunction(
+    fn invokeMathUnitPredicateFunction(
         self: *Engine,
         callable: native_value.Callable,
         arguments: *const EvaluatedCallArguments,
@@ -8983,7 +8983,14 @@ const Engine = struct {
     ) Error!?*const native_value.Value {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
         if (reference.owner != null and reference.owner.? != .math) return null;
-        if (reference.builtin != .math_compatible) return null;
+        const parameters: []const native_arguments.Parameter = switch (reference.builtin) {
+            .math_compatible => &.{
+                .{ .name = "number1" },
+                .{ .name = "number2" },
+            },
+            .math_is_unitless => &.{.{ .name = "number" }},
+            else => return null,
+        };
         if (reference.owner == null) {
             try self.transaction.report(
                 .warning,
@@ -8994,25 +9001,23 @@ const Engine = struct {
             );
         }
 
-        const parameters = [_]native_arguments.Parameter{
-            .{ .name = "number1" },
-            .{ .name = "number2" },
-        };
         var bound = try self.bindEvaluatedArguments(
-            &parameters,
+            parameters,
             parameters.len,
             arguments,
             span,
         );
         defer bound.deinit();
 
-        const ordered = [_]*const native_value.Value{
-            bound.values[0].?,
-            bound.values[1].?,
-        };
+        var ordered: [2]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values, 0..) |value, index| {
+            ordered[index] = value orelse continue;
+            count = index + 1;
+        }
         return try self.callMathUnitPredicate(
             reference.builtin,
-            &ordered,
+            ordered[0..count],
             span,
         );
     }
@@ -9024,7 +9029,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, or math compatibility function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, or math unit predicate function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }

@@ -168,6 +168,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-existence-function-invocation',
       'built-in-meta-math-unary-function-invocation',
       'built-in-meta-math-compatibility-function-invocation',
+      'built-in-meta-math-unitless-function-invocation',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
       'built-in-selector-parse-simple',
