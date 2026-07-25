@@ -9042,7 +9042,7 @@ const Engine = struct {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
         if (reference.owner == null or reference.owner.? != .math) return null;
         switch (reference.builtin) {
-            .math_acos => {},
+            .math_acos, .math_asin => {},
             else => return null,
         }
 
@@ -12364,7 +12364,7 @@ fn globalCallableBuiltin(name: []const u8) ?Builtin {
     // without being a legacy Sass function that reflection may construct.
     // Keep this list evidence-driven rather than inferring sibling functions.
     return switch (builtin) {
-        .math_acos => null,
+        .math_acos, .math_asin => null,
         else => builtin,
     };
 }
