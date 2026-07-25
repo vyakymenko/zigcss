@@ -8487,6 +8487,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMathLogFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -9074,6 +9081,40 @@ const Engine = struct {
         );
     }
 
+    fn invokeMathLogFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .math or
+            reference.builtin != .math_log)
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "number" },
+            .{ .name = "base", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        var ordered: [2]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values, 0..) |value, index| {
+            ordered[index] = value orelse continue;
+            count = index + 1;
+        }
+        return try self.callMathPower(.math_log, ordered[0..count], span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -9081,7 +9122,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, or math trigonometric function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, or math logarithm function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -12375,7 +12416,15 @@ fn globalCallableBuiltin(name: []const u8) ?Builtin {
     // without being a legacy Sass function that reflection may construct.
     // Keep this list evidence-driven rather than inferring sibling functions.
     return switch (builtin) {
-        .math_acos, .math_asin, .math_atan, .math_atan2, .math_sin, .math_cos, .math_tan => null,
+        .math_acos,
+        .math_asin,
+        .math_atan,
+        .math_atan2,
+        .math_log,
+        .math_sin,
+        .math_cos,
+        .math_tan,
+        => null,
         else => builtin,
     };
 }

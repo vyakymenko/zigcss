@@ -5946,6 +5946,132 @@ test "native Sass meta call rejects global math tan reflection" {
     );
 }
 
+test "native Sass meta call invokes math log function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("log", $module: "numbers");
+        \\$default: meta.get-function("log", $module: "math");
+        \\$star: meta.get-function("log");
+        \\$list-args: (8, 2);
+        \\$map-args: (number: 100, base: 10);
+        \\.values {
+        \\  natural: meta.call($custom, math.$e);
+        \\  named: meta.call($default, $base: 10, $number: 1000);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  decimal: meta.call($default, 10);
+        \\  binary: meta.call($default, 8, 2);
+        \\  zero-base: meta.call($default, 8, 0);
+        \\  ordered: meta.call(mark(1, $star), $base: mark(2, 10), $number: mark(3, 100));
+        \\  trace: $trace;
+        \\  star: meta.call($star, .125, .5);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-log-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{natural:1;named:3;list-splat:3;map-splat:2;decimal:2.302585093;binary:3;zero-base:0;ordered:2;trace:123;star:3}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$log: m.get-function("log", $module: "numbers")
+        \\.sass
+        \\  natural: m.call($log, numbers.$e)
+        \\  named: m.call($log, $base: 2, $number: 8)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-log-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{natural:1;named:3}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects global math log reflection" {
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-log-global-exists.scss",
+        "@use \"sass:meta\"; .a { exists: meta.function-exists(\"log\"); }",
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{exists:false}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-log-global-reference.scss",
+            "@use \"sass:meta\"; $log: meta.get-function(\"log\");",
+            .scss,
+            .{},
+        ),
+    );
+}
+
+test "native Sass meta call safe narrows nonfinite math log function results" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-call-math-log-zero.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 0); }",
+        },
+        .{
+            .name = "meta-call-math-log-negative.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), -1); }",
+        },
+        .{
+            .name = "meta-call-math-log-one-base.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 8, 1); }",
+        },
+        .{
+            .name = "meta-call-math-log-negative-base.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 8, -1); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidNumber,
+            compile(
+                std.testing.allocator,
+                case.name,
+                case.input,
+                .scss,
+                .{},
+            ),
+        );
+    }
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -6059,7 +6185,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 1); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"pow\", $module: \"math\"), 2, 3); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -6324,6 +6450,38 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-math-tan-unit.scss",
             .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"tan\", $module: \"math\"), 1px); }",
+        },
+        .{
+            .name = "meta-call-math-log-missing-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-call-math-log-extra-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 8, 2, 1); }",
+        },
+        .{
+            .name = "meta-call-math-log-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), $other: 8); }",
+        },
+        .{
+            .name = "meta-call-math-log-duplicate-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 8, $number: 4); }",
+        },
+        .{
+            .name = "meta-call-math-log-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), \"8\"); }",
+        },
+        .{
+            .name = "meta-call-math-log-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), (8, 2)); }",
+        },
+        .{
+            .name = "meta-call-math-log-number-unit.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 8px); }",
+        },
+        .{
+            .name = "meta-call-math-log-base-unit.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"log\", $module: \"math\"), 8, 2px); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -12594,6 +12752,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-sin-function-call: meta.call(meta.get-function("sin", $module: "numbers"), 30deg);
         \\  math-cos-function-call: meta.call(meta.get-function("cos", $module: "numbers"), 60deg);
         \\  math-tan-function-call: meta.call(meta.get-function("tan", $module: "numbers"), 45deg);
+        \\  math-log-function-call: meta.call(meta.get-function("log", $module: "numbers"), 8, 2);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -12617,7 +12776,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
