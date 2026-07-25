@@ -8443,6 +8443,13 @@ const Engine = struct {
                 if (try self.invokeMetaKeywordsFunction(callable, &forwarded, span)) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMetaContentAcceptanceFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -8799,6 +8806,29 @@ const Engine = struct {
         return try self.callMetaKeywords(&ordered, span);
     }
 
+    fn invokeMetaContentAcceptanceFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .meta) return null;
+        if (reference.builtin != .meta_accepts_content) return null;
+
+        const parameters = [_]native_arguments.Parameter{.{ .name = "mixin" }};
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{bound.values[0].?};
+        return try self.callMetaAcceptsContent(&ordered, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -8806,7 +8836,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, or meta keywords function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, or meta content acceptance function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }

@@ -4675,6 +4675,73 @@ test "native Sass meta call preserves meta keywords function origin warnings" {
     );
 }
 
+test "native Sass meta call invokes meta content acceptance function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@mixin plain {}
+        \\@mixin slot { @content; }
+        \\$accepts: meta.get-function("accepts-content", $module: "reflect");
+        \\$star: get-function("accepts-content");
+        \\$list-args: (meta.get-mixin("plain"),);
+        \\$map-args: (mixin: meta.get-mixin("slot"));
+        \\.values {
+        \\  plain: meta.call($accepts, meta.get-mixin("plain"));
+        \\  slot: meta.call($accepts, meta.get-mixin("slot"));
+        \\  named: meta.call($accepts, $mixin: meta.get-mixin("slot"));
+        \\  list-splat: meta.call($accepts, $list-args...);
+        \\  map-splat: meta.call($accepts, $map-args...);
+        \\  load: meta.call($accepts, meta.get-mixin("load-css", $module: "meta"));
+        \\  apply: meta.call($accepts, meta.get-mixin("apply", $module: "meta"));
+        \\  ordered: meta.call(mark(1, $accepts), $mixin: mark(2, meta.get-mixin("slot")));
+        \\  trace: $trace;
+        \\  star: meta.call($star, meta.get-mixin("plain"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-content-acceptance-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{plain:false;slot:true;named:true;list-splat:false;map-splat:true;load:false;apply:true;ordered:true;trace:12;star:false}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:meta" as reflection
+        \\@mixin slot
+        \\  @content
+        \\$accepts: m.get-function("accepts-content", $module: "reflection")
+        \\.sass
+        \\  accepts: m.call($accepts, m.get-mixin("slot"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-content-acceptance-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{accepts:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call preserves the legacy warning" {
     const input =
         \\@use "sass:meta";
@@ -4802,6 +4869,26 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-meta-keywords-type.scss",
             .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"keywords\", $module: \"meta\"), (a: 1)); }",
+        },
+        .{
+            .name = "meta-call-meta-content-acceptance-missing-mixin.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"accepts-content\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-call-meta-content-acceptance-extra-mixin.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.call(meta.get-function(\"accepts-content\", $module: \"meta\"), meta.get-mixin(\"local\"), meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "meta-call-meta-content-acceptance-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.call(meta.get-function(\"accepts-content\", $module: \"meta\"), $other: meta.get-mixin(\"local\")); }",
+        },
+        .{
+            .name = "meta-call-meta-content-acceptance-type.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"accepts-content\", $module: \"meta\"), meta.get-function(\"inspect\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-call-unavailable-meta-calculation.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"calc-name\", $module: \"meta\"), calc(1px + var(--x))); }",
         },
         .{
             .name = "meta-call-missing-user-argument.scss",
@@ -10868,6 +10955,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  meta-inspect-function-call: meta.call(meta.get-function("inspect", $module: "meta"), (a: (1, 2)));
         \\  meta-type-function-call: meta.call(meta.get-function("type-of", $module: "meta"), $value: $calculation);
         \\  meta-keywords-function-call: meta.inspect(invoke-keywords(meta.get-function("keywords", $module: "meta"), base, $invoked: true));
+        \\  meta-content-acceptance-function-call: meta.call(meta.get-function("accepts-content", $module: "meta"), meta.get-mixin("content-probe"));
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -10891,7 +10979,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
