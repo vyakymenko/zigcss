@@ -4737,6 +4737,175 @@ test "native Sass meta call invokes meta calculation function references" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass meta call invokes meta existence function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\@use "sass:math" as numbers;
+        \\$global-name: 1;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function local-fn() { @return ok; }
+        \\@mixin local-mixin() {}
+        \\@function scope-probe($variable, $global) {
+        \\  $local-name: 2;
+        \\  @return meta.inspect((
+        \\    local: meta.call($variable, "local-name"),
+        \\    local-global: meta.call($global, "local-name"),
+        \\    outer: meta.call($variable, "global_name"),
+        \\    outer-global: meta.call($global, "global-name")
+        \\  ));
+        \\}
+        \\$function: meta.get-function("function-exists", $module: "reflect");
+        \\$mixin: meta.get-function("mixin-exists", $module: "reflect");
+        \\$variable: meta.get-function("variable-exists", $module: "reflect");
+        \\$global: meta.get-function("global-variable-exists", $module: "reflect");
+        \\$feature: meta.get-function("feature-exists", $module: "reflect");
+        \\$star: get-function("function-exists");
+        \\$list-args: ("local-fn",);
+        \\$map-args: (name: "local-mixin");
+        \\.values {
+        \\  function: meta.call($function, "local_fn");
+        \\  function-module: meta.call($function, "ceil", "numbers");
+        \\  function-named: meta.call($function, $module: "numbers", $name: "ceil");
+        \\  function-list: meta.call($function, $list-args...);
+        \\  mixin: meta.call($mixin, $map-args...);
+        \\  variable: meta.call($variable, "global_name");
+        \\  global: meta.call($global, $name: "global-name");
+        \\  scope: scope-probe($variable, $global);
+        \\  feature: meta.call($feature, $feature: "at-error");
+        \\  ordered: meta.call(mark(1, $function), $name: mark(2, "local-fn"));
+        \\  trace: $trace;
+        \\  star: meta.call($star, "local-fn");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-existence-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{function:true;function-module:true;function-named:true;function-list:true;mixin:true;variable:true;global:true;scope:(local: true, local-global: false, outer: true, outer-global: true);feature:true;ordered:true;trace:12;star:true}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "The feature-exists() function is deprecated.",
+        diagnostics[0].message,
+    );
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:meta" as reflection
+        \\@use "sass:math" as numbers
+        \\$global_name: 1
+        \\@function native_fn()
+        \\  @return 1
+        \\@mixin native_mix()
+        \\  $inside: true
+        \\$function: m.get-function("function-exists", $module: "reflection")
+        \\$mixin: m.get-function("mixin-exists", $module: "reflection")
+        \\$variable: m.get-function("variable-exists", $module: "reflection")
+        \\$global: m.get-function("global-variable-exists", $module: "reflection")
+        \\.sass
+        \\  function: m.call($function, "native_fn")
+        \\  module: m.call($function, "ceil", "numbers")
+        \\  mixin: m.call($mixin, "native_mix")
+        \\  variable: m.call($variable, "global_name")
+        \\  global: m.call($global, "global-name")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-existence-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{function:true;module:true;mixin:true;variable:true;global:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves meta existence function origin warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\$function: meta.get-function("function-exists");
+        \\$mixin: meta.get-function("mixin-exists");
+        \\$variable: meta.get-function("variable-exists");
+        \\$global: meta.get-function("global-variable-exists");
+        \\$feature: meta.get-function("feature-exists");
+        \\.legacy {
+        \\  function: meta.call($function, "rgb");
+        \\  mixin: meta.call($mixin, "missing");
+        \\  variable: meta.call($variable, "missing");
+        \\  global: meta.call($global, "missing");
+        \\  feature: meta.call($feature, "at-error");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-existence-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{function:true;mixin:false;variable:false;global:false;feature:true}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), diagnostics.len);
+    var global_warnings: usize = 0;
+    var feature_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "The feature-exists() function is deprecated.",
+        )) {
+            feature_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 5), global_warnings);
+    try std.testing.expectEqual(@as(usize, 1), feature_warnings);
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -4969,8 +5138,28 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
             .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"calc-name\", $module: \"meta\"), 1px); }",
         },
         .{
-            .name = "meta-call-unavailable-meta-existence.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"feature-exists\", $module: \"meta\"), \"at-error\"); }",
+            .name = "meta-call-meta-existence-missing-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"function-exists\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-call-meta-existence-extra-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"function-exists\", $module: \"meta\"), \"rgb\", null, 1); }",
+        },
+        .{
+            .name = "meta-call-meta-existence-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"function-exists\", $module: \"meta\"), $other: \"rgb\"); }",
+        },
+        .{
+            .name = "meta-call-meta-existence-variable-extra-name.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"variable-exists\", $module: \"meta\"), \"x\", null); }",
+        },
+        .{
+            .name = "meta-call-meta-existence-feature-type.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"feature-exists\", $module: \"meta\"), 1); }",
+        },
+        .{
+            .name = "meta-call-meta-existence-missing-module.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"function-exists\", $module: \"meta\"), \"ceil\", \"numbers\"); }",
         },
         .{
             .name = "meta-call-missing-user-argument.scss",
@@ -11040,6 +11229,11 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  meta-content-acceptance-function-call: meta.call(meta.get-function("accepts-content", $module: "meta"), meta.get-mixin("content-probe"));
         \\  meta-calc-name-function-call: meta.call(meta.get-function("calc-name", $module: "meta"), $calculation);
         \\  meta-calc-args-function-call: meta.inspect(meta.call(meta.get-function("calc-args", $module: "meta"), min(1px, var(--y))));
+        \\  meta-function-exists-call: meta.call(meta.get-function("function-exists", $module: "meta"), "allocation-function");
+        \\  meta-mixin-exists-call: meta.call(meta.get-function("mixin-exists", $module: "meta"), "allocation-mixin");
+        \\  meta-variable-exists-call: meta.call(meta.get-function("variable-exists", $module: "meta"), "calculation");
+        \\  meta-global-variable-exists-call: meta.call(meta.get-function("global-variable-exists", $module: "meta"), "calculation");
+        \\  meta-module-function-exists-call: meta.call(meta.get-function("function-exists", $module: "meta"), "ceil", "numbers");
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -11063,7 +11257,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

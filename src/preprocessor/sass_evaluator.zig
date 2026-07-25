@@ -8458,6 +8458,14 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMetaExistenceFunction(
+                    callable,
+                    &forwarded,
+                    scope,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -8868,6 +8876,51 @@ const Engine = struct {
         };
     }
 
+    fn invokeMetaExistenceFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null and reference.owner.? != .meta) return null;
+        const parameters: []const native_arguments.Parameter = switch (reference.builtin) {
+            .meta_feature_exists => &.{.{ .name = "feature" }},
+            .meta_function_exists,
+            .meta_global_variable_exists,
+            .meta_mixin_exists,
+            => &.{
+                .{ .name = "name" },
+                .{ .name = "module", .required = false },
+            },
+            .meta_variable_exists => &.{.{ .name = "name" }},
+            else => return null,
+        };
+
+        var bound = try self.bindEvaluatedArguments(
+            parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        var ordered: [2]*const native_value.Value = undefined;
+        var count: usize = 0;
+        for (bound.values, 0..) |value, index| {
+            ordered[index] = value orelse continue;
+            count = index + 1;
+        }
+        return try self.callMetaExistence(
+            reference.builtin,
+            reference.owner != null,
+            ordered[0..count],
+            scope,
+            span,
+        );
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -8875,7 +8928,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, or meta calculation function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, or meta existence function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
