@@ -4675,6 +4675,68 @@ test "native Sass meta call preserves meta keywords function origin warnings" {
     );
 }
 
+test "native Sass meta call invokes meta calculation function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflection;
+        \\@use "sass:meta" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$name: meta.get-function("calc-name", $module: "reflection");
+        \\$args: get-function("calc-args");
+        \\$list-args: (min(var(--x), 2px),);
+        \\$map-args: (calc: clamp(1px, var(--x), 3px));
+        \\.values {
+        \\  name: meta.call($name, calc(1px + var(--x)));
+        \\  named: meta.call($name, $calc: max(1px, var(--x)));
+        \\  list-splat: meta.call($name, $list-args...);
+        \\  map-splat: meta.call($name, $map-args...);
+        \\  args: meta.inspect(meta.call($args, min(var(--x, 1px), max(2px, var(--y, 3px)))));
+        \\  ordered: meta.call(mark(1, $name), $calc: mark(2, round(to-zero, var(--x), 1px)));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-calculation-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{name:\"calc\";named:\"max\";list-splat:\"min\";map-splat:\"clamp\";args:var(--x, 1px), max(2px, var(--y, 3px));ordered:\"round\";trace:12}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:meta" as reflection
+        \\$name: m.get-function("calc-name", $module: "reflection")
+        \\$args: m.get-function("calc-args", $module: "reflection")
+        \\.sass
+        \\  name: m.call($name, calc(1px + var(--x)))
+        \\  args: m.inspect(m.call($args, min(1px, var(--x))))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-calculation-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{name:\"calc\";args:1px, var(--x)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -4887,8 +4949,28 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
             .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"accepts-content\", $module: \"meta\"), meta.get-function(\"inspect\", $module: \"meta\")); }",
         },
         .{
-            .name = "meta-call-unavailable-meta-calculation.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"calc-name\", $module: \"meta\"), calc(1px + var(--x))); }",
+            .name = "meta-call-meta-calculation-missing-calc.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"calc-name\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-call-meta-calculation-extra-calc.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"calc-args\", $module: \"meta\"), calc(1px + var(--x)), 1); }",
+        },
+        .{
+            .name = "meta-call-meta-calculation-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"calc-name\", $module: \"meta\"), $value: calc(1px + var(--x))); }",
+        },
+        .{
+            .name = "meta-call-meta-calculation-duplicate-calc.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"calc-name\", $module: \"meta\"), calc(1px + var(--x)), $calc: calc(2px + var(--y))); }",
+        },
+        .{
+            .name = "meta-call-meta-calculation-number.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"calc-name\", $module: \"meta\"), 1px); }",
+        },
+        .{
+            .name = "meta-call-unavailable-meta-existence.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"feature-exists\", $module: \"meta\"), \"at-error\"); }",
         },
         .{
             .name = "meta-call-missing-user-argument.scss",
@@ -10956,6 +11038,8 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  meta-type-function-call: meta.call(meta.get-function("type-of", $module: "meta"), $value: $calculation);
         \\  meta-keywords-function-call: meta.inspect(invoke-keywords(meta.get-function("keywords", $module: "meta"), base, $invoked: true));
         \\  meta-content-acceptance-function-call: meta.call(meta.get-function("accepts-content", $module: "meta"), meta.get-mixin("content-probe"));
+        \\  meta-calc-name-function-call: meta.call(meta.get-function("calc-name", $module: "meta"), $calculation);
+        \\  meta-calc-args-function-call: meta.inspect(meta.call(meta.get-function("calc-args", $module: "meta"), min(1px, var(--y))));
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -10979,7 +11063,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

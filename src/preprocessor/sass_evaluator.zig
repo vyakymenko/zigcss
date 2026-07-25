@@ -8450,6 +8450,14 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMetaCalculationFunction(
+                    callable,
+                    &forwarded,
+                    scope,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -8829,6 +8837,37 @@ const Engine = struct {
         return try self.callMetaAcceptsContent(&ordered, span);
     }
 
+    fn invokeMetaCalculationFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .meta) return null;
+        switch (reference.builtin) {
+            .meta_calc_args, .meta_calc_name => {},
+            else => return null,
+        }
+
+        const parameters = [_]native_arguments.Parameter{.{ .name = "calc" }};
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{bound.values[0].?};
+        return switch (reference.builtin) {
+            .meta_calc_args => try self.callMetaCalcArgs(&ordered, scope, span),
+            .meta_calc_name => try self.callMetaCalcName(&ordered, span),
+            else => unreachable,
+        };
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -8836,7 +8875,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, or meta content acceptance function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, or meta calculation function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
