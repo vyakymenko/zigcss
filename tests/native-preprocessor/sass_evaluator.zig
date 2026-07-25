@@ -6190,6 +6190,108 @@ test "native Sass meta call safe narrows nonfinite math pow function results" {
     }
 }
 
+test "native Sass meta call invokes math sqrt function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("sqrt", $module: "numbers");
+        \\$default: meta.get-function("sqrt", $module: "math");
+        \\$star: meta.get-function("sqrt");
+        \\$list-args: (81,);
+        \\$map-args: (number: .0625);
+        \\.values {
+        \\  irrational: meta.call($custom, 2);
+        \\  named: meta.call($default, $number: 81);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  zero: meta.call($default, 0);
+        \\  fraction: meta.call($default, .25);
+        \\  ordered: meta.call(mark(1, $star), $number: mark(2, 81));
+        \\  trace: $trace;
+        \\  star: meta.call($star, 49);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-sqrt-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{irrational:1.4142135624;named:9;list-splat:9;map-splat:.25;zero:0;fraction:.5;ordered:9;trace:12;star:7}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$sqrt: m.get-function("sqrt", $module: "numbers")
+        \\.sass
+        \\  irrational: m.call($sqrt, 2)
+        \\  named: m.call($sqrt, $number: 121)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-sqrt-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{irrational:1.4142135624;named:11}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects global math sqrt reflection" {
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-sqrt-global-exists.scss",
+        "@use \"sass:meta\"; .a { exists: meta.function-exists(\"sqrt\"); }",
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{exists:false}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-sqrt-global-reference.scss",
+            "@use \"sass:meta\"; $sqrt: meta.get-function(\"sqrt\");",
+            .scss,
+            .{},
+        ),
+    );
+}
+
+test "native Sass meta call safe narrows nonfinite math sqrt function results" {
+    try std.testing.expectError(
+        error.InvalidNumber,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-sqrt-negative.scss",
+            "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\"), -1); }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -6303,7 +6405,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\"), 4); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"div\", $module: \"math\"), 8, 2); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -6636,6 +6738,34 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-math-pow-unit-exponent.scss",
             .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"pow\", $module: \"math\"), 2, 3px); }",
+        },
+        .{
+            .name = "meta-call-math-sqrt-missing-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-call-math-sqrt-extra-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\"), 4, 2); }",
+        },
+        .{
+            .name = "meta-call-math-sqrt-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\"), $number: 4, $other: 2); }",
+        },
+        .{
+            .name = "meta-call-math-sqrt-duplicate-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\"), 4, $number: 9); }",
+        },
+        .{
+            .name = "meta-call-math-sqrt-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\"), \"4\"); }",
+        },
+        .{
+            .name = "meta-call-math-sqrt-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\"), (4, 9)); }",
+        },
+        .{
+            .name = "meta-call-math-sqrt-unit.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sqrt\", $module: \"math\"), 4px); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -12908,6 +13038,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-tan-function-call: meta.call(meta.get-function("tan", $module: "numbers"), 45deg);
         \\  math-log-function-call: meta.call(meta.get-function("log", $module: "numbers"), 8, 2);
         \\  math-pow-function-call: meta.call(meta.get-function("pow", $module: "numbers"), 2, 3);
+        \\  math-sqrt-function-call: meta.call(meta.get-function("sqrt", $module: "numbers"), 81);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -12931,7 +13062,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

@@ -179,6 +179,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-math-tan-function-invocation',
       'built-in-meta-math-log-function-invocation',
       'built-in-meta-math-pow-function-invocation',
+      'built-in-meta-math-sqrt-function-invocation',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
       'built-in-selector-parse-simple',
