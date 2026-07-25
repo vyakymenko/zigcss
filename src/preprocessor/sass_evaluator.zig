@@ -8401,20 +8401,24 @@ const Engine = struct {
             .callable => |value| value,
             else => return self.metaCallFunctionFailure(span),
         };
-        const arguments = switch (bound.rest_value.?.*) {
-            .argument_list => |value| value,
-            else => return error.InvalidSassSyntax,
-        };
 
         var forwarded = EvaluatedCallArguments{ .allocator = self.allocator };
         defer forwarded.deinit();
-        for (arguments.positional) |*item| {
+        const positional_start: usize = if (evaluated.positional.items.len > 0) 1 else 0;
+        for (evaluated.positional.items[positional_start..]) |item| {
             try self.appendEvaluatedPositional(&forwarded, item, span);
         }
-        for (arguments.keywords) |*keyword| {
+        for (evaluated.keywords.items) |keyword| {
+            if (positional_start == 0) {
+                const is_function = if (keyword.normalize_name)
+                    native_arguments.nameEql(keyword.name, parameters[0].name)
+                else
+                    std.mem.eql(u8, keyword.name, parameters[0].name);
+                if (is_function) continue;
+            }
             try self.appendEvaluatedKeyword(&forwarded, .{
                 .name = keyword.name,
-                .value = &keyword.value,
+                .value = keyword.value,
                 .normalize_name = keyword.normalize_name,
             }, span);
         }
@@ -8434,6 +8438,9 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeMetaInspectionFunction(callable, &forwarded, span)) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeMetaKeywordsFunction(callable, &forwarded, span)) |value| {
                     break :blk value;
                 }
                 break :blk self.metaCallFunctionFailure(span);
@@ -8760,6 +8767,38 @@ const Engine = struct {
         };
     }
 
+    fn invokeMetaKeywordsFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null and reference.owner.? != .meta) return null;
+        if (reference.builtin != .meta_keywords) return null;
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        const parameters = [_]native_arguments.Parameter{.{ .name = "args" }};
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{bound.values[0].?};
+        return try self.callMetaKeywords(&ordered, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -8767,7 +8806,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, or meta inspection function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, or meta keywords function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -8789,7 +8828,7 @@ const Engine = struct {
                 return builtinFunctionCallable(builtin, binding.kind);
             }
         }
-        const builtin = globalBuiltin(name) orelse return null;
+        const builtin = globalCallableBuiltin(name) orelse return null;
         return builtinFunctionCallable(builtin, null);
     }
 
@@ -8928,7 +8967,7 @@ const Engine = struct {
     ) Error!bool {
         if (std.mem.eql(u8, name, "if") or
             (try self.lookupUserFunction(name, scope)) != null or
-            globalBuiltin(name) != null)
+            globalCallableBuiltin(name) != null)
         {
             return true;
         }
@@ -10502,7 +10541,7 @@ const Engine = struct {
         if (bracketed) {
             const child = try self.evaluateExpressionBytes(body, scope, span);
             const items = [_]native_value.Value{child.*};
-            return try self.values.own(.{ .list = .{
+            return try self.values.ownCollectionWithSharedArgumentLists(.{ .list = .{
                 .items = &items,
                 .separator = .undecided,
                 .bracketed = true,
@@ -10553,7 +10592,9 @@ const Engine = struct {
             }
             try entries.append(self.allocator, .{ .key = key.*, .value = value.* });
         }
-        return try self.values.own(.{ .map = .{ .entries = entries.items } });
+        return try self.values.ownCollectionWithSharedArgumentLists(.{
+            .map = .{ .entries = entries.items },
+        });
     }
 
     fn trySeparatedList(
@@ -10588,11 +10629,13 @@ const Engine = struct {
             const item = try self.evaluateExpressionBytes(item_raw, scope, span);
             try items.append(self.allocator, item.*);
         }
-        return try self.values.own(.{ .list = .{
-            .items = items.items,
-            .separator = separator,
-            .bracketed = bracketed,
-        } });
+        return try self.values.ownCollectionWithSharedArgumentLists(.{
+            .list = .{
+                .items = items.items,
+                .separator = separator,
+                .bracketed = bracketed,
+            },
+        });
     }
 
     fn lookupVariable(
@@ -11804,7 +11847,7 @@ fn globalBuiltinCallableName(builtin: Builtin) ?[]const u8 {
         else
             tag_name,
     };
-    return if (globalBuiltin(candidate) == builtin) candidate else null;
+    return if (globalCallableBuiltin(candidate) == builtin) candidate else null;
 }
 
 fn moduleBuiltinCallableName(owner: BuiltinModule, builtin: Builtin) ?[]const u8 {
@@ -12048,6 +12091,11 @@ fn globalBuiltin(name: []const u8) ?Builtin {
         if (sassNameEql(name, definition.name)) return definition.builtin;
     }
     return null;
+}
+
+fn globalCallableBuiltin(name: []const u8) ?Builtin {
+    if (sassNameEql(name, "keywords")) return .meta_keywords;
+    return globalBuiltin(name);
 }
 
 fn metaModuleBuiltin(name: []const u8) ?Builtin {

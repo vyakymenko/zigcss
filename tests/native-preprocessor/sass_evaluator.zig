@@ -3260,6 +3260,8 @@ test "native Sass meta existence queries inspect scope declarations globals and 
         \\  dollar: meta.variable-exists("$global-name");
         \\  scope: scope_probe();
         \\  builtin: meta.function-exists("rgb");
+        \\  keywords-global: meta.function-exists("keywords");
+        \\  keywords-module: meta.function-exists("keywords", "meta");
         \\  module: meta.function-exists("ceil", "numbers");
         \\  module-missing: meta.function-exists("nope", "numbers");
         \\  module-variable: meta.global-variable-exists("pi", "numbers");
@@ -3276,7 +3278,7 @@ test "native Sass meta existence queries inspect scope declarations globals and 
     var result = try compile(std.testing.allocator, "meta-existence.scss", input, .scss, .{});
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".before{function:false;mixin:false}.values{function:true;function-hyphen:true;function-escaped:true;function-case:false;mixin:true;variable:true;global:true;dollar:false;scope:(local: true, local-global: false, outer: true, outer-global: true);builtin:true;module:true;module-missing:false;module-variable:true;star-function:true;star-variable:true;star-global:true;list:true;map:true;selector:true;string:true;keyword:true}",
+        ".before{function:false;mixin:false}.values{function:true;function-hyphen:true;function-escaped:true;function-case:false;mixin:true;variable:true;global:true;dollar:false;scope:(local: true, local-global: false, outer: true, outer-global: true);builtin:true;keywords-global:true;keywords-module:true;module:true;module-missing:false;module-variable:true;star-function:true;star-variable:true;star-global:true;list:true;map:true;selector:true;string:true;keyword:true}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
@@ -4557,6 +4559,122 @@ test "native Sass meta call preserves meta inspection function origin warnings" 
     }
 }
 
+test "native Sass meta call invokes meta keywords function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:meta" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function direct($function, $args...) {
+        \\  @return meta.call($function, $args);
+        \\}
+        \\@function named($function, $args...) {
+        \\  @return meta.call($function, $args: $args);
+        \\}
+        \\@function named-function($function, $args...) {
+        \\  @return meta.call($function: $function, $args: $args);
+        \\}
+        \\@function list-splat($function, $args...) {
+        \\  @return meta.call($function, ($args,)...);
+        \\}
+        \\@function map-splat($function, $args...) {
+        \\  @return meta.call($function, (args: $args)...);
+        \\}
+        \\@function ordered($function, $args...) {
+        \\  @return meta.call(mark(2, $function), $args: mark(3, $args));
+        \\}
+        \\$keywords: meta.get-function("keywords", $module: "reflect");
+        \\$star: get-function("keywords");
+        \\.values {
+        \\  direct: meta.inspect(direct($keywords, base, $alpha: 1, $start_at: 2));
+        \\  named: meta.inspect(named($keywords, $tone: red));
+        \\  named-function: meta.inspect(named-function($keywords, $via_named: 7));
+        \\  list-splat: meta.inspect(list-splat($keywords, $left: 3));
+        \\  map-splat: meta.inspect(map-splat($keywords, $right: 4));
+        \\  ordered: meta.inspect(ordered(mark(1, $keywords), $final: 5));
+        \\  trace: $trace;
+        \\  star: meta.inspect(direct($star, $unprefixed: 6));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-keywords-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{direct:(alpha: 1, start-at: 2);named:(tone: red);named-function:(via-named: 7);list-splat:(left: 3);map-splat:(right: 4);ordered:(final: 5);trace:123;star:(unprefixed: 6)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:meta" as reflection
+        \\@function read($function, $args...)
+        \\  @return m.call($function, $args)
+        \\$keywords: m.get-function("keywords", $module: "reflection")
+        \\.sass
+        \\  keywords: m.inspect(read($keywords, base, $tone: blue))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-keywords-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{keywords:(tone: blue)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves meta keywords function origin warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\@function read($function, $args...) {
+        \\  @return meta.call($function, $args);
+        \\}
+        \\$keywords: meta.get-function("keywords");
+        \\.legacy { value: meta.inspect(read($keywords, $tone: red)); }
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-keywords-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{value:(tone: red)}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
 test "native Sass meta call preserves the legacy warning" {
     const input =
         \\@use "sass:meta";
@@ -4668,6 +4786,22 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-meta-inspect-unknown-keyword.scss",
             .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"inspect\", $module: \"meta\"), $other: 1); }",
+        },
+        .{
+            .name = "meta-call-meta-keywords-missing-args.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"keywords\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-call-meta-keywords-extra-args.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"keywords\", $module: \"meta\"), 1, 2); }",
+        },
+        .{
+            .name = "meta-call-meta-keywords-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"keywords\", $module: \"meta\"), $other: 1); }",
+        },
+        .{
+            .name = "meta-call-meta-keywords-type.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"keywords\", $module: \"meta\"), (a: 1)); }",
         },
         .{
             .name = "meta-call-missing-user-argument.scss",
@@ -10700,6 +10834,9 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  $keywords: meta.keywords($args);
         \\  @return meta.inspect($args);
         \\}
+        \\@function invoke-keywords($function, $args...) {
+        \\  @return meta.call($function, $args);
+        \\}
         \\@function allocation-function($value) { @return $value; }
         \\$calculation: calc(1px + var(--x));
         \\.allocation {
@@ -10730,6 +10867,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  map-mutation-function-call: meta.inspect(meta.call(meta.get-function("set", $module: "dictionaries"), (a: 1), b, 9));
         \\  meta-inspect-function-call: meta.call(meta.get-function("inspect", $module: "meta"), (a: (1, 2)));
         \\  meta-type-function-call: meta.call(meta.get-function("type-of", $module: "meta"), $value: $calculation);
+        \\  meta-keywords-function-call: meta.inspect(invoke-keywords(meta.get-function("keywords", $module: "meta"), base, $invoked: true));
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -10753,7 +10891,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

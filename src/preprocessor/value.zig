@@ -129,13 +129,32 @@ pub const Store = struct {
     }
 
     pub fn own(self: *Store, input: Value) Error!*const Value {
-        const cloned = try self.cloneValue(input, 1);
+        const cloned = try self.cloneValue(input, 1, false);
         const result = try self.arena.allocator().create(Value);
         result.* = cloned;
         return result;
     }
 
-    fn cloneValue(self: *Store, input: Value, depth: u16) Error!Value {
+    pub fn ownCollectionWithSharedArgumentLists(
+        self: *Store,
+        input: Value,
+    ) Error!*const Value {
+        switch (input) {
+            .list, .map => {},
+            else => return error.InvalidValue,
+        }
+        const cloned = try self.cloneValue(input, 1, true);
+        const result = try self.arena.allocator().create(Value);
+        result.* = cloned;
+        return result;
+    }
+
+    fn cloneValue(
+        self: *Store,
+        input: Value,
+        depth: u16,
+        share_argument_list_state: bool,
+    ) Error!Value {
         if (depth > self.limits.max_depth) return error.ValueDepthExceeded;
         if (self.value_count >= self.limits.max_values) return error.ValueLimitExceeded;
         self.value_count += 1;
@@ -148,9 +167,19 @@ pub const Store = struct {
             .string => |item| .{ .string = try self.cloneString(item) },
             .selector => |item| .{ .selector = try self.cloneString(item) },
             .callable => |item| .{ .callable = item },
-            .list => |item| .{ .list = try self.cloneList(item, depth) },
-            .map => |item| .{ .map = try self.cloneMap(item, depth) },
-            .argument_list => |item| .{ .argument_list = try self.cloneArgumentList(item, depth) },
+            .list => |item| .{
+                .list = try self.cloneList(item, depth, share_argument_list_state),
+            },
+            .map => |item| .{
+                .map = try self.cloneMap(item, depth, share_argument_list_state),
+            },
+            .argument_list => |item| .{
+                .argument_list = try self.cloneArgumentList(
+                    item,
+                    depth,
+                    share_argument_list_state,
+                ),
+            },
         };
     }
 
@@ -177,7 +206,12 @@ pub const Store = struct {
         return owned;
     }
 
-    fn cloneList(self: *Store, input: List, depth: u16) Error!List {
+    fn cloneList(
+        self: *Store,
+        input: List,
+        depth: u16,
+        share_argument_list_state: bool,
+    ) Error!List {
         try self.reserveCollection(input.items.len);
         if (input.items.len == 0) return .{
             .items = &.{},
@@ -186,7 +220,11 @@ pub const Store = struct {
         };
         const items = try self.arena.allocator().alloc(Value, input.items.len);
         for (input.items, 0..) |item, index| {
-            items[index] = try self.cloneValue(item, depth + 1);
+            items[index] = try self.cloneValue(
+                item,
+                depth + 1,
+                share_argument_list_state,
+            );
         }
         return .{
             .items = items,
@@ -195,14 +233,27 @@ pub const Store = struct {
         };
     }
 
-    fn cloneMap(self: *Store, input: Map, depth: u16) Error!Map {
+    fn cloneMap(
+        self: *Store,
+        input: Map,
+        depth: u16,
+        share_argument_list_state: bool,
+    ) Error!Map {
         try self.reserveCollection(input.entries.len);
         if (input.entries.len == 0) return .{ .entries = &.{} };
         const entries = try self.arena.allocator().alloc(Entry, input.entries.len);
         for (input.entries, 0..) |entry, index| {
             entries[index] = .{
-                .key = try self.cloneValue(entry.key, depth + 1),
-                .value = try self.cloneValue(entry.value, depth + 1),
+                .key = try self.cloneValue(
+                    entry.key,
+                    depth + 1,
+                    share_argument_list_state,
+                ),
+                .value = try self.cloneValue(
+                    entry.value,
+                    depth + 1,
+                    share_argument_list_state,
+                ),
             };
         }
         return .{ .entries = entries };
@@ -212,6 +263,7 @@ pub const Store = struct {
         self: *Store,
         input: ArgumentList,
         depth: u16,
+        share_argument_list_state: bool,
     ) Error!ArgumentList {
         const collection_count = std.math.add(
             usize,
@@ -222,7 +274,11 @@ pub const Store = struct {
 
         const positional = try self.arena.allocator().alloc(Value, input.positional.len);
         for (input.positional, 0..) |item, index| {
-            positional[index] = try self.cloneValue(item, depth + 1);
+            positional[index] = try self.cloneValue(
+                item,
+                depth + 1,
+                share_argument_list_state,
+            );
         }
 
         const keywords = try self.arena.allocator().alloc(
@@ -232,13 +288,20 @@ pub const Store = struct {
         for (input.keywords, 0..) |keyword, index| {
             keywords[index] = .{
                 .name = try self.cloneBytes(keyword.name, false),
-                .value = try self.cloneValue(keyword.value, depth + 1),
+                .value = try self.cloneValue(
+                    keyword.value,
+                    depth + 1,
+                    share_argument_list_state,
+                ),
                 .normalize_name = keyword.normalize_name,
             };
         }
 
-        const state = try self.arena.allocator().create(ArgumentListState);
-        state.* = input.state.*;
+        const state = if (share_argument_list_state) input.state else blk: {
+            const owned = try self.arena.allocator().create(ArgumentListState);
+            owned.* = input.state.*;
+            break :blk owned;
+        };
         return .{
             .positional = positional,
             .keywords = keywords,
