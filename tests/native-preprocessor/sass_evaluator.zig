@@ -5673,6 +5673,97 @@ test "native Sass meta call rejects global math atan2 reflection" {
     );
 }
 
+test "native Sass meta call invokes math sin function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("sin", $module: "numbers");
+        \\$default: meta.get-function("sin", $module: "math");
+        \\$star: meta.get-function("sin");
+        \\$list-args: (30deg,);
+        \\$map-args: (number: -30deg);
+        \\.values {
+        \\  zero: meta.call($custom, 0);
+        \\  named: meta.call($default, $number: 90deg);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  unitless: meta.call($default, 1);
+        \\  grad: meta.call($default, 100grad);
+        \\  turn: meta.call($default, .25turn);
+        \\  rad: meta.call($default, 1rad);
+        \\  ordered: meta.call(mark(1, $star), $number: mark(2, 30deg));
+        \\  trace: $trace;
+        \\  star: meta.call($star, -30deg);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-sin-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{zero:0;named:1;list-splat:.5;map-splat:-.5;unitless:.8414709848;grad:1;turn:1;rad:.8414709848;ordered:.5;trace:12;star:-.5}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$sin: m.get-function("sin", $module: "numbers")
+        \\.sass
+        \\  half: m.call($sin, 30deg)
+        \\  named: m.call($sin, $number: -30deg)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-sin-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{half:.5;named:-.5}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects global math sin reflection" {
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-sin-global-exists.scss",
+        "@use \"sass:meta\"; .a { exists: meta.function-exists(\"sin\"); }",
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{exists:false}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-sin-global-reference.scss",
+            "@use \"sass:meta\"; $sin: meta.get-function(\"sin\");",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -5786,7 +5877,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\"), 1); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"cos\", $module: \"math\"), 1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -5967,6 +6058,34 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-math-atan2-list.scss",
             .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"atan2\", $module: \"math\"), (1, 2), 1); }",
+        },
+        .{
+            .name = "meta-call-math-sin-missing-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-call-math-sin-extra-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\"), 1, 2); }",
+        },
+        .{
+            .name = "meta-call-math-sin-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\"), $other: 1); }",
+        },
+        .{
+            .name = "meta-call-math-sin-duplicate-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\"), 1, $number: 2); }",
+        },
+        .{
+            .name = "meta-call-math-sin-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\"), \"1\"); }",
+        },
+        .{
+            .name = "meta-call-math-sin-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\"), (1, 2)); }",
+        },
+        .{
+            .name = "meta-call-math-sin-unit.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"sin\", $module: \"math\"), 1px); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -12234,6 +12353,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-asin-function-call: meta.call(meta.get-function("asin", $module: "numbers"), .5);
         \\  math-atan-function-call: meta.call(meta.get-function("atan", $module: "numbers"), 1);
         \\  math-atan2-function-call: meta.call(meta.get-function("atan2", $module: "numbers"), 1, 1);
+        \\  math-sin-function-call: meta.call(meta.get-function("sin", $module: "numbers"), 30deg);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -12257,7 +12377,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
