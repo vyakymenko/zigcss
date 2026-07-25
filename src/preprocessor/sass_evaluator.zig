@@ -8466,6 +8466,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMathUnaryFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -8921,6 +8928,46 @@ const Engine = struct {
         );
     }
 
+    fn invokeMathUnaryFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null and reference.owner.? != .math) return null;
+        switch (reference.builtin) {
+            .math_abs,
+            .math_ceil,
+            .math_floor,
+            .math_percentage,
+            .math_round,
+            => {},
+            else => return null,
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        const parameters = [_]native_arguments.Parameter{.{ .name = "number" }};
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{bound.values[0].?};
+        return try self.callMathUnary(reference.builtin, &ordered, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -8928,7 +8975,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, or meta existence function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, or unary math function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }

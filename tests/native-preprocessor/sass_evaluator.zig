@@ -4906,6 +4906,117 @@ test "native Sass meta call preserves meta existence function origin warnings" {
     try std.testing.expectEqual(@as(usize, 1), feature_warnings);
 }
 
+test "native Sass meta call invokes unary math function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as numbers;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$abs: meta.get-function("abs", $module: "numbers");
+        \\$ceil: meta.get-function("ceil", $module: "math");
+        \\$floor: meta.get-function("floor");
+        \\$round: meta.get-function("round", $module: "math");
+        \\$percentage: meta.get-function("percentage", $module: "math");
+        \\$list-args: (-1.2px,);
+        \\.values {
+        \\  abs: meta.call($abs, -1.5px);
+        \\  ceil: meta.call($ceil, $number: 1.2px);
+        \\  floor: meta.call($floor, -1.2px);
+        \\  round-list: meta.call($round, $list-args...);
+        \\  percentage-map: meta.call($percentage, (number: .125)...);
+        \\  ordered: meta.call(mark(1, $round), $number: mark(2, -1.5foo));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-unary-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{abs:1.5px;ceil:2px;floor:-2px;round-list:-1px;percentage-map:12.5%;ordered:-2foo;trace:12}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as numbers
+        \\$abs: m.get-function("abs", $module: "numbers")
+        \\$round: m.get-function("round", $module: "numbers")
+        \\.sass
+        \\  abs: m.call($abs, -1.5px)
+        \\  named: m.call($round, $number: -1.5deg)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-unary-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{abs:1.5px;named:-2deg}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves unary math function origin warnings" {
+    const input =
+        \\@use "sass:meta";
+        \\$abs: meta.get-function("abs");
+        \\$ceil: meta.get-function("ceil");
+        \\$floor: meta.get-function("floor");
+        \\$round: meta.get-function("round");
+        \\$percentage: meta.get-function("percentage");
+        \\.legacy {
+        \\  abs: meta.call($abs, -1px);
+        \\  ceil: meta.call($ceil, 1.2px);
+        \\  floor: meta.call($floor, 1.8px);
+        \\  round: meta.call($round, 1.5px);
+        \\  percentage: meta.call($percentage, .125);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-unary-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{abs:1px;ceil:2px;floor:1px;round:2px;percentage:12.5%}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 5), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -5019,7 +5130,31 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"abs\", $module: \"math\"), -1); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"compatible\", $module: \"math\"), 1px, 1in); }",
+        },
+        .{
+            .name = "meta-call-math-unary-missing-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"abs\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-call-math-unary-extra-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"ceil\", $module: \"math\"), 1.2, 2.3); }",
+        },
+        .{
+            .name = "meta-call-math-unary-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"floor\", $module: \"math\"), $other: 1.2); }",
+        },
+        .{
+            .name = "meta-call-math-unary-duplicate-number.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"round\", $module: \"math\"), 1.2, $number: 2.3); }",
+        },
+        .{
+            .name = "meta-call-math-unary-type.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"abs\", $module: \"math\"), \"-1px\"); }",
+        },
+        .{
+            .name = "meta-call-math-unary-percentage-unit.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"percentage\", $module: \"math\"), 1px); }",
         },
         .{
             .name = "meta-call-list-missing-argument.scss",
@@ -11234,6 +11369,8 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  meta-variable-exists-call: meta.call(meta.get-function("variable-exists", $module: "meta"), "calculation");
         \\  meta-global-variable-exists-call: meta.call(meta.get-function("global-variable-exists", $module: "meta"), "calculation");
         \\  meta-module-function-exists-call: meta.call(meta.get-function("function-exists", $module: "meta"), "ceil", "numbers");
+        \\  math-abs-function-call: meta.call(meta.get-function("abs", $module: "numbers"), -7px);
+        \\  math-percentage-function-call: meta.call(meta.get-function("percentage", $module: "numbers"), .125);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -11257,7 +11394,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
