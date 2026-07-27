@@ -9481,7 +9481,8 @@ const Engine = struct {
         if ((reference.builtin != .quote and
             reference.builtin != .unquote and
             reference.builtin != .str_length and
-            reference.builtin != .str_index) or
+            reference.builtin != .str_index and
+            reference.builtin != .str_slice) or
             (reference.owner != null and reference.owner.? != .string))
         {
             return null;
@@ -9510,6 +9511,34 @@ const Engine = struct {
                 );
                 defer bound.deinit();
 
+                const ordered = [_]*const native_value.Value{
+                    bound.values[0].?,
+                    bound.values[1].?,
+                };
+                break :blk try self.callStringBuiltin(reference.builtin, &ordered, span);
+            },
+            .str_slice => blk: {
+                const parameters = [_]native_arguments.Parameter{
+                    .{ .name = "string" },
+                    .{ .name = "start-at" },
+                    .{ .name = "end-at", .required = false },
+                };
+                var bound = try self.bindEvaluatedArguments(
+                    &parameters,
+                    parameters.len,
+                    arguments,
+                    span,
+                );
+                defer bound.deinit();
+
+                if (bound.values[2]) |end| {
+                    const ordered = [_]*const native_value.Value{
+                        bound.values[0].?,
+                        bound.values[1].?,
+                        end,
+                    };
+                    break :blk try self.callStringBuiltin(reference.builtin, &ordered, span);
+                }
                 const ordered = [_]*const native_value.Value{
                     bound.values[0].?,
                     bound.values[1].?,
@@ -9819,7 +9848,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, or index, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, or slice, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -10751,6 +10780,14 @@ const Engine = struct {
                     return error.InvalidExpression;
                 }
                 const string = try self.stringArgument(arguments[0].*, span);
+                if (!string.quoted and isSassCalculationValue(string.bytes)) {
+                    try self.report(
+                        .type_mismatch,
+                        span,
+                        "native Sass string function requires a string",
+                    );
+                    return error.InvalidExpression;
+                }
                 const start = try self.stringIndex(arguments[1].*, span);
                 const end = if (arguments.len == 3)
                     try self.stringIndex(arguments[2].*, span)
