@@ -8061,6 +8061,208 @@ test "native Sass meta call rejects invalid selector append arguments and limits
     );
 }
 
+test "native Sass meta call invokes selector nest function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\@use "sass:selector" as selectors;
+        \\@use "sass:selector" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("nest", $module: "selectors");
+        \\$default: meta.get-function("nest", $module: "selector");
+        \\$star: meta.get-function("nest");
+        \\$list-args: (".list, .other", "&.item:hover");
+        \\$typed: selector.parse("button.typed");
+        \\.values {
+        \\  exists: meta.function-exists("nest", "selector");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  star-same: $star == $default;
+        \\  plain: meta.call($custom, ".a", ".b");
+        \\  parent: meta.call($default, ".root", "&__part", "&:hover");
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  typed: meta.call($default, $typed, "&.more");
+        \\  from-list: meta.call($default, (".left", ".right"), "&.joined");
+        \\  repeated: meta.call($default, (".a", ".b"), "& + &");
+        \\  leading: meta.call($default, ".lead", "> .child");
+        \\  interpolated: meta.call($default, ".item-#{2}", "&:hover");
+        \\  one: meta.call($default, ".single, .other");
+        \\  ordered: meta.call(mark(1, $star), mark(2, ".ordered"), mark(3, "&.more"));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($default, ".typed-result", "&.more"));
+        \\  inspected: meta.inspect(meta.call($default, ".inspect", "> .more"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-nest-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;star-same:true;plain:.a .b;parent:.root__part:hover;list-splat:.list.item:hover,.other.item:hover;typed:button.typed.more;from-list:.left.joined,.right.joined;repeated:.a + .a,.a + .b,.b + .a,.b + .b;leading:.lead > .child;interpolated:.item-2:hover;one:.single,.other;ordered:.ordered.more;trace:123;result-type:list;inspected:(.inspect > .more,)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:selector" as selectors
+        \\$nest: m.get-function("nest", $module: "selectors")
+        \\.sass
+        \\  type: m.type-of($nest)
+        \\  plain: m.call($nest, ".a", ".b")
+        \\  parent: m.call($nest, ".root", "&__part", "&:hover")
+        \\  typed: m.call($nest, selectors.parse(".typed"), "&.more")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-nest-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:.a .b;parent:.root__part:hover;typed:.typed.more}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves selector nest ownership" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\$global: meta.get-function("selector-nest");
+        \\$module: meta.get-function("nest", $module: "selector");
+        \\.legacy {
+        \\  exists: meta.function-exists("selector-nest");
+        \\  unprefixed: meta.function-exists("nest");
+        \\  distinct: $global == $module;
+        \\  inspect: meta.inspect($global);
+        \\  value: meta.call($global, ".a", "&.b");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-nest-ownership.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{exists:true;unprefixed:false;distinct:false;inspect:get-function(\"selector-nest\");value:.a.b}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta call rejects invalid selector nest arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($nest)" },
+        .{ .name = "selectors-keyword", .invocation = "meta.call($nest, $selectors: \".a\")" },
+        .{ .name = "selector-keyword", .invocation = "meta.call($nest, $selector: \".a\")" },
+        .{ .name = "map-splat", .invocation = "meta.call($nest, (selectors: \".a\")...)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($nest, ()...)" },
+        .{ .name = "empty", .invocation = "meta.call($nest, \"\")" },
+        .{ .name = "empty-second", .invocation = "meta.call($nest, \".a\", \"\")" },
+        .{ .name = "null", .invocation = "meta.call($nest, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($nest, true)" },
+        .{ .name = "number", .invocation = "meta.call($nest, 1)" },
+        .{ .name = "map", .invocation = "meta.call($nest, (a: 1))" },
+        .{ .name = "invalid-parent", .invocation = "meta.call($nest, \".a\", \".b&\")" },
+        .{ .name = "malformed", .invocation = "meta.call($nest, \".a[\")" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:selector\"; $nest: meta.get-function(\"nest\", $module: \"selector\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var selector_count = sass_evaluator.Limits{};
+    selector_count.max_selectors = 3;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-nest-count-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"nest\", $module: \"selector\"), \".a, .b\", \".c, .d\"); }",
+            .scss,
+            selector_count,
+        ),
+    );
+
+    var selector_bytes = sass_evaluator.Limits{};
+    selector_bytes.max_selector_bytes = 5;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-nest-byte-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"nest\", $module: \"selector\"), \".abc\", \"&.def\"); }",
+            .scss,
+            selector_bytes,
+        ),
+    );
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 10;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-nest-temporary-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"nest\", $module: \"selector\"), \".abc\", \"&.def\"); }",
+            .scss,
+            temporary,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-nest-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"nest\", $module: \"selector\"), \".a\", \"&.b\", \"&:hover\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -8174,7 +8376,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"nest\", $module: \"selector\"), \".a\", \".b\"); }",
+            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"extend\", $module: \"selector\"), \".a\", \".b\", \".c\"); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -15009,6 +15211,7 @@ fn exerciseSelectorAllocationFailures(
         \\  appended: selector.append(".a, .b", ".c");
         \\  call-appended: meta.call(meta.get-function("append", $module: "selector"), ".call", ".appended");
         \\  nested: selector.nest(".a, .b", "& + &");
+        \\  call-nested: meta.call(meta.get-function("nest", $module: "selector"), ".call", "&.nested");
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
         \\  relation: selector.is-superselector("[data-x='a b'] .b", ".x [data-x=\"a b\"] > .b.extra");
@@ -15036,7 +15239,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);dir::dir(ltr , ltr);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;call-appended:.call.appended;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);dir::dir(ltr , ltr);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;call-appended:.call.appended;nested:.a + .a,.a + .b,.b + .a,.b + .b;call-nested:.call.nested;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

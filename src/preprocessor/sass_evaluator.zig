@@ -8585,6 +8585,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeSelectorNestFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -9607,6 +9614,30 @@ const Engine = struct {
         return try self.callSelectorComposition(.selector_append, arguments, span);
     }
 
+    fn invokeSelectorNestFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .selector_nest or
+            (reference.owner != null and reference.owner.? != .selector))
+        {
+            return null;
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        return try self.callSelectorComposition(.selector_nest, arguments, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -9614,7 +9645,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, selector simple-selectors, selector is-superselector, selector unify, or selector append function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, or selector nest function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -12649,6 +12680,7 @@ fn globalBuiltinCallableName(builtin: Builtin) ?[]const u8 {
         .math_is_unitless => "unitless",
         .selector_is_superselector => "is-superselector",
         .selector_simple_selectors => "simple-selectors",
+        .selector_nest => "selector-nest",
         .selector_unify => "selector-unify",
         .minimum => "min",
         .maximum => "max",
@@ -12916,6 +12948,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
 fn globalCallableBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "is-superselector")) return .selector_is_superselector;
     if (sassNameEql(name, "keywords")) return .meta_keywords;
+    if (sassNameEql(name, "selector-nest")) return .selector_nest;
     if (sassNameEql(name, "selector-unify")) return .selector_unify;
     if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;
     const builtin = globalBuiltin(name) orelse return null;

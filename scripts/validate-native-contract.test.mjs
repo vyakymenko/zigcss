@@ -107,6 +107,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-selector-is-superselector-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-selector-unify-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-selector-append-function-invocation'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-selector-nest-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-content-acceptance'), true)
   assert.equal(sassCore.capabilities.includes('plain-css-function-argument-evaluation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-parse-simple'), true)

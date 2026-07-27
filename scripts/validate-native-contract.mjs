@@ -199,6 +199,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-selector-is-superselector-function-invocation',
       'built-in-meta-selector-unify-function-invocation',
       'built-in-meta-selector-append-function-invocation',
+      'built-in-meta-selector-nest-function-invocation',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
       'built-in-selector-parse-simple',
