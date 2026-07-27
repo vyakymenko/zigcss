@@ -9978,6 +9978,188 @@ test "native Sass meta call rejects invalid string upper case arguments and limi
     );
 }
 
+test "native Sass meta call invokes string lower case function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("to-lower-case", $module: "text");
+        \\$default: meta.get-function("to-lower-case", $module: "string");
+        \\$alias: meta.get-function("to_lower_case", $module: "text");
+        \\$star: meta.get-function("to-lower-case");
+        \\$list-args: ("A💚B",);
+        \\$map-args: (string: "ÉX");
+        \\.values {
+        \\  exists: meta.function-exists("to-lower-case", "string");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  alias-same: $alias == $default;
+        \\  star-same: $star == $default;
+        \\  ascii: meta.call($custom, BANANA-XyZ);
+        \\  quoted-unicode: meta.call($default, "A💚ÉẞIİB");
+        \\  combining: meta.call($default, "ÉX");
+        \\  zwj: meta.call($default, "A👩‍💻Z");
+        \\  quoted-hex: meta.call($default, "A\42 C-\C9-Z");
+        \\  unquoted-hex: meta.call($default, A\42 C-\C9-Z);
+        \\  quoted-simple: meta.call($default, "X\ Y-Z");
+        \\  unquoted-simple: meta.call($default, X\ Y-Z);
+        \\  empty: meta.call($default, "");
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  interpolated: meta.call($default, ITEM-#{24}Z);
+        \\  ordered: meta.call(mark(1, $star), $string: mark(2, ABCZ));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($default, "TYPED"));
+        \\  inspected: meta.inspect(meta.call($default, "INSPECT"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-string-lower-case-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;alias-same:true;star-same:true;ascii:banana-xyz;quoted-unicode:\"a💚Éẞiİb\";combining:\"éx\";zwj:\"a👩‍💻z\";quoted-hex:\"abc-É-z\";unquoted-hex:abc-É-z;quoted-simple:\"x y-z\";unquoted-simple:x\\ y-z;empty:\"\";list-splat:\"a💚b\";map-splat:\"éx\";interpolated:item-24z;ordered:abcz;trace:12;result-type:string;inspected:\"inspect\"}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:string" as text
+        \\$lower: m.get-function("to-lower-case", $module: "text")
+        \\.sass
+        \\  type: m.type-of($lower)
+        \\  plain: m.call($lower, BANANA-XyZ)
+        \\  named: m.call($lower, $string: "A💚ÉẞIİB")
+        \\  escaped: m.call($lower, X\ Y-Z)
+        \\  empty: m.call($lower, "")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-string-lower-case-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:banana-xyz;named:\"a💚Éẞiİb\";escaped:x\\ y-z;empty:\"\"}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves string lower case ownership" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:string";
+        \\$global: meta.get-function("to-lower-case");
+        \\$module: meta.get-function("to-lower-case", $module: "string");
+        \\.legacy {
+        \\  exists: meta.function-exists("to-lower-case");
+        \\  module-exists: meta.function-exists("to-lower-case", "string");
+        \\  distinct: $global == $module;
+        \\  inspect: meta.inspect($global);
+        \\  module-inspect: meta.inspect($module);
+        \\  value: meta.call($global, "A💚ÉẞIİB");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-string-lower-case-ownership.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{exists:true;module-exists:true;distinct:false;inspect:get-function(\"to-lower-case\");module-inspect:get-function(\"to-lower-case\");value:\"a💚Éẞiİb\"}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta call rejects invalid string lower case arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($lower)" },
+        .{ .name = "extra", .invocation = "meta.call($lower, A, B)" },
+        .{ .name = "unknown", .invocation = "meta.call($lower, $string: A, $other: B)" },
+        .{ .name = "duplicate", .invocation = "meta.call($lower, A, $string: B)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($lower, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($lower, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($lower, true)" },
+        .{ .name = "number", .invocation = "meta.call($lower, 1px)" },
+        .{ .name = "list", .invocation = "meta.call($lower, (A, B))" },
+        .{ .name = "map", .invocation = "meta.call($lower, (A: B))" },
+        .{ .name = "color", .invocation = "meta.call($lower, red)" },
+        .{ .name = "calculation", .invocation = "meta.call($lower, calc(1px + var(--x)))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:string\"; $lower: meta.get-function(\"to-lower-case\", $module: \"string\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 8;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-string-lower-case-temporary-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:string\"; $lower: meta.get-function(\"to-lower-case\", $module: \"string\"); .a { value: meta.call($lower, \"LONG VALUE\"); }",
+            .scss,
+            temporary,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-string-lower-case-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:string\" as *; $lower: meta.get-function(\"to-lower-case\"); .a { value: meta.call($lower, VALUE); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -10091,7 +10273,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:string\"; .a { value: meta.call(meta.get-function(\"to-lower-case\", $module: \"string\"), \"value\"); }",
+            .input = "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"adjust\", $module: \"color\"), red, $red: 1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -15304,6 +15486,11 @@ test "native Sass string module rejects unowned calls" {
             .expected = error.InvalidExpression,
         },
         .{
+            .name = "string-module-lower-case-calculation.scss",
+            .input = "@use \"sass:string\"; .a { value: string.to-lower-case(calc(1px + var(--x))); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
             .name = "string-module-splat.scss",
             .input = "@use \"sass:string\"; $args: (abc,); .a { value: string.length($args...); }",
             .expected = error.UnsupportedFeature,
@@ -16906,6 +17093,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  string-slice-function-call: meta.call(meta.get-function("slice", $module: "text"), "a💚b", 2, 2);
         \\  string-insert-function-call: meta.call(meta.get-function("insert", $module: "text"), "a💚b", "🌍", 2);
         \\  string-upper-case-function-call: meta.call(meta.get-function("to-upper-case", $module: "text"), "a💚éßıiẞb");
+        \\  string-lower-case-function-call: meta.call(meta.get-function("to-lower-case", $module: "text"), "A💚ÉẞIİB");
         \\  selector-parse-function-call: meta.call(meta.get-function("parse", $module: "selector"), ".allocation-call");
         \\  selector-simple-selectors-function-call: meta.call(meta.get-function("simple-selectors", $module: "selector"), ".allocation-call:hover");
         \\  selector-is-superselector-function-call: meta.call(meta.get-function("is-superselector", $module: "selector"), ".allocation-call", ".allocation-call:hover");
@@ -16933,7 +17121,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;string-slice-function-call:\"💚\";string-insert-function-call:\"a🌍💚b\";string-upper-case-function-call:\"A💚éßıIẞB\";selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;string-slice-function-call:\"💚\";string-insert-function-call:\"a🌍💚b\";string-upper-case-function-call:\"A💚éßıIẞB\";string-lower-case-function-call:\"a💚Éẞiİb\";selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
