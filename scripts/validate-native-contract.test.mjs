@@ -115,6 +115,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-string-length-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-string-index-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-string-slice-function-invocation'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-string-insert-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-content-acceptance'), true)
   assert.equal(sassCore.capabilities.includes('plain-css-function-argument-evaluation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-parse-simple'), true)
