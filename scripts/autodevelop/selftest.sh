@@ -72,6 +72,7 @@ assert_equal "$(grep -Fc 'NLESS-010 through NLESS-012' "$PROMPT_OUTPUT")" 1 'pro
 assert_equal "$(grep -Fc 'NSTYLUS-010 through NSTYLUS-012' "$PROMPT_OUTPUT")" 1 'prompt retains native Stylus dependency order'
 assert_equal "$(grep -Fc 'NATIVE-006 through NATIVE-009' "$PROMPT_OUTPUT")" 1 'prompt retains native graduation dependency order'
 assert_equal "$(if grep -Fq 'Milestone 9 canonical frontend work is active.' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes stale provider milestone'
+assert_equal "$(grep -Fc 'only the first fully graduated native release' "$PROMPT_OUTPUT")" 1 'prompt binds guarded native publication authority'
 
 fixture prompt-echo 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <stable-code>: <reason>'
 assert_equal "$(autodevelop_classify_pass 1 "$TMP/prompt-echo")" ERROR 'prompt marker ignored'

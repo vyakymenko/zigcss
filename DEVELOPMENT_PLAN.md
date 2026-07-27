@@ -1,9 +1,9 @@
 # ZigCSS Development Plan
 
 Status: Approved and in execution
-Plan version: 1.2
+Plan version: 1.3
 Prepared: 2026-07-11  
-Amended: 2026-07-17 (owner-approved self-contained native frontend expansion)
+Amended: 2026-07-27 (owner-approved xhigh runtime and guarded native publication)
 Primary target: a trustworthy, standards-oriented CSS compiler, minifier, Zig library, and CLI  
 Core target release: `0.4.0`
 Preprocessor expansion target: `0.5.0`
@@ -11,7 +11,7 @@ Self-contained native target: `0.6.0`
 
 ## 1. Purpose
 
-This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.2 preserves the completed `0.4.x` CSS recovery and verified unpublished `0.5.x` canonical-preprocessor reference implementation, then adds the owner-approved self-contained native frontend program defined by ADR-013.
+This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.3 preserves the completed `0.4.x` CSS recovery and verified unpublished `0.5.x` canonical-preprocessor reference implementation, adds the owner-approved self-contained native frontend program defined by ADR-013, records the xhigh autonomous runtime, and authorizes only the fail-closed native publication path defined below.
 
 The current repository is an ambitious prototype. It has useful scaffolding for parsing, optimization, preprocessors, a CLI, an LSP, documentation, packaging, and benchmarks, but the core parser and optimizer are not yet safe enough for production CSS. Development must therefore prioritize correctness and security before new features or performance work.
 
@@ -33,7 +33,7 @@ The following decisions are defaults for the autonomous program. Changing one re
 
 ### 3.1 Required model
 
-The project owner requires autonomous development to use **Codex 5.6 Sol Ultra exclusively**.
+The project owner requires autonomous development to use **Codex 5.6 Sol with xhigh reasoning exclusively**.
 
 Execution rules:
 
@@ -48,7 +48,7 @@ Execution rules:
 Autonomous implementation begins only when all of these are true:
 
 - This plan is approved by the project owner.
-- Codex 5.6 Sol Ultra is selected and verified.
+- Codex 5.6 Sol with xhigh reasoning is selected and verified.
 - A dedicated branch is created from a clean, current `main` branch.
 - Baseline commands and known failures are recorded in `DEVELOPMENT_STATUS.md`.
 - The public compile endpoint is either disabled or explicitly accepted as the first security task.
@@ -72,6 +72,8 @@ The run may not, without separate explicit authorization:
 - Deploy the documentation or public compile service.
 - Rotate secrets, change billing, or weaken security controls.
 - Expand stable scope beyond this plan.
+
+On 2026-07-27 the owner granted one bounded publication authorization: after `NATIVE-009` proves every native graduation, hosted, release, artifact, provenance, and consumer gate on one immutable candidate already integrated to `origin/main`, the autonomous executor may create and push that candidate's single unused `v*` tag and monitor the existing fail-closed `.github/workflows/release.yml` path through a GitHub prerelease and exact npm `next` publication. This authorization does not revive or publish the provider-backed `0.5.0-rc.1` reference candidate, permit moving or reusing a tag, target npm `latest`, bypass the native machine interlock or workflow, or publish Homebrew, editor-extension, or container channels. Any failed release remains immutable evidence and requires a new ledgered candidate identity before another attempt.
 
 ### 3.4 Work loop
 
@@ -713,7 +715,7 @@ Milestone 10 replaces the production language-engine boundary from Milestone 9 w
 | `NATIVE-006` | Route individually graduated native syntaxes through the Zig API, binary CLI, JavaScript wrapper, files/stdin, batch, watch, parallel, diagnostics, dependencies, and source maps without a provider process | `NSASS-012`, `NLESS-012`, `NSTYLUS-012` |
 | `NATIVE-007` | Remove production providers/host/runtime closure; prove zero `dependencies` and `optionalDependencies`, closed archive/package inventories, no compile child process/network/runtime data, offline installation, five native targets, SBOM, provenance, and consumer behavior | `NATIVE-006`, `REL-005` |
 | `NATIVE-008` | Graduate native rows in machine metadata and update help, README, website lab, guides, examples, changelog, compatibility claims, and migration notes without claiming executable plugin parity | `NATIVE-007` |
-| `NATIVE-009` | Select one immutable native release candidate, pass every local/hosted/release/consumer gate, enable the release interlock, and prepare publication; publication remains separately authorized | `NATIVE-008` |
+| `NATIVE-009` | Select one immutable native release candidate, pass every local/hosted/release/consumer gate, enable the release interlock, then exercise the owner-authorized fail-closed GitHub prerelease and npm `next` publication path | `NATIVE-008` |
 
 ### Zero-runtime-dependency graduation criteria
 
@@ -897,7 +899,7 @@ Work-Package: TOK-002
 | Compatibility data becoming stale | Incorrect prefixing | Generate versioned tables and record their source/version |
 | Cross-compilation mislabeled as native | Broken release assets | Inspect architectures and smoke-test artifacts |
 | Benchmark marketing pressure | Speed prioritized over semantics | Reject timing samples until output validation succeeds |
-| Model availability | Autonomous run violates owner requirement | Hard stop when Codex 5.6 Sol Ultra cannot be verified |
+| Model availability | Autonomous run violates owner requirement | Hard stop when Codex 5.6 Sol with xhigh reasoning cannot be verified |
 | Large migration destabilizes all surfaces | CLI, LSP, docs, and formats break together | Maintain explicit compatibility boundaries and milestone gates |
 
 ## 12. ADR backlog
@@ -1003,7 +1005,7 @@ The following decisions are captured or queued under `docs/adr/` during implemen
 
 - Every Milestone 10 package is verified on one immutable release commit.
 - No fallback, partial output, dependency leak, child-process/network compile path, semantic P0/P1, or unverified native claim remains.
-- Publication occurs only through the separately authorized fail-closed release workflow after the native machine interlock is enabled.
+- Publication occurs only through the owner-authorized fail-closed release workflow after the native machine interlock is enabled and every `NATIVE-009` gate passes on the exact integrated candidate.
 
 ### `1.0.0`
 
@@ -1084,6 +1086,6 @@ Milestone 9 is verified as an unpublished reference. After the 2026-07-17 owner 
 9. Complete `NATIVE-006`: route all graduated languages through the Zig library/binary and thin JavaScript wrapper while retaining provider oracles only in development tests.
 10. Complete `NATIVE-007`: remove production providers and host bytes, reduce the production package graph to zero dependencies, and pass runtime/process/network/archive/install/platform/SBOM/provenance gates.
 11. Complete `NATIVE-008`: graduate machine rows and update every public claim, example, guide, website input/output panel, and changelog from executable evidence.
-12. Complete `NATIVE-009`: choose an unused native candidate identity, run the complete local/hosted/release matrix, enable the native release interlock only after all gates pass, and prepare publication without publishing unless separately authorized.
+12. Complete `NATIVE-009`: choose an unused native candidate identity, run the complete local/hosted/release matrix, enable the native release interlock only after all gates pass, ensure the exact candidate is integrated to `origin/main`, then use the 2026-07-27 owner authorization to push its single immutable tag and verify the existing workflow's GitHub prerelease plus npm `next` publication. Never revive `0.5.0-rc.1`, move a tag, target npm `latest`, bypass a failed gate, or publish another channel.
 
 Every native package uses the existing common work loop and an additional compatibility rule: the canonical provider path may judge a native result but may not enter production bytes or runtime execution. A partial native implementation remains internal and unavailable rather than replacing a verified reference path.

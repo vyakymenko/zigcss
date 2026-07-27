@@ -24,6 +24,14 @@ const expectedBoundary = Object.freeze({
   allowedSystemBoundary: 'zig-standard-library-and-host-operating-system-abi',
 })
 
+const expectedPublicationAuthority = Object.freeze({
+  authorized: true,
+  authorizedOn: '2026-07-27',
+  scope: 'first-fully-graduated-native-release',
+  workflow: '.github/workflows/release.yml',
+  channels: Object.freeze(['github-prerelease', 'npm-next']),
+})
+
 const expectedReferenceOracles = Object.freeze([
   Object.freeze({
     id: 'dart-sass',
@@ -511,6 +519,7 @@ export function validateContract(
       'state',
       'nativeReleaseReady',
       'nativeReleaseVersion',
+      'nativePublicationAuthority',
       'referenceCandidate',
       'targetRelease',
       'decision',
@@ -522,10 +531,13 @@ export function validateContract(
     ],
     'root',
   )
-  if (contract.schemaVersion !== 3) fail('schemaVersion must be 3')
+  if (contract.schemaVersion !== 4) fail('schemaVersion must be 4')
   if (contract.state !== 'native-foundation') fail('state must remain native-foundation during Milestone 10')
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
+  if (!same(contract.nativePublicationAuthority, expectedPublicationAuthority)) {
+    fail('native publication authority drifted')
+  }
   if (contract.referenceCandidate !== '0.5.0-rc.1') fail('reference candidate drifted')
   if (contract.targetRelease !== '0.6.0') fail('targetRelease must be 0.6.0')
   if (contract.decision !== 'ADR-013') fail('decision must be ADR-013')
@@ -566,12 +578,13 @@ export function validateContract(
   validateInternalReachability(contract.implementations, buildFile, productionSources)
   validateNativeImportClosure(contract, productionSources)
 
-  requireText(plan, 'Plan version: 1.2', 'DEVELOPMENT_PLAN.md')
+  requireText(plan, 'Plan version: 1.3', 'DEVELOPMENT_PLAN.md')
   requireText(plan, '## Milestone 10: Self-contained native stylesheet frontends', 'DEVELOPMENT_PLAN.md')
   requireText(plan, '## 17. First self-contained-native autonomous sequence', 'DEVELOPMENT_PLAN.md')
   requireText(decision, '- Status: Accepted', 'ADR-013')
   requireText(decision, 'zero `dependencies` and zero `optionalDependencies`', 'ADR-013')
   requireText(decision, 'All tag-triggered releases are fail-closed', 'ADR-013')
+  requireText(decision, 'first fully graduated native candidate', 'ADR-013')
   requireText(readme, 'Native dependency-free migration', 'README.md')
 
   const buildGate = 'npm run test:native-contract && npm run check:native-contract'
@@ -583,6 +596,7 @@ export function validateContract(
   )
   const releaseGate = 'npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"'
   requireText(releaseWorkflow, releaseGate, 'release workflow')
+  requireText(releaseWorkflow, 'npm publish --tag next --provenance', 'release workflow')
   if (releaseWorkflow.indexOf(releaseGate) > releaseWorkflow.indexOf('npm whoami')) {
     fail('release interlock must run before npm authentication/publication preflight')
   }
@@ -596,6 +610,9 @@ export function validateReleaseTag(contract, tag) {
   }
   if (!contract.nativeReleaseReady) {
     fail(`release ${tag} rejected: native frontends are not graduated`)
+  }
+  if (contract.nativePublicationAuthority?.authorized !== true) {
+    fail(`release ${tag} rejected: native publication is not authorized`)
   }
   if (contract.nativeReleaseVersion === null || tag !== `v${contract.nativeReleaseVersion}`) {
     fail(`release tag ${tag} does not match the graduated native version`)

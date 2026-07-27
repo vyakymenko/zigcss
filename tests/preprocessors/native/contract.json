@@ -1,8 +1,15 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "state": "native-foundation",
   "nativeReleaseReady": false,
   "nativeReleaseVersion": null,
+  "nativePublicationAuthority": {
+    "authorized": true,
+    "authorizedOn": "2026-07-27",
+    "scope": "first-fully-graduated-native-release",
+    "workflow": ".github/workflows/release.yml",
+    "channels": ["github-prerelease", "npm-next"]
+  },
   "referenceCandidate": "0.5.0-rc.1",
   "targetRelease": "0.6.0",
   "decision": "ADR-013",

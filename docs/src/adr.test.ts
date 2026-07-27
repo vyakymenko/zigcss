@@ -23,6 +23,7 @@ describe('foundational architecture decisions', () => {
     'ADR-010-autonomous-model-requirement.md',
     'ADR-011-native-plugin-contract.md',
     'ADR-012-canonical-preprocessor-host.md',
+    'ADR-013-self-contained-native-frontends.md',
   ]
 
   test.each(decisions)('%s is accepted and records consequences', name => {
@@ -181,5 +182,16 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('xhigh reasoning')
     expect(adr).toContain('one implementation agent')
     expect(adr).toContain('No fallback model')
+  })
+
+  test('authorizes only the fail-closed native release publication path', () => {
+    const adr = read('ADR-013-self-contained-native-frontends.md')
+
+    expect(adr).toContain('On 2026-07-27')
+    expect(adr).toContain('first fully graduated native candidate')
+    expect(adr).toContain('GitHub prerelease')
+    expect(adr).toContain('npm package published under the `next` dist-tag')
+    expect(adr).toContain('`0.5.0-rc.1` reference candidate remains permanently outside')
+    expect(adr).toContain('tags may not be moved or reused')
   })
 })

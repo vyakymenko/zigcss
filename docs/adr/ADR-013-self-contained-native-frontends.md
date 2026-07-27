@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-17
+- Amended: 2026-07-27
 - Owners: ZigCSS parser, language frontend, CLI, package, security, and release maintainers
 - Roadmap: `NATIVE-001` through `NATIVE-009`, `NSASS-010` through `NSASS-012`, `NLESS-010` through `NLESS-012`, and `NSTYLUS-010` through `NSTYLUS-012`
 - Supersedes: ADR-012's decision to ship canonical providers as production runtime dependencies; ADR-012 remains the behavioral reference and security oracle until every native replacement graduates
@@ -85,6 +86,17 @@ All tag-triggered releases are fail-closed while the machine-readable native con
 - five native platform jobs compile all five languages from direct archives and an offline installed package;
 - official corpora, differential, fuzz, allocation-failure, resource-limit, map, diagnostic, import, watch, batch, and parallel gates pass; and
 - README, website, compatibility metadata, SBOM, changelog, and release notes describe the exact native boundary without plugin-parity claims.
+
+### Publication authority
+
+On 2026-07-27 the project owner separately authorized publication of the first fully graduated native candidate after every `NATIVE-009` gate passes. The authorization is intentionally narrower than general release access:
+
+- the exact candidate commit must already be integrated to `origin/main`, use an unused version and unused immutable `v*` tag, match `nativeReleaseVersion`, and report `nativeReleaseReady: true`;
+- publication must run only through the existing fail-closed `.github/workflows/release.yml` tag workflow;
+- the authorized outputs are its GitHub prerelease, five-target artifacts and attestations, and the exact npm package published under the `next` dist-tag;
+- the unpublished provider-backed `0.5.0-rc.1` reference candidate remains permanently outside this authority;
+- tags may not be moved or reused, npm `latest` may not be changed, failed gates may not be bypassed, and Homebrew, editor-extension, container, documentation, or service publication is not authorized by this decision; and
+- a failed immutable candidate is recorded as evidence. Any retry uses a new candidate identity selected and documented by the roadmap rather than rewriting public history.
 
 ## Consequences
 

@@ -20,9 +20,16 @@ function clone(value) {
 
 test('accepts the closed native Sass implementation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.schemaVersion, 3)
+  assert.equal(contract.schemaVersion, 4)
   assert.equal(contract.state, 'native-foundation')
   assert.equal(contract.nativeReleaseReady, false)
+  assert.deepEqual(contract.nativePublicationAuthority, {
+    authorized: true,
+    authorizedOn: '2026-07-27',
+    scope: 'first-fully-graduated-native-release',
+    workflow: '.github/workflows/release.yml',
+    channels: ['github-prerelease', 'npm-next'],
+  })
   assert.equal(contract.productionBoundary.packageDependencies, 0)
   assert.deepEqual(contract.foundations.map(foundation => foundation.id), [
     'shared-lossless-lexer',
@@ -221,6 +228,20 @@ test('rejects premature native adapter and release claims', () => {
   assert.throws(() => validateContract(sourceClaim), /cannot claim native sources/)
 })
 
+test('binds the owner-authorized native publication boundary', () => {
+  for (const mutate of [
+    authority => { authority.authorized = false },
+    authority => { authority.authorizedOn = '2026-07-26' },
+    authority => { authority.scope = 'any-release' },
+    authority => { authority.workflow = '.github/workflows/build.yml' },
+    authority => { authority.channels = ['npm-latest'] },
+  ]) {
+    const changed = clone(loadContract())
+    mutate(changed.nativePublicationAuthority)
+    assert.throws(() => validateContract(changed), /native publication authority drifted/)
+  }
+})
+
 test('binds implemented native foundation sources and focused test inventories', () => {
   const changed = clone(loadContract())
   changed.foundations[0].nativeSources.reverse()
@@ -275,6 +296,19 @@ test('release tags fail closed until all native rows graduate', () => {
     /native frontends are not graduated/,
   )
   assert.throws(() => validateReleaseTag(contract, 'not-a-tag'), /invalid release tag/)
+})
+
+test('release tags require the exact owner publication authority after graduation', () => {
+  const contract = clone(loadContract())
+  contract.nativeReleaseReady = true
+  contract.nativeReleaseVersion = '0.6.0'
+  assert.doesNotThrow(() => validateReleaseTag(contract, 'v0.6.0'))
+
+  contract.nativePublicationAuthority.authorized = false
+  assert.throws(
+    () => validateReleaseTag(contract, 'v0.6.0'),
+    /native publication is not authorized/,
+  )
 })
 
 test('requires the native interlock before npm publication preflight', () => {
