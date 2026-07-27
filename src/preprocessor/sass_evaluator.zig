@@ -8557,6 +8557,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeSelectorSimpleSelectorsFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -9443,6 +9450,45 @@ const Engine = struct {
         return try self.callSelectorParse(&ordered, span);
     }
 
+    fn invokeSelectorSimpleSelectorsFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .selector_simple_selectors or
+            (reference.owner != null and reference.owner.? != .selector))
+        {
+            return null;
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "selector" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+        };
+        return try self.callSelectorSimpleSelectors(&ordered, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -9450,7 +9496,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, or selector parse function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, or selector simple-selectors function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -12474,6 +12520,7 @@ fn globalBuiltinCallableName(builtin: Builtin) ?[]const u8 {
     const candidate: []const u8 = switch (builtin) {
         .math_compatible => "comparable",
         .math_is_unitless => "unitless",
+        .selector_simple_selectors => "simple-selectors",
         .minimum => "min",
         .maximum => "max",
         .calculation => "calc",
@@ -12739,6 +12786,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
 
 fn globalCallableBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "keywords")) return .meta_keywords;
+    if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;
     const builtin = globalBuiltin(name) orelse return null;
     // A CSS-compatible calculation name can have native direct-call behavior
     // without being a legacy Sass function that reflection may construct.

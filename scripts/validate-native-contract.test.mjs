@@ -103,6 +103,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-math-max-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-math-random-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-selector-parse-function-invocation'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-selector-simple-selectors-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-content-acceptance'), true)
   assert.equal(sassCore.capabilities.includes('plain-css-function-argument-evaluation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-parse-simple'), true)
