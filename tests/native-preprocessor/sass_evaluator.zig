@@ -7652,6 +7652,213 @@ test "native Sass meta call rejects invalid selector is superselector arguments 
     );
 }
 
+test "native Sass meta call invokes selector unify function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\@use "sass:selector" as selectors;
+        \\@use "sass:selector" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("unify", $module: "selectors");
+        \\$default: meta.get-function("unify", $module: "selector");
+        \\$star: meta.get-function("unify");
+        \\$list-args: (".list", ".item");
+        \\$map-args: (selector1: "[data-x='a,b']", selector2: ".mapped");
+        \\$typed: selector.parse("button.typed");
+        \\.values {
+        \\  exists: meta.function-exists("unify", "selector");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  star-same: $star == $default;
+        \\  plain: meta.call($custom, ".a", ".b");
+        \\  named: meta.call($default, $selector2: ".named2", $selector1: ".named1");
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  typed: meta.call($default, $typed, ".more");
+        \\  from-list: meta.call($default, (".left", ".right"), ".joined");
+        \\  interpolated: meta.call($default, ".item-#{2}", ".more");
+        \\  conflict: meta.inspect(meta.call($default, "a", "b"));
+        \\  ordered: meta.call(mark(1, $star), $selector2: mark(2, ".ordered2"), $selector1: mark(3, ".ordered1"));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($default, ".typed-result", ".more"));
+        \\  inspected: meta.inspect(meta.call($default, ".inspect", ".more"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-unify-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;star-same:true;plain:.a.b;named:.named1.named2;list-splat:.list.item;map-splat:[data-x=\"a,b\"].mapped;typed:button.typed.more;from-list:.left.joined,.right.joined;interpolated:.item-2.more;conflict:null;ordered:.ordered1.ordered2;trace:123;result-type:list;inspected:(.inspect.more,)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:selector" as selectors
+        \\$unify: m.get-function("unify", $module: "selectors")
+        \\.sass
+        \\  type: m.type-of($unify)
+        \\  plain: m.call($unify, ".a", ".b")
+        \\  named: m.call($unify, $selector2: ".right", $selector1: ".left")
+        \\  typed: m.call($unify, selectors.parse(".typed"), ".more")
+        \\  conflict: m.inspect(m.call($unify, "a", "b"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-unify-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:.a.b;named:.left.right;typed:.typed.more;conflict:null}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves selector unify ownership" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\$global: meta.get-function("selector-unify");
+        \\$module: meta.get-function("unify", $module: "selector");
+        \\.legacy {
+        \\  exists: meta.function-exists("selector-unify");
+        \\  unprefixed: meta.function-exists("unify");
+        \\  distinct: $global == $module;
+        \\  inspect: meta.inspect($global);
+        \\  value: meta.call($global, ".a", ".b");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-unify-ownership.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{exists:true;unprefixed:false;distinct:false;inspect:get-function(\"selector-unify\");value:.a.b}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta call rejects invalid selector unify arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+        expected: anyerror,
+    }{
+        .{ .name = "missing-both", .invocation = "meta.call($unify)", .expected = error.InvalidExpression },
+        .{ .name = "missing-second", .invocation = "meta.call($unify, \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "extra", .invocation = "meta.call($unify, \".a\", \".b\", \".c\")", .expected = error.InvalidExpression },
+        .{ .name = "unknown", .invocation = "meta.call($unify, $selector1: \".a\", $selector2: \".b\", $other: \".c\")", .expected = error.InvalidExpression },
+        .{ .name = "duplicate", .invocation = "meta.call($unify, \".a\", $selector1: \".b\", $selector2: \".c\")", .expected = error.InvalidExpression },
+        .{ .name = "empty-left", .invocation = "meta.call($unify, \"\", \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "empty-right", .invocation = "meta.call($unify, \".a\", \"\")", .expected = error.InvalidExpression },
+        .{ .name = "null", .invocation = "meta.call($unify, null, \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "boolean", .invocation = "meta.call($unify, true, \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "number", .invocation = "meta.call($unify, 1, \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "map", .invocation = "meta.call($unify, (a: 1), \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "parent-left", .invocation = "meta.call($unify, \"&.a\", \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "parent-right", .invocation = "meta.call($unify, \".a\", \"&.a\")", .expected = error.InvalidExpression },
+        .{ .name = "malformed", .invocation = "meta.call($unify, \".a[\", \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "short-splat", .invocation = "meta.call($unify, (\".a\",)...)", .expected = error.InvalidExpression },
+        .{ .name = "unsupported-unification", .invocation = "meta.call($unify, \":host(.a)\", \".b\")", .expected = error.UnsupportedFeature },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:selector\"; $unify: meta.get-function(\"unify\", $module: \"selector\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var selector_count = sass_evaluator.Limits{};
+    selector_count.max_selectors = 7;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-unify-count-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"unify\", $module: \"selector\"), \".a, .b\", \".x, .y\"); }",
+            .scss,
+            selector_count,
+        ),
+    );
+
+    var selector_bytes = sass_evaluator.Limits{};
+    selector_bytes.max_selector_bytes = 3;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-unify-byte-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"unify\", $module: \"selector\"), \".abcd\", \".efgh\"); }",
+            .scss,
+            selector_bytes,
+        ),
+    );
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 10;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-unify-temporary-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"unify\", $module: \"selector\"), \".abcd\", \".efgh\"); }",
+            .scss,
+            temporary,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-unify-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"unify\", $module: \"selector\"), \".a\", \".b\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -7765,7 +7972,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"unify\", $module: \"selector\"), \".a\", \".b\"); }",
+            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"append\", $module: \"selector\"), \".a\", \".b\"); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -14529,6 +14736,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  selector-parse-function-call: meta.call(meta.get-function("parse", $module: "selector"), ".allocation-call");
         \\  selector-simple-selectors-function-call: meta.call(meta.get-function("simple-selectors", $module: "selector"), ".allocation-call:hover");
         \\  selector-is-superselector-function-call: meta.call(meta.get-function("is-superselector", $module: "selector"), ".allocation-call", ".allocation-call:hover");
+        \\  selector-unify-function-call: meta.call(meta.get-function("unify", $module: "selector"), ".allocation-call", ".allocation-more");
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -14552,7 +14760,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

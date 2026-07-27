@@ -8571,6 +8571,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeSelectorUnifyFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -9537,6 +9544,47 @@ const Engine = struct {
         return try self.callSelectorIsSuperselector(&ordered, span);
     }
 
+    fn invokeSelectorUnifyFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .selector_unify or
+            (reference.owner != null and reference.owner.? != .selector))
+        {
+            return null;
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "selector1" },
+            .{ .name = "selector2" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+            bound.values[1].?,
+        };
+        return try self.callSelectorUnify(&ordered, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -9544,7 +9592,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, selector simple-selectors, or selector is-superselector function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, selector simple-selectors, selector is-superselector, or selector unify function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -12570,6 +12618,7 @@ fn globalBuiltinCallableName(builtin: Builtin) ?[]const u8 {
         .math_is_unitless => "unitless",
         .selector_is_superselector => "is-superselector",
         .selector_simple_selectors => "simple-selectors",
+        .selector_unify => "selector-unify",
         .minimum => "min",
         .maximum => "max",
         .calculation => "calc",
@@ -12836,6 +12885,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
 fn globalCallableBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "is-superselector")) return .selector_is_superselector;
     if (sassNameEql(name, "keywords")) return .meta_keywords;
+    if (sassNameEql(name, "selector-unify")) return .selector_unify;
     if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;
     const builtin = globalBuiltin(name) orelse return null;
     // A CSS-compatible calculation name can have native direct-call behavior
