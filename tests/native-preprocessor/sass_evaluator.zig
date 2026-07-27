@@ -6862,6 +6862,210 @@ test "native Sass meta call rejects invalid math max function units and limits" 
     );
 }
 
+test "native Sass meta call invokes math random function references deterministically" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as rng;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("random", $module: "rng");
+        \\$default: meta.get-function("random", $module: "math");
+        \\$star: meta.get-function("random");
+        \\$list-args: (9,);
+        \\$unit-a: meta.call($default);
+        \\$unit-null: meta.call($default, null);
+        \\$unit-b: meta.call($default);
+        \\$bounded: meta.call($custom, 5);
+        \\$named: meta.call($default, $limit: 7);
+        \\$list-splat: meta.call($star, $list-args...);
+        \\$map-splat: meta.call($default, (limit: 11)...);
+        \\$empty-splat: meta.call($default, ()...);
+        \\$overridden: meta.call($default, $limit: 0, (limit: 5)...);
+        \\$maximum: meta.call($default, 4294967296);
+        \\$stamped: meta.call(mark(1, $default), $limit: mark(2, 6));
+        \\$unit-limit: meta.call($default, 4px);
+        \\.values {
+        \\  exists: meta.function-exists("random", "math");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  star-same: $star == $default;
+        \\  unit-range: $unit-a >= 0 and $unit-a < 1 and $unit-null >= 0 and $unit-null < 1 and $unit-b >= 0 and $unit-b < 1;
+        \\  sequence-varies: $unit-a != $unit-null or $unit-null != $unit-b;
+        \\  bounded-range: $bounded >= 1 and $bounded <= 5 and $bounded == math.floor($bounded);
+        \\  named-range: $named >= 1 and $named <= 7 and $named == math.floor($named);
+        \\  list-range: $list-splat >= 1 and $list-splat <= 9;
+        \\  map-range: $map-splat >= 1 and $map-splat <= 11;
+        \\  empty-range: $empty-splat >= 0 and $empty-splat < 1;
+        \\  override-range: $overridden >= 1 and $overridden <= 5;
+        \\  maximum-range: $maximum >= 1 and $maximum <= 4294967296;
+        \\  stamped-range: $stamped >= 1 and $stamped <= 6;
+        \\  trace: $trace;
+        \\  unit-limit: $unit-limit >= 1 and $unit-limit <= 4 and math.is-unitless($unit-limit);
+        \\  samples: $unit-a $unit-null $unit-b $bounded $named $list-splat $map-splat $empty-splat $overridden $maximum $stamped $unit-limit;
+        \\}
+    ;
+    var first = try compile(
+        std.testing.allocator,
+        "meta-call-math-random-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer first.deinit();
+    var replay = try compile(
+        std.testing.allocator,
+        "meta-call-math-random-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer replay.deinit();
+    try std.testing.expectEqualStrings(first.css(), replay.css());
+    try std.testing.expect(std.mem.startsWith(
+        u8,
+        first.css(),
+        ".values{exists:true;type:function;same:true;star-same:true;unit-range:true;sequence-varies:true;bounded-range:true;named-range:true;list-range:true;map-range:true;empty-range:true;override-range:true;maximum-range:true;stamped-range:true;trace:12;unit-limit:true;samples:",
+    ));
+    try std.testing.expect(std.mem.endsWith(u8, first.css(), "}"));
+    const diagnostics = first.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "math.random() currently ignores $limit units",
+        diagnostics[0].message,
+    );
+    try std.testing.expectEqual(@as(usize, 1), replay.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as rng
+        \\$random: m.get-function("random", $module: "rng")
+        \\$sample: m.call($random, 8)
+        \\.sass
+        \\  type: m.type-of($random)
+        \\  range: $sample >= 1 and $sample <= 8
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-random-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;range:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves legacy global math random reflection" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\$legacy: meta.get-function("random");
+        \\$module: meta.get-function("random", $module: "math");
+        \\$unit: meta.call($legacy);
+        \\$bounded: meta.call($legacy, 6);
+        \\$unitful: meta.call($legacy, 4px);
+        \\.legacy {
+        \\  exists: meta.function-exists("random");
+        \\  distinct: $legacy == $module;
+        \\  unit-range: $unit >= 0 and $unit < 1;
+        \\  bounded-range: $bounded >= 1 and $bounded <= 6;
+        \\  unitful-range: $unitful >= 1 and $unitful <= 4;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-random-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{exists:true;distinct:false;unit-range:true;bounded-range:true;unitful-range:true}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), diagnostics.len);
+    for (diagnostics[0..3]) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+    try std.testing.expectEqualStrings(
+        "math.random() currently ignores $limit units",
+        diagnostics[3].message,
+    );
+}
+
+test "native Sass meta call rejects invalid math random arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        argument: []const u8,
+    }{
+        .{ .name = "decimal", .argument = "2.5" },
+        .{ .name = "zero", .argument = "0" },
+        .{ .name = "negative", .argument = "-2" },
+        .{ .name = "too-large", .argument = "4294967297" },
+        .{ .name = "string", .argument = "foo" },
+        .{ .name = "dynamic", .argument = "var(--limit)" },
+        .{ .name = "extra", .argument = "1, 2" },
+        .{ .name = "unknown", .argument = "$other: 2" },
+        .{ .name = "duplicate", .argument = "2, $limit: 3" },
+        .{ .name = "position-map", .argument = "2, (limit: 3)..." },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:math\"; .a {{ value: meta.call(meta.get-function(\"random\", $module: \"math\"), {s}); }}",
+            .{case.argument},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-random-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"random\", $module: \"math\"), 3); }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -6975,7 +7179,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"random\", $module: \"math\")); }",
+            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"parse\", $module: \"selector\"), \".a\"); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -13734,6 +13938,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-hypot-function-call: meta.call(meta.get-function("hypot", $module: "numbers"), 3px, 4px);
         \\  math-min-function-call: meta.call(meta.get-function("min", $module: "numbers"), 3px, 1px, 2px);
         \\  math-max-function-call: meta.call(meta.get-function("max", $module: "numbers"), 3px, 1px, 2px);
+        \\  math-random-function-call: meta.call(meta.get-function("random", $module: "numbers"), 1);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -13757,7 +13962,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
