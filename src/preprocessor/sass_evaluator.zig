@@ -8592,6 +8592,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeSelectorExtendFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -9638,6 +9645,49 @@ const Engine = struct {
         return try self.callSelectorComposition(.selector_nest, arguments, span);
     }
 
+    fn invokeSelectorExtendFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .selector_extend or
+            (reference.owner != null and reference.owner.? != .selector))
+        {
+            return null;
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "selector" },
+            .{ .name = "extendee" },
+            .{ .name = "extender" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+            bound.values[1].?,
+            bound.values[2].?,
+        };
+        return try self.callSelectorExtension(.selector_extend, &ordered, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -9645,7 +9695,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, or selector nest function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, or selector extend function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -12678,6 +12728,7 @@ fn globalBuiltinCallableName(builtin: Builtin) ?[]const u8 {
     const candidate: []const u8 = switch (builtin) {
         .math_compatible => "comparable",
         .math_is_unitless => "unitless",
+        .selector_extend => "selector-extend",
         .selector_is_superselector => "is-superselector",
         .selector_simple_selectors => "simple-selectors",
         .selector_nest => "selector-nest",
@@ -12948,6 +12999,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
 fn globalCallableBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "is-superselector")) return .selector_is_superselector;
     if (sassNameEql(name, "keywords")) return .meta_keywords;
+    if (sassNameEql(name, "selector-extend")) return .selector_extend;
     if (sassNameEql(name, "selector-nest")) return .selector_nest;
     if (sassNameEql(name, "selector-unify")) return .selector_unify;
     if (sassNameEql(name, "simple-selectors")) return .selector_simple_selectors;
