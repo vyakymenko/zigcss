@@ -8550,7 +8550,7 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
-                if (try self.invokeStringQuoteFunction(
+                if (try self.invokeStringQuotingFunction(
                     callable,
                     &forwarded,
                     span,
@@ -9469,14 +9469,14 @@ const Engine = struct {
         return try self.callMathRandom(bound.values[0], span);
     }
 
-    fn invokeStringQuoteFunction(
+    fn invokeStringQuotingFunction(
         self: *Engine,
         callable: native_value.Callable,
         arguments: *const EvaluatedCallArguments,
         span: native_source.Span,
     ) Error!?*const native_value.Value {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
-        if (reference.builtin != .quote or
+        if ((reference.builtin != .quote and reference.builtin != .unquote) or
             (reference.owner != null and reference.owner.? != .string))
         {
             return null;
@@ -9505,7 +9505,7 @@ const Engine = struct {
         const ordered = [_]*const native_value.Value{
             bound.values[0].?,
         };
-        return try self.callStringBuiltin(.quote, &ordered, span);
+        return try self.callStringBuiltin(reference.builtin, &ordered, span);
     }
 
     fn invokeSelectorParseFunction(
@@ -9791,7 +9791,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote or unquote, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -10641,7 +10641,7 @@ const Engine = struct {
                     return error.InvalidExpression;
                 }
                 const string = try self.stringArgument(arguments[0].*, span);
-                if (builtin == .quote and !string.quoted and
+                if (!string.quoted and
                     isSassCalculationValue(string.bytes))
                 {
                     try self.report(
