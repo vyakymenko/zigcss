@@ -3399,6 +3399,7 @@ const Engine = struct {
             if (!parser.saw_operator) {
                 return switch (err) {
                     error.UndefinedVariable => err,
+                    error.InvalidSassSyntax,
                     error.InvalidExpression,
                     error.DivisionByZero,
                     error.IncompatibleUnits,
@@ -3414,6 +3415,7 @@ const Engine = struct {
                     .invalid
                 else
                     .incompatible,
+                error.InvalidSassSyntax,
                 error.InvalidExpression,
                 error.DivisionByZero,
                 error.InvalidNumber,
@@ -8550,7 +8552,7 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
-                if (try self.invokeStringQuotingFunction(
+                if (try self.invokeStringFunction(
                     callable,
                     &forwarded,
                     span,
@@ -9469,14 +9471,16 @@ const Engine = struct {
         return try self.callMathRandom(bound.values[0], span);
     }
 
-    fn invokeStringQuotingFunction(
+    fn invokeStringFunction(
         self: *Engine,
         callable: native_value.Callable,
         arguments: *const EvaluatedCallArguments,
         span: native_source.Span,
     ) Error!?*const native_value.Value {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
-        if ((reference.builtin != .quote and reference.builtin != .unquote) or
+        if ((reference.builtin != .quote and
+            reference.builtin != .unquote and
+            reference.builtin != .str_length) or
             (reference.owner != null and reference.owner.? != .string))
         {
             return null;
@@ -9791,7 +9795,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote or unquote, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, or length, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -10671,6 +10675,14 @@ const Engine = struct {
                     return error.InvalidExpression;
                 }
                 const string = try self.stringArgument(arguments[0].*, span);
+                if (!string.quoted and isSassCalculationValue(string.bytes)) {
+                    try self.report(
+                        .type_mismatch,
+                        span,
+                        "native Sass string function requires a string",
+                    );
+                    return error.InvalidExpression;
+                }
                 const count = native_string.length(
                     self.allocator,
                     string.bytes,
@@ -12495,7 +12507,7 @@ fn splitTopLevelRanges(
             continue;
         }
         if (byte == '\\' and index + 1 < input.len) {
-            index += 2;
+            index = sassEscapeEnd(input, index);
             continue;
         }
         if (commentEnd(input, index)) |end| {
@@ -12564,6 +12576,30 @@ fn splitTopLevelRanges(
         try output.append(allocator, .{ .start = start, .end = input.len });
     }
     return saw_separator;
+}
+
+fn sassEscapeEnd(input: []const u8, opening: usize) usize {
+    std.debug.assert(opening < input.len and input[opening] == '\\');
+    var index = opening + 1;
+    if (index == input.len) return index;
+
+    if (std.ascii.isHex(input[index])) {
+        var digits: u8 = 0;
+        while (index < input.len and digits < 6 and std.ascii.isHex(input[index])) {
+            index += 1;
+            digits += 1;
+        }
+        if (index < input.len and isExpressionWhitespace(input[index])) {
+            if (input[index] == '\r' and index + 1 < input.len and input[index + 1] == '\n') {
+                return index + 2;
+            }
+            return index + 1;
+        }
+        return index;
+    }
+
+    const scalar_length = std.unicode.utf8ByteSequenceLength(input[index]) catch return index + 1;
+    return @min(input.len, index + scalar_length);
 }
 
 fn findTopLevelByte(input: []const u8, target: u8) ?usize {

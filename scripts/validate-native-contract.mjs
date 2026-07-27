@@ -204,6 +204,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-selector-replace-function-invocation',
       'built-in-meta-string-quote-function-invocation',
       'built-in-meta-string-unquote-function-invocation',
+      'built-in-meta-string-length-function-invocation',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
       'built-in-selector-parse-simple',
