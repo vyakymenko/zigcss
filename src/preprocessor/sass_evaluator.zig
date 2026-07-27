@@ -255,6 +255,26 @@ const ColorTransformChannel = enum {
     z,
 };
 
+const color_transform_parameters = [17]native_arguments.Parameter{
+    .{ .name = "color" },
+    .{ .name = "red", .required = false },
+    .{ .name = "green", .required = false },
+    .{ .name = "blue", .required = false },
+    .{ .name = "hue", .required = false },
+    .{ .name = "saturation", .required = false },
+    .{ .name = "lightness", .required = false },
+    .{ .name = "whiteness", .required = false },
+    .{ .name = "blackness", .required = false },
+    .{ .name = "alpha", .required = false },
+    .{ .name = "space", .required = false },
+    .{ .name = "a", .required = false },
+    .{ .name = "b", .required = false },
+    .{ .name = "chroma", .required = false },
+    .{ .name = "x", .required = false },
+    .{ .name = "y", .required = false },
+    .{ .name = "z", .required = false },
+};
+
 fn transformSpaceForColorSpace(space: native_value.ColorSpace) ColorTransformSpace {
     return switch (space) {
         .rgb => .rgb,
@@ -5709,6 +5729,40 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            body,
+            ranges,
+            self.limits.max_function_arguments,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer parsed.deinit();
+        var bound = native_arguments.bindAlloc(
+            self.allocator,
+            parsed.items,
+            &color_transform_parameters,
+            1,
+        ) catch |err| return self.argumentsFailure(err, span);
+        defer bound.deinit();
+
+        var values: [color_transform_parameters.len]?*const native_value.Value = @splat(null);
+        for (bound.values, 0..) |value_range, index| {
+            const range = value_range orelse continue;
+            values[index] = try self.evaluateExpressionBytes(
+                body[range.start..range.end],
+                scope,
+                span,
+            );
+        }
+        return self.callColorTransform(builtin, &values, span);
+    }
+
+    fn callColorTransform(
+        self: *Engine,
+        builtin: Builtin,
+        values: []const ?*const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        std.debug.assert(values.len == color_transform_parameters.len);
         const color_index = 0;
         const red_index = 1;
         const green_index = 2;
@@ -5726,49 +5780,6 @@ const Engine = struct {
         const x_index = 14;
         const y_index = 15;
         const z_index = 16;
-        const parameters = [17]native_arguments.Parameter{
-            .{ .name = "color" },
-            .{ .name = "red", .required = false },
-            .{ .name = "green", .required = false },
-            .{ .name = "blue", .required = false },
-            .{ .name = "hue", .required = false },
-            .{ .name = "saturation", .required = false },
-            .{ .name = "lightness", .required = false },
-            .{ .name = "whiteness", .required = false },
-            .{ .name = "blackness", .required = false },
-            .{ .name = "alpha", .required = false },
-            .{ .name = "space", .required = false },
-            .{ .name = "a", .required = false },
-            .{ .name = "b", .required = false },
-            .{ .name = "chroma", .required = false },
-            .{ .name = "x", .required = false },
-            .{ .name = "y", .required = false },
-            .{ .name = "z", .required = false },
-        };
-        var parsed = native_arguments.parseAlloc(
-            self.allocator,
-            body,
-            ranges,
-            self.limits.max_function_arguments,
-        ) catch |err| return self.argumentsFailure(err, span);
-        defer parsed.deinit();
-        var bound = native_arguments.bindAlloc(
-            self.allocator,
-            parsed.items,
-            &parameters,
-            1,
-        ) catch |err| return self.argumentsFailure(err, span);
-        defer bound.deinit();
-
-        var values: [parameters.len]?*const native_value.Value = @splat(null);
-        for (bound.values, 0..) |value_range, index| {
-            const range = value_range orelse continue;
-            values[index] = try self.evaluateExpressionBytes(
-                body[range.start..range.end],
-                scope,
-                span,
-            );
-        }
         const color = try self.colorArgument(values[color_index].?.*, span);
         const kind: native_color.TransformKind = switch (builtin) {
             .adjust_color => .adjust,
@@ -8559,6 +8570,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorAdjustFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -9589,6 +9607,38 @@ const Engine = struct {
         };
     }
 
+    fn invokeColorAdjustFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .adjust_color or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+
+        var bound = try self.bindEvaluatedArguments(
+            &color_transform_parameters,
+            1,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return try self.callColorTransform(.adjust_color, bound.values, span);
+    }
+
     fn invokeSelectorParseFunction(
         self: *Engine,
         callable: native_value.Callable,
@@ -9872,7 +9922,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
