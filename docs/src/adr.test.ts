@@ -178,7 +178,7 @@ describe('foundational architecture decisions', () => {
     const adr = read('ADR-010-autonomous-model-requirement.md')
 
     expect(adr).toContain('gpt-5.6-sol')
-    expect(adr).toContain('ultra reasoning')
+    expect(adr).toContain('xhigh reasoning')
     expect(adr).toContain('one implementation agent')
     expect(adr).toContain('No fallback model')
   })
