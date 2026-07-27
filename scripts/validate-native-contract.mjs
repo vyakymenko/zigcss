@@ -192,6 +192,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-math-clamp-function-invocation',
       'built-in-meta-math-hypot-function-invocation',
       'built-in-meta-math-min-function-invocation',
+      'built-in-meta-math-max-function-invocation',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
       'built-in-selector-parse-simple',
