@@ -8473,6 +8473,217 @@ test "native Sass meta call rejects invalid selector extend arguments and limits
     );
 }
 
+test "native Sass meta call invokes selector replace function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\@use "sass:selector" as selectors;
+        \\@use "sass:selector" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("replace", $module: "selectors");
+        \\$default: meta.get-function("replace", $module: "selector");
+        \\$star: meta.get-function("replace");
+        \\$list-args: (".list.item", ".list", ".extended.more");
+        \\$map-args: (selector: ".mapped.target", original: ".mapped", replacement: ".replacement");
+        \\$typed: selector.parse("button.typed");
+        \\.values {
+        \\  exists: meta.function-exists("replace", "selector");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  star-same: $star == $default;
+        \\  plain: meta.call($custom, ".a.c", ".a", ".b.d");
+        \\  named: meta.call($default, $replacement: ".k3", $selector: ".k1.k2", $original: ".k1");
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  typed: meta.call($default, $typed, ".typed", ".more");
+        \\  from-list: meta.call($default, (".left.a", ".right.a"), ".a", ".joined");
+        \\  no-match: meta.call($default, ".none", ".a", ".b");
+        \\  interpolated: meta.call($default, ".item-#{2}.target", ".target", ".more");
+        \\  ordered: meta.call(mark(1, $star), $replacement: mark(2, ".ordered-more"), $selector: mark(3, ".ordered.base"), $original: mark(4, ".base"));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($default, ".typed-result", ".typed-result", ".more"));
+        \\  inspected: meta.inspect(meta.call($default, ".inspect.target", ".target", ".more"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-replace-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;star-same:true;plain:.c.b.d;named:.k2.k3;list-splat:.item.extended.more;map-splat:.target.replacement;typed:button.more;from-list:.left.joined,.right.joined;no-match:.none;interpolated:.item-2.more;ordered:.ordered.ordered-more;trace:1234;result-type:list;inspected:(.inspect.more,)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:selector" as selectors
+        \\$replace: m.get-function("replace", $module: "selectors")
+        \\.sass
+        \\  type: m.type-of($replace)
+        \\  plain: m.call($replace, ".a.c", ".a", ".b")
+        \\  named: m.call($replace, $replacement: ".more", $selector: ".typed.target", $original: ".target")
+        \\  typed: m.call($replace, selectors.parse(".typed.target"), ".target", ".more")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-replace-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:.c.b;named:.typed.more;typed:.typed.more}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves selector replace ownership" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\$global: meta.get-function("selector-replace");
+        \\$module: meta.get-function("replace", $module: "selector");
+        \\.legacy {
+        \\  exists: meta.function-exists("selector-replace");
+        \\  unprefixed: meta.function-exists("replace");
+        \\  distinct: $global == $module;
+        \\  inspect: meta.inspect($global);
+        \\  value: meta.call($global, ".a.c", ".a", ".b");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-replace-ownership.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{exists:true;unprefixed:false;distinct:false;inspect:get-function(\"selector-replace\");value:.c.b}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta call rejects invalid selector replace arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+        expected: anyerror,
+    }{
+        .{ .name = "missing-all", .invocation = "meta.call($replace)", .expected = error.InvalidExpression },
+        .{ .name = "missing-two", .invocation = "meta.call($replace, \".a\")", .expected = error.InvalidExpression },
+        .{ .name = "missing-one", .invocation = "meta.call($replace, \".a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "extra", .invocation = "meta.call($replace, \".a\", \".b\", \".c\", \".d\")", .expected = error.InvalidExpression },
+        .{ .name = "unknown", .invocation = "meta.call($replace, $selector: \".a\", $original: \".b\", $replacement: \".c\", $other: \".d\")", .expected = error.InvalidExpression },
+        .{ .name = "extend-names", .invocation = "meta.call($replace, $selector: \".a\", $extendee: \".b\", $extender: \".c\")", .expected = error.InvalidExpression },
+        .{ .name = "duplicate", .invocation = "meta.call($replace, \".a\", $selector: \".b\", $original: \".c\", $replacement: \".d\")", .expected = error.InvalidExpression },
+        .{ .name = "short-list-splat", .invocation = "meta.call($replace, (\".a\", \".b\")...)", .expected = error.InvalidExpression },
+        .{ .name = "missing-map-splat", .invocation = "meta.call($replace, (selector: \".a\", replacement: \".b\")...)", .expected = error.InvalidExpression },
+        .{ .name = "empty-selector", .invocation = "meta.call($replace, \"\", \".a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "empty-original", .invocation = "meta.call($replace, \".a\", \"\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "empty-replacement", .invocation = "meta.call($replace, \".a\", \".a\", \"\")", .expected = error.InvalidExpression },
+        .{ .name = "null", .invocation = "meta.call($replace, null, \".a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "boolean", .invocation = "meta.call($replace, true, \".a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "number", .invocation = "meta.call($replace, 1, \".a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "map", .invocation = "meta.call($replace, (a: 1), \".a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "parent-selector", .invocation = "meta.call($replace, \"&.a\", \".a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "parent-original", .invocation = "meta.call($replace, \".a\", \"&.a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "parent-replacement", .invocation = "meta.call($replace, \".a\", \".a\", \"&.b\")", .expected = error.InvalidExpression },
+        .{ .name = "malformed", .invocation = "meta.call($replace, \".a]\", \".a\", \".b\")", .expected = error.InvalidExpression },
+        .{ .name = "unsupported-replacement", .invocation = "meta.call($replace, \".a\", \".a\", \".x .b\")", .expected = error.UnsupportedFeature },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:selector\"; $replace: meta.get-function(\"replace\", $module: \"selector\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            case.expected,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var selector_count = sass_evaluator.Limits{};
+    selector_count.max_selectors = 6;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-replace-count-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; $replace: meta.get-function(\"replace\", $module: \"selector\"); .a { value: meta.call($replace, \".a .a\", \".a\", \".b, .c\"); }",
+            .scss,
+            selector_count,
+        ),
+    );
+
+    var selector_bytes = sass_evaluator.Limits{};
+    selector_bytes.max_selector_bytes = 5;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-replace-byte-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; $replace: meta.get-function(\"replace\", $module: \"selector\"); .a { value: meta.call($replace, \".a.c\", \".a\", \".b.d\"); }",
+            .scss,
+            selector_bytes,
+        ),
+    );
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 12;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-replace-temporary-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; $replace: meta.get-function(\"replace\", $module: \"selector\"); .a { value: meta.call($replace, \".abc\", \".abc\", \".def\"); }",
+            .scss,
+            temporary,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-replace-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"replace\", $module: \"selector\"), \".a\", \".a\", \".b\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -8586,7 +8797,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"replace\", $module: \"selector\"), \".a\", \".b\", \".c\"); }",
+            .input = "@use \"sass:meta\"; @use \"sass:string\"; .a { value: meta.call(meta.get-function(\"quote\", $module: \"string\"), value); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -15428,6 +15639,7 @@ fn exerciseSelectorAllocationFailures(
         \\  extended: selector.extend("[data-x=\"y\"].c [data-x=y].d", "[data-x='y']", ".b");
         \\  call-extended: meta.call(meta.get-function("extend", $module: "selector"), ".call.target", ".target", ".extended");
         \\  replaced: selector.replace("[data-x=\"y\"].c [data-x=y].d", "[data-x='y']", ".b");
+        \\  call-replaced: meta.call(meta.get-function("replace", $module: "selector"), ".call.target", ".target", ".replacement");
         \\  list-extended: selector.extend(".a.c .a", ".a, .c", ".x, .y");
         \\  list-replaced: selector.replace(".a, .c", ".a, .c", ".b, .d");
         \\  unified: selector.unify(".a > .b .c", ".d .b .e");
@@ -15450,7 +15662,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);dir::dir(ltr , ltr);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;call-appended:.call.appended;nested:.a + .a,.a + .b,.b + .a,.b + .b;call-nested:.call.nested;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;call-extended:.call.target,.call.extended;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);dir::dir(ltr , ltr);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;call-appended:.call.appended;nested:.a + .a,.a + .b,.b + .a,.b + .b;call-nested:.call.nested;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;call-extended:.call.target,.call.extended;replaced:.c.b .d.b;call-replaced:.call.replacement;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
