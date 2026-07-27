@@ -6596,6 +6596,139 @@ test "native Sass meta call rejects incompatible math hypot function units" {
     );
 }
 
+test "native Sass meta call invokes math min function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as extrema;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("min", $module: "extrema");
+        \\$default: meta.get-function("min", $module: "math");
+        \\$star: meta.get-function("min");
+        \\$list-args: (3px, 1px, 2px);
+        \\.values {
+        \\  plain: meta.call($custom, 3px, 1px, 2px);
+        \\  one: meta.call($default, 3px);
+        \\  converted: meta.call($default, 1in, 95px);
+        \\  mixed-unitless: meta.call($default, 1px, 2);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  ordered: meta.call(mark(1, $star), mark(2, 3px), mark(3, 1px), mark(4, 2px));
+        \\  trace: $trace;
+        \\  star: meta.call($star, 5em, 2em, 3em);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-min-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{plain:1px;one:3px;converted:95px;mixed-unitless:1px;list-splat:1px;ordered:1px;trace:1234;star:2em}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as extrema
+        \\$minimum: m.get-function("min", $module: "extrema")
+        \\.sass
+        \\  plain: m.call($minimum, 3px, 1px, 2px)
+        \\  one: m.call($minimum, -5px)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-min-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{plain:1px;one:-5px}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves legacy global math min reflection" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\$legacy: meta.get-function("min");
+        \\$module: meta.get-function("min", $module: "math");
+        \\$list-args: (3px, 1px, 2px);
+        \\.legacy {
+        \\  exists: meta.function-exists("min");
+        \\  distinct: $legacy == $module;
+        \\  plain: meta.call($legacy, 3px, 1px, 2px);
+        \\  list-splat: meta.call($legacy, $list-args...);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-min-global.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{exists:true;distinct:false;plain:1px;list-splat:1px}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+}
+
+test "native Sass meta call rejects invalid math min function units and limits" {
+    try std.testing.expectError(
+        error.IncompatibleUnits,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-min-incompatible.scss",
+            "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"min\", $module: \"math\"), 3px, 1s); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-min-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"min\", $module: \"math\"), 3px, 1px, 2px); }",
+            .scss,
+            limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -6709,7 +6842,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"min\", $module: \"math\"), 3, 4); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"max\", $module: \"math\"), 3, 4); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -7150,6 +7283,26 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-math-hypot-list.scss",
             .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"hypot\", $module: \"math\"), (3px, 4px)); }",
+        },
+        .{
+            .name = "meta-call-math-min-empty.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"min\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-call-math-min-named-numbers.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"min\", $module: \"math\"), $numbers: (3px, 1px)); }",
+        },
+        .{
+            .name = "meta-call-math-min-map-splat.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; $args: (numbers: (3px, 1px)); .a { value: meta.call(meta.get-function(\"min\", $module: \"math\"), $args...); }",
+        },
+        .{
+            .name = "meta-call-math-min-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"min\", $module: \"math\"), foo, 1px); }",
+        },
+        .{
+            .name = "meta-call-math-min-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"min\", $module: \"math\"), (3px, 1px)); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -13426,6 +13579,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-div-function-call: meta.call(meta.get-function("div", $module: "numbers"), 6px, 2);
         \\  math-clamp-function-call: meta.call(meta.get-function("clamp", $module: "numbers"), 1px, 2px, 3px);
         \\  math-hypot-function-call: meta.call(meta.get-function("hypot", $module: "numbers"), 3px, 4px);
+        \\  math-min-function-call: meta.call(meta.get-function("min", $module: "numbers"), 3px, 1px, 2px);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -13449,7 +13603,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

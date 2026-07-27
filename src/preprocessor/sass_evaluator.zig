@@ -8529,6 +8529,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMathMinFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -9296,6 +9303,33 @@ const Engine = struct {
         return try self.callMathHypot(arguments.positional.items, span);
     }
 
+    fn invokeMathMinFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        const is_module = reference.owner != null and
+            reference.owner.? == .math and
+            reference.builtin == .math_min;
+        const is_global = reference.owner == null and reference.builtin == .minimum;
+        if (!is_module and !is_global) return null;
+        if (is_global) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        if (arguments.keywords.items.len != 0) {
+            return self.argumentsFailure(error.UnknownArgument, span);
+        }
+        return try self.callMathExtremum(.math_min, arguments.positional.items, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -9303,7 +9337,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, or math hypotenuse function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, or math minimum function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
