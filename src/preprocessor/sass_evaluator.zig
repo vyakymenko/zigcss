@@ -8578,6 +8578,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeSelectorAppendFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 break :blk self.metaCallFunctionFailure(span);
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
@@ -9585,6 +9592,21 @@ const Engine = struct {
         return try self.callSelectorUnify(&ordered, span);
     }
 
+    fn invokeSelectorAppendFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .selector or
+            reference.builtin != .selector_append)
+        {
+            return null;
+        }
+        return try self.callSelectorComposition(.selector_append, arguments, span);
+    }
+
     fn metaCallFunctionFailure(
         self: *Engine,
         span: native_source.Span,
@@ -9592,7 +9614,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, selector simple-selectors, selector is-superselector, or selector unify function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, selector parse, selector simple-selectors, selector is-superselector, selector unify, or selector append function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -10077,7 +10099,16 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
         defer evaluated.deinit();
-        if (evaluated.keywords.items.len != 0) {
+        return self.callSelectorComposition(builtin, &evaluated, span);
+    }
+
+    fn callSelectorComposition(
+        self: *Engine,
+        builtin: Builtin,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.keywords.items.len != 0) {
             try self.report(
                 .invalid_operation,
                 span,
@@ -10085,8 +10116,8 @@ const Engine = struct {
             );
             return error.InvalidExpression;
         }
-        const arguments = evaluated.positional.items;
-        if (arguments.len == 0) {
+        const positional = arguments.positional.items;
+        if (positional.len == 0) {
             try self.report(
                 .invalid_operation,
                 span,
@@ -10097,20 +10128,20 @@ const Engine = struct {
 
         const pointer_bytes = std.math.mul(
             usize,
-            arguments.len,
+            positional.len,
             @sizeOf([]const u8),
         ) catch return self.selectorTemporaryFailure(span);
         if (pointer_bytes > self.limits.max_temporary_bytes) {
             return self.selectorTemporaryFailure(span);
         }
-        const inputs = try self.allocator.alloc([]const u8, arguments.len);
+        const inputs = try self.allocator.alloc([]const u8, positional.len);
         var input_count: usize = 0;
         defer {
             for (inputs[0..input_count]) |input| self.allocator.free(input);
             self.allocator.free(inputs);
         }
         var temporary_bytes = pointer_bytes;
-        for (arguments) |argument| {
+        for (positional) |argument| {
             const input = try self.selectorInput(argument.*, span);
             const next = std.math.add(usize, temporary_bytes, input.len) catch {
                 self.allocator.free(input);

@@ -7859,6 +7859,208 @@ test "native Sass meta call rejects invalid selector unify arguments and limits"
     );
 }
 
+test "native Sass meta call invokes selector append function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\@use "sass:selector" as selectors;
+        \\@use "sass:selector" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("append", $module: "selectors");
+        \\$default: meta.get-function("append", $module: "selector");
+        \\$star: meta.get-function("append");
+        \\$list-args: (".list", ".item", ":hover");
+        \\$typed: selector.parse("button.typed");
+        \\.values {
+        \\  exists: meta.function-exists("append", "selector");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  star-same: $star == $default;
+        \\  plain: meta.call($custom, ".a", ".b");
+        \\  three: meta.call($default, ".three", "__part", ".active");
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  typed: meta.call($default, $typed, ".more");
+        \\  from-list: meta.call($default, (".left", ".right"), ".joined");
+        \\  interpolated: meta.call($default, ".item-#{2}", ":hover");
+        \\  one: meta.call($default, ".single");
+        \\  ordered: meta.call(mark(1, $star), mark(2, ".ordered"), mark(3, ".more"));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($default, ".typed-result", ".more"));
+        \\  inspected: meta.inspect(meta.call($default, ".inspect", ".more"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-append-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;star-same:true;plain:.a.b;three:.three__part.active;list-splat:.list.item:hover;typed:button.typed.more;from-list:.left.joined,.right.joined;interpolated:.item-2:hover;one:.single;ordered:.ordered.more;trace:123;result-type:list;inspected:(.inspect.more,)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:selector" as selectors
+        \\$append: m.get-function("append", $module: "selectors")
+        \\.sass
+        \\  type: m.type-of($append)
+        \\  plain: m.call($append, ".a", ".b")
+        \\  three: m.call($append, ".root", "__part", ":hover")
+        \\  typed: m.call($append, selectors.parse(".typed"), ".more")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-append-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:.a.b;three:.root__part:hover;typed:.typed.more}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call keeps selector append distinct from global list append" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\$global: meta.get-function("append");
+        \\$module: meta.get-function("append", $module: "selector");
+        \\.legacy {
+        \\  exists: meta.function-exists("append");
+        \\  module-exists: meta.function-exists("append", "selector");
+        \\  distinct: $global == $module;
+        \\  inspect: meta.inspect($global);
+        \\  global-value: meta.call($global, (a,), b);
+        \\  module-value: meta.call($module, ".a", ".b");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-append-ownership.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{exists:true;module-exists:true;distinct:false;inspect:get-function(\"append\");global-value:a,b;module-value:.a.b}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta call rejects invalid selector append arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($append)" },
+        .{ .name = "selectors-keyword", .invocation = "meta.call($append, $selectors: \".a\")" },
+        .{ .name = "selector-keyword", .invocation = "meta.call($append, $selector: \".a\")" },
+        .{ .name = "map-splat", .invocation = "meta.call($append, (selectors: \".a\")...)" },
+        .{ .name = "empty", .invocation = "meta.call($append, \"\")" },
+        .{ .name = "empty-second", .invocation = "meta.call($append, \".a\", \"\")" },
+        .{ .name = "null", .invocation = "meta.call($append, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($append, true)" },
+        .{ .name = "number", .invocation = "meta.call($append, 1)" },
+        .{ .name = "map", .invocation = "meta.call($append, (a: 1))" },
+        .{ .name = "parent", .invocation = "meta.call($append, \".a\", \"&.b\")" },
+        .{ .name = "leading-combinator", .invocation = "meta.call($append, \".a\", \"> .b\")" },
+        .{ .name = "malformed", .invocation = "meta.call($append, \".a[\")" },
+        .{ .name = "empty-splat", .invocation = "meta.call($append, ()...)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:selector\"; $append: meta.get-function(\"append\", $module: \"selector\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var selector_count = sass_evaluator.Limits{};
+    selector_count.max_selectors = 3;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-append-count-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"append\", $module: \"selector\"), \".a, .b\", \".c, .d\"); }",
+            .scss,
+            selector_count,
+        ),
+    );
+
+    var selector_bytes = sass_evaluator.Limits{};
+    selector_bytes.max_selector_bytes = 5;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-append-byte-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"append\", $module: \"selector\"), \".abc\", \".def\"); }",
+            .scss,
+            selector_bytes,
+        ),
+    );
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 10;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-append-temporary-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"append\", $module: \"selector\"), \".abc\", \".def\"); }",
+            .scss,
+            temporary,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-append-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"append\", $module: \"selector\"), \".a\", \".b\", \".c\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -7972,7 +8174,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"append\", $module: \"selector\"), \".a\", \".b\"); }",
+            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"nest\", $module: \"selector\"), \".a\", \".b\"); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -14805,6 +15007,7 @@ fn exerciseSelectorAllocationFailures(
         \\  simple: selector.simple-selectors("[title=\"x\"].foo:hover");
         \\  from-value: selector.simple-selectors(selector.parse("button.primary"));
         \\  appended: selector.append(".a, .b", ".c");
+        \\  call-appended: meta.call(meta.get-function("append", $module: "selector"), ".call", ".appended");
         \\  nested: selector.nest(".a, .b", "& + &");
         \\  nested-value: selector.nest(selector.parse(".root"), "&.child");
         \\  splat: selector.append((".splat", ".item")...);
@@ -14833,7 +15036,7 @@ fn exerciseSelectorAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);dir::dir(ltr , ltr);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
+        ".allocation{parsed:.a > .b,[data-x=\"a b\"]#c:hover;nth::nth-child(2n+1 of .a, .b);lang::lang(en , en);dir::dir(ltr , ltr);inspected:.a, .b;simple:[title=x],.foo,:hover;from-value:button,.primary;appended:.a.c,.b.c;call-appended:.call.appended;nested:.a + .a,.a + .b,.b + .a,.b + .b;nested-value:.root.child;splat:.splat.item;relation:true;extended:[data-x=y].c [data-x=y].d,.c.b [data-x=y].d,[data-x=y].c .d.b,.c.b .d.b;replaced:.c.b .d.b;list-extended:.a.c .a,.x .a,.y .a,.a.c .x,.x .x,.y .x,.a.c .y,.x .y,.y .y;list-replaced:.b,.d,.b;unified:.d .a > .b .c.e}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
