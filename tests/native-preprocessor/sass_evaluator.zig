@@ -7066,6 +7066,187 @@ test "native Sass meta call rejects invalid math random arguments and limits" {
     );
 }
 
+test "native Sass meta call invokes selector parse function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:selector";
+        \\@use "sass:selector" as selectors;
+        \\@use "sass:selector" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("parse", $module: "selectors");
+        \\$default: meta.get-function("parse", $module: "selector");
+        \\$star: meta.get-function("parse");
+        \\$list-args: (".list > .item, #listed:hover",);
+        \\$map-args: (selector: "[data-x='a,b']:not(.x, .y)");
+        \\$typed: selector.parse(".typed");
+        \\.values {
+        \\  exists: meta.function-exists("parse", "selector");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  star-same: $star == $default;
+        \\  plain: meta.call($custom, ".foo > .bar, #id:hover");
+        \\  named: meta.call($default, $selector: "  .named   >   .item , #id:hover  ");
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  from-list: meta.call($default, (a, b));
+        \\  typed: meta.call($default, $typed);
+        \\  interpolated: meta.call($default, ".item-#{2}");
+        \\  inspected: meta.inspect(meta.call($custom, ".inspect, #me:hover"));
+        \\  ordered: meta.call(mark(1, $star), $selector: mark(2, ".ordered"));
+        \\  trace: $trace;
+        \\  star: meta.call($star, "> .star, + .next, ~ .later");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-parse-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;star-same:true;plain:.foo > .bar,#id:hover;named:.named > .item,#id:hover;list-splat:.list > .item,#listed:hover;map-splat:[data-x=\"a,b\"]:not(.x, .y);from-list:a,b;typed:.typed;interpolated:.item-2;inspected:.inspect, #me:hover;ordered:.ordered;trace:12;star:> .star,+ .next,~ .later}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:selector" as selectors
+        \\$parse: m.get-function("parse", $module: "selectors")
+        \\.sass
+        \\  type: m.type-of($parse)
+        \\  plain: m.call($parse, ".foo > .bar, #id:hover")
+        \\  named: m.call($parse, $selector: "[data-x='a,b']:not(.x, .y)")
+        \\  typed: m.call($parse, selectors.parse(".typed"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-parse-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:.foo > .bar,#id:hover;named:[data-x=\"a,b\"]:not(.x, .y);typed:.typed}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves selector parse module ownership" {
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-selector-parse-global-exists.scss",
+        "@use \"sass:meta\"; .a { exists: meta.function-exists(\"parse\"); }",
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{exists:false}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-parse-global-reference.scss",
+            "@use \"sass:meta\"; $parse: meta.get-function(\"parse\");",
+            .scss,
+            .{},
+        ),
+    );
+}
+
+test "native Sass meta call rejects invalid selector parse arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($parse)" },
+        .{ .name = "extra", .invocation = "meta.call($parse, \".a\", \".b\")" },
+        .{ .name = "unknown", .invocation = "meta.call($parse, $value: \".a\")" },
+        .{ .name = "duplicate", .invocation = "meta.call($parse, \".a\", $selector: \".b\")" },
+        .{ .name = "empty", .invocation = "meta.call($parse, \"\")" },
+        .{ .name = "null", .invocation = "meta.call($parse, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($parse, true)" },
+        .{ .name = "number", .invocation = "meta.call($parse, 1)" },
+        .{ .name = "map", .invocation = "meta.call($parse, (a: 1))" },
+        .{ .name = "parent", .invocation = "meta.call($parse, \"&:hover\")" },
+        .{ .name = "list-splat", .invocation = "meta.call($parse, (\".a\", \".b\")...)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:selector\"; $parse: meta.get-function(\"parse\", $module: \"selector\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var selector_count = sass_evaluator.Limits{};
+    selector_count.max_selectors = 1;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-parse-count-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"parse\", $module: \"selector\"), \".a, .b\"); }",
+            .scss,
+            selector_count,
+        ),
+    );
+
+    var selector_bytes = sass_evaluator.Limits{};
+    selector_bytes.max_selector_bytes = 3;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-parse-byte-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"parse\", $module: \"selector\"), \".abcd\"); }",
+            .scss,
+            selector_bytes,
+        ),
+    );
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 6;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-parse-temporary-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"parse\", $module: \"selector\"), \".abcdef\"); }",
+            .scss,
+            temporary,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-selector-parse-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"parse\", $module: \"selector\"), \".a\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -7179,7 +7360,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"parse\", $module: \"selector\"), \".a\"); }",
+            .input = "@use \"sass:meta\"; @use \"sass:selector\"; .a { value: meta.call(meta.get-function(\"simple-selectors\", $module: \"selector\"), \".a\"); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -13867,6 +14048,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\@use "sass:list" as sequences;
         \\@use "sass:map" as dictionaries;
         \\@use "sass:math" as numbers;
+        \\@use "sass:selector";
         \\@mixin allocation-mixin() { $inside: true; }
         \\@mixin content-probe() {
         \\  .content { exists: meta.content-exists(); }
@@ -13939,6 +14121,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-min-function-call: meta.call(meta.get-function("min", $module: "numbers"), 3px, 1px, 2px);
         \\  math-max-function-call: meta.call(meta.get-function("max", $module: "numbers"), 3px, 1px, 2px);
         \\  math-random-function-call: meta.call(meta.get-function("random", $module: "numbers"), 1);
+        \\  selector-parse-function-call: meta.call(meta.get-function("parse", $module: "selector"), ".allocation-call");
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -13962,7 +14145,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;selector-parse-function-call:.allocation-call;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
