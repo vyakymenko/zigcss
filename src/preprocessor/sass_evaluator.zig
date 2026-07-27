@@ -9480,7 +9480,8 @@ const Engine = struct {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
         if ((reference.builtin != .quote and
             reference.builtin != .unquote and
-            reference.builtin != .str_length) or
+            reference.builtin != .str_length and
+            reference.builtin != .str_index) or
             (reference.owner != null and reference.owner.? != .string))
         {
             return null;
@@ -9495,21 +9496,44 @@ const Engine = struct {
             );
         }
 
-        const parameters = [_]native_arguments.Parameter{
-            .{ .name = "string" },
-        };
-        var bound = try self.bindEvaluatedArguments(
-            &parameters,
-            parameters.len,
-            arguments,
-            span,
-        );
-        defer bound.deinit();
+        return switch (reference.builtin) {
+            .str_index => blk: {
+                const parameters = [_]native_arguments.Parameter{
+                    .{ .name = "string" },
+                    .{ .name = "substring" },
+                };
+                var bound = try self.bindEvaluatedArguments(
+                    &parameters,
+                    parameters.len,
+                    arguments,
+                    span,
+                );
+                defer bound.deinit();
 
-        const ordered = [_]*const native_value.Value{
-            bound.values[0].?,
+                const ordered = [_]*const native_value.Value{
+                    bound.values[0].?,
+                    bound.values[1].?,
+                };
+                break :blk try self.callStringBuiltin(reference.builtin, &ordered, span);
+            },
+            else => blk: {
+                const parameters = [_]native_arguments.Parameter{
+                    .{ .name = "string" },
+                };
+                var bound = try self.bindEvaluatedArguments(
+                    &parameters,
+                    parameters.len,
+                    arguments,
+                    span,
+                );
+                defer bound.deinit();
+
+                const ordered = [_]*const native_value.Value{
+                    bound.values[0].?,
+                };
+                break :blk try self.callStringBuiltin(reference.builtin, &ordered, span);
+            },
         };
-        return try self.callStringBuiltin(reference.builtin, &ordered, span);
     }
 
     fn invokeSelectorParseFunction(
@@ -9795,7 +9819,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, or length, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, or index, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -10698,6 +10722,16 @@ const Engine = struct {
                 }
                 const string = try self.stringArgument(arguments[0].*, span);
                 const needle = try self.stringArgument(arguments[1].*, span);
+                if ((!string.quoted and isSassCalculationValue(string.bytes)) or
+                    (!needle.quoted and isSassCalculationValue(needle.bytes)))
+                {
+                    try self.report(
+                        .type_mismatch,
+                        span,
+                        "native Sass string function requires a string",
+                    );
+                    return error.InvalidExpression;
+                }
                 const index = native_string.indexOf(
                     self.allocator,
                     string.bytes,

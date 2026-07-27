@@ -9224,6 +9224,189 @@ test "native Sass meta call rejects invalid string length arguments and limits" 
     );
 }
 
+test "native Sass meta call invokes string index function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("index", $module: "text");
+        \\$default: meta.get-function("index", $module: "string");
+        \\$star: meta.get-function("index");
+        \\$list-args: ("a💚b", "💚");
+        \\$map-args: (string: "éx", substring: "́");
+        \\.values {
+        \\  exists: meta.function-exists("index", "string");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  star-same: $star == $default;
+        \\  ascii: meta.call($custom, banana, na);
+        \\  quoted-unicode: meta.call($default, "a💚b", "💚");
+        \\  combining: meta.call($default, "éx", "́");
+        \\  zwj: meta.call($default, "👩‍💻", "💻");
+        \\  quoted-hex: meta.call($default, "a\62 c", "b");
+        \\  unquoted-hex: meta.call($default, a\62 c, b);
+        \\  quoted-simple: meta.call($default, "foo\ bar", " ");
+        \\  unquoted-simple: meta.call($default, foo\ bar, \ );
+        \\  empty: meta.call($default, abc, "");
+        \\  missing: meta.call($default, abc, z);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  map-splat: meta.call($default, $map-args...);
+        \\  interpolated: meta.call($default, item-#{2}, m-2);
+        \\  ordered: meta.call(mark(1, $star), $substring: mark(2, b), $string: mark(3, abc));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($default, typed, p));
+        \\  missing-type: meta.type-of(meta.call($default, typed, z));
+        \\  inspected: meta.inspect(meta.call($default, inspect, spec));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-string-index-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;star-same:true;ascii:3;quoted-unicode:2;combining:2;zwj:3;quoted-hex:2;unquoted-hex:2;quoted-simple:4;unquoted-simple:4;empty:1;list-splat:2;map-splat:2;interpolated:4;ordered:2;trace:123;result-type:number;missing-type:null;inspected:3}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:string" as text
+        \\$index: m.get-function("index", $module: "text")
+        \\.sass
+        \\  type: m.type-of($index)
+        \\  plain: m.call($index, banana, na)
+        \\  named: m.call($index, $substring: "💚", $string: "a💚b")
+        \\  escaped: m.call($index, foo\ bar, \ )
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-string-index-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:3;named:2;escaped:4}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call preserves string index ownership" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:string";
+        \\$global: meta.get-function("str-index");
+        \\$module: meta.get-function("index", $module: "string");
+        \\.legacy {
+        \\  exists: meta.function-exists("str-index");
+        \\  module-exists: meta.function-exists("index", "string");
+        \\  distinct: $global == $module;
+        \\  inspect: meta.inspect($global);
+        \\  module-inspect: meta.inspect($module);
+        \\  value: meta.call($global, "a💚b", "💚");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-string-index-ownership.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{exists:true;module-exists:true;distinct:false;inspect:get-function(\"str-index\");module-inspect:get-function(\"index\");value:2}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+}
+
+test "native Sass meta call rejects invalid string index arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($index, a)" },
+        .{ .name = "extra", .invocation = "meta.call($index, a, b, c)" },
+        .{ .name = "unknown", .invocation = "meta.call($index, $string: a, $substring: b, $other: c)" },
+        .{ .name = "duplicate", .invocation = "meta.call($index, a, b, $string: c)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($index, ()...)" },
+        .{ .name = "null-string", .invocation = "meta.call($index, null, a)" },
+        .{ .name = "null-substring", .invocation = "meta.call($index, a, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($index, true, a)" },
+        .{ .name = "number", .invocation = "meta.call($index, a, 1px)" },
+        .{ .name = "list", .invocation = "meta.call($index, (a, b), a)" },
+        .{ .name = "map", .invocation = "meta.call($index, a, (a: b))" },
+        .{ .name = "color", .invocation = "meta.call($index, red, r)" },
+        .{ .name = "string-calculation", .invocation = "meta.call($index, calc(1px + var(--x)), x)" },
+        .{ .name = "substring-calculation", .invocation = "meta.call($index, abc, calc(1px + var(--x)))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:string\"; $index: meta.get-function(\"index\", $module: \"string\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 8;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-string-index-temporary-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:string\"; $index: meta.get-function(\"index\", $module: \"string\"); .a { value: meta.call($index, \"long value\", value); }",
+            .scss,
+            temporary,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-string-index-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:string\" as *; $index: meta.get-function(\"index\"); .a { value: meta.call($index, value, a); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -9337,7 +9520,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:string\"; .a { value: meta.call(meta.get-function(\"index\", $module: \"string\"), \"value\", \"a\"); }",
+            .input = "@use \"sass:meta\"; @use \"sass:string\"; .a { value: meta.call(meta.get-function(\"slice\", $module: \"string\"), \"value\", 1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -14520,6 +14703,16 @@ test "native Sass string module rejects unowned calls" {
             .expected = error.InvalidExpression,
         },
         .{
+            .name = "string-module-index-string-calculation.scss",
+            .input = "@use \"sass:string\"; .a { value: string.index(calc(1px + var(--x)), x); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "string-module-index-substring-calculation.scss",
+            .input = "@use \"sass:string\"; .a { value: string.index(abc, calc(1px + var(--x))); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
             .name = "string-module-splat.scss",
             .input = "@use \"sass:string\"; $args: (abc,); .a { value: string.length($args...); }",
             .expected = error.UnsupportedFeature,
@@ -16118,6 +16311,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  string-quote-function-call: meta.call(meta.get-function("quote", $module: "text"), allocation-string);
         \\  string-unquote-function-call: meta.call(meta.get-function("unquote", $module: "text"), "allocation string");
         \\  string-length-function-call: meta.call(meta.get-function("length", $module: "text"), "a💚b");
+        \\  string-index-function-call: meta.call(meta.get-function("index", $module: "text"), "a💚b", "💚");
         \\  selector-parse-function-call: meta.call(meta.get-function("parse", $module: "selector"), ".allocation-call");
         \\  selector-simple-selectors-function-call: meta.call(meta.get-function("simple-selectors", $module: "selector"), ".allocation-call:hover");
         \\  selector-is-superselector-function-call: meta.call(meta.get-function("is-superselector", $module: "selector"), ".allocation-call", ".allocation-call:hover");
@@ -16145,7 +16339,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
