@@ -6497,6 +6497,105 @@ test "native Sass meta call rejects incompatible math clamp function units" {
     );
 }
 
+test "native Sass meta call invokes math hypot function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\@use "sass:math" as lengths;
+        \\@use "sass:math" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("hypot", $module: "lengths");
+        \\$default: meta.get-function("hypot", $module: "math");
+        \\$star: meta.get-function("hypot");
+        \\$list-args: (3px, 4px, 12px);
+        \\.values {
+        \\  plain: meta.call($custom, 3px, 4px);
+        \\  one: meta.call($default, -3px);
+        \\  converted: meta.call($default, 1in, 96px);
+        \\  list-splat: meta.call($custom, $list-args...);
+        \\  ordered: meta.call(mark(1, $star), mark(2, 3px), mark(3, 4px), mark(4, 12px));
+        \\  trace: $trace;
+        \\  star: meta.call($star, 5em, 12em);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-hypot-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{plain:5px;one:3px;converted:1.4142135624in;list-splat:13px;ordered:13px;trace:1234;star:13em}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:math" as lengths
+        \\$hypot: m.get-function("hypot", $module: "lengths")
+        \\.sass
+        \\  plain: m.call($hypot, 3px, 4px)
+        \\  one: m.call($hypot, -5px)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-math-hypot-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{plain:5px;one:5px}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects global math hypot reflection" {
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-math-hypot-global-exists.scss",
+        "@use \"sass:meta\"; .a { exists: meta.function-exists(\"hypot\"); }",
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{exists:false}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-hypot-global-reference.scss",
+            "@use \"sass:meta\"; $hypot: meta.get-function(\"hypot\");",
+            .scss,
+            .{},
+        ),
+    );
+}
+
+test "native Sass meta call rejects incompatible math hypot function units" {
+    try std.testing.expectError(
+        error.IncompatibleUnits,
+        compile(
+            std.testing.allocator,
+            "meta-call-math-hypot-incompatible.scss",
+            "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"hypot\", $module: \"math\"), 3px, 4s); }",
+            .scss,
+            .{},
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -6610,7 +6709,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"hypot\", $module: \"math\"), 3, 4); }",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"min\", $module: \"math\"), 3, 4); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -7031,6 +7130,26 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-math-clamp-list.scss",
             .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"clamp\", $module: \"math\"), (1px, 2px), 2px, 3px); }",
+        },
+        .{
+            .name = "meta-call-math-hypot-empty.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"hypot\", $module: \"math\")); }",
+        },
+        .{
+            .name = "meta-call-math-hypot-named-numbers.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"hypot\", $module: \"math\"), $numbers: (3px, 4px)); }",
+        },
+        .{
+            .name = "meta-call-math-hypot-map-splat.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; $args: (numbers: (3px, 4px)); .a { value: meta.call(meta.get-function(\"hypot\", $module: \"math\"), $args...); }",
+        },
+        .{
+            .name = "meta-call-math-hypot-string.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"hypot\", $module: \"math\"), foo, 4px); }",
+        },
+        .{
+            .name = "meta-call-math-hypot-list.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.call(meta.get-function(\"hypot\", $module: \"math\"), (3px, 4px)); }",
         },
         .{
             .name = "meta-call-math-unary-missing-number.scss",
@@ -13306,6 +13425,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  math-sqrt-function-call: meta.call(meta.get-function("sqrt", $module: "numbers"), 81);
         \\  math-div-function-call: meta.call(meta.get-function("div", $module: "numbers"), 6px, 2);
         \\  math-clamp-function-call: meta.call(meta.get-function("clamp", $module: "numbers"), 1px, 2px, 3px);
+        \\  math-hypot-function-call: meta.call(meta.get-function("hypot", $module: "numbers"), 3px, 4px);
         \\  accepts-content: meta.accepts-content(meta.get-mixin("content-probe"));
         \\  load-accepts-content: meta.accepts-content(meta.get-mixin("load-css", "meta"));
         \\  apply-accepts-content: meta.accepts-content(meta.get-mixin("apply", "meta"));
@@ -13329,7 +13449,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
