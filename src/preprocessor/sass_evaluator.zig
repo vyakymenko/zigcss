@@ -9653,7 +9653,11 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!?*const native_value.Value {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
-        if (reference.owner != null or reference.builtin != .rgb) return null;
+        if (reference.owner != null or
+            (reference.builtin != .rgb and reference.builtin != .rgba))
+        {
+            return null;
+        }
 
         var has_channels = false;
         var has_color = false;
@@ -10095,7 +10099,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, or rgb, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, or rgba, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
