@@ -257,6 +257,18 @@ test "native Sass legacy color manipulation matches closed conversion rules" {
             .value = try color.adjustLightness(base, -10),
             .expected = "rgb(9.1730769231,26.5,43.8269230769)",
         },
+        .{
+            .value = try color.adjustLightness(try color.hsl(120, 50, 25, 1), -10),
+            .expected = "hsl(120,50%,15%)",
+        },
+        .{
+            .value = try color.adjustLightness(try color.hwb(240, 10, 20, 1), 1),
+            .expected = "hsl(240,77.7777777778%,46%)",
+        },
+        .{
+            .value = try color.adjustLightness(try color.hwb(240, 10, 20, 1), -25),
+            .expected = "hsl(240,77.7777777778%,20%)",
+        },
         .{ .value = try color.adjustHue(base, 30), .expected = "#121256" },
         .{ .value = try color.adjustHue(base, 180), .expected = "#563412" },
         .{ .value = try color.grayscale(base), .expected = "#343434" },

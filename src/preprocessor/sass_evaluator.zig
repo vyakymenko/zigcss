@@ -8715,6 +8715,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorDarkenFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -11946,6 +11953,92 @@ const Engine = struct {
                     .type_mismatch,
                     span,
                     "native legacy lighten() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
+    fn invokeColorDarkenFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .darken) return null;
+        if (reference.owner) |owner| {
+            if (owner != .color) return null;
+            try self.report(
+                .unsupported_feature,
+                span,
+                "darken() is not callable from the sass:color module",
+            );
+            return error.InvalidExpression;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "amount" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const color = try self.legacyDarkenColorArgument(bound.values[0].?.*, span);
+        const amount = try self.legacyColorAmount(bound.values[1].?.*, 0, 100, span);
+        const result = native_color.adjustLightness(color, -amount) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            &.{},
+        );
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "darken() is deprecated. Use color.adjust($color, $lightness: -$amount).",
+            &.{},
+        );
+        return self.values.own(.{ .color = result });
+    }
+
+    fn legacyDarkenColorArgument(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "darken() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy darken() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy darken() supports only RGB, HSL, or HWB colors",
                 );
                 return error.InvalidExpression;
             },
@@ -15331,6 +15424,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "blackness")) return .blackness;
     if (kind == .color and sassNameEql(name, "mix")) return .mix;
     if (kind == .color and sassNameEql(name, "lighten")) return .lighten;
+    if (kind == .color and sassNameEql(name, "darken")) return .darken;
     return null;
 }
 
