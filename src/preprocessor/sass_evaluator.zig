@@ -8708,6 +8708,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorLightenFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -11857,6 +11864,92 @@ const Engine = struct {
             return error.InvalidExpression;
         }
         return number.value;
+    }
+
+    fn invokeColorLightenFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .lighten) return null;
+        if (reference.owner) |owner| {
+            if (owner != .color) return null;
+            try self.report(
+                .unsupported_feature,
+                span,
+                "lighten() is not callable from the sass:color module",
+            );
+            return error.InvalidExpression;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "amount" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const color = try self.legacyLightenColorArgument(bound.values[0].?.*, span);
+        const amount = try self.legacyColorAmount(bound.values[1].?.*, 0, 100, span);
+        const result = native_color.adjustLightness(color, amount) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            &.{},
+        );
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "lighten() is deprecated. Use color.adjust($color, $lightness: $amount).",
+            &.{},
+        );
+        return self.values.own(.{ .color = result });
+    }
+
+    fn legacyLightenColorArgument(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "lighten() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy lighten() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy lighten() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
     }
 
     fn invalidHslChannels(
@@ -15237,6 +15330,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "whiteness")) return .whiteness;
     if (kind == .color and sassNameEql(name, "blackness")) return .blackness;
     if (kind == .color and sassNameEql(name, "mix")) return .mix;
+    if (kind == .color and sassNameEql(name, "lighten")) return .lighten;
     return null;
 }
 

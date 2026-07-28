@@ -14859,6 +14859,269 @@ test "native Sass meta call rejects unavailable color mix forms arguments and li
     );
 }
 
+test "native Sass meta call invokes legacy color lighten function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("lighten");
+        \\$module: meta.get-function("lighten", $module: "color");
+        \\$alias: meta.get-function("lighten", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("lighten");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (hsl(120deg 50% 25%), 10%);
+        \\$map-args: ("color": hwb(240deg 10% 20%), "amount": 25%);
+        \\.values {
+        \\  global-exists: meta.function-exists("lighten");
+        \\  module-exists: meta.function-exists("lighten", "color");
+        \\  alias-exists: meta.function-exists("lighten", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, #123456, 10%);
+        \\  named: meta.call($global, $amount: 10%, $color: #123456);
+        \\  unitless: meta.call($global, red, 10);
+        \\  unitful: meta.call($global, red, 10px);
+        \\  transparent: meta.call($global, transparent, 10%);
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .5), 10%);
+        \\  hsl: meta.call($global, hsl(120deg 50% 25%), 10%);
+        \\  hwb: meta.call($global, hwb(240deg 10% 20%), 25%);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  zero: meta.call($global, red, 0%);
+        \\  full: meta.call($global, red, 100%);
+        \\  ordered: meta.call(mark(1, $global), $amount: mark(3, 10%), $color: mark(2, #123456));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, red, 10%));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-lighten-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"lighten\");inspect-module:get-function(\"lighten\");global:rgb(26.8269230769,77.5,128.1730769231);named:rgb(26.8269230769,77.5,128.1730769231);unitless:#f33;unitful:#f33;transparent:hsla(0,0%,10%,0);alpha:rgba(26.8269230769,77.5,128.1730769231,.5);hsl:hsl(120,50%,35%);hwb:#77e;list-splat:hsl(120,50%,35%);map-splat:#77e;zero:red;full:#fff;ordered:rgb(26.8269230769,77.5,128.1730769231);trace:132;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 28), diagnostics.len);
+    var global_warnings: usize = 0;
+    var lighten_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "lighten() is deprecated. Use color.adjust($color, $lightness: $amount).",
+        )) {
+            lighten_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 14), global_warnings);
+    try std.testing.expectEqual(@as(usize, 14), lighten_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$lighten: m.get-function("lighten")
+        \\$module: m.get-function("lighten", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20%), "amount": 25%)
+        \\.sass
+        \\  type: m.type-of($lighten)
+        \\  module-type: m.type-of($module)
+        \\  plain: m.call($lighten, hsl(120deg 50% 25%), 10%)
+        \\  named: m.call($lighten, $color: #123456, $amount: 10%)
+        \\  map: m.call($lighten, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-lighten-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;plain:hsl(120,50%,35%);named:rgb(26.8269230769,77.5,128.1730769231);map:#77e;module-inspect:get-function(\"lighten\")}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), sass_diagnostics.len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorLightenFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorLightenFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$lighten: meta.get-function("lighten");
+        \\.allocation {
+        \\  percent: meta.call($lighten, #123456, 10%);
+        \\  unitful: meta.call($lighten, red, 10px);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-lighten-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{percent:rgb(26.8269230769,77.5,128.1730769231);unitful:#f33}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 4), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color lighten forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($lighten)" },
+        .{ .name = "missing-amount", .invocation = "meta.call($lighten, red)" },
+        .{ .name = "extra", .invocation = "meta.call($lighten, red, 10%, hsl)" },
+        .{ .name = "unknown", .invocation = "meta.call($lighten, red, $other: 10%)" },
+        .{ .name = "duplicate", .invocation = "meta.call($lighten, red, 10%, $amount: 20%)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($lighten, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($lighten, null, 10%)" },
+        .{ .name = "boolean", .invocation = "meta.call($lighten, true, 10%)" },
+        .{ .name = "number", .invocation = "meta.call($lighten, 1, 10%)" },
+        .{ .name = "quoted", .invocation = "meta.call($lighten, \"red\", 10%)" },
+        .{ .name = "unquoted", .invocation = "meta.call($lighten, red-name, 10%)" },
+        .{ .name = "list", .invocation = "meta.call($lighten, (red, blue), 10%)" },
+        .{ .name = "map", .invocation = "meta.call($lighten, (tone: red), 10%)" },
+        .{ .name = "callable", .invocation = "meta.call($lighten, meta.get-function(\"inspect\", $module: \"meta\"), 10%)" },
+        .{ .name = "null-amount", .invocation = "meta.call($lighten, red, null)" },
+        .{ .name = "boolean-amount", .invocation = "meta.call($lighten, red, true)" },
+        .{ .name = "color-amount", .invocation = "meta.call($lighten, red, blue)" },
+        .{ .name = "string-amount", .invocation = "meta.call($lighten, red, \"10%\")" },
+        .{ .name = "list-amount", .invocation = "meta.call($lighten, red, (10%, 20%))" },
+        .{ .name = "map-amount", .invocation = "meta.call($lighten, red, (amount: 10%))" },
+        .{ .name = "callable-amount", .invocation = "meta.call($lighten, red, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "calculation-amount", .invocation = "meta.call($lighten, red, calc(5% + var(--amount)))" },
+        .{ .name = "compound-amount", .invocation = "meta.call($lighten, red, math.div(10px, 1s))" },
+        .{ .name = "negative-amount", .invocation = "meta.call($lighten, red, -1%)" },
+        .{ .name = "high-amount", .invocation = "meta.call($lighten, red, 101%)" },
+        .{ .name = "rgb-missing", .invocation = "meta.call($lighten, rgb(none 0 0), 10%)" },
+        .{ .name = "lab", .invocation = "meta.call($lighten, lab(50% 10 20), 10%)" },
+        .{ .name = "lch", .invocation = "meta.call($lighten, lch(50% 20 30deg), 10%)" },
+        .{ .name = "oklab", .invocation = "meta.call($lighten, oklab(50% .1 .2), 10%)" },
+        .{ .name = "oklch", .invocation = "meta.call($lighten, oklch(50% .1 30deg), 10%)" },
+        .{ .name = "srgb", .invocation = "meta.call($lighten, color(srgb .1 .2 .3), 10%)" },
+        .{ .name = "srgb-linear", .invocation = "meta.call($lighten, color(srgb-linear .1 .2 .3), 10%)" },
+        .{ .name = "display-p3", .invocation = "meta.call($lighten, color(display-p3 .1 .2 .3), 10%)" },
+        .{ .name = "a98-rgb", .invocation = "meta.call($lighten, color(a98-rgb .1 .2 .3), 10%)" },
+        .{ .name = "prophoto-rgb", .invocation = "meta.call($lighten, color(prophoto-rgb .1 .2 .3), 10%)" },
+        .{ .name = "rec2020", .invocation = "meta.call($lighten, color(rec2020 .1 .2 .3), 10%)" },
+        .{ .name = "xyz-d50", .invocation = "meta.call($lighten, color(xyz-d50 .1 .2 .3), 10%)" },
+        .{ .name = "xyz-d65", .invocation = "meta.call($lighten, color(xyz-d65 .1 .2 .3), 10%)" },
+        .{ .name = "variable", .invocation = "meta.call($lighten, var(--color), 10%)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:math\"; $lighten: meta.get-function(\"lighten\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-lighten-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"lighten\", $module: \"color\"), red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-lighten-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-lighten-removed-module.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $lighten: meta.get-function(\"lighten\", $module: \"color\"); .a { value: meta.call($lighten, red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-lighten-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.lighten(red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-lighten-argument-limit.scss",
+            "@use \"sass:meta\"; $lighten: meta.get-function(\"lighten\"); .a { value: meta.call($lighten, red, 10%); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -14972,7 +15235,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"mix\"), #123); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"darken\"), #123, 10%); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
