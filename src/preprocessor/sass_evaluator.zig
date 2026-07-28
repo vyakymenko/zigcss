@@ -8660,6 +8660,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorHueFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -11345,6 +11352,83 @@ const Engine = struct {
         }
         try self.appendTemporary(&rendered, ")");
         return self.values.own(.{ .string = .{ .bytes = rendered.items } });
+    }
+
+    fn invokeColorHueFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .hue or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        const result = try self.callHueChannelValue(bound.values[0].?.*, span);
+
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            if (reference.owner == null)
+                "hue() is deprecated. Use color.channel($color, \"hue\", $space: hsl)."
+            else
+                "color.hue() is deprecated. Use color.channel($color, \"hue\", $space: hsl).",
+            &.{},
+        );
+        return result;
+    }
+
+    fn callHueChannelValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "hue() requires one color");
+                return error.InvalidExpression;
+            },
+        };
+        switch (color.space) {
+            .rgb, .hsl, .hwb => {},
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.hue() is available only for legacy RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+        const units = [_][]const u8{"deg"};
+        return self.values.own(.{ .number = .{
+            .value = (try native_color.toHsl(color))[0],
+            .numerator_units = &units,
+        } });
     }
 
     fn invalidHslChannels(
@@ -14719,6 +14803,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "blue")) return .blue;
     if (kind == .color and sassNameEql(name, "alpha")) return .alpha;
     if (kind == .color and sassNameEql(name, "opacity")) return .opacity;
+    if (kind == .color and sassNameEql(name, "hue")) return .hue;
     return null;
 }
 

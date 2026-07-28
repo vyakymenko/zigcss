@@ -13441,6 +13441,251 @@ test "native Sass meta call rejects unavailable opacity forms arguments and limi
     );
 }
 
+test "native Sass meta call invokes hue function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("hue");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module: meta.get-function("hue", $module: "color");
+        \\$alias: meta.get-function("hue", $module: "palette");
+        \\$opacity: meta.get-function("opacity", $module: "color");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("hue");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (hsl(45deg 20% 30%),);
+        \\$map-args: ("color": hwb(75deg 20% 30%));
+        \\.values {
+        \\  global-exists: meta.function-exists("hue");
+        \\  module-exists: meta.function-exists("hue", "color");
+        \\  alias-exists: meta.function-exists("hue", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  hue-opacity-same: $module == $opacity;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, hsl(210deg 50% 40%));
+        \\  named: meta.call($module, $color: hsl(90deg 30% 20%));
+        \\  transparent: meta.call($module, transparent);
+        \\  rgb: meta.call($module, rgb(10 20 30 / .4));
+        \\  hsl: meta.call($module, hsl(120deg 50% 25%));
+        \\  hwb: meta.call($module, hwb(240deg 10% 20%));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, hsl(135deg 50% 25%)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, hsl(150deg 50% 25%)));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-hue-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;hue-opacity-same:false;inspect-global:get-function(\"hue\");inspect-module:get-function(\"hue\");global:210deg;named:90deg;transparent:0deg;rgb:210deg;hsl:120deg;hwb:240deg;list-splat:45deg;map-splat:75deg;ordered:135deg;trace:12;result-type:number}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 11), diagnostics.len);
+    var global_warnings: usize = 0;
+    var global_hue_warnings: usize = 0;
+    var module_hue_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "hue() is deprecated. Use color.channel($color, \"hue\", $space: hsl).",
+        )) {
+            global_hue_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "color.hue() is deprecated. Use color.channel($color, \"hue\", $space: hsl).",
+        )) {
+            module_hue_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), global_warnings);
+    try std.testing.expectEqual(@as(usize, 1), global_hue_warnings);
+    try std.testing.expectEqual(@as(usize, 9), module_hue_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$hue: m.get-function("hue", $module: "palette")
+        \\$arguments: ("color": hwb(75deg 20% 30%))
+        \\.sass
+        \\  type: m.type-of($hue)
+        \\  plain: m.call($hue, hsl(210deg 50% 40%))
+        \\  rgb: m.call($hue, rgb(10 20 30))
+        \\  map: m.call($hue, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-hue-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:210deg;rgb:210deg;map:75deg}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 3), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.hue() is deprecated. Use color.channel($color, \"hue\", $space: hsl).",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseHueFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseHueFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("hue");
+        \\@use "sass:color";
+        \\$module: meta.get-function("hue", $module: "color");
+        \\.allocation {
+        \\  global: meta.call($global, hsl(210deg 50% 40%));
+        \\  module: meta.call($module, rgb(10 20 30));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-hue-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{global:210deg;module:210deg}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable hue forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($hue)" },
+        .{ .name = "extra", .invocation = "meta.call($hue, red, rgb)" },
+        .{ .name = "unknown", .invocation = "meta.call($hue, $other: red)" },
+        .{ .name = "duplicate", .invocation = "meta.call($hue, red, $color: blue)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($hue, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($hue, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($hue, true)" },
+        .{ .name = "number", .invocation = "meta.call($hue, 1)" },
+        .{ .name = "quoted", .invocation = "meta.call($hue, \"hue\")" },
+        .{ .name = "unquoted", .invocation = "meta.call($hue, hue)" },
+        .{ .name = "list", .invocation = "meta.call($hue, (red, blue))" },
+        .{ .name = "map", .invocation = "meta.call($hue, (a: red))" },
+        .{ .name = "callable", .invocation = "meta.call($hue, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "space", .invocation = "meta.call($hue, red, $space: hsl)" },
+        .{ .name = "display-p3", .invocation = "meta.call($hue, color(display-p3 .3 .4 .5))" },
+        .{ .name = "xyz", .invocation = "meta.call($hue, color(xyz .1 .2 .3))" },
+        .{ .name = "lab", .invocation = "meta.call($hue, lab(50% 10 20))" },
+        .{ .name = "lch", .invocation = "meta.call($hue, lch(50% 20 30deg))" },
+        .{ .name = "oklab", .invocation = "meta.call($hue, oklab(50% .1 .2))" },
+        .{ .name = "oklch", .invocation = "meta.call($hue, oklch(50% .1 30deg))" },
+        .{ .name = "variable", .invocation = "meta.call($hue, var(--color))" },
+        .{ .name = "calculation", .invocation = "meta.call($hue, calc(1 + var(--x)))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $hue: meta.get-function(\"hue\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-hue-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"hue\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-hue-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-hue-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $hue: meta.get-function(\"hue\", $module: \"color\"); .a { value: meta.call($hue, red); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -13554,7 +13799,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"hue\"), #123); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"saturation\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
