@@ -8674,6 +8674,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorLightnessFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -11511,6 +11518,83 @@ const Engine = struct {
         const units = [_][]const u8{"%"};
         return self.values.own(.{ .number = .{
             .value = (try native_color.toHsl(color))[1],
+            .numerator_units = &units,
+        } });
+    }
+
+    fn invokeColorLightnessFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .lightness or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        const result = try self.callLightnessChannelValue(bound.values[0].?.*, span);
+
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            if (reference.owner == null)
+                "lightness() is deprecated. Use color.channel($color, \"lightness\", $space: hsl)."
+            else
+                "color.lightness() is deprecated. Use color.channel($color, \"lightness\", $space: hsl).",
+            &.{},
+        );
+        return result;
+    }
+
+    fn callLightnessChannelValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "lightness() requires one color");
+                return error.InvalidExpression;
+            },
+        };
+        switch (color.space) {
+            .rgb, .hsl, .hwb => {},
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.lightness() is available only for legacy RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+        const units = [_][]const u8{"%"};
+        return self.values.own(.{ .number = .{
+            .value = (try native_color.toHsl(color))[2],
             .numerator_units = &units,
         } });
     }
@@ -14889,6 +14973,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "opacity")) return .opacity;
     if (kind == .color and sassNameEql(name, "hue")) return .hue;
     if (kind == .color and sassNameEql(name, "saturation")) return .saturation;
+    if (kind == .color and sassNameEql(name, "lightness")) return .lightness;
     return null;
 }
 

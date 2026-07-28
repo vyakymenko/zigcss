@@ -13931,6 +13931,251 @@ test "native Sass meta call rejects unavailable saturation forms arguments and l
     );
 }
 
+test "native Sass meta call invokes lightness function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("lightness");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module: meta.get-function("lightness", $module: "color");
+        \\$alias: meta.get-function("lightness", $module: "palette");
+        \\$saturation: meta.get-function("saturation", $module: "color");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("lightness");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (hsl(45deg 20% 30%),);
+        \\$map-args: ("color": hwb(75deg 20% 30%));
+        \\.values {
+        \\  global-exists: meta.function-exists("lightness");
+        \\  module-exists: meta.function-exists("lightness", "color");
+        \\  alias-exists: meta.function-exists("lightness", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  lightness-saturation-same: $module == $saturation;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, hsl(210deg 50% 40%));
+        \\  named: meta.call($module, $color: hsl(90deg 30% 20%));
+        \\  transparent: meta.call($module, transparent);
+        \\  rgb: meta.call($module, rgb(10 20 30 / .4));
+        \\  hsl: meta.call($module, hsl(120deg 50% 25%));
+        \\  hwb: meta.call($module, hwb(240deg 10% 20%));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, hsl(135deg 50% 25%)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, hsl(150deg 50% 25%)));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-lightness-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;lightness-saturation-same:false;inspect-global:get-function(\"lightness\");inspect-module:get-function(\"lightness\");global:40%;named:20%;transparent:0%;rgb:7.8431372549%;hsl:25%;hwb:45%;list-splat:30%;map-splat:45%;ordered:25%;trace:12;result-type:number}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 11), diagnostics.len);
+    var global_warnings: usize = 0;
+    var global_lightness_warnings: usize = 0;
+    var module_lightness_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "lightness() is deprecated. Use color.channel($color, \"lightness\", $space: hsl).",
+        )) {
+            global_lightness_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "color.lightness() is deprecated. Use color.channel($color, \"lightness\", $space: hsl).",
+        )) {
+            module_lightness_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), global_warnings);
+    try std.testing.expectEqual(@as(usize, 1), global_lightness_warnings);
+    try std.testing.expectEqual(@as(usize, 9), module_lightness_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$lightness: m.get-function("lightness", $module: "palette")
+        \\$arguments: ("color": hwb(75deg 20% 30%))
+        \\.sass
+        \\  type: m.type-of($lightness)
+        \\  plain: m.call($lightness, hsl(210deg 50% 40%))
+        \\  rgb: m.call($lightness, rgb(10 20 30))
+        \\  map: m.call($lightness, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-lightness-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:40%;rgb:7.8431372549%;map:45%}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 3), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.lightness() is deprecated. Use color.channel($color, \"lightness\", $space: hsl).",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLightnessFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseLightnessFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("lightness");
+        \\@use "sass:color";
+        \\$module: meta.get-function("lightness", $module: "color");
+        \\.allocation {
+        \\  global: meta.call($global, hsl(210deg 50% 40%));
+        \\  module: meta.call($module, rgb(10 20 30));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-lightness-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{global:40%;module:7.8431372549%}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable lightness forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($lightness)" },
+        .{ .name = "extra", .invocation = "meta.call($lightness, red, rgb)" },
+        .{ .name = "unknown", .invocation = "meta.call($lightness, $other: red)" },
+        .{ .name = "duplicate", .invocation = "meta.call($lightness, red, $color: blue)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($lightness, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($lightness, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($lightness, true)" },
+        .{ .name = "number", .invocation = "meta.call($lightness, 1)" },
+        .{ .name = "quoted", .invocation = "meta.call($lightness, \"lightness\")" },
+        .{ .name = "unquoted", .invocation = "meta.call($lightness, lightness)" },
+        .{ .name = "list", .invocation = "meta.call($lightness, (red, blue))" },
+        .{ .name = "map", .invocation = "meta.call($lightness, (a: red))" },
+        .{ .name = "callable", .invocation = "meta.call($lightness, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "space", .invocation = "meta.call($lightness, red, $space: hsl)" },
+        .{ .name = "display-p3", .invocation = "meta.call($lightness, color(display-p3 .3 .4 .5))" },
+        .{ .name = "xyz", .invocation = "meta.call($lightness, color(xyz .1 .2 .3))" },
+        .{ .name = "lab", .invocation = "meta.call($lightness, lab(50% 10 20))" },
+        .{ .name = "lch", .invocation = "meta.call($lightness, lch(50% 20 30deg))" },
+        .{ .name = "oklab", .invocation = "meta.call($lightness, oklab(50% .1 .2))" },
+        .{ .name = "oklch", .invocation = "meta.call($lightness, oklch(50% .1 30deg))" },
+        .{ .name = "variable", .invocation = "meta.call($lightness, var(--color))" },
+        .{ .name = "calculation", .invocation = "meta.call($lightness, calc(1 + var(--x)))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $lightness: meta.get-function(\"lightness\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-lightness-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"lightness\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-lightness-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-lightness-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $lightness: meta.get-function(\"lightness\", $module: \"color\"); .a { value: meta.call($lightness, red); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -14044,7 +14289,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"lightness\"), #123); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"mix\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
