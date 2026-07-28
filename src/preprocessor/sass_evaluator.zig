@@ -8736,6 +8736,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorAdjustHueFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -12274,6 +12281,110 @@ const Engine = struct {
         }
     }
 
+    fn invokeColorAdjustHueFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .adjust_hue) return null;
+        if (reference.owner) |owner| {
+            if (owner != .color) return null;
+            try self.report(
+                .unsupported_feature,
+                span,
+                "adjust-hue() is not callable from the sass:color module",
+            );
+            return error.InvalidExpression;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "degrees" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const color = try self.legacyAdjustHueColorArgument(bound.values[0].?.*, span);
+        const degrees = try self.legacyAdjustHueAngle(bound.values[1].?.*, span);
+        const result = native_color.adjustHue(color, degrees) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            &.{},
+        );
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "adjust-hue() is deprecated. Use color.adjust($color, $hue: $degrees).",
+            &.{},
+        );
+        return self.values.own(.{ .color = result });
+    }
+
+    fn legacyAdjustHueColorArgument(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "adjust-hue() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy adjust-hue() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy adjust-hue() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
+    fn legacyAdjustHueAngle(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(value, span);
+        if (number.numerator_units.len == 0) return number.value;
+
+        const unit = number.numerator_units[0];
+        if (std.ascii.eqlIgnoreCase(unit, "grad")) return number.value * 0.9;
+        if (std.ascii.eqlIgnoreCase(unit, "rad")) return number.value * 180 / std.math.pi;
+        if (std.ascii.eqlIgnoreCase(unit, "turn")) return number.value * 360;
+
+        // Dart Sass 1.101.0 treats unitless values, degrees, and deprecated
+        // arbitrary simple units as degree magnitudes for this legacy global.
+        return number.value;
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -15656,6 +15767,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "darken")) return .darken;
     if (kind == .color and sassNameEql(name, "saturate")) return .saturate;
     if (kind == .color and sassNameEql(name, "desaturate")) return .desaturate;
+    if (kind == .color and sassNameEql(name, "adjust-hue")) return .adjust_hue;
     return null;
 }
 

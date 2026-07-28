@@ -15934,6 +15934,274 @@ test "native Sass meta call rejects unavailable color desaturate forms arguments
     );
 }
 
+test "native Sass meta call invokes legacy color adjust hue function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("adjust-hue");
+        \\$module: meta.get-function("adjust-hue", $module: "color");
+        \\$alias: meta.get-function("adjust-hue", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("adjust-hue");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (hsl(120deg 20% 25%), 30deg);
+        \\$map-args: ("color": hwb(240deg 10% 20%), "degrees": 30deg);
+        \\.values {
+        \\  global-exists: meta.function-exists("adjust-hue");
+        \\  module-exists: meta.function-exists("adjust-hue", "color");
+        \\  alias-exists: meta.function-exists("adjust-hue", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, #123456, 30deg);
+        \\  named: meta.call($global, $degrees: 30deg, $color: #123456);
+        \\  unitless: meta.call($global, #123456, 30);
+        \\  unitful: meta.call($global, #123456, 30px);
+        \\  grad: meta.call($global, #123456, 33.333333333333grad);
+        \\  rad: meta.call($global, #123456, 0.5235987755982988rad);
+        \\  turn: meta.call($global, #123456, 0.0833333333333333turn);
+        \\  transparent: meta.call($global, transparent, 30deg);
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .5), 30deg);
+        \\  hsl: meta.call($global, hsl(120deg 20% 25%), 30deg);
+        \\  hwb: meta.call($global, hwb(240deg 10% 20%), 30deg);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  negative: meta.call($global, #123456, -30deg);
+        \\  wrapped: meta.call($global, #123456, 390deg);
+        \\  zero: meta.call($global, #123456, 0deg);
+        \\  full: meta.call($global, #123456, 360deg);
+        \\  ordered: meta.call(mark(1, $global), $degrees: mark(3, 30deg), $color: mark(2, #123456));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, #123456, 30deg));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-adjust-hue-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"adjust-hue\");inspect-module:get-function(\"adjust-hue\");global:#121256;named:#121256;unitless:#121256;unitful:#121256;grad:#121256;rad:#121256;turn:#121256;transparent:rgba(0,0,0,0);alpha:rgba(18,18,86,.5);hsl:hsl(150,20%,25%);hwb:rgb(114.75,25.5,204);list-splat:hsl(150,20%,25%);map-splat:rgb(114.75,25.5,204);negative:#125656;wrapped:#121256;zero:#123456;full:#123456;ordered:#121256;trace:132;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 38), diagnostics.len);
+    var global_warnings: usize = 0;
+    var adjust_hue_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "adjust-hue() is deprecated. Use color.adjust($color, $hue: $degrees).",
+        )) {
+            adjust_hue_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 19), global_warnings);
+    try std.testing.expectEqual(@as(usize, 19), adjust_hue_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$adjust: m.get-function("adjust-hue")
+        \\$module: m.get-function("adjust-hue", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20%), "degrees": 30deg)
+        \\.sass
+        \\  type: m.type-of($adjust)
+        \\  module-type: m.type-of($module)
+        \\  plain: m.call($adjust, hsl(120deg 20% 25%), 30deg)
+        \\  named: m.call($adjust, $color: #123456, $degrees: 30deg)
+        \\  map: m.call($adjust, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-adjust-hue-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;plain:hsl(150,20%,25%);named:#121256;map:rgb(114.75,25.5,204);module-inspect:get-function(\"adjust-hue\")}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorAdjustHueFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorAdjustHueFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$adjust: meta.get-function("adjust-hue");
+        \\.allocation {
+        \\  angle: meta.call($adjust, #123456, 30deg);
+        \\  unitful: meta.call($adjust, #123456, 30px);
+        \\  hsl: meta.call($adjust, hsl(120deg 20% 25%), 30deg);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-adjust-hue-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{angle:#121256;unitful:#121256;hsl:hsl(150,20%,25%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color adjust hue forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($adjust)" },
+        .{ .name = "missing-degrees", .invocation = "meta.call($adjust, red)" },
+        .{ .name = "extra", .invocation = "meta.call($adjust, red, 30deg, hsl)" },
+        .{ .name = "unknown", .invocation = "meta.call($adjust, red, $other: 30deg)" },
+        .{ .name = "duplicate", .invocation = "meta.call($adjust, red, 30deg, $degrees: 60deg)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($adjust, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($adjust, null, 30deg)" },
+        .{ .name = "boolean", .invocation = "meta.call($adjust, true, 30deg)" },
+        .{ .name = "number", .invocation = "meta.call($adjust, 1, 30deg)" },
+        .{ .name = "quoted", .invocation = "meta.call($adjust, \"red\", 30deg)" },
+        .{ .name = "unquoted", .invocation = "meta.call($adjust, red-name, 30deg)" },
+        .{ .name = "list", .invocation = "meta.call($adjust, (red, blue), 30deg)" },
+        .{ .name = "map", .invocation = "meta.call($adjust, (tone: red), 30deg)" },
+        .{ .name = "callable", .invocation = "meta.call($adjust, meta.get-function(\"inspect\", $module: \"meta\"), 30deg)" },
+        .{ .name = "null-degrees", .invocation = "meta.call($adjust, red, null)" },
+        .{ .name = "boolean-degrees", .invocation = "meta.call($adjust, red, true)" },
+        .{ .name = "color-degrees", .invocation = "meta.call($adjust, red, blue)" },
+        .{ .name = "string-degrees", .invocation = "meta.call($adjust, red, \"30deg\")" },
+        .{ .name = "list-degrees", .invocation = "meta.call($adjust, red, (30deg, 60deg))" },
+        .{ .name = "map-degrees", .invocation = "meta.call($adjust, red, (degrees: 30deg))" },
+        .{ .name = "callable-degrees", .invocation = "meta.call($adjust, red, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "calculation-degrees", .invocation = "meta.call($adjust, red, calc(30deg + var(--degrees)))" },
+        .{ .name = "compound-degrees", .invocation = "meta.call($adjust, red, math.div(30deg, 1s))" },
+        .{ .name = "rgb-missing", .invocation = "meta.call($adjust, rgb(none 0 0), 30deg)" },
+        .{ .name = "hsl-missing", .invocation = "meta.call($adjust, hsl(none 10% 20%), 30deg)" },
+        .{ .name = "hwb-missing", .invocation = "meta.call($adjust, hwb(none 10% 20%), 30deg)" },
+        .{ .name = "lab", .invocation = "meta.call($adjust, lab(50% 10 20), 30deg)" },
+        .{ .name = "lch", .invocation = "meta.call($adjust, lch(50% 20 30deg), 30deg)" },
+        .{ .name = "oklab", .invocation = "meta.call($adjust, oklab(50% .1 .2), 30deg)" },
+        .{ .name = "oklch", .invocation = "meta.call($adjust, oklch(50% .1 30deg), 30deg)" },
+        .{ .name = "srgb", .invocation = "meta.call($adjust, color(srgb .1 .2 .3), 30deg)" },
+        .{ .name = "srgb-linear", .invocation = "meta.call($adjust, color(srgb-linear .1 .2 .3), 30deg)" },
+        .{ .name = "display-p3", .invocation = "meta.call($adjust, color(display-p3 .1 .2 .3), 30deg)" },
+        .{ .name = "a98-rgb", .invocation = "meta.call($adjust, color(a98-rgb .1 .2 .3), 30deg)" },
+        .{ .name = "prophoto-rgb", .invocation = "meta.call($adjust, color(prophoto-rgb .1 .2 .3), 30deg)" },
+        .{ .name = "rec2020", .invocation = "meta.call($adjust, color(rec2020 .1 .2 .3), 30deg)" },
+        .{ .name = "xyz-d50", .invocation = "meta.call($adjust, color(xyz-d50 .1 .2 .3), 30deg)" },
+        .{ .name = "xyz-d65", .invocation = "meta.call($adjust, color(xyz-d65 .1 .2 .3), 30deg)" },
+        .{ .name = "variable", .invocation = "meta.call($adjust, var(--color), 30deg)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:math\"; $adjust: meta.get-function(\"adjust-hue\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-adjust-hue-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"adjust-hue\", $module: \"color\"), red, 30deg); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-adjust-hue-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red, 30deg); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-adjust-hue-removed-module.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $adjust: meta.get-function(\"adjust-hue\", $module: \"color\"); .a { value: meta.call($adjust, red, 30deg); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-adjust-hue-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.adjust-hue(red, 30deg); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-adjust-hue-argument-limit.scss",
+            "@use \"sass:meta\"; $adjust: meta.get-function(\"adjust-hue\"); .a { value: meta.call($adjust, red, 30deg); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -16047,7 +16315,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"adjust-hue\"), #123, 10deg); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"complement\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
