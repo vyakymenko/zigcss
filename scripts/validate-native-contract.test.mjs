@@ -120,6 +120,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-string-lower-case-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-adjust-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-change-function-invocation'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-color-scale-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-content-acceptance'), true)
   assert.equal(sassCore.capabilities.includes('plain-css-function-argument-evaluation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-parse-simple'), true)
