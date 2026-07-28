@@ -8639,6 +8639,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorBlueFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -11089,6 +11096,81 @@ const Engine = struct {
         }
         return self.values.own(.{ .number = .{
             .value = @round((try native_color.toRgb(color))[1]),
+        } });
+    }
+
+    fn invokeColorBlueFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .blue or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        const result = try self.callBlueChannelValue(bound.values[0].?.*, span);
+
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            if (reference.owner == null)
+                "blue() is deprecated. Use color.channel($color, \"blue\", $space: rgb)."
+            else
+                "color.blue() is deprecated. Use color.channel($color, \"blue\", $space: rgb).",
+            &.{},
+        );
+        return result;
+    }
+
+    fn callBlueChannelValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "blue() requires one color");
+                return error.InvalidExpression;
+            },
+        };
+        switch (color.space) {
+            .rgb, .hsl, .hwb => {},
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "blue() is available only for legacy RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+        return self.values.own(.{ .number = .{
+            .value = @round((try native_color.toRgb(color))[2]),
         } });
     }
 
@@ -14461,6 +14543,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (moduleBuiltin(kind, name)) |builtin| return builtin;
     if (kind == .color and sassNameEql(name, "red")) return .red;
     if (kind == .color and sassNameEql(name, "green")) return .green;
+    if (kind == .color and sassNameEql(name, "blue")) return .blue;
     return null;
 }
 
