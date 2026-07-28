@@ -8701,6 +8701,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorMixFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -11739,6 +11746,117 @@ const Engine = struct {
             .value = (try native_color.toHwb(color))[2],
             .numerator_units = &units,
         } });
+    }
+
+    fn invokeColorMixFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .mix or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color1" },
+            .{ .name = "color2" },
+            .{ .name = "weight", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const first = try self.legacyMixColorArgument(bound.values[0].?.*, span);
+        const second = try self.legacyMixColorArgument(bound.values[1].?.*, span);
+        const weight = if (bound.values[2]) |value|
+            try self.legacyMixWeight(value.*, span)
+        else
+            50;
+        const result = native_color.mix(first, second, weight) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        return self.values.own(.{ .color = result });
+    }
+
+    fn legacyMixColorArgument(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "mix() requires two colors");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "native legacy mix() does not support missing color channels",
+            );
+            return error.InvalidExpression;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy mix() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
+    fn legacyMixWeight(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = switch (value) {
+            .number => |number| number,
+            else => {
+                try self.report(.type_mismatch, span, "mix() weight requires a percentage");
+                return error.InvalidExpression;
+            },
+        };
+        if (number.numerator_units.len != 1 or
+            number.denominator_units.len != 0 or
+            !std.mem.eql(u8, number.numerator_units[0], "%"))
+        {
+            try self.report(.type_mismatch, span, "mix() weight requires a percentage");
+            return error.InvalidExpression;
+        }
+        if (!std.math.isFinite(number.value) or number.value < 0 or number.value > 100) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "mix() weight must be between 0% and 100%",
+            );
+            return error.InvalidExpression;
+        }
+        return number.value;
     }
 
     fn invalidHslChannels(
@@ -15118,6 +15236,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "lightness")) return .lightness;
     if (kind == .color and sassNameEql(name, "whiteness")) return .whiteness;
     if (kind == .color and sassNameEql(name, "blackness")) return .blackness;
+    if (kind == .color and sassNameEql(name, "mix")) return .mix;
     return null;
 }
 

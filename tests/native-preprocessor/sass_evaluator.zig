@@ -14636,6 +14636,229 @@ test "native Sass meta call rejects unavailable blackness forms arguments and li
     );
 }
 
+test "native Sass meta call invokes legacy color mix function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("mix");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module: meta.get-function("mix", $module: "color");
+        \\$alias: meta.get-function("mix", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("mix");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (red, blue, 25%);
+        \\$map-args: ("color1": red, "color2": blue, "weight": 25%);
+        \\.values {
+        \\  global-exists: meta.function-exists("mix");
+        \\  module-exists: meta.function-exists("mix", "color");
+        \\  alias-exists: meta.function-exists("mix", "palette");
+        \\  type: meta.type-of($module);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, red, blue);
+        \\  module: meta.call($module, red, blue);
+        \\  named: meta.call($module, $weight: 25%, $color2: blue, $color1: red);
+        \\  transparent: meta.call($module, transparent, blue);
+        \\  alpha: meta.call($module, rgba(255, 0, 0, .5), blue);
+        \\  hsl-hwb: meta.call($module, hsl(120deg 50% 25%), hwb(240deg 10% 20%), 25%);
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, red), $weight: mark(4, 25%), $color2: mark(3, blue));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, red, blue));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-mix-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"mix\");inspect-module:get-function(\"mix\");global:hsl(300,100%,25%);module:hsl(300,100%,25%);named:rgb(63.75,0,191.25);transparent:rgba(0,0,255,.5);alpha:rgba(63.75,0,191.25,.75);hsl-hwb:rgb(27.09375,43.03125,160.96875);list-splat:rgb(63.75,0,191.25);map-splat:rgb(63.75,0,191.25);ordered:rgb(63.75,0,191.25);trace:1243;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$mix: m.get-function("mix", $module: "palette")
+        \\$arguments: ("color1": red, "color2": blue, "weight": 25%)
+        \\.sass
+        \\  type: m.type-of($mix)
+        \\  plain: m.call($mix, red, blue)
+        \\  named: m.call($mix, $color1: red, $color2: blue, $weight: 25%)
+        \\  map: m.call($mix, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-mix-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:hsl(300,100%,25%);named:rgb(63.75,0,191.25);map:rgb(63.75,0,191.25)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorMixFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorMixFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\$mix: meta.get-function("mix", $module: "color");
+        \\.allocation {
+        \\  default: meta.call($mix, red, blue);
+        \\  weighted: meta.call($mix, red, blue, 25%);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-mix-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{default:hsl(300,100%,25%);weighted:rgb(63.75,0,191.25)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color mix forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($mix, red)" },
+        .{ .name = "extra", .invocation = "meta.call($mix, red, blue, 25%, rgb)" },
+        .{ .name = "unknown", .invocation = "meta.call($mix, red, blue, $other: 25%)" },
+        .{ .name = "duplicate", .invocation = "meta.call($mix, red, blue, 25%, $weight: 30%)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($mix, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($mix, red, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($mix, red, true)" },
+        .{ .name = "number", .invocation = "meta.call($mix, red, 1)" },
+        .{ .name = "quoted", .invocation = "meta.call($mix, red, \"blue\")" },
+        .{ .name = "unquoted", .invocation = "meta.call($mix, red, blue-name)" },
+        .{ .name = "list", .invocation = "meta.call($mix, red, (blue, green))" },
+        .{ .name = "map", .invocation = "meta.call($mix, red, (tone: blue))" },
+        .{ .name = "callable", .invocation = "meta.call($mix, red, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "unitless-weight", .invocation = "meta.call($mix, red, blue, 25)" },
+        .{ .name = "unit-weight", .invocation = "meta.call($mix, red, blue, 25px)" },
+        .{ .name = "negative-weight", .invocation = "meta.call($mix, red, blue, -1%)" },
+        .{ .name = "high-weight", .invocation = "meta.call($mix, red, blue, 101%)" },
+        .{ .name = "calculation-weight", .invocation = "meta.call($mix, red, blue, calc(25% + var(--weight)))" },
+        .{ .name = "method", .invocation = "meta.call($mix, red, blue, $method: rgb)" },
+        .{ .name = "rgb-missing", .invocation = "meta.call($mix, rgb(none 0 0), blue)" },
+        .{ .name = "lab", .invocation = "meta.call($mix, lab(50% 10 20), lab(40% 5 10))" },
+        .{ .name = "lch", .invocation = "meta.call($mix, lch(50% 20 30deg), lch(40% 10 20deg))" },
+        .{ .name = "oklab", .invocation = "meta.call($mix, oklab(50% .1 .2), oklab(40% .05 .1))" },
+        .{ .name = "oklch", .invocation = "meta.call($mix, oklch(50% .1 30deg), oklch(40% .05 20deg))" },
+        .{ .name = "srgb", .invocation = "meta.call($mix, color(srgb .1 .2 .3), color(srgb .3 .2 .1))" },
+        .{ .name = "srgb-linear", .invocation = "meta.call($mix, color(srgb-linear .1 .2 .3), color(srgb-linear .3 .2 .1))" },
+        .{ .name = "display-p3", .invocation = "meta.call($mix, color(display-p3 .1 .2 .3), color(display-p3 .3 .2 .1))" },
+        .{ .name = "a98-rgb", .invocation = "meta.call($mix, color(a98-rgb .1 .2 .3), color(a98-rgb .3 .2 .1))" },
+        .{ .name = "prophoto-rgb", .invocation = "meta.call($mix, color(prophoto-rgb .1 .2 .3), color(prophoto-rgb .3 .2 .1))" },
+        .{ .name = "rec2020", .invocation = "meta.call($mix, color(rec2020 .1 .2 .3), color(rec2020 .3 .2 .1))" },
+        .{ .name = "xyz-d50", .invocation = "meta.call($mix, color(xyz-d50 .1 .2 .3), color(xyz-d50 .3 .2 .1))" },
+        .{ .name = "xyz-d65", .invocation = "meta.call($mix, color(xyz-d65 .1 .2 .3), color(xyz-d65 .3 .2 .1))" },
+        .{ .name = "variable", .invocation = "meta.call($mix, red, var(--color))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $mix: meta.get-function(\"mix\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-mix-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"mix\", $module: \"color\"), red, blue); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-mix-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red, blue); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-mix-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.mix(red, blue); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-mix-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $mix: meta.get-function(\"mix\", $module: \"color\"); .a { value: meta.call($mix, red, blue); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
