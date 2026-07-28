@@ -12293,6 +12293,246 @@ test "native Sass meta call rejects unavailable color forms arguments and limits
     );
 }
 
+test "native Sass meta call invokes red function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("red");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module: meta.get-function("red", $module: "color");
+        \\$alias: meta.get-function("red", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("red");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (#123,);
+        \\$map-args: ("color": #abc);
+        \\.values {
+        \\  global-exists: meta.function-exists("red");
+        \\  module-exists: meta.function-exists("red", "color");
+        \\  alias-exists: meta.function-exists("red", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  short: meta.call($global, #123);
+        \\  named: meta.call($global, $color: #abc);
+        \\  module-short: meta.call($module, #123);
+        \\  module-named: meta.call($module, $color: #abc);
+        \\  transparent: meta.call($module, transparent);
+        \\  rgb: meta.call($module, rgb(10 20 30 / .4));
+        \\  hsl: meta.call($module, hsl(120 50% 25%));
+        \\  hwb: meta.call($module, hwb(240 10% 20%));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, #456));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, #123));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-red-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"red\");inspect-module:get-function(\"red\");short:17;named:170;module-short:17;module-named:170;transparent:0;rgb:10;hsl:32;hwb:26;list-splat:17;map-splat:170;ordered:68;trace:12;result-type:number}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 14), diagnostics.len);
+    var global_warnings: usize = 0;
+    var global_red_warnings: usize = 0;
+    var module_red_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "red() is deprecated. Use color.channel($color, \"red\", $space: rgb).",
+        )) {
+            global_red_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "color.red() is deprecated. Use color.channel($color, \"red\", $space: rgb).",
+        )) {
+            module_red_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 2), global_warnings);
+    try std.testing.expectEqual(@as(usize, 2), global_red_warnings);
+    try std.testing.expectEqual(@as(usize, 10), module_red_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$red: m.get-function("red", $module: "palette")
+        \\$arguments: ("color": #abc)
+        \\.sass
+        \\  type: m.type-of($red)
+        \\  plain: m.call($red, #123)
+        \\  hsl: m.call($red, hsl(120 50% 25%))
+        \\  map: m.call($red, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-red-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:17;hsl:32;map:170}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 3), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.red() is deprecated. Use color.channel($color, \"red\", $space: rgb).",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseRedFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseRedFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("red");
+        \\@use "sass:color";
+        \\$module: meta.get-function("red", $module: "color");
+        \\.allocation {
+        \\  global: meta.call($global, #123);
+        \\  module: meta.call($module, hsl(120 50% 25%));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-red-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{global:17;module:32}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable red forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($red)" },
+        .{ .name = "extra", .invocation = "meta.call($red, #123, rgb)" },
+        .{ .name = "unknown", .invocation = "meta.call($red, $other: #123)" },
+        .{ .name = "duplicate", .invocation = "meta.call($red, #123, $color: #456)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($red, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($red, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($red, true)" },
+        .{ .name = "number", .invocation = "meta.call($red, 1)" },
+        .{ .name = "quoted", .invocation = "meta.call($red, \"red\")" },
+        .{ .name = "list", .invocation = "meta.call($red, (#123, #456))" },
+        .{ .name = "map", .invocation = "meta.call($red, (a: #123))" },
+        .{ .name = "callable", .invocation = "meta.call($red, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "space", .invocation = "meta.call($red, #123, $space: rgb)" },
+        .{ .name = "display-p3", .invocation = "meta.call($red, color(display-p3 .3 .4 .5))" },
+        .{ .name = "xyz", .invocation = "meta.call($red, color(xyz .1 .2 .3))" },
+        .{ .name = "lab", .invocation = "meta.call($red, lab(50% 10 20))" },
+        .{ .name = "oklch", .invocation = "meta.call($red, oklch(50% .1 30deg))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $red: meta.get-function(\"red\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-red-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"red\", $module: \"color\"), #123); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-red-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"rouge\", $module: \"color\"), #123); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-red-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $red: meta.get-function(\"red\", $module: \"color\"); .a { value: meta.call($red, #123); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -12406,7 +12646,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"red\"), #123); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"green\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

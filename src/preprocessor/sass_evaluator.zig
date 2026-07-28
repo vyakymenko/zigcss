@@ -8344,7 +8344,7 @@ const Engine = struct {
         else
             null;
         const callable = if (module) |kind| blk: {
-            const builtin = moduleBuiltin(kind, normalized) orelse {
+            const builtin = moduleCallableBuiltin(kind, normalized) orelse {
                 try self.report(
                     .invalid_operation,
                     span,
@@ -8619,6 +8619,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorRedFunction(
                     callable,
                     &forwarded,
                     span,
@@ -10928,6 +10935,81 @@ const Engine = struct {
         return error.InvalidExpression;
     }
 
+    fn invokeColorRedFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .red or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        const result = try self.callRedChannelValue(bound.values[0].?.*, span);
+
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            if (reference.owner == null)
+                "red() is deprecated. Use color.channel($color, \"red\", $space: rgb)."
+            else
+                "color.red() is deprecated. Use color.channel($color, \"red\", $space: rgb).",
+            &.{},
+        );
+        return result;
+    }
+
+    fn callRedChannelValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "red() requires one color");
+                return error.InvalidExpression;
+            },
+        };
+        switch (color.space) {
+            .rgb, .hsl, .hwb => {},
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "red() is available only for legacy RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+        return self.values.own(.{ .number = .{
+            .value = @round((try native_color.toRgb(color))[0]),
+        } });
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -11253,7 +11335,7 @@ const Engine = struct {
         for (self.modules.items) |binding| {
             try self.transaction.consumeOperations(1);
             if (binding.namespace != null) continue;
-            if (moduleBuiltin(binding.kind, name)) |builtin| {
+            if (moduleCallableBuiltin(binding.kind, name)) |builtin| {
                 return builtinFunctionCallable(builtin, binding.kind);
             }
         }
@@ -14293,8 +14375,14 @@ fn moduleBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     };
 }
 
+fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
+    if (moduleBuiltin(kind, name)) |builtin| return builtin;
+    if (kind == .color and sassNameEql(name, "red")) return .red;
+    return null;
+}
+
 fn moduleFunctionExists(kind: BuiltinModule, name: []const u8) bool {
-    if (moduleBuiltin(kind, name) != null) return true;
+    if (moduleCallableBuiltin(kind, name) != null) return true;
     // Dart Sass 1.101.0 reports modern global color constructors as existing
     // in sass:color even though qualified calls and module-owned references
     // remain unavailable. Preserve that measured split only for constructors
@@ -14428,7 +14516,7 @@ fn moduleBuiltinCallableName(owner: BuiltinModule, builtin: Builtin) ?[]const u8
         else
             tag_name,
     };
-    return if (moduleBuiltin(owner, candidate) == builtin) candidate else null;
+    return if (moduleCallableBuiltin(owner, candidate) == builtin) candidate else null;
 }
 
 fn moduleBuiltinMixin(kind: BuiltinModule, name: []const u8) ?BuiltinMixin {
