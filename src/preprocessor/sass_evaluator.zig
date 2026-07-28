@@ -8750,6 +8750,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorGrayscaleFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -12482,6 +12489,111 @@ const Engine = struct {
         }
     }
 
+    fn invokeColorGrayscaleFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .grayscale or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        const argument = bound.values[0].?;
+        const result = switch (argument.*) {
+            .color => |color| blk: {
+                const legacy = try self.legacyGrayscaleColorArgument(color, span);
+                const grayscale = native_color.grayscale(legacy) catch |failure| {
+                    return self.colorTransformFailure(failure, span);
+                };
+                break :blk try self.values.own(.{ .color = grayscale });
+            },
+            .number => blk: {
+                if (reference.owner != null) {
+                    try self.transaction.report(
+                        .warning,
+                        .invalid_operation,
+                        span,
+                        "Passing a number to color.grayscale() is deprecated.",
+                        &.{},
+                    );
+                }
+                const rendered = [_]*const native_value.Value{argument};
+                break :blk try self.preservePlainCssFunction(
+                    "grayscale",
+                    &rendered,
+                    false,
+                );
+            },
+            else => blk: {
+                if (reference.owner == null and isDeferredColorValue(argument.*)) {
+                    const rendered = [_]*const native_value.Value{argument};
+                    break :blk try self.preservePlainCssFunction(
+                        "grayscale",
+                        &rendered,
+                        false,
+                    );
+                }
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "grayscale() requires one color or CSS filter amount",
+                );
+                return error.InvalidExpression;
+            },
+        };
+
+        if (reference.owner == null and argument.* == .color) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        return result;
+    }
+
+    fn legacyGrayscaleColorArgument(
+        self: *Engine,
+        color: native_value.Color,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy grayscale() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy grayscale() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -15866,6 +15978,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "desaturate")) return .desaturate;
     if (kind == .color and sassNameEql(name, "adjust-hue")) return .adjust_hue;
     if (kind == .color and sassNameEql(name, "complement")) return .complement;
+    if (kind == .color and sassNameEql(name, "grayscale")) return .grayscale;
     return null;
 }
 

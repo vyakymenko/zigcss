@@ -459,7 +459,11 @@ pub fn adjustHue(input: native_value.Color, amount: f64) Error!native_value.Colo
 pub fn grayscale(input: native_value.Color) Error!native_value.Color {
     var channels = try toHsl(input);
     channels[1] = 0;
-    return rgbFromChannels(hslToRgb(channels));
+    return switch (input.space) {
+        .rgb, .hwb => rgbFromChannels(hslToRgb(channels)),
+        .hsl => hsl(channels[0], channels[1], channels[2], channels[3]),
+        else => error.InvalidColor,
+    };
 }
 
 pub fn invert(input: native_value.Color, weight: f64) Error!native_value.Color {

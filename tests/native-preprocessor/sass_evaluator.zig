@@ -1060,6 +1060,8 @@ test "native Sass evaluates legacy color manipulation without a provider" {
         \\  complement: complement(#123456);
         \\  grayscale-red: grayscale(red);
         \\  grayscale-base: grayscale(#123456);
+        \\  grayscale-hsl: grayscale(hsl(120deg 20% 25%));
+        \\  grayscale-hwb: grayscale(hwb(240deg 10% 20%));
         \\  invert: invert(#123456);
         \\  invert-weighted: invert(#123456, 25%);
         \\  mix: mix(red, blue);
@@ -1080,7 +1082,7 @@ test "native Sass evaluates legacy color manipulation without a provider" {
     var result = try compile(std.testing.allocator, "color-manipulation.scss", input, .scss, .{});
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".a{lighten:rgb(26.8269230769,77.5,128.1730769231);darken:rgb(9.1730769231,26.5,43.8269230769);saturate:hsl(120,40%,50%);desaturate:hsl(0,0%,50%);adjust-hue:#121256;complement:#563412;grayscale-red:hsl(0,0%,50%);grayscale-base:#343434;invert:#edcba9;invert-weighted:rgb(72.75,89.75,106.75);mix:hsl(300,100%,25%);mix-weighted:rgb(63.75,0,191.25);mix-alpha:rgba(63.75,0,191.25,.75);opacify:rgba(1,2,3,.6);fade-in:rgba(1,2,3,.6);transparentize:rgba(1,2,3,.2);fade-out:rgba(1,2,3,.2);opacity-channel:.4;filter-saturate:saturate(20%);filter-grayscale:grayscale(20%);filter-invert:invert(var(--amount));filter-opacity:opacity(20%);ie-hex:#66010203}",
+        ".a{lighten:rgb(26.8269230769,77.5,128.1730769231);darken:rgb(9.1730769231,26.5,43.8269230769);saturate:hsl(120,40%,50%);desaturate:hsl(0,0%,50%);adjust-hue:#121256;complement:#563412;grayscale-red:hsl(0,0%,50%);grayscale-base:#343434;grayscale-hsl:hsl(120,0%,25%);grayscale-hwb:hsl(0,0%,45%);invert:#edcba9;invert-weighted:rgb(72.75,89.75,106.75);mix:hsl(300,100%,25%);mix-weighted:rgb(63.75,0,191.25);mix-alpha:rgba(63.75,0,191.25,.75);opacify:rgba(1,2,3,.6);fade-in:rgba(1,2,3,.6);transparentize:rgba(1,2,3,.2);fade-out:rgba(1,2,3,.2);opacity-channel:.4;filter-saturate:saturate(20%);filter-grayscale:grayscale(20%);filter-invert:invert(var(--amount));filter-opacity:opacity(20%);ie-hex:#66010203}",
         result.css(),
     );
 }
@@ -16449,6 +16451,284 @@ test "native Sass meta call rejects unavailable color complement forms arguments
     );
 }
 
+test "native Sass meta call invokes color grayscale function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("grayscale");
+        \\$module: meta.get-function("grayscale", $module: "color");
+        \\$alias: meta.get-function("grayscale", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("grayscale");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$color-list: (#123456,);
+        \\$color-map: ("color": hwb(240deg 10% 20%));
+        \\$filter-list: (20%,);
+        \\$filter-map: ("color": 20%);
+        \\.values {
+        \\  global-exists: meta.function-exists("grayscale");
+        \\  module-exists: meta.function-exists("grayscale", "color");
+        \\  alias-exists: meta.function-exists("grayscale", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, #123456);
+        \\  module: meta.call($module, #123456);
+        \\  transparent: meta.call($global, transparent);
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .5));
+        \\  hsl: meta.call($global, hsl(120deg 20% 25%));
+        \\  hwb: meta.call($module, hwb(240deg 10% 20%));
+        \\  color-list-splat: meta.call($global, $color-list...);
+        \\  color-map-splat: meta.call($module, $color-map...);
+        \\  global-filter: meta.call($global, 20%);
+        \\  global-filter-unit: meta.call($global, 2px);
+        \\  global-filter-type: meta.type-of(meta.call($global, var(--amount)));
+        \\  global-filter-calculation: meta.call($global, calc(10% + var(--amount)));
+        \\  module-filter: meta.call($module, 20%);
+        \\  module-filter-type: meta.type-of(meta.call($module, $color: 20%));
+        \\  filter-list-splat: meta.call($global, $filter-list...);
+        \\  filter-map-splat: meta.call($module, $filter-map...);
+        \\  ordered: meta.call(mark(1, $module), $color: mark(2, #123456));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, #123456));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-grayscale-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"grayscale\");inspect-module:get-function(\"grayscale\");global:#343434;module:#343434;transparent:rgba(0,0,0,0);alpha:rgba(52,52,52,.5);hsl:hsl(120,0%,25%);hwb:hsl(0,0%,45%);color-list-splat:#343434;color-map-splat:hsl(0,0%,45%);global-filter:grayscale(20%);global-filter-unit:grayscale(2px);global-filter-type:string;global-filter-calculation:grayscale(calc(10% + var(--amount)));module-filter:grayscale(20%);module-filter-type:string;filter-list-splat:grayscale(20%);filter-map-splat:grayscale(20%);ordered:#343434;trace:12;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 9), diagnostics.len);
+    var global_warnings: usize = 0;
+    var module_filter_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Passing a number to color.grayscale() is deprecated.",
+        )) {
+            module_filter_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 6), global_warnings);
+    try std.testing.expectEqual(@as(usize, 3), module_filter_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$global: m.get-function("grayscale")
+        \\$module: m.get-function("grayscale", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20%))
+        \\.sass
+        \\  type: m.type-of($global)
+        \\  module-type: m.type-of($module)
+        \\  filter: m.call($global, 20%)
+        \\  module-filter: m.call($module, 20%)
+        \\  plain: m.call($global, hsl(120deg 20% 25%))
+        \\  named: m.call($module, $color: #123456)
+        \\  map: m.call($module, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-grayscale-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;filter:grayscale(20%);module-filter:grayscale(20%);plain:hsl(120,0%,25%);named:#343434;map:hsl(0,0%,45%);module-inspect:get-function(\"grayscale\")}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), sass_diagnostics.len);
+    try std.testing.expectEqualStrings(
+        "Passing a number to color.grayscale() is deprecated.",
+        sass_diagnostics[0].message,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        sass_diagnostics[1].message,
+    );
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorGrayscaleFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorGrayscaleFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\$global: meta.get-function("grayscale");
+        \\$module: meta.get-function("grayscale", $module: "color");
+        \\.allocation {
+        \\  global: meta.call($global, #123456);
+        \\  module: meta.call($module, hsl(120deg 20% 25%));
+        \\  global-filter: meta.call($global, var(--amount));
+        \\  module-filter: meta.call($module, 20%);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-grayscale-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{global:#343434;module:hsl(120,0%,25%);global-filter:grayscale(var(--amount));module-filter:grayscale(20%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color grayscale forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($grayscale)" },
+        .{ .name = "extra", .invocation = "meta.call($grayscale, red, blue)" },
+        .{ .name = "unknown", .invocation = "meta.call($grayscale, $other: red)" },
+        .{ .name = "duplicate", .invocation = "meta.call($grayscale, red, $color: blue)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($grayscale, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($grayscale, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($grayscale, true)" },
+        .{ .name = "quoted", .invocation = "meta.call($grayscale, \"red\")" },
+        .{ .name = "unquoted", .invocation = "meta.call($grayscale, red-name)" },
+        .{ .name = "list", .invocation = "meta.call($grayscale, (red, blue))" },
+        .{ .name = "map", .invocation = "meta.call($grayscale, (tone: red))" },
+        .{ .name = "callable", .invocation = "meta.call($grayscale, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "rgb-missing", .invocation = "meta.call($grayscale, rgb(none 0 0))" },
+        .{ .name = "hsl-missing", .invocation = "meta.call($grayscale, hsl(none 10% 20%))" },
+        .{ .name = "hwb-missing", .invocation = "meta.call($grayscale, hwb(none 10% 20%))" },
+        .{ .name = "lab", .invocation = "meta.call($grayscale, lab(50% 10 20))" },
+        .{ .name = "lch", .invocation = "meta.call($grayscale, lch(50% 20 30deg))" },
+        .{ .name = "oklab", .invocation = "meta.call($grayscale, oklab(50% .1 .2))" },
+        .{ .name = "oklch", .invocation = "meta.call($grayscale, oklch(50% .1 30deg))" },
+        .{ .name = "srgb", .invocation = "meta.call($grayscale, color(srgb .1 .2 .3))" },
+        .{ .name = "srgb-linear", .invocation = "meta.call($grayscale, color(srgb-linear .1 .2 .3))" },
+        .{ .name = "display-p3", .invocation = "meta.call($grayscale, color(display-p3 .1 .2 .3))" },
+        .{ .name = "a98-rgb", .invocation = "meta.call($grayscale, color(a98-rgb .1 .2 .3))" },
+        .{ .name = "prophoto-rgb", .invocation = "meta.call($grayscale, color(prophoto-rgb .1 .2 .3))" },
+        .{ .name = "rec2020", .invocation = "meta.call($grayscale, color(rec2020 .1 .2 .3))" },
+        .{ .name = "xyz-d50", .invocation = "meta.call($grayscale, color(xyz-d50 .1 .2 .3))" },
+        .{ .name = "xyz-d65", .invocation = "meta.call($grayscale, color(xyz-d65 .1 .2 .3))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; $grayscale: meta.get-function(\"grayscale\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    const module_invalid = [_][]const u8{
+        "meta.call($grayscale, var(--amount))",
+        "meta.call($grayscale, calc(10% + var(--amount)))",
+    };
+    for (module_invalid) |invocation| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $grayscale: meta.get-function(\"grayscale\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, "meta-call-color-grayscale-module-deferred.scss", input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-grayscale-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"grayscale\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-grayscale-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-grayscale-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.grayscale(red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-grayscale-argument-limit.scss",
+            "@use \"sass:meta\"; $grayscale: meta.get-function(\"grayscale\"); .a { value: meta.call($grayscale, red, blue); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -16562,7 +16842,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"grayscale\"), #123); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"invert\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

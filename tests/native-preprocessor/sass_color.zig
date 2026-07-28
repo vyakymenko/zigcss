@@ -296,6 +296,14 @@ test "native Sass legacy color manipulation matches closed conversion rules" {
             .expected = "rgb(114.75,25.5,204)",
         },
         .{ .value = try color.grayscale(base), .expected = "#343434" },
+        .{
+            .value = try color.grayscale(try color.hsl(120, 20, 25, 1)),
+            .expected = "hsl(120,0%,25%)",
+        },
+        .{
+            .value = try color.grayscale(try color.hwb(240, 10, 20, 1)),
+            .expected = "hsl(0,0%,45%)",
+        },
         .{ .value = try color.invert(base, 100), .expected = "#edcba9" },
         .{ .value = try color.invert(base, 25), .expected = "rgb(72.75,89.75,106.75)" },
         .{
