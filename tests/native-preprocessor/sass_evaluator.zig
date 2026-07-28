@@ -13013,6 +13013,207 @@ test "native Sass meta call rejects unavailable blue forms arguments and limits"
     );
 }
 
+test "native Sass meta call invokes alpha function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("alpha");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module: meta.get-function("alpha", $module: "color");
+        \\$alias: meta.get-function("alpha", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("alpha");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (rgb(10 20 30 / .4),);
+        \\$map-args: ("color": hsl(120 50% 25% / .25));
+        \\.values {
+        \\  global-exists: meta.function-exists("alpha");
+        \\  module-exists: meta.function-exists("alpha", "color");
+        \\  alias-exists: meta.function-exists("alpha", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, #1238);
+        \\  named: meta.call($global, $color: #abcdef80);
+        \\  module: meta.call($module, transparent);
+        \\  module-named: meta.call($module, $color: hwb(240 10% 20% / 25%));
+        \\  rgb: meta.call($module, rgb(10 20 30 / .4));
+        \\  hsl: meta.call($module, hsl(120 50% 25% / .25));
+        \\  hwb: meta.call($module, hwb(240 10% 20% / .6));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, rgb(1 2 3 / .15)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, #1238));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-alpha-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"alpha\");inspect-module:get-function(\"alpha\");global:.5333333333;named:.5019607843;module:0;module-named:.25;rgb:.4;hsl:.25;hwb:.6;list-splat:.4;map-splat:.25;ordered:.15;trace:12;result-type:number}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$alpha: m.get-function("alpha", $module: "palette")
+        \\$arguments: ("color": hsl(120 50% 25% / .25))
+        \\.sass
+        \\  type: m.type-of($alpha)
+        \\  plain: m.call($alpha, #1238)
+        \\  hsl: m.call($alpha, hsl(120 50% 25% / .25))
+        \\  map: m.call($alpha, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-alpha-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:.5333333333;hsl:.25;map:.25}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseAlphaFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseAlphaFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("alpha");
+        \\@use "sass:color";
+        \\$module: meta.get-function("alpha", $module: "color");
+        \\.allocation {
+        \\  global: meta.call($global, #1238);
+        \\  module: meta.call($module, hsl(120 50% 25% / .25));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-alpha-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{global:.5333333333;module:.25}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable alpha forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($alpha)" },
+        .{ .name = "extra", .invocation = "meta.call($alpha, #123, rgb)" },
+        .{ .name = "unknown", .invocation = "meta.call($alpha, $other: #123)" },
+        .{ .name = "duplicate", .invocation = "meta.call($alpha, #123, $color: #456)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($alpha, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($alpha, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($alpha, true)" },
+        .{ .name = "number", .invocation = "meta.call($alpha, 1)" },
+        .{ .name = "quoted", .invocation = "meta.call($alpha, \"alpha\")" },
+        .{ .name = "list", .invocation = "meta.call($alpha, (#123, #456))" },
+        .{ .name = "map", .invocation = "meta.call($alpha, (a: #123))" },
+        .{ .name = "callable", .invocation = "meta.call($alpha, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "space", .invocation = "meta.call($alpha, #123, $space: rgb)" },
+        .{ .name = "display-p3", .invocation = "meta.call($alpha, color(display-p3 .3 .4 .5 / .2))" },
+        .{ .name = "xyz", .invocation = "meta.call($alpha, color(xyz .1 .2 .3 / .2))" },
+        .{ .name = "lab", .invocation = "meta.call($alpha, lab(50% 10 20 / .2))" },
+        .{ .name = "oklch", .invocation = "meta.call($alpha, oklch(50% .1 30deg / .2))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $alpha: meta.get-function(\"alpha\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-alpha-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"alpha\", $module: \"color\"), #1238); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-alpha-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"transparency\", $module: \"color\"), #1238); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-alpha-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $alpha: meta.get-function(\"alpha\", $module: \"color\"); .a { value: meta.call($alpha, #1238); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -13126,7 +13327,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"alpha\"), #123); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"opacity\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
