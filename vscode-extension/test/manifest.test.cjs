@@ -41,6 +41,7 @@ test('extension identity and dependency versions are synchronized and exact', ()
   for (const name of [
     'vscode-languageclient',
     'vscode-languageserver-protocol',
+    'vscode-languageserver-textdocument',
     'vscode-languageserver-types',
     'vscode-jsonrpc',
     'minimatch',

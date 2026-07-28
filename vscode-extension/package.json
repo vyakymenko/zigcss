@@ -23,7 +23,7 @@
     "lsp"
   ],
   "engines": {
-    "vscode": "^1.82.0"
+    "vscode": "^1.91.0"
   },
   "extensionKind": ["workspace"],
   "capabilities": {
@@ -81,12 +81,12 @@
   },
   "devDependencies": {
     "@types/node": "18.19.130",
-    "@types/vscode": "1.82.0",
+    "@types/vscode": "1.91.0",
     "@vscode/vsce": "3.9.2",
     "esbuild": "0.28.1",
     "typescript": "5.9.3"
   },
   "dependencies": {
-    "vscode-languageclient": "9.0.1"
+    "vscode-languageclient": "10.1.0"
   }
 }

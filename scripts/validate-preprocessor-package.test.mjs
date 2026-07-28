@@ -177,6 +177,14 @@ test('CI and release workflows own exact Node, package, audit, and provenance ga
   assert.throws(
     () => validatePreprocessorPackagingWorkflows(
       build,
+      release,
+      docs.replace("node-version: '22.22.0'", "node-version: '22'"),
+    ),
+    /exact Node/,
+  )
+  assert.throws(
+    () => validatePreprocessorPackagingWorkflows(
+      build,
       release.replace('npm publish --tag next --provenance', 'npm publish --tag next'),
       docs,
     ),

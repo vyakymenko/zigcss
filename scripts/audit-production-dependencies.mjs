@@ -41,6 +41,25 @@ function normalizedRecord(value) {
   return Object.fromEntries(Object.entries(value ?? {}).sort(([left], [right]) => left === right ? 0 : left < right ? -1 : 1))
 }
 
+export const reviewedProductionOverrides = Object.freeze({
+  'brace-expansion': '5.0.8',
+})
+
+export function validateReviewedProductionOverrides(manifest, lock) {
+  if (JSON.stringify(normalizedRecord(manifest?.overrides)) !== JSON.stringify(reviewedProductionOverrides)) {
+    fail(`root npm package overrides must equal ${JSON.stringify(reviewedProductionOverrides)}`)
+  }
+  const minimatch = lock?.packages?.['node_modules/minimatch']
+  if (minimatch?.dependencies?.['brace-expansion'] !== '^2.0.2') {
+    fail('reviewed brace-expansion override no longer matches the locked minimatch dependency edge')
+  }
+  const patched = lock?.packages?.['node_modules/brace-expansion']
+  if (patched?.version !== reviewedProductionOverrides['brace-expansion']) {
+    fail(`root npm package must lock brace-expansion ${reviewedProductionOverrides['brace-expansion']}`)
+  }
+  return true
+}
+
 function recursiveLockfiles(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
     if (entry.isDirectory() && ignoredDirectories.has(entry.name)) return []
@@ -124,6 +143,8 @@ export function validateUpdatePolicy(root = repositoryRoot) {
   if (actual !== expected) fail('.github/dependabot.yml does not match the bounded reviewed policy')
 
   const manifest = readJson(path.join(root, 'package.json'))
+  const lock = readJson(path.join(root, 'package-lock.json'))
+  validateReviewedProductionOverrides(manifest, lock)
   if (manifest.scripts?.['test:dependencies'] !== 'node --test scripts/audit-production-dependencies.test.mjs') {
     fail('package.json is missing the exact dependency policy test script')
   }

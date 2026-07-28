@@ -27,8 +27,8 @@ Stylus 0.64.0 declares `glob ^10.4.5`. ZigCSS locks `glob 10.5.0`: the fixed 10.
 | `node_modules/@pkgjs/parseargs` | `0.11.0` | `MIT` | `sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==` |
 | `node_modules/ansi-regex` | `6.2.2` | `MIT` | `sha512-Bq3SmSpyFHaWjPk8If9yc6svM8c56dB5BAtW4Qbw5jHTwwXXcTLoRMkpDJp6VL0XzlWaCHTXrkFURMYmD0sLqg==` |
 | `node_modules/ansi-styles` | `6.2.3` | `MIT` | `sha512-4Dj6M28JB+oAH8kFkTLUo+a2jwOFkuqb3yucU0CANcRRUbxS0cP0nZYCGjcc3BNXwRIsUVmDGgzawme7zvJHvg==` |
-| `node_modules/balanced-match` | `1.0.2` | `MIT` | `sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==` |
-| `node_modules/brace-expansion` | `2.1.2` | `MIT` | `sha512-w5JZcKgdhDOgOwm8H+KgbosopHMuGcl6qbulwjtz3SM7I7P3yW1eAjzMPLrIE+NQ9vjgANKHWeMHnrT0OXW1oA==` |
+| `node_modules/balanced-match` | `4.0.4` | `MIT` | `sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==` |
+| `node_modules/brace-expansion` | `5.0.8` | `MIT` | `sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==` |
 | `node_modules/chokidar` | `5.0.0` | `MIT` | `sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw==` |
 | `node_modules/color-convert` | `2.0.1` | `MIT` | `sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==` |
 | `node_modules/color-name` | `1.1.4` | `MIT` | `sha512-dOy+3AuW3a2wNbZHIuMZpTcgjGuLU/uBL/ubcZF9OXbDo8ff4O8yVp5Bf0efS8uEoYo5q4Fx7dY9OgQGXgAsQA==` |

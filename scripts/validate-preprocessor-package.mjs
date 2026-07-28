@@ -628,8 +628,8 @@ export function validatePreprocessorPackagingWorkflows(build, release, docs) {
   if (literalCount(release, "node-version: '20.19.0'") !== 3) {
     fail('all release npm surfaces must use exact Node 20.19.0')
   }
-  if (literalCount(docs, "node-version: '20.19.0'") !== 1) {
-    fail('documentation package consumer must use exact Node 20.19.0')
+  if (literalCount(docs, "node-version: '22.22.0'") !== 1) {
+    fail('documentation package consumer must use exact Node 22.22.0')
   }
   if (literalCount(release, 'npm publish --tag next --provenance') !== 1) {
     fail('npm publication must retain provenance')

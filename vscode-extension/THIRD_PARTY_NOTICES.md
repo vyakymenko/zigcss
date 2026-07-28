@@ -5,14 +5,15 @@ The bundled extension runtime contains the following exact dependencies from
 
 | Packages | Version | License | Source |
 |---|---:|---|---|
-| `vscode-languageclient` | 9.0.1 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
-| `vscode-languageserver-protocol` | 3.17.5 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
-| `vscode-languageserver-types` | 3.17.5 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
-| `vscode-jsonrpc` | 8.2.0 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
-| `minimatch` | 5.1.9 | ISC | <https://github.com/isaacs/minimatch> |
+| `vscode-languageclient` | 10.1.0 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
+| `vscode-languageserver-protocol` | 3.18.2 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
+| `vscode-languageserver-textdocument` | 1.0.13 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
+| `vscode-languageserver-types` | 3.18.0 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
+| `vscode-jsonrpc` | 9.0.1 | MIT | <https://github.com/microsoft/vscode-languageserver-node> |
+| `minimatch` | 10.2.6 | BlueOak-1.0.0 | <https://github.com/isaacs/minimatch> |
 | `semver` | 7.8.5 | ISC | <https://github.com/npm/node-semver> |
-| `brace-expansion` | 2.1.2 | MIT | <https://github.com/juliangruber/brace-expansion> |
-| `balanced-match` | 1.0.2 | MIT | <https://github.com/juliangruber/balanced-match> |
+| `brace-expansion` | 5.0.8 | MIT | <https://github.com/juliangruber/brace-expansion> |
+| `balanced-match` | 4.0.4 | MIT | <https://github.com/juliangruber/balanced-match> |
 
 ## Microsoft LSP libraries — MIT
 
@@ -36,21 +37,56 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## minimatch — ISC
+## minimatch — BlueOak-1.0.0
 
-Copyright (c) 2011-2023 Isaac Z. Schlueter and Contributors
+Blue Oak Model License
 
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
+Version 1.0.0
 
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
-REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
-AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
-INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
-LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
-OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
-PERFORMANCE OF THIS SOFTWARE.
+### Purpose
+
+This license gives everyone as much permission to work with this software as
+possible, while protecting contributors from liability.
+
+### Acceptance
+
+In order to receive this license, you must agree to its rules. The rules of
+this license are both obligations under that agreement and conditions to your
+license. You must not do anything with this software that triggers a rule that
+you cannot or will not follow.
+
+### Copyright
+
+Each contributor licenses you to do everything with this software that would
+otherwise infringe their copyright in it.
+
+### Notices
+
+You must ensure that everyone who gets a copy of any part of this software,
+with or without changes, also gets the text of this license or a link to
+<https://blueoakcouncil.org/license/1.0.0>.
+
+### Excuse
+
+If anyone notifies you in writing that you have not complied with Notices, you
+can keep your license by taking all practical steps to comply within 30 days
+after the notice. If you do not do so, your license ends immediately.
+
+### Patent
+
+Each contributor licenses you to do everything with this software that would
+otherwise infringe any patent claims they can license or become able to
+license.
+
+### Reliability
+
+No contributor can revoke this license.
+
+### No Liability
+
+As far as the law allows, this software comes as is, without any warranty or
+condition, and no contributor will be liable to anyone for any damages related
+to this software or this license, under any kind of legal claim.
 
 ## semver — ISC
 

@@ -9,6 +9,7 @@ import {
   renderDependabotConfig,
   repositoryRoot,
   validateManifestLocks,
+  validateReviewedProductionOverrides,
   validateUpdatePolicy,
 } from './audit-production-dependencies.mjs'
 
@@ -64,6 +65,40 @@ test('production audit parsing requires a consistent v2 report with no high or c
   inconsistent.metadata.vulnerabilities.total = 4
   assert.throws(() => parseAuditReport(inconsistent, 'fixture'), /total is inconsistent/)
   assert.throws(() => parseAuditReport({ error: 'offline' }, 'fixture'), /report version 2/)
+})
+
+test('root production override is exact and locks the reviewed minimatch security patch', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'))
+  const lock = JSON.parse(fs.readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'))
+  assert.equal(validateReviewedProductionOverrides(manifest, lock), true)
+
+  const missing = structuredClone(manifest)
+  delete missing.overrides
+  assert.throws(
+    () => validateReviewedProductionOverrides(missing, lock),
+    /overrides must equal/,
+  )
+
+  const extra = structuredClone(manifest)
+  extra.overrides.unreviewed = '1.0.0'
+  assert.throws(
+    () => validateReviewedProductionOverrides(extra, lock),
+    /overrides must equal/,
+  )
+
+  const vulnerable = structuredClone(lock)
+  vulnerable.packages['node_modules/brace-expansion'].version = '2.1.2'
+  assert.throws(
+    () => validateReviewedProductionOverrides(manifest, vulnerable),
+    /must lock brace-expansion 5\.0\.8/,
+  )
+
+  const detached = structuredClone(lock)
+  detached.packages['node_modules/minimatch'].dependencies['brace-expansion'] = '^5.0.8'
+  assert.throws(
+    () => validateReviewedProductionOverrides(manifest, detached),
+    /no longer matches the locked minimatch dependency edge/,
+  )
 })
 
 test('Dependabot policy is exact, bounded, and cannot silently gain release authority', () => {

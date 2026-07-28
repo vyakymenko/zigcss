@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "zigcss-0.5.0-rc.1-npm-runtime",
-  "documentNamespace": "https://github.com/vyakymenko/zigcss/spdx/npm/0.5.0-rc.1/edfe17f5d1859a1be36359fb5795769750a4d357860ae3f813a2028c553782ff",
+  "documentNamespace": "https://github.com/vyakymenko/zigcss/spdx/npm/0.5.0-rc.1/7db47d61a9db7cb08b94b6703cb84eff6247608ce3a96b71859a369ce9f10a05",
   "creationInfo": {
     "created": "2026-07-16T00:00:00Z",
     "creators": [
@@ -531,14 +531,14 @@
     {
       "SPDXID": "SPDXRef-Package-e2485ae88eaf7c7400fc1efb",
       "name": "balanced-match",
-      "versionInfo": "1.0.2",
+      "versionInfo": "4.0.4",
       "supplier": "NOASSERTION",
-      "downloadLocation": "https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz",
+      "downloadLocation": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz",
       "filesAnalyzed": false,
       "checksums": [
         {
           "algorithm": "SHA512",
-          "checksumValue": "de849e50ed13315ebb84dd4099b5ec2b8c9aa94eed8e21e56f144364ea47d0a5bdf82797e1b440697d009f1b74b71d8cae94695b041a3f02252121098585393f"
+          "checksumValue": "04bae011c453c17da8ea01b118e08dc8cbc64a9df96287ee633c3d87520c4d198aaadb40659554ebb6dd6fd3ebdaf50703cfa3de2dad25f8cee82ebee26c864c"
         }
       ],
       "licenseConcluded": "MIT",
@@ -549,7 +549,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/balanced-match@1.0.2"
+          "referenceLocator": "pkg:npm/balanced-match@4.0.4"
         }
       ],
       "comment": "npm lock path: node_modules/balanced-match"
@@ -557,14 +557,14 @@
     {
       "SPDXID": "SPDXRef-Package-416f0dd3db142aba781b73a9",
       "name": "brace-expansion",
-      "versionInfo": "2.1.2",
+      "versionInfo": "5.0.8",
       "supplier": "NOASSERTION",
-      "downloadLocation": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.2.tgz",
+      "downloadLocation": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz",
       "filesAnalyzed": false,
       "checksums": [
         {
           "algorithm": "SHA512",
-          "checksumValue": "c3925970a81d8433a03b09bc1fe2a06e8b28a4732e19c97aa9bba5c23b73dd233b23b3f7c96d5e023ccc3cbac813e350f6f8e000d28759e3079eb4f43975b5a0"
+          "checksumValue": "259c83caadc3e005227ca4cf381ec310b7fa5ec07759d3ee3710ada1bd6f1573ec49785d0221c1589fed27c1c073d687f3804afb924564b36424ac771bd93342"
         }
       ],
       "licenseConcluded": "MIT",
@@ -575,7 +575,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/brace-expansion@2.1.2"
+          "referenceLocator": "pkg:npm/brace-expansion@5.0.8"
         }
       ],
       "comment": "npm lock path: node_modules/brace-expansion"

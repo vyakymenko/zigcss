@@ -59,7 +59,7 @@ On Windows, use an absolute executable path when the binary is not in `Path`:
 ## Requirements
 
 - zigcss binary (built from source or installed)
-- VSCode 1.82.0 or later
+- VS Code 1.91.0 or later
 - Node.js 22 or later for source tests and local VSIX verification
 
 ## Development

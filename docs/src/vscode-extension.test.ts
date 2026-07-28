@@ -19,7 +19,7 @@ describe('experimental VS Code extension package', () => {
     expect(root.scripts['test:vscode']).toContain('vscode-extension')
     expect(read('build.zig.zon')).toContain(`.version = "${root.version}"`)
     expect(lock.packages[''].version).toBe(extension.version)
-    expect(extension.engines.vscode).toBe('^1.82.0')
+    expect(extension.engines.vscode).toBe('^1.91.0')
     for (const [name, version] of Object.entries({
       ...extension.dependencies,
       ...extension.devDependencies,
