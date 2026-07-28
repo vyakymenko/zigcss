@@ -13214,6 +13214,233 @@ test "native Sass meta call rejects unavailable alpha forms arguments and limits
     );
 }
 
+test "native Sass meta call invokes opacity function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("opacity");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module: meta.get-function("opacity", $module: "color");
+        \\$alias: meta.get-function("opacity", $module: "palette");
+        \\$alpha: meta.get-function("alpha", $module: "color");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("opacity");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (rgb(10 20 30 / .4),);
+        \\$map-args: ("color": hsl(120 50% 25% / .25));
+        \\.values {
+        \\  global-exists: meta.function-exists("opacity");
+        \\  module-exists: meta.function-exists("opacity", "color");
+        \\  alias-exists: meta.function-exists("opacity", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  opacity-alpha-same: $module == $alpha;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, #1238);
+        \\  named: meta.call($module, $color: hwb(240 10% 20% / 25%));
+        \\  rgb: meta.call($module, rgb(1 2 3 / .1));
+        \\  hsl: meta.call($module, hsl(1 2% 3% / .2));
+        \\  hwb: meta.call($module, hwb(1 2% 3% / .3));
+        \\  lab: meta.call($module, lab(50% 1 2 / .4));
+        \\  lch: meta.call($module, lch(50% 1 2 / .5));
+        \\  oklab: meta.call($module, oklab(50% .1 .2 / .6));
+        \\  oklch: meta.call($module, oklch(50% .1 2 / .7));
+        \\  srgb: meta.call($module, color(srgb .1 .2 .3 / .11));
+        \\  linear: meta.call($module, color(srgb-linear .1 .2 .3 / .12));
+        \\  p3: meta.call($module, color(display-p3 .1 .2 .3 / .13));
+        \\  a98: meta.call($module, color(a98-rgb .1 .2 .3 / .14));
+        \\  prophoto: meta.call($module, color(prophoto-rgb .1 .2 .3 / .15));
+        \\  rec2020: meta.call($module, color(rec2020 .1 .2 .3 / .16));
+        \\  xyz50: meta.call($module, color(xyz-d50 .1 .2 .3 / .17));
+        \\  xyz65: meta.call($module, color(xyz .1 .2 .3 / .18));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  global-number: meta.call($global, .5);
+        \\  global-percent: meta.call($global, 50%);
+        \\  global-unit: meta.call($global, 2px);
+        \\  global-var: meta.call($global, var(--amount));
+        \\  module-number: meta.call($module, .75);
+        \\  ordered: meta.call(mark(1, $module), mark(2, rgb(1 2 3 / .15)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, #1238));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-opacity-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;opacity-alpha-same:false;inspect-global:get-function(\"opacity\");inspect-module:get-function(\"opacity\");global:.5333333333;named:.25;rgb:.1;hsl:.2;hwb:.3;lab:.4;lch:.5;oklab:.6;oklch:.7;srgb:.11;linear:.12;p3:.13;a98:.14;prophoto:.15;rec2020:.16;xyz50:.17;xyz65:.18;list-splat:.4;map-splat:.25;global-number:opacity(0.5);global-percent:opacity(50%);global-unit:opacity(2px);global-var:opacity(var(--amount));module-number:opacity(0.75);ordered:.15;trace:12;result-type:number}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[1].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[1].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Passing a number to color.opacity() is deprecated.",
+        diagnostics[1].message,
+    );
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$opacity: m.get-function("opacity", $module: "palette")
+        \\$arguments: ("color": hsl(120 50% 25% / .25))
+        \\.sass
+        \\  type: m.type-of($opacity)
+        \\  plain: m.call($opacity, #1238)
+        \\  modern: m.call($opacity, color(display-p3 .1 .2 .3 / .2))
+        \\  map: m.call($opacity, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-opacity-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:.5333333333;modern:.2;map:.25}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseOpacityFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseOpacityFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("opacity");
+        \\@use "sass:color";
+        \\$module: meta.get-function("opacity", $module: "color");
+        \\.allocation {
+        \\  global: meta.call($global, #1238);
+        \\  modern: meta.call($module, color(display-p3 .1 .2 .3 / .2));
+        \\  global-number: meta.call($global, .5);
+        \\  module-number: meta.call($module, 50%);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-opacity-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{global:.5333333333;modern:.2;global-number:opacity(0.5);module-number:opacity(50%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable opacity forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($opacity)" },
+        .{ .name = "extra", .invocation = "meta.call($opacity, #123, rgb)" },
+        .{ .name = "unknown", .invocation = "meta.call($opacity, $other: #123)" },
+        .{ .name = "duplicate", .invocation = "meta.call($opacity, #123, $color: #456)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($opacity, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($opacity, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($opacity, true)" },
+        .{ .name = "quoted", .invocation = "meta.call($opacity, \"opacity\")" },
+        .{ .name = "unquoted", .invocation = "meta.call($opacity, opacity)" },
+        .{ .name = "list", .invocation = "meta.call($opacity, (#123, #456))" },
+        .{ .name = "map", .invocation = "meta.call($opacity, (a: #123))" },
+        .{ .name = "callable", .invocation = "meta.call($opacity, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "space", .invocation = "meta.call($opacity, #123, $space: rgb)" },
+        .{ .name = "module-variable", .invocation = "meta.call($opacity, var(--amount))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $opacity: meta.get-function(\"opacity\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-opacity-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"opacity\", $module: \"color\"), #1238); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-opacity-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"transparency\", $module: \"color\"), #1238); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-opacity-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $opacity: meta.get-function(\"opacity\", $module: \"color\"); .a { value: meta.call($opacity, #1238); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -13327,7 +13554,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"opacity\"), #123); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"hue\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

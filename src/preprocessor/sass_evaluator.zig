@@ -8653,6 +8653,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorOpacityFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -11244,6 +11251,100 @@ const Engine = struct {
         return self.values.own(.{ .number = .{
             .value = (try native_color.toRgb(color))[3],
         } });
+    }
+
+    fn invokeColorOpacityFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .opacity or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        const argument = bound.values[0].?;
+        const result = switch (argument.*) {
+            .color => |color| try self.values.own(.{ .number = .{
+                .value = color.channels[3],
+            } }),
+            .number => blk: {
+                if (reference.owner != null) {
+                    try self.transaction.report(
+                        .warning,
+                        .invalid_operation,
+                        span,
+                        "Passing a number to color.opacity() is deprecated.",
+                        &.{},
+                    );
+                }
+                break :blk try self.preserveOpacityNumber(argument.number);
+            },
+            else => blk: {
+                if (reference.owner == null and isDeferredColorValue(argument.*)) {
+                    const forwarded = [_]*const native_value.Value{argument};
+                    break :blk try self.preserveEvaluatedFunction(
+                        "opacity()",
+                        &forwarded,
+                        span,
+                    );
+                }
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "opacity() requires one color or CSS filter amount",
+                );
+                return error.InvalidExpression;
+            },
+        };
+
+        if (reference.owner == null and argument.* == .color) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        return result;
+    }
+
+    fn preserveOpacityNumber(
+        self: *Engine,
+        number: native_value.Number,
+    ) Error!*const native_value.Value {
+        var rendered: std.ArrayList(u8) = .empty;
+        defer rendered.deinit(self.allocator);
+        try self.appendTemporary(&rendered, "opacity(");
+        var buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        try self.appendTemporary(
+            &rendered,
+            try native_numeric.serialize(number.value, &buffer, false),
+        );
+        for (number.numerator_units, 0..) |unit, index| {
+            if (index > 0) try self.appendTemporary(&rendered, "*");
+            try self.appendTemporary(&rendered, unit);
+        }
+        for (number.denominator_units) |unit| {
+            try self.appendTemporary(&rendered, "/");
+            try self.appendTemporary(&rendered, unit);
+        }
+        try self.appendTemporary(&rendered, ")");
+        return self.values.own(.{ .string = .{ .bytes = rendered.items } });
     }
 
     fn invalidHslChannels(
@@ -14617,6 +14718,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "green")) return .green;
     if (kind == .color and sassNameEql(name, "blue")) return .blue;
     if (kind == .color and sassNameEql(name, "alpha")) return .alpha;
+    if (kind == .color and sassNameEql(name, "opacity")) return .opacity;
     return null;
 }
 
