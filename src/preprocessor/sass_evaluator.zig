@@ -8577,6 +8577,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorRgbFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -9639,6 +9646,172 @@ const Engine = struct {
         return try self.callColorTransform(builtin, bound.values, span);
     }
 
+    fn invokeColorRgbFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null or reference.builtin != .rgb) return null;
+
+        var has_channels = false;
+        var has_color = false;
+        var has_alpha = false;
+        var has_rgb_channel = false;
+        for (arguments.keywords.items) |keyword| {
+            has_channels = has_channels or evaluatedKeywordNameEql(keyword, "channels");
+            has_color = has_color or evaluatedKeywordNameEql(keyword, "color");
+            has_alpha = has_alpha or evaluatedKeywordNameEql(keyword, "alpha");
+            has_rgb_channel = has_rgb_channel or
+                evaluatedKeywordNameEql(keyword, "red") or
+                evaluatedKeywordNameEql(keyword, "green") or
+                evaluatedKeywordNameEql(keyword, "blue");
+        }
+
+        const channels_parameters = [_]native_arguments.Parameter{
+            .{ .name = "channels" },
+        };
+        const color_parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "alpha" },
+        };
+        const rgb_parameters = [_]native_arguments.Parameter{
+            .{ .name = "red" },
+            .{ .name = "green" },
+            .{ .name = "blue" },
+            .{ .name = "alpha", .required = false },
+        };
+        const positional_count = arguments.positional.items.len;
+        const channels_overload = has_channels or
+            (positional_count == 1 and arguments.keywords.items.len == 0);
+        const color_overload = !channels_overload and
+            (has_color or
+                (positional_count == 2 and arguments.keywords.items.len == 0) or
+                (positional_count == 1 and has_alpha and !has_rgb_channel));
+        const parameters: []const native_arguments.Parameter = if (channels_overload)
+            &channels_parameters
+        else if (color_overload)
+            &color_parameters
+        else
+            &rgb_parameters;
+        var bound = try self.bindEvaluatedArguments(
+            parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        if (channels_overload) {
+            return try self.callRgbChannelsValue(bound.values[0].?.*, span);
+        }
+        if (color_overload) {
+            return try self.callRgbColorAlpha(
+                bound.values[0].?.*,
+                bound.values[1].?.*,
+                span,
+            );
+        }
+        return try self.callRgbValues(
+            bound.values[0].?.*,
+            bound.values[1].?.*,
+            bound.values[2].?.*,
+            if (bound.values[3]) |alpha| alpha.* else null,
+            span,
+        );
+    }
+
+    fn callRgbChannelsValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const outer = switch (value) {
+            .list => |list| list,
+            else => return self.invalidRgbChannels(span),
+        };
+        if (outer.bracketed) return self.invalidRgbChannels(span);
+
+        var channels = outer;
+        var alpha: ?native_value.Value = null;
+        if (outer.separator == .slash or outer.separator == .legacy_slash) {
+            if (outer.items.len != 2) return self.invalidRgbChannels(span);
+            channels = switch (outer.items[0]) {
+                .list => |list| list,
+                else => return self.invalidRgbChannels(span),
+            };
+            alpha = outer.items[1];
+        }
+        if (channels.bracketed or channels.separator != .space or channels.items.len != 3) {
+            return self.invalidRgbChannels(span);
+        }
+        return try self.callRgbValues(
+            channels.items[0],
+            channels.items[1],
+            channels.items[2],
+            alpha,
+            span,
+        );
+    }
+
+    fn callRgbColorAlpha(
+        self: *Engine,
+        color_value: native_value.Value,
+        alpha_value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var color = switch (color_value) {
+            .color => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "rgb() color overload requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        switch (color.space) {
+            .rgb, .hsl, .hwb => {},
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "rgb() color overload requires a legacy RGB, HSL, or HWB color",
+                );
+                return error.InvalidExpression;
+            },
+        }
+        color.channels[3] = std.math.clamp(try self.colorAlpha(alpha_value, span), 0, 1);
+        return self.values.own(.{ .color = color });
+    }
+
+    fn callRgbValues(
+        self: *Engine,
+        red_value: native_value.Value,
+        green_value: native_value.Value,
+        blue_value: native_value.Value,
+        alpha_value: ?native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = native_color.rgb(
+            try self.rgbChannel(red_value, span),
+            try self.rgbChannel(green_value, span),
+            try self.rgbChannel(blue_value, span),
+            if (alpha_value) |alpha| try self.colorAlpha(alpha, span) else 1,
+        ) catch |err| return self.colorTransformFailure(err, span);
+        return self.values.own(.{ .color = color });
+    }
+
+    fn invalidRgbChannels(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "rgb() channels require an unbracketed three-item space list and optional slash alpha",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
     fn invokeSelectorParseFunction(
         self: *Engine,
         callable: native_value.Callable,
@@ -9922,7 +10095,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, or scale, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, or rgb, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -12922,6 +13095,16 @@ fn callKeywordNamesEqual(
         if (normalized_left != normalized_right) return false;
     }
     return true;
+}
+
+fn evaluatedKeywordNameEql(
+    keyword: EvaluatedKeywordArgument,
+    expected: []const u8,
+) bool {
+    return if (keyword.normalize_name)
+        native_arguments.nameEql(keyword.name, expected)
+    else
+        std.mem.eql(u8, keyword.name, expected);
 }
 
 fn fixedListBuiltinParameters(

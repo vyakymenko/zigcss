@@ -10678,6 +10678,141 @@ test "native Sass meta call rejects invalid color scale arguments and limits" {
     );
 }
 
+test "native Sass meta call invokes global rgb function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$before: meta.get-function("rgb");
+        \\@use "sass:color" as *;
+        \\$rgb: meta.get-function("rgb");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (18, 52, 86);
+        \\$map-args: ("red": 18, "green": 52, "blue": 86);
+        \\$channels: 18 52 86 / 40%;
+        \\.values {
+        \\  exists: meta.function-exists("rgb");
+        \\  type: meta.type-of($rgb);
+        \\  same: $before == $rgb;
+        \\  inspect: meta.inspect($rgb);
+        \\  positional: meta.call($rgb, 18, 52, 86);
+        \\  named: meta.call($rgb, $blue: 86, $red: 18, $green: 52);
+        \\  percentage: meta.call($rgb, 10%, 20%, 30%);
+        \\  alpha: meta.call($rgb, 18, 52, 86, .4);
+        \\  color-alpha: meta.call($rgb, #123456, .4);
+        \\  hsl-alpha: meta.call($rgb, hsl(120, 40%, 50%), .4);
+        \\  channels: meta.call($rgb, $channels);
+        \\  named-channels: meta.call($rgb, $channels: $channels);
+        \\  list-splat: meta.call($rgb, $list-args...);
+        \\  map-splat: meta.call($rgb, $map-args...);
+        \\  clamped: meta.call($rgb, 300, -10, 260, 1.1);
+        \\  ordered: meta.call(mark(1, $rgb), mark(2, 18), $blue: mark(3, 86), $green: mark(4, 52));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($rgb, 18, 52, 86));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-rgb-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;inspect:get-function(\"rgb\");positional:#123456;named:#123456;percentage:hsl(210,50%,20%);alpha:rgba(18,52,86,.4);color-alpha:rgba(18,52,86,.4);hsl-alpha:hsla(120,40%,50%,.4);channels:rgba(18,52,86,.4);named-channels:rgba(18,52,86,.4);list-splat:#123456;map-splat:#123456;clamped:#f0f;ordered:#123456;trace:1234;result-type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$rgb: m.get-function("rgb")
+        \\.sass
+        \\  type: m.type-of($rgb)
+        \\  positional: m.call($rgb, 18, 52, 86)
+        \\  named: m.call($rgb, $blue: 86, $red: 18, $green: 52)
+        \\  color-alpha: m.call($rgb, hsl(120, 40%, 50%), .4)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-rgb-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;positional:#123456;named:#123456;color-alpha:hsla(120,40%,50%,.4)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects invalid global rgb arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($rgb)" },
+        .{ .name = "two-numbers", .invocation = "meta.call($rgb, 1, 2)" },
+        .{ .name = "extra", .invocation = "meta.call($rgb, 1, 2, 3, .4, 5)" },
+        .{ .name = "unknown", .invocation = "meta.call($rgb, 1, 2, 3, $other: 4)" },
+        .{ .name = "duplicate", .invocation = "meta.call($rgb, 1, 2, 3, $red: 4)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($rgb, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($rgb, null, 2, 3)" },
+        .{ .name = "boolean", .invocation = "meta.call($rgb, true, 2, 3)" },
+        .{ .name = "quoted", .invocation = "meta.call($rgb, \"1\", 2, 3)" },
+        .{ .name = "unit", .invocation = "meta.call($rgb, 1px, 2, 3)" },
+        .{ .name = "alpha-unit", .invocation = "meta.call($rgb, 1, 2, 3, 1px)" },
+        .{ .name = "calculation", .invocation = "meta.call($rgb, calc(1 + var(--x)), 2, 3)" },
+        .{ .name = "function", .invocation = "meta.call($rgb, meta.get-function(\"inspect\", $module: \"meta\"), 2, 3)" },
+        .{ .name = "bad-channels", .invocation = "meta.call($rgb, 1 2)" },
+        .{ .name = "map-value", .invocation = "meta.call($rgb, (a: 1))" },
+        .{ .name = "color-only", .invocation = "meta.call($rgb, #123456)" },
+        .{ .name = "named-color-only", .invocation = "meta.call($rgb, $color: #123456)" },
+        .{ .name = "named-channels-wrong", .invocation = "meta.call($rgb, $channels: 1 2)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; $rgb: meta.get-function(\"rgb\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-rgb-module-reference.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $rgb: meta.get-function(\"rgb\", $module: \"color\");",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-rgb-argument-limit.scss",
+            "@use \"sass:meta\"; $rgb: meta.get-function(\"rgb\"); .a { value: meta.call($rgb, 18, 52, 86); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -10791,7 +10926,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"rgb\"), 1, 2, 3); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"rgba\"), 1, 2, 3, .4); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
@@ -17616,6 +17751,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  color-adjust-function-call: meta.call(meta.get-function("adjust", $module: "palette"), #123456, $red: 10);
         \\  color-change-function-call: meta.call(meta.get-function("change", $module: "palette"), #123456, $red: 28);
         \\  color-scale-function-call: meta.call(meta.get-function("scale", $module: "palette"), #123456, $red: 50%);
+        \\  color-rgb-function-call: meta.call(meta.get-function("rgb"), 18, 52, 86);
         \\  selector-parse-function-call: meta.call(meta.get-function("parse", $module: "selector"), ".allocation-call");
         \\  selector-simple-selectors-function-call: meta.call(meta.get-function("simple-selectors", $module: "selector"), ".allocation-call:hover");
         \\  selector-is-superselector-function-call: meta.call(meta.get-function("is-superselector", $module: "selector"), ".allocation-call", ".allocation-call:hover");
@@ -17643,7 +17779,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;string-slice-function-call:\"💚\";string-insert-function-call:\"a🌍💚b\";string-upper-case-function-call:\"A💚éßıIẞB\";string-lower-case-function-call:\"a💚Éẞiİb\";color-adjust-function-call:#1c3456;color-change-function-call:#1c3456;color-scale-function-call:rgb(136.5,52,86);selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;string-slice-function-call:\"💚\";string-insert-function-call:\"a🌍💚b\";string-upper-case-function-call:\"A💚éßıIẞB\";string-lower-case-function-call:\"a💚Éẞiİb\";color-adjust-function-call:#1c3456;color-change-function-call:#1c3456;color-scale-function-call:rgb(136.5,52,86);color-rgb-function-call:#123456;selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
