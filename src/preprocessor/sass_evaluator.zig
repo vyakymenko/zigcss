@@ -198,6 +198,7 @@ const Builtin = enum {
     saturation,
     lightness,
     whiteness,
+    blackness,
     mix,
     lighten,
     darken,
@@ -4983,9 +4984,10 @@ const Engine = struct {
                 scope,
                 span,
             ),
-            // Dart Sass 1.101.0 exposes whiteness only as a sass:color
-            // callable reference. Direct calls remain outside this slice.
-            .whiteness => return null,
+            // Dart Sass 1.101.0 exposes whiteness and blackness only as
+            // sass:color callable references here. Direct calls remain
+            // outside these evidence-closed slices.
+            .whiteness, .blackness => return null,
             .rgb, .rgba, .hsl, .hsla, .hwb => return try self.callColorConstructorRaw(
                 builtin,
                 raw,
@@ -8692,6 +8694,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorBlacknessFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -11667,6 +11676,67 @@ const Engine = struct {
         const units = [_][]const u8{"%"};
         return self.values.own(.{ .number = .{
             .value = (try native_color.toHwb(color))[1],
+            .numerator_units = &units,
+        } });
+    }
+
+    fn invokeColorBlacknessFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .blackness or reference.owner != .color) return null;
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        const result = try self.callBlacknessChannelValue(bound.values[0].?.*, span);
+
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "color.blackness() is deprecated. Use color.channel($color, \"blackness\", $space: hwb).",
+            &.{},
+        );
+        return result;
+    }
+
+    fn callBlacknessChannelValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "blackness() requires one color");
+                return error.InvalidExpression;
+            },
+        };
+        switch (color.space) {
+            .rgb, .hsl, .hwb => {},
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.blackness() is available only for legacy RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+        const units = [_][]const u8{"%"};
+        return self.values.own(.{ .number = .{
+            .value = (try native_color.toHwb(color))[2],
             .numerator_units = &units,
         } });
     }
@@ -15047,6 +15117,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "saturation")) return .saturation;
     if (kind == .color and sassNameEql(name, "lightness")) return .lightness;
     if (kind == .color and sassNameEql(name, "whiteness")) return .whiteness;
+    if (kind == .color and sassNameEql(name, "blackness")) return .blackness;
     return null;
 }
 
