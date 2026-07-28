@@ -8743,6 +8743,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorComplementFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -12385,6 +12392,96 @@ const Engine = struct {
         return number.value;
     }
 
+    fn invokeColorComplementFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .complement or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const global_parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        const module_parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "space", .required = false },
+        };
+        const parameters: []const native_arguments.Parameter = if (reference.owner == null)
+            &global_parameters
+        else
+            &module_parameters;
+        var bound = try self.bindEvaluatedArguments(
+            parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        if (reference.owner != null and bound.values[1] != null) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native complement() interpolation spaces are not implemented",
+            );
+            return error.UnsupportedFeature;
+        }
+        const color = try self.legacyComplementColorArgument(bound.values[0].?.*, span);
+        const result = native_color.adjustHue(color, 180) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+
+        if (reference.owner == null) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        return self.values.own(.{ .color = result });
+    }
+
+    fn legacyComplementColorArgument(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "complement() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy complement() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy complement() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -15768,6 +15865,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "saturate")) return .saturate;
     if (kind == .color and sassNameEql(name, "desaturate")) return .desaturate;
     if (kind == .color and sassNameEql(name, "adjust-hue")) return .adjust_hue;
+    if (kind == .color and sassNameEql(name, "complement")) return .complement;
     return null;
 }
 

@@ -16202,6 +16202,253 @@ test "native Sass meta call rejects unavailable color adjust hue forms arguments
     );
 }
 
+test "native Sass meta call invokes legacy color complement function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("complement");
+        \\$module: meta.get-function("complement", $module: "color");
+        \\$alias: meta.get-function("complement", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("complement");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (#123456,);
+        \\$map-args: ("color": hwb(240deg 10% 20%));
+        \\.values {
+        \\  global-exists: meta.function-exists("complement");
+        \\  module-exists: meta.function-exists("complement", "color");
+        \\  alias-exists: meta.function-exists("complement", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, #123456);
+        \\  module: meta.call($module, #123456);
+        \\  named-global: meta.call($global, $color: #123456);
+        \\  named-module: meta.call($module, $color: #123456);
+        \\  transparent: meta.call($global, transparent);
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .5));
+        \\  hsl: meta.call($global, hsl(120deg 20% 25%));
+        \\  hwb: meta.call($module, hwb(240deg 10% 20%));
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), $color: mark(2, #123456));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, #123456));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-complement-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"complement\");inspect-module:get-function(\"complement\");global:#563412;module:#563412;named-global:#563412;named-module:#563412;transparent:rgba(0,0,0,0);alpha:rgba(86,52,18,.5);hsl:hsl(300,20%,25%);hwb:rgb(204,204,25.5);list-splat:#563412;map-splat:rgb(204,204,25.5);ordered:#563412;trace:12;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 7), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$global: m.get-function("complement")
+        \\$module: m.get-function("complement", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20%))
+        \\.sass
+        \\  type: m.type-of($global)
+        \\  module-type: m.type-of($module)
+        \\  plain: m.call($global, hsl(120deg 20% 25%))
+        \\  named: m.call($module, $color: #123456)
+        \\  map: m.call($module, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-complement-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;plain:hsl(300,20%,25%);named:#563412;map:rgb(204,204,25.5);module-inspect:get-function(\"complement\")}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorComplementFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorComplementFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\$global: meta.get-function("complement");
+        \\$module: meta.get-function("complement", $module: "color");
+        \\.allocation {
+        \\  global: meta.call($global, #123456);
+        \\  module: meta.call($module, hsl(120deg 20% 25%));
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .5));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-complement-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{global:#563412;module:hsl(300,20%,25%);alpha:rgba(86,52,18,.5)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color complement forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($complement)" },
+        .{ .name = "extra", .invocation = "meta.call($complement, red, hsl)" },
+        .{ .name = "unknown", .invocation = "meta.call($complement, $other: red)" },
+        .{ .name = "duplicate", .invocation = "meta.call($complement, red, $color: blue)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($complement, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($complement, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($complement, true)" },
+        .{ .name = "number", .invocation = "meta.call($complement, 1)" },
+        .{ .name = "quoted", .invocation = "meta.call($complement, \"red\")" },
+        .{ .name = "unquoted", .invocation = "meta.call($complement, red-name)" },
+        .{ .name = "list", .invocation = "meta.call($complement, (red, blue))" },
+        .{ .name = "map", .invocation = "meta.call($complement, (tone: red))" },
+        .{ .name = "callable", .invocation = "meta.call($complement, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "rgb-missing", .invocation = "meta.call($complement, rgb(none 0 0))" },
+        .{ .name = "hsl-missing", .invocation = "meta.call($complement, hsl(none 10% 20%))" },
+        .{ .name = "hwb-missing", .invocation = "meta.call($complement, hwb(none 10% 20%))" },
+        .{ .name = "lab", .invocation = "meta.call($complement, lab(50% 10 20))" },
+        .{ .name = "lch", .invocation = "meta.call($complement, lch(50% 20 30deg))" },
+        .{ .name = "oklab", .invocation = "meta.call($complement, oklab(50% .1 .2))" },
+        .{ .name = "oklch", .invocation = "meta.call($complement, oklch(50% .1 30deg))" },
+        .{ .name = "srgb", .invocation = "meta.call($complement, color(srgb .1 .2 .3))" },
+        .{ .name = "srgb-linear", .invocation = "meta.call($complement, color(srgb-linear .1 .2 .3))" },
+        .{ .name = "display-p3", .invocation = "meta.call($complement, color(display-p3 .1 .2 .3))" },
+        .{ .name = "a98-rgb", .invocation = "meta.call($complement, color(a98-rgb .1 .2 .3))" },
+        .{ .name = "prophoto-rgb", .invocation = "meta.call($complement, color(prophoto-rgb .1 .2 .3))" },
+        .{ .name = "rec2020", .invocation = "meta.call($complement, color(rec2020 .1 .2 .3))" },
+        .{ .name = "xyz-d50", .invocation = "meta.call($complement, color(xyz-d50 .1 .2 .3))" },
+        .{ .name = "xyz-d65", .invocation = "meta.call($complement, color(xyz-d65 .1 .2 .3))" },
+        .{ .name = "variable", .invocation = "meta.call($complement, var(--color))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; $complement: meta.get-function(\"complement\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    const module_space_cases = [_][]const u8{
+        "meta.call($complement, #123456, $space: hsl)",
+        "meta.call($complement, #123456, $space: hwb)",
+        "meta.call($complement, lch(50% 20 30deg), $space: lch)",
+        "meta.call($complement, oklch(50% .1 30deg), $space: oklch)",
+    };
+    for (module_space_cases) |invocation| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $complement: meta.get-function(\"complement\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.UnsupportedFeature,
+            compile(std.testing.allocator, "meta-call-color-complement-space.scss", input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-complement-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"complement\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-complement-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-complement-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.complement(red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-complement-argument-limit.scss",
+            "@use \"sass:meta\"; $complement: meta.get-function(\"complement\"); .a { value: meta.call($complement, red, hsl); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -16315,7 +16562,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"complement\"), #123); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"grayscale\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
