@@ -11587,6 +11587,181 @@ test "native Sass meta call rejects unavailable lab forms arguments and limits" 
     );
 }
 
+test "native Sass meta call invokes lch function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("lch");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module-exists: meta.function-exists("lch", "color");
+        \\$alias-exists: meta.function-exists("lch", "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("lch");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (50% 20 30deg / .4,);
+        \\$map-args: ("channels": 50% 20 30deg / 40%);
+        \\$negative-chroma: -10;
+        \\$negative-hue: -30deg;
+        \\.values {
+        \\  global-exists: meta.function-exists("lch");
+        \\  module-exists: $module-exists;
+        \\  alias-exists: $alias-exists;
+        \\  type: meta.type-of($global);
+        \\  star-same: $global == $star;
+        \\  inspect: meta.inspect($global);
+        \\  plain: meta.call($global, 50% 20 30deg / .4);
+        \\  named: meta.call($global, $channels: 50% 20 30deg / .4);
+        \\  unitless-light: meta.call($global, 50 20 30deg);
+        \\  percent-chroma: meta.call($global, 50% 10% 30deg);
+        \\  unitless-hue: meta.call($global, 50% 20 30);
+        \\  turn-hue: meta.call($global, 50% 20 .25turn);
+        \\  alpha-percent: meta.call($global, 50% 20 30deg / 40%);
+        \\  clamped: meta.call($global, 120% $negative-chroma 390deg / 2);
+        \\  negative-hue: meta.call($global, 50% 20 $negative-hue);
+        \\  missing: meta.call($global, none none none / none);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  ordered: meta.call(mark(1, $global), mark(2, 50% 20 30deg / .4));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, 50% 20 30deg));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-lch-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;star-same:true;inspect:get-function(\"lch\");plain:lch(50 20 30/.4);named:lch(50 20 30/.4);unitless-light:lch(50 20 30);percent-chroma:lch(50 15 30);unitless-hue:lch(50 20 30);turn-hue:lch(50 20 90);alpha-percent:lch(50 20 30/.4);clamped:lch(100 0 30);negative-hue:lch(50 20 330);missing:lch(none none none/none);list-splat:lch(50 20 30/.4);map-splat:lch(50 20 30/.4);ordered:lch(50 20 30/.4);trace:12;result-type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$lch: m.get-function("lch")
+        \\$arguments: ("channels": 50% 20 30deg / .4)
+        \\.sass
+        \\  type: m.type-of($lch)
+        \\  plain: m.call($lch, 50% 20 30deg / .4)
+        \\  named: m.call($lch, $channels: 50% 20 30deg)
+        \\  map: m.call($lch, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-lch-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:lch(50 20 30/.4);named:lch(50 20 30);map:lch(50 20 30/.4)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLchFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseLchFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$lch: meta.get-function("lch");
+        \\.allocation {
+        \\  value: meta.call($lch, 50% 20 30deg / .4);
+        \\  type: meta.type-of(meta.call($lch, $channels: 50% 20 30deg));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-lch-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:lch(50 20 30/.4);type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable lch forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "module-reference", .invocation = "meta.get-function(\"lch\", $module: \"color\")" },
+        .{ .name = "missing", .invocation = "meta.call($lch)" },
+        .{ .name = "extra", .invocation = "meta.call($lch, 50% 20 30deg, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($lch, $other: 50% 20 30deg)" },
+        .{ .name = "duplicate", .invocation = "meta.call($lch, 50% 20 30deg, $channels: 50% 20 30deg)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($lch, ()...)" },
+        .{ .name = "legacy-positional", .invocation = "meta.call($lch, 50%, 20, 30deg)" },
+        .{ .name = "legacy-named", .invocation = "meta.call($lch, $lightness: 50%, $chroma: 20, $hue: 30deg)" },
+        .{ .name = "null", .invocation = "meta.call($lch, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($lch, true)" },
+        .{ .name = "quoted", .invocation = "meta.call($lch, \"50% 20 30deg\")" },
+        .{ .name = "number", .invocation = "meta.call($lch, 50)" },
+        .{ .name = "two-channels", .invocation = "meta.call($lch, 50% 20)" },
+        .{ .name = "four-channels", .invocation = "meta.call($lch, 50% 20 30deg 40)" },
+        .{ .name = "comma-list", .invocation = "meta.call($lch, (50%, 20, 30deg))" },
+        .{ .name = "map-value", .invocation = "meta.call($lch, (a: 1))" },
+        .{ .name = "color", .invocation = "meta.call($lch, red)" },
+        .{ .name = "bracketed", .invocation = "meta.call($lch, [50% 20 30deg])" },
+        .{ .name = "lightness-unit", .invocation = "meta.call($lch, 50px 20 30deg)" },
+        .{ .name = "chroma-unit", .invocation = "meta.call($lch, 50% 20px 30deg)" },
+        .{ .name = "hue-unit", .invocation = "meta.call($lch, 50% 20 30px)" },
+        .{ .name = "hue-percentage", .invocation = "meta.call($lch, 50% 20 30%)" },
+        .{ .name = "alpha-unit", .invocation = "meta.call($lch, 50% 20 30deg / 1px)" },
+        .{ .name = "deferred-variable", .invocation = "meta.call($lch, var(--channels))" },
+        .{ .name = "lightness-calculation", .invocation = "meta.call($lch, calc(50% + var(--l)) 20 30deg)" },
+        .{ .name = "chroma-calculation", .invocation = "meta.call($lch, 50% calc(20 + var(--c)) 30deg)" },
+        .{ .name = "hue-calculation", .invocation = "meta.call($lch, 50% 20 calc(30deg + var(--h)))" },
+        .{ .name = "alpha-calculation", .invocation = "meta.call($lch, 50% 20 30deg / calc(.4 + var(--a)))" },
+        .{ .name = "function", .invocation = "meta.call($lch, meta.get-function(\"inspect\", $module: \"meta\") 20 30deg)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $lch: meta.get-function(\"lch\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-lch-argument-limit.scss",
+            "@use \"sass:meta\"; $lch: meta.get-function(\"lch\"); .a { value: meta.call($lch, 50% 20 30deg); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -11700,7 +11875,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"lch\"), 50% 20 30deg); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"oklab\"), 50% 10 20); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

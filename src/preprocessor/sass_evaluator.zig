@@ -8605,6 +8605,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorLchFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -10134,7 +10141,7 @@ const Engine = struct {
             .string => |string| {
                 if (string.quoted) return self.invalidLabChannels(span);
                 var parsed: [3]ModernColorChannel = undefined;
-                if (!parseStaticLabChannels(string.bytes, &kinds, &parsed)) {
+                if (!parseStaticModernColorChannels(string.bytes, &kinds, &parsed)) {
                     return self.invalidLabChannels(span);
                 }
                 for (parsed, 0..) |channel, index| {
@@ -10154,7 +10161,7 @@ const Engine = struct {
                         .lab_axis,
                     };
                     var leading: [2]ModernColorChannel = undefined;
-                    if (!parseStaticLabChannels(
+                    if (!parseStaticModernColorChannels(
                         list.items[0].string.bytes,
                         &leading_kinds,
                         &leading,
@@ -10182,7 +10189,7 @@ const Engine = struct {
                     );
                     const axes_kinds = [_]ModernColorChannelKind{ .lab_axis, .lab_axis };
                     var axes: [2]ModernColorChannel = undefined;
-                    if (!parseStaticLabChannels(
+                    if (!parseStaticModernColorChannels(
                         list.items[1].string.bytes,
                         &axes_kinds,
                         &axes,
@@ -10214,6 +10221,170 @@ const Engine = struct {
             .type_mismatch,
             span,
             "lab() channels require an unbracketed three-item space list and optional slash alpha",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
+    fn invokeColorLchFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null or reference.builtin != .lch) return null;
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "channels" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return try self.callLchChannelsValue(bound.values[0].?.*, span);
+    }
+
+    fn callLchChannelsValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var channels = value;
+        var alpha: ?native_value.Value = null;
+        if (value == .list) {
+            const outer = value.list;
+            if (outer.bracketed) return self.invalidLchChannels(span);
+            if (outer.separator == .slash or outer.separator == .legacy_slash) {
+                if (outer.items.len != 2) return self.invalidLchChannels(span);
+                channels = outer.items[0];
+                alpha = outer.items[1];
+            }
+        }
+
+        var color_channels = [4]f64{ 0, 0, 0, 1 };
+        var missing_mask: u4 = 0;
+        try self.populateLchChannels(
+            channels,
+            &color_channels,
+            &missing_mask,
+            span,
+        );
+        if (alpha) |alpha_value| {
+            const channel = try self.modernColorChannel(alpha_value, .alpha, span);
+            color_channels[3] = channel.value;
+            if (channel.missing) missing_mask |= 0b1000;
+        }
+        const color = native_color.modern(
+            .lch,
+            color_channels,
+            missing_mask,
+        ) catch |err| return self.colorTransformFailure(err, span);
+        return self.values.own(.{ .color = color });
+    }
+
+    fn populateLchChannels(
+        self: *Engine,
+        value: native_value.Value,
+        output: *[4]f64,
+        missing_mask: *u4,
+        span: native_source.Span,
+    ) Error!void {
+        const kinds = [_]ModernColorChannelKind{
+            .lab_lightness,
+            .lch_chroma,
+            .hue,
+        };
+        const missing_bits = [_]u4{ 0b0001, 0b0010, 0b0100 };
+        switch (value) {
+            .string => |string| {
+                if (string.quoted) return self.invalidLchChannels(span);
+                var parsed: [3]ModernColorChannel = undefined;
+                if (!parseStaticModernColorChannels(string.bytes, &kinds, &parsed)) {
+                    return self.invalidLchChannels(span);
+                }
+                for (parsed, 0..) |channel, index| {
+                    output[index] = channel.value;
+                    if (channel.missing) missing_mask.* |= missing_bits[index];
+                }
+            },
+            .list => |list| {
+                if (list.bracketed or list.separator != .space) {
+                    return self.invalidLchChannels(span);
+                }
+                if (list.items.len == 2 and list.items[0] == .string and
+                    !list.items[0].string.quoted)
+                {
+                    const leading_kinds = [_]ModernColorChannelKind{
+                        .lab_lightness,
+                        .lch_chroma,
+                    };
+                    var leading: [2]ModernColorChannel = undefined;
+                    if (!parseStaticModernColorChannels(
+                        list.items[0].string.bytes,
+                        &leading_kinds,
+                        &leading,
+                    )) return self.invalidLchChannels(span);
+                    const trailing = try self.modernColorChannel(
+                        list.items[1],
+                        .hue,
+                        span,
+                    );
+                    for (leading, 0..) |channel, index| {
+                        output[index] = channel.value;
+                        if (channel.missing) missing_mask.* |= missing_bits[index];
+                    }
+                    output[2] = trailing.value;
+                    if (trailing.missing) missing_mask.* |= missing_bits[2];
+                    return;
+                }
+                if (list.items.len == 2 and list.items[1] == .string and
+                    !list.items[1].string.quoted)
+                {
+                    const lightness = try self.modernColorChannel(
+                        list.items[0],
+                        .lab_lightness,
+                        span,
+                    );
+                    const trailing_kinds = [_]ModernColorChannelKind{
+                        .lch_chroma,
+                        .hue,
+                    };
+                    var trailing: [2]ModernColorChannel = undefined;
+                    if (!parseStaticModernColorChannels(
+                        list.items[1].string.bytes,
+                        &trailing_kinds,
+                        &trailing,
+                    )) return self.invalidLchChannels(span);
+                    output[0] = lightness.value;
+                    if (lightness.missing) missing_mask.* |= missing_bits[0];
+                    for (trailing, 1..) |channel, index| {
+                        output[index] = channel.value;
+                        if (channel.missing) missing_mask.* |= missing_bits[index];
+                    }
+                    return;
+                }
+                if (list.items.len != 3) return self.invalidLchChannels(span);
+                for (list.items, kinds, 0..) |item, kind, index| {
+                    const channel = try self.modernColorChannel(item, kind, span);
+                    output[index] = channel.value;
+                    if (channel.missing) missing_mask.* |= missing_bits[index];
+                }
+            },
+            else => return self.invalidLchChannels(span),
+        }
+    }
+
+    fn invalidLchChannels(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "lch() channels require an unbracketed three-item space list and optional slash alpha",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -13587,9 +13758,10 @@ fn moduleFunctionExists(kind: BuiltinModule, name: []const u8) bool {
     if (moduleBuiltin(kind, name) != null) return true;
     // Dart Sass 1.101.0 reports modern global color constructors as existing
     // in sass:color even though qualified calls and module-owned references
-    // remain unavailable. Preserve that measured split for Lab only until the
-    // next constructor receives its own evidence-closed slice.
-    return kind == .color and sassNameEql(name, "lab");
+    // remain unavailable. Preserve that measured split only for constructors
+    // with their own evidence-closed invocation slices.
+    return kind == .color and
+        (sassNameEql(name, "lab") or sassNameEql(name, "lch"));
 }
 
 // Built-in function identity includes its owner: a legacy global and the
@@ -14679,7 +14851,7 @@ fn parseColorPercentagePair(input: []const u8) ?[2]f64 {
     return result;
 }
 
-fn parseStaticLabChannels(
+fn parseStaticModernColorChannels(
     input: []const u8,
     kinds: []const ModernColorChannelKind,
     output: []ModernColorChannel,
@@ -14696,7 +14868,7 @@ fn parseStaticLabChannels(
             cursor += 1;
         }
         if (start == cursor) return false;
-        channel.* = parseStaticLabChannel(trimmed[start..cursor], kind) orelse return false;
+        channel.* = parseStaticModernColorChannel(trimmed[start..cursor], kind) orelse return false;
     }
     while (cursor < trimmed.len and isExpressionWhitespace(trimmed[cursor])) {
         cursor += 1;
@@ -14704,11 +14876,12 @@ fn parseStaticLabChannels(
     return cursor == trimmed.len;
 }
 
-fn parseStaticLabChannel(
+fn parseStaticModernColorChannel(
     input: []const u8,
     kind: ModernColorChannelKind,
 ) ?ModernColorChannel {
     if (std.mem.eql(u8, input, "none")) return .{ .missing = true };
+    if (kind == .hue) return parseStaticColorHue(input);
     const percentage = input.len > 1 and input[input.len - 1] == '%';
     const number_bytes = if (percentage) input[0 .. input.len - 1] else input;
     const value = std.fmt.parseFloat(f64, number_bytes) catch return null;
@@ -14716,8 +14889,35 @@ fn parseStaticLabChannel(
     return .{ .value = switch (kind) {
         .lab_lightness => value,
         .lab_axis => if (percentage) value * 1.25 else value,
+        .lch_chroma => if (percentage) value * 1.5 else value,
         else => return null,
     } };
+}
+
+fn parseStaticColorHue(input: []const u8) ?ModernColorChannel {
+    const units = [_]struct {
+        name: []const u8,
+        factor: f64,
+    }{
+        .{ .name = "deg", .factor = 1 },
+        .{ .name = "grad", .factor = 0.9 },
+        .{ .name = "rad", .factor = 180.0 / std.math.pi },
+        .{ .name = "turn", .factor = 360 },
+    };
+    for (units) |unit| {
+        if (input.len <= unit.name.len) continue;
+        const suffix = input[input.len - unit.name.len ..];
+        if (!std.ascii.eqlIgnoreCase(suffix, unit.name)) continue;
+        const value = std.fmt.parseFloat(
+            f64,
+            input[0 .. input.len - unit.name.len],
+        ) catch return null;
+        if (!std.math.isFinite(value)) return null;
+        return .{ .value = value * unit.factor };
+    }
+    const value = std.fmt.parseFloat(f64, input) catch return null;
+    if (!std.math.isFinite(value)) return null;
+    return .{ .value = value };
 }
 
 fn isExpressionWhitespace(byte: u8) bool {
