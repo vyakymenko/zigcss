@@ -8612,6 +8612,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorOklabFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -10385,6 +10392,170 @@ const Engine = struct {
             .type_mismatch,
             span,
             "lch() channels require an unbracketed three-item space list and optional slash alpha",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
+    fn invokeColorOklabFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null or reference.builtin != .oklab) return null;
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "channels" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return try self.callOklabChannelsValue(bound.values[0].?.*, span);
+    }
+
+    fn callOklabChannelsValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var channels = value;
+        var alpha: ?native_value.Value = null;
+        if (value == .list) {
+            const outer = value.list;
+            if (outer.bracketed) return self.invalidOklabChannels(span);
+            if (outer.separator == .slash or outer.separator == .legacy_slash) {
+                if (outer.items.len != 2) return self.invalidOklabChannels(span);
+                channels = outer.items[0];
+                alpha = outer.items[1];
+            }
+        }
+
+        var color_channels = [4]f64{ 0, 0, 0, 1 };
+        var missing_mask: u4 = 0;
+        try self.populateOklabChannels(
+            channels,
+            &color_channels,
+            &missing_mask,
+            span,
+        );
+        if (alpha) |alpha_value| {
+            const channel = try self.modernColorChannel(alpha_value, .alpha, span);
+            color_channels[3] = channel.value;
+            if (channel.missing) missing_mask |= 0b1000;
+        }
+        const color = native_color.modern(
+            .oklab,
+            color_channels,
+            missing_mask,
+        ) catch |err| return self.colorTransformFailure(err, span);
+        return self.values.own(.{ .color = color });
+    }
+
+    fn populateOklabChannels(
+        self: *Engine,
+        value: native_value.Value,
+        output: *[4]f64,
+        missing_mask: *u4,
+        span: native_source.Span,
+    ) Error!void {
+        const kinds = [_]ModernColorChannelKind{
+            .oklab_lightness,
+            .oklab_axis,
+            .oklab_axis,
+        };
+        const missing_bits = [_]u4{ 0b0001, 0b0010, 0b0100 };
+        switch (value) {
+            .string => |string| {
+                if (string.quoted) return self.invalidOklabChannels(span);
+                var parsed: [3]ModernColorChannel = undefined;
+                if (!parseStaticModernColorChannels(string.bytes, &kinds, &parsed)) {
+                    return self.invalidOklabChannels(span);
+                }
+                for (parsed, 0..) |channel, index| {
+                    output[index] = channel.value;
+                    if (channel.missing) missing_mask.* |= missing_bits[index];
+                }
+            },
+            .list => |list| {
+                if (list.bracketed or list.separator != .space) {
+                    return self.invalidOklabChannels(span);
+                }
+                if (list.items.len == 2 and list.items[0] == .string and
+                    !list.items[0].string.quoted)
+                {
+                    const leading_kinds = [_]ModernColorChannelKind{
+                        .oklab_lightness,
+                        .oklab_axis,
+                    };
+                    var leading: [2]ModernColorChannel = undefined;
+                    if (!parseStaticModernColorChannels(
+                        list.items[0].string.bytes,
+                        &leading_kinds,
+                        &leading,
+                    )) return self.invalidOklabChannels(span);
+                    const trailing = try self.modernColorChannel(
+                        list.items[1],
+                        .oklab_axis,
+                        span,
+                    );
+                    for (leading, 0..) |channel, index| {
+                        output[index] = channel.value;
+                        if (channel.missing) missing_mask.* |= missing_bits[index];
+                    }
+                    output[2] = trailing.value;
+                    if (trailing.missing) missing_mask.* |= missing_bits[2];
+                    return;
+                }
+                if (list.items.len == 2 and list.items[1] == .string and
+                    !list.items[1].string.quoted)
+                {
+                    const lightness = try self.modernColorChannel(
+                        list.items[0],
+                        .oklab_lightness,
+                        span,
+                    );
+                    const axes_kinds = [_]ModernColorChannelKind{
+                        .oklab_axis,
+                        .oklab_axis,
+                    };
+                    var axes: [2]ModernColorChannel = undefined;
+                    if (!parseStaticModernColorChannels(
+                        list.items[1].string.bytes,
+                        &axes_kinds,
+                        &axes,
+                    )) return self.invalidOklabChannels(span);
+                    output[0] = lightness.value;
+                    if (lightness.missing) missing_mask.* |= missing_bits[0];
+                    for (axes, 1..) |channel, index| {
+                        output[index] = channel.value;
+                        if (channel.missing) missing_mask.* |= missing_bits[index];
+                    }
+                    return;
+                }
+                if (list.items.len != 3) return self.invalidOklabChannels(span);
+                for (list.items, kinds, 0..) |item, kind, index| {
+                    const channel = try self.modernColorChannel(item, kind, span);
+                    output[index] = channel.value;
+                    if (channel.missing) missing_mask.* |= missing_bits[index];
+                }
+            },
+            else => return self.invalidOklabChannels(span),
+        }
+    }
+
+    fn invalidOklabChannels(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "oklab() channels require an unbracketed three-item space list and optional slash alpha",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -13761,7 +13932,9 @@ fn moduleFunctionExists(kind: BuiltinModule, name: []const u8) bool {
     // remain unavailable. Preserve that measured split only for constructors
     // with their own evidence-closed invocation slices.
     return kind == .color and
-        (sassNameEql(name, "lab") or sassNameEql(name, "lch"));
+        (sassNameEql(name, "lab") or
+            sassNameEql(name, "lch") or
+            sassNameEql(name, "oklab"));
 }
 
 // Built-in function identity includes its owner: a legacy global and the
@@ -14888,7 +15061,9 @@ fn parseStaticModernColorChannel(
     if (!std.math.isFinite(value)) return null;
     return .{ .value = switch (kind) {
         .lab_lightness => value,
+        .oklab_lightness => if (percentage) value / 100 else value,
         .lab_axis => if (percentage) value * 1.25 else value,
+        .oklab_axis => if (percentage) value * 0.004 else value,
         .lch_chroma => if (percentage) value * 1.5 else value,
         else => return null,
     } };

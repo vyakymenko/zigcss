@@ -11762,6 +11762,182 @@ test "native Sass meta call rejects unavailable lch forms arguments and limits" 
     );
 }
 
+test "native Sass meta call invokes oklab function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("oklab");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module-exists: meta.function-exists("oklab", "color");
+        \\$alias-exists: meta.function-exists("oklab", "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("oklab");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$negative-axis: -10%;
+        \\$negative-unitless-axis: -.04;
+        \\$list-args: (50% 10% 20% / .4,);
+        \\$map-args: ("channels": 50% 10% 20% / 40%);
+        \\$high-lightness: 120%;
+        \\$negative-lightness: -10%;
+        \\.values {
+        \\  global-exists: meta.function-exists("oklab");
+        \\  module-exists: $module-exists;
+        \\  alias-exists: $alias-exists;
+        \\  type: meta.type-of($global);
+        \\  star-same: $global == $star;
+        \\  inspect: meta.inspect($global);
+        \\  plain: meta.call($global, 50% 10% 20% / .4);
+        \\  named: meta.call($global, $channels: 50% 10% 20% / .4);
+        \\  unitless-light: meta.call($global, .5 .04 $negative-unitless-axis);
+        \\  percent-axes: meta.call($global, 50% 10% $negative-axis);
+        \\  unitless-high: meta.call($global, 50 .04 $negative-unitless-axis);
+        \\  alpha-percent: meta.call($global, 50% 10% 20% / 40%);
+        \\  clamped: meta.call($global, $high-lightness .5 .5 / 2);
+        \\  negative-light: meta.call($global, $negative-lightness .04 $negative-unitless-axis);
+        \\  missing: meta.call($global, none none none / none);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  ordered: meta.call(mark(1, $global), mark(2, 50% 10% 20% / .4));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, 50% .04 $negative-unitless-axis));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-oklab-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;star-same:true;inspect:get-function(\"oklab\");plain:oklab(.5 .04 .08/.4);named:oklab(.5 .04 .08/.4);unitless-light:oklab(.5 .04 -0.04);percent-axes:oklab(.5 .04 -0.04);unitless-high:oklab(1 .04 -0.04);alpha-percent:oklab(.5 .04 .08/.4);clamped:oklab(1 .5 .5);negative-light:oklab(0 .04 -0.04);missing:oklab(none none none/none);list-splat:oklab(.5 .04 .08/.4);map-splat:oklab(.5 .04 .08/.4);ordered:oklab(.5 .04 .08/.4);trace:12;result-type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$oklab: m.get-function("oklab")
+        \\$arguments: ("channels": 50% 10% 20% / .4)
+        \\.sass
+        \\  type: m.type-of($oklab)
+        \\  plain: m.call($oklab, 50% 10% 20% / .4)
+        \\  named: m.call($oklab, $channels: 50% .04 .08)
+        \\  map: m.call($oklab, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-oklab-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:oklab(.5 .04 .08/.4);named:oklab(.5 .04 .08);map:oklab(.5 .04 .08/.4)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseOklabFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseOklabFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$oklab: meta.get-function("oklab");
+        \\$negative-unitless-axis: -.04;
+        \\.allocation {
+        \\  value: meta.call($oklab, 50% 10% 20% / .4);
+        \\  type: meta.type-of(meta.call($oklab, $channels: 50% .04 $negative-unitless-axis));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-oklab-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:oklab(.5 .04 .08/.4);type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable oklab forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "module-reference", .invocation = "meta.get-function(\"oklab\", $module: \"color\")" },
+        .{ .name = "missing", .invocation = "meta.call($oklab)" },
+        .{ .name = "extra", .invocation = "meta.call($oklab, 50% 10% -10%, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($oklab, $other: 50% 10% -10%)" },
+        .{ .name = "duplicate", .invocation = "meta.call($oklab, 50% 10% -10%, $channels: 50% 10% -10%)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($oklab, ()...)" },
+        .{ .name = "legacy-positional", .invocation = "meta.call($oklab, 50%, 10%, -10%)" },
+        .{ .name = "legacy-named", .invocation = "meta.call($oklab, $lightness: 50%, $a: 10%, $b: -10%)" },
+        .{ .name = "null", .invocation = "meta.call($oklab, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($oklab, true)" },
+        .{ .name = "quoted", .invocation = "meta.call($oklab, \"50% 10% -10%\")" },
+        .{ .name = "number", .invocation = "meta.call($oklab, 50)" },
+        .{ .name = "two-channels", .invocation = "meta.call($oklab, 50% 10%)" },
+        .{ .name = "four-channels", .invocation = "meta.call($oklab, 50% 10% -10% .4)" },
+        .{ .name = "comma-list", .invocation = "meta.call($oklab, (50%, 10%, -10%))" },
+        .{ .name = "map-value", .invocation = "meta.call($oklab, (a: 1))" },
+        .{ .name = "color", .invocation = "meta.call($oklab, red)" },
+        .{ .name = "bracketed", .invocation = "meta.call($oklab, [50% 10% -10%])" },
+        .{ .name = "lightness-unit", .invocation = "meta.call($oklab, 50px 10% -10%)" },
+        .{ .name = "first-axis-unit", .invocation = "meta.call($oklab, 50% 10px -10%)" },
+        .{ .name = "second-axis-unit", .invocation = "meta.call($oklab, 50% 10% -10px)" },
+        .{ .name = "alpha-unit", .invocation = "meta.call($oklab, 50% 10% -10% / 1px)" },
+        .{ .name = "deferred-variable", .invocation = "meta.call($oklab, var(--channels))" },
+        .{ .name = "lightness-calculation", .invocation = "meta.call($oklab, calc(50% + var(--l)) 10% -10%)" },
+        .{ .name = "first-axis-calculation", .invocation = "meta.call($oklab, 50% calc(10% + var(--a)) -10%)" },
+        .{ .name = "second-axis-calculation", .invocation = "meta.call($oklab, 50% 10% calc(-10% + var(--b)))" },
+        .{ .name = "alpha-calculation", .invocation = "meta.call($oklab, 50% 10% -10% / calc(.4 + var(--alpha)))" },
+        .{ .name = "function", .invocation = "meta.call($oklab, meta.get-function(\"inspect\", $module: \"meta\") 10% -10%)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $oklab: meta.get-function(\"oklab\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-oklab-argument-limit.scss",
+            "@use \"sass:meta\"; $oklab: meta.get-function(\"oklab\"); .a { value: meta.call($oklab, 50% 10% -10%); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -11875,7 +12051,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"oklab\"), 50% 10 20); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"oklch\"), 50% 10% 30deg); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
