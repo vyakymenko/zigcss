@@ -11422,6 +11422,171 @@ test "native Sass meta call rejects invalid hwb arguments and limits" {
     );
 }
 
+test "native Sass meta call invokes lab function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("lab");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module-exists: meta.function-exists("lab", "color");
+        \\$alias-exists: meta.function-exists("lab", "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("lab");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (50% 10 20 / .4,);
+        \\$map-args: ("channels": 50% 10 20 / 40%);
+        \\.values {
+        \\  global-exists: meta.function-exists("lab");
+        \\  module-exists: $module-exists;
+        \\  alias-exists: $alias-exists;
+        \\  type: meta.type-of($global);
+        \\  star-same: $global == $star;
+        \\  inspect: meta.inspect($global);
+        \\  plain: meta.call($global, 50% 10 20 / .4);
+        \\  named: meta.call($global, $channels: 50% 10 20 / .4);
+        \\  unitless-light: meta.call($global, 50 10 20);
+        \\  percent-axes: meta.call($global, 50% 10% -10%);
+        \\  alpha-percent: meta.call($global, 50% 10 20 / 40%);
+        \\  clamped: meta.call($global, 120% 10 20 / 2);
+        \\  missing: meta.call($global, none none none / none);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  ordered: meta.call(mark(1, $global), mark(2, 50% 10 20 / .4));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, 50% 10 20));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-lab-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;star-same:true;inspect:get-function(\"lab\");plain:lab(50 10 20/.4);named:lab(50 10 20/.4);unitless-light:lab(50 10 20);percent-axes:lab(50 12.5 -12.5);alpha-percent:lab(50 10 20/.4);clamped:lab(100 10 20);missing:lab(none none none/none);list-splat:lab(50 10 20/.4);map-splat:lab(50 10 20/.4);ordered:lab(50 10 20/.4);trace:12;result-type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$lab: m.get-function("lab")
+        \\$arguments: ("channels": 50% 10 20 / .4)
+        \\.sass
+        \\  type: m.type-of($lab)
+        \\  plain: m.call($lab, 50% 10 20 / .4)
+        \\  named: m.call($lab, $channels: 50% 10 20)
+        \\  map: m.call($lab, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-lab-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:lab(50 10 20/.4);named:lab(50 10 20);map:lab(50 10 20/.4)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLabFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseLabFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$lab: meta.get-function("lab");
+        \\.allocation {
+        \\  value: meta.call($lab, 50% 10 20 / .4);
+        \\  type: meta.type-of(meta.call($lab, $channels: 50% 10 20));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-lab-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:lab(50 10 20/.4);type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable lab forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "module-reference", .invocation = "meta.get-function(\"lab\", $module: \"color\")" },
+        .{ .name = "missing", .invocation = "meta.call($lab)" },
+        .{ .name = "extra", .invocation = "meta.call($lab, 50% 10 20, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($lab, $other: 50% 10 20)" },
+        .{ .name = "duplicate", .invocation = "meta.call($lab, 50% 10 20, $channels: 50% 10 20)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($lab, ()...)" },
+        .{ .name = "legacy-positional", .invocation = "meta.call($lab, 50%, 10, 20)" },
+        .{ .name = "legacy-named", .invocation = "meta.call($lab, $lightness: 50%, $a: 10, $b: 20)" },
+        .{ .name = "null", .invocation = "meta.call($lab, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($lab, true)" },
+        .{ .name = "quoted", .invocation = "meta.call($lab, \"50% 10 20\")" },
+        .{ .name = "number", .invocation = "meta.call($lab, 50)" },
+        .{ .name = "two-channels", .invocation = "meta.call($lab, 50% 10)" },
+        .{ .name = "four-channels", .invocation = "meta.call($lab, 50% 10 20 30)" },
+        .{ .name = "comma-list", .invocation = "meta.call($lab, (50%, 10, 20))" },
+        .{ .name = "map-value", .invocation = "meta.call($lab, (a: 1))" },
+        .{ .name = "color", .invocation = "meta.call($lab, red)" },
+        .{ .name = "bracketed", .invocation = "meta.call($lab, [50% 10 20])" },
+        .{ .name = "lightness-unit", .invocation = "meta.call($lab, 50px 10 20)" },
+        .{ .name = "axis-unit", .invocation = "meta.call($lab, 50% 10px 20)" },
+        .{ .name = "alpha-unit", .invocation = "meta.call($lab, 50% 10 20 / 1px)" },
+        .{ .name = "deferred-variable", .invocation = "meta.call($lab, var(--channels))" },
+        .{ .name = "deferred-calculation", .invocation = "meta.call($lab, calc(50% + var(--l)) 10 20)" },
+        .{ .name = "function", .invocation = "meta.call($lab, meta.get-function(\"inspect\", $module: \"meta\") 10 20)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $lab: meta.get-function(\"lab\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-lab-argument-limit.scss",
+            "@use \"sass:meta\"; $lab: meta.get-function(\"lab\"); .a { value: meta.call($lab, 50% 10 20); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -11535,7 +11700,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"lab\"), 50% 10 20); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"lch\"), 50% 20 30deg); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

@@ -8598,6 +8598,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorLabFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -10050,6 +10057,167 @@ const Engine = struct {
         return error.InvalidExpression;
     }
 
+    fn invokeColorLabFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null or reference.builtin != .lab) return null;
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "channels" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return try self.callLabChannelsValue(bound.values[0].?.*, span);
+    }
+
+    fn callLabChannelsValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var channels = value;
+        var alpha: ?native_value.Value = null;
+        if (value == .list) {
+            const outer = value.list;
+            if (outer.bracketed) return self.invalidLabChannels(span);
+            if (outer.separator == .slash or outer.separator == .legacy_slash) {
+                if (outer.items.len != 2) return self.invalidLabChannels(span);
+                channels = outer.items[0];
+                alpha = outer.items[1];
+            }
+        }
+
+        var color_channels = [4]f64{ 0, 0, 0, 1 };
+        var missing_mask: u4 = 0;
+        try self.populateLabChannels(
+            channels,
+            &color_channels,
+            &missing_mask,
+            span,
+        );
+        if (alpha) |alpha_value| {
+            const channel = try self.modernColorChannel(alpha_value, .alpha, span);
+            color_channels[3] = channel.value;
+            if (channel.missing) missing_mask |= 0b1000;
+        }
+        const color = native_color.modern(
+            .lab,
+            color_channels,
+            missing_mask,
+        ) catch |err| return self.colorTransformFailure(err, span);
+        return self.values.own(.{ .color = color });
+    }
+
+    fn populateLabChannels(
+        self: *Engine,
+        value: native_value.Value,
+        output: *[4]f64,
+        missing_mask: *u4,
+        span: native_source.Span,
+    ) Error!void {
+        const kinds = [_]ModernColorChannelKind{
+            .lab_lightness,
+            .lab_axis,
+            .lab_axis,
+        };
+        const missing_bits = [_]u4{ 0b0001, 0b0010, 0b0100 };
+        switch (value) {
+            .string => |string| {
+                if (string.quoted) return self.invalidLabChannels(span);
+                var parsed: [3]ModernColorChannel = undefined;
+                if (!parseStaticLabChannels(string.bytes, &kinds, &parsed)) {
+                    return self.invalidLabChannels(span);
+                }
+                for (parsed, 0..) |channel, index| {
+                    output[index] = channel.value;
+                    if (channel.missing) missing_mask.* |= missing_bits[index];
+                }
+            },
+            .list => |list| {
+                if (list.bracketed or list.separator != .space) {
+                    return self.invalidLabChannels(span);
+                }
+                if (list.items.len == 2 and list.items[0] == .string and
+                    !list.items[0].string.quoted)
+                {
+                    const leading_kinds = [_]ModernColorChannelKind{
+                        .lab_lightness,
+                        .lab_axis,
+                    };
+                    var leading: [2]ModernColorChannel = undefined;
+                    if (!parseStaticLabChannels(
+                        list.items[0].string.bytes,
+                        &leading_kinds,
+                        &leading,
+                    )) return self.invalidLabChannels(span);
+                    const trailing = try self.modernColorChannel(
+                        list.items[1],
+                        .lab_axis,
+                        span,
+                    );
+                    for (leading, 0..) |channel, index| {
+                        output[index] = channel.value;
+                        if (channel.missing) missing_mask.* |= missing_bits[index];
+                    }
+                    output[2] = trailing.value;
+                    if (trailing.missing) missing_mask.* |= missing_bits[2];
+                    return;
+                }
+                if (list.items.len == 2 and list.items[1] == .string and
+                    !list.items[1].string.quoted)
+                {
+                    const lightness = try self.modernColorChannel(
+                        list.items[0],
+                        .lab_lightness,
+                        span,
+                    );
+                    const axes_kinds = [_]ModernColorChannelKind{ .lab_axis, .lab_axis };
+                    var axes: [2]ModernColorChannel = undefined;
+                    if (!parseStaticLabChannels(
+                        list.items[1].string.bytes,
+                        &axes_kinds,
+                        &axes,
+                    )) return self.invalidLabChannels(span);
+                    output[0] = lightness.value;
+                    if (lightness.missing) missing_mask.* |= missing_bits[0];
+                    for (axes, 1..) |channel, index| {
+                        output[index] = channel.value;
+                        if (channel.missing) missing_mask.* |= missing_bits[index];
+                    }
+                    return;
+                }
+                if (list.items.len != 3) return self.invalidLabChannels(span);
+                for (list.items, kinds, 0..) |item, kind, index| {
+                    const channel = try self.modernColorChannel(item, kind, span);
+                    output[index] = channel.value;
+                    if (channel.missing) missing_mask.* |= missing_bits[index];
+                }
+            },
+            else => return self.invalidLabChannels(span),
+        }
+    }
+
+    fn invalidLabChannels(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "lab() channels require an unbracketed three-item space list and optional slash alpha",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -10357,7 +10525,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, or hwb, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, or lab, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -10433,7 +10601,7 @@ const Engine = struct {
 
         const exists = switch (builtin) {
             .meta_function_exists => if (module) |kind|
-                moduleBuiltin(kind, normalized) != null
+                moduleFunctionExists(kind, normalized)
             else
                 try self.metaGlobalFunctionExists(normalized, scope),
             .meta_mixin_exists => if (module) |kind|
@@ -13415,6 +13583,15 @@ fn moduleBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     };
 }
 
+fn moduleFunctionExists(kind: BuiltinModule, name: []const u8) bool {
+    if (moduleBuiltin(kind, name) != null) return true;
+    // Dart Sass 1.101.0 reports modern global color constructors as existing
+    // in sass:color even though qualified calls and module-owned references
+    // remain unavailable. Preserve that measured split for Lab only until the
+    // next constructor receives its own evidence-closed slice.
+    return kind == .color and sassNameEql(name, "lab");
+}
+
 // Built-in function identity includes its owner: a legacy global and the
 // corresponding module member are distinct, while module aliases are equal.
 // Reserve origin zero's largest member for the special legacy `if()` function.
@@ -14500,6 +14677,47 @@ fn parseColorPercentagePair(input: []const u8) ?[2]f64 {
         result[index] = value;
     }
     return result;
+}
+
+fn parseStaticLabChannels(
+    input: []const u8,
+    kinds: []const ModernColorChannelKind,
+    output: []ModernColorChannel,
+) bool {
+    if (kinds.len == 0 or kinds.len != output.len) return false;
+    const trimmed = trimWhitespace(input);
+    var cursor: usize = 0;
+    for (kinds, output) |kind, *channel| {
+        while (cursor < trimmed.len and isExpressionWhitespace(trimmed[cursor])) {
+            cursor += 1;
+        }
+        const start = cursor;
+        while (cursor < trimmed.len and !isExpressionWhitespace(trimmed[cursor])) {
+            cursor += 1;
+        }
+        if (start == cursor) return false;
+        channel.* = parseStaticLabChannel(trimmed[start..cursor], kind) orelse return false;
+    }
+    while (cursor < trimmed.len and isExpressionWhitespace(trimmed[cursor])) {
+        cursor += 1;
+    }
+    return cursor == trimmed.len;
+}
+
+fn parseStaticLabChannel(
+    input: []const u8,
+    kind: ModernColorChannelKind,
+) ?ModernColorChannel {
+    if (std.mem.eql(u8, input, "none")) return .{ .missing = true };
+    const percentage = input.len > 1 and input[input.len - 1] == '%';
+    const number_bytes = if (percentage) input[0 .. input.len - 1] else input;
+    const value = std.fmt.parseFloat(f64, number_bytes) catch return null;
+    if (!std.math.isFinite(value)) return null;
+    return .{ .value = switch (kind) {
+        .lab_lightness => value,
+        .lab_axis => if (percentage) value * 1.25 else value,
+        else => return null,
+    } };
 }
 
 fn isExpressionWhitespace(byte: u8) bool {
