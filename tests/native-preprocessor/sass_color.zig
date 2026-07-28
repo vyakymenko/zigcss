@@ -38,6 +38,7 @@ test "native Sass legacy color constructors clamp normalize and serialize determ
         .{ .value = try color.hsl(360, 100, 50, 1), .expected = "red" },
         .{ .value = try color.hsl(400, 120, -10, 1), .expected = "hsl(40,120%,-10%)" },
         .{ .value = try color.hwb(0, 80, 80, 1), .expected = "hsl(0,0%,50%)" },
+        .{ .value = try color.hwb(400, 120, -10, 1.1), .expected = "hsl(0,0%,109.0909090909%)" },
     };
     for (cases) |case| {
         var buffer: [color.max_serialized_bytes]u8 = undefined;

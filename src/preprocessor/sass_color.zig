@@ -247,8 +247,8 @@ pub fn hsl(hue: f64, saturation: f64, lightness: f64, alpha: f64) Error!native_v
 
 pub fn hwb(hue: f64, whiteness: f64, blackness: f64, alpha: f64) Error!native_value.Color {
     if (!allFinite(.{ hue, whiteness, blackness, alpha })) return error.InvalidColor;
-    var white = clamp(whiteness, 0, 100);
-    var black = clamp(blackness, 0, 100);
+    var white = whiteness;
+    var black = blackness;
     const total = white + black;
     if (total > 100) {
         white = white / total * 100;
@@ -771,7 +771,7 @@ pub fn serialize(
     }
     if (input.space == .hwb and approximatelyEqual(input.channels[1] + input.channels[2], 100)) {
         const grayscale_channels = [4]f64{
-            input.channels[0],
+            0,
             0,
             input.channels[1],
             input.channels[3],

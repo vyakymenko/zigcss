@@ -8591,6 +8591,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorHwbFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -9891,7 +9898,7 @@ const Engine = struct {
         if (channels.items.len == 2 and channels.items[1] == .string and
             !channels.items[1].string.quoted)
         {
-            const percentages = parseHslPercentagePair(channels.items[1].string.bytes) orelse
+            const percentages = parseColorPercentagePair(channels.items[1].string.bytes) orelse
                 return self.invalidHslChannels(span);
             const color = native_color.hsl(
                 try self.colorHue(channels.items[0], span),
@@ -9940,6 +9947,106 @@ const Engine = struct {
             return number.value;
         }
         try self.report(.type_mismatch, span, "HSL saturation and lightness require percentages");
+        return error.InvalidExpression;
+    }
+
+    fn invokeColorHwbFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .hwb or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "channels" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return try self.callHwbChannelsValue(bound.values[0].?.*, span);
+    }
+
+    fn callHwbChannelsValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const outer = switch (value) {
+            .list => |list| list,
+            else => return self.invalidHwbChannels(span),
+        };
+        if (outer.bracketed) return self.invalidHwbChannels(span);
+
+        var channels = outer;
+        var alpha: ?native_value.Value = null;
+        if (outer.separator == .slash or outer.separator == .legacy_slash) {
+            if (outer.items.len != 2) return self.invalidHwbChannels(span);
+            channels = switch (outer.items[0]) {
+                .list => |list| list,
+                else => return self.invalidHwbChannels(span),
+            };
+            alpha = outer.items[1];
+        }
+        if (channels.bracketed or channels.separator != .space) {
+            return self.invalidHwbChannels(span);
+        }
+        if (channels.items.len == 2 and channels.items[1] == .string and
+            !channels.items[1].string.quoted)
+        {
+            const percentages = parseColorPercentagePair(channels.items[1].string.bytes) orelse
+                return self.invalidHwbChannels(span);
+            const color = native_color.hwb(
+                try self.colorHue(channels.items[0], span),
+                percentages[0],
+                percentages[1],
+                if (alpha) |alpha_channel| try self.colorAlpha(alpha_channel, span) else 1,
+            ) catch |err| return self.colorTransformFailure(err, span);
+            return self.values.own(.{ .color = color });
+        }
+        if (channels.items.len != 3) return self.invalidHwbChannels(span);
+        const color = native_color.hwb(
+            try self.colorHue(channels.items[0], span),
+            try self.requiredHwbPercentage(channels.items[1], span),
+            try self.requiredHwbPercentage(channels.items[2], span),
+            if (alpha) |alpha_channel| try self.colorAlpha(alpha_channel, span) else 1,
+        ) catch |err| return self.colorTransformFailure(err, span);
+        return self.values.own(.{ .color = color });
+    }
+
+    fn requiredHwbPercentage(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.numerator_units.len == 1 and
+            std.mem.eql(u8, number.numerator_units[0], "%"))
+        {
+            return number.value;
+        }
+        try self.report(.type_mismatch, span, "HWB whiteness and blackness require percentages");
+        return error.InvalidExpression;
+    }
+
+    fn invalidHwbChannels(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "hwb() channels require an unbracketed three-item space list and optional slash alpha",
+        ) catch |err| return err;
         return error.InvalidExpression;
     }
 
@@ -10250,7 +10357,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, or hsla, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, or hwb, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -13403,7 +13510,7 @@ fn moduleBuiltinCallableName(owner: BuiltinModule, builtin: Builtin) ?[]const u8
         .color => if (std.mem.endsWith(u8, tag_name, "_color"))
             tag_name[0 .. tag_name.len - "_color".len]
         else
-            return null,
+            tag_name,
         .list => if (std.mem.startsWith(u8, tag_name, "list_"))
             tag_name["list_".len..]
         else
@@ -13457,6 +13564,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "adjust")) return .adjust_color;
     if (sassNameEql(name, "change")) return .change_color;
     if (sassNameEql(name, "scale")) return .scale_color;
+    if (sassNameEql(name, "hwb")) return .hwb;
     return null;
 }
 
@@ -14368,7 +14476,7 @@ fn isDeferredColorValue(item: native_value.Value) bool {
     };
 }
 
-fn parseHslPercentagePair(input: []const u8) ?[2]f64 {
+fn parseColorPercentagePair(input: []const u8) ?[2]f64 {
     const trimmed = trimWhitespace(input);
     var separator: usize = 0;
     while (separator < trimmed.len and !isExpressionWhitespace(trimmed[separator])) {

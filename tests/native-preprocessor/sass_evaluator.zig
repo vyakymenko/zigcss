@@ -11243,6 +11243,185 @@ test "native Sass meta call rejects invalid global hsla arguments and limits" {
     );
 }
 
+test "native Sass meta call invokes hwb function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("hwb");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module: meta.get-function("hwb", $module: "color");
+        \\$alias: meta.get-function("hwb", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("hwb");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (120 10% 20% / .4,);
+        \\$map-args: ("channels": 120 10% 20% / 40%);
+        \\.values {
+        \\  global-exists: meta.function-exists("hwb");
+        \\  module-exists: meta.function-exists("hwb", "color");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  module-star-same: $module == $star;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, 120 10% 20% / .4);
+        \\  module: meta.call($module, 120 10% 20% / .4);
+        \\  star: meta.call($star, 120 10% 20% / .4);
+        \\  named: meta.call($global, $channels: 120 10% 20% / .4);
+        \\  angle-units: meta.call($global, .5turn 10% 20% / .4);
+        \\  alpha-percent: meta.call($global, 120 10% 20% / 40%);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  normalized: meta.call($global, 120 80% 40%);
+        \\  out-of-range: meta.call($global, 400 120% 10% / 1.1);
+        \\  ordered: meta.call(mark(1, $global), mark(2, 120 10% 20% / .4));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, 120 10% 20%));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-hwb-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;type:function;global-module-same:false;module-alias-same:true;module-star-same:true;inspect-global:get-function(\"hwb\");inspect-module:get-function(\"hwb\");global:rgba(25.5,204,25.5,.4);module:rgba(25.5,204,25.5,.4);star:rgba(25.5,204,25.5,.4);named:rgba(25.5,204,25.5,.4);angle-units:rgba(25.5,204,204,.4);alpha-percent:rgba(25.5,204,25.5,.4);list-splat:rgba(25.5,204,25.5,.4);map-splat:rgba(25.5,204,25.5,.4);normalized:#aaa;out-of-range:hsl(0,0%,92.3076923077%);ordered:rgba(25.5,204,25.5,.4);trace:12;result-type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$global: m.get-function("hwb")
+        \\@use "sass:color" as palette
+        \\$module: m.get-function("hwb", $module: "palette")
+        \\.sass
+        \\  same: $global == $module
+        \\  type: m.type-of($global)
+        \\  global: m.call($global, 120 10% 20% / .4)
+        \\  module: m.call($module, $channels: 180 10% 20% / .4)
+        \\  normalized: m.call($global, 120 80% 40%)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-hwb-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{same:false;type:function;global:rgba(25.5,204,25.5,.4);module:rgba(25.5,204,204,.4);normalized:#aaa}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseHwbFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseHwbFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$hwb: meta.get-function("hwb");
+        \\.allocation {
+        \\  value: meta.call($hwb, 120 10% 20% / .4);
+        \\  type: meta.type-of(meta.call($hwb, $channels: 180 10% 20%));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-hwb-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:rgba(25.5,204,25.5,.4);type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects invalid hwb arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($hwb)" },
+        .{ .name = "extra", .invocation = "meta.call($hwb, 120 10% 20%, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($hwb, $other: 120 10% 20%)" },
+        .{ .name = "duplicate", .invocation = "meta.call($hwb, 120 10% 20%, $channels: 120 10% 20%)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($hwb, ()...)" },
+        .{ .name = "positional-three", .invocation = "meta.call($hwb, 120, 10%, 20%)" },
+        .{ .name = "named-legacy", .invocation = "meta.call($hwb, $hue: 120, $whiteness: 10%, $blackness: 20%)" },
+        .{ .name = "null", .invocation = "meta.call($hwb, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($hwb, true)" },
+        .{ .name = "quoted", .invocation = "meta.call($hwb, \"120 10% 20%\")" },
+        .{ .name = "number", .invocation = "meta.call($hwb, 120)" },
+        .{ .name = "two-channels", .invocation = "meta.call($hwb, 120 10%)" },
+        .{ .name = "four-channels", .invocation = "meta.call($hwb, 120 10% 20% 30%)" },
+        .{ .name = "map-value", .invocation = "meta.call($hwb, (a: 1))" },
+        .{ .name = "color", .invocation = "meta.call($hwb, #123456)" },
+        .{ .name = "bracketed", .invocation = "meta.call($hwb, [120 10% 20%])" },
+        .{ .name = "hue-unit", .invocation = "meta.call($hwb, 1px 10% 20%)" },
+        .{ .name = "whiteness-unitless", .invocation = "meta.call($hwb, 120 10 20%)" },
+        .{ .name = "blackness-unitless", .invocation = "meta.call($hwb, 120 10% 20)" },
+        .{ .name = "whiteness-unit", .invocation = "meta.call($hwb, 120 10px 20%)" },
+        .{ .name = "blackness-unit", .invocation = "meta.call($hwb, 120 10% 20px)" },
+        .{ .name = "alpha-unit", .invocation = "meta.call($hwb, 120 10% 20% / 1px)" },
+        .{ .name = "negative-blackness", .invocation = "meta.call($hwb, 120 120% -10%)" },
+        .{ .name = "hue-calculation", .invocation = "meta.call($hwb, calc(120deg + var(--h)) 10% 20%)" },
+        .{ .name = "whiteness-calculation", .invocation = "meta.call($hwb, 120 calc(10% + var(--w)) 20%)" },
+        .{ .name = "blackness-calculation", .invocation = "meta.call($hwb, 120 10% calc(20% + var(--b)))" },
+        .{ .name = "alpha-calculation", .invocation = "meta.call($hwb, 120 10% 20% / calc(.4 + var(--a)))" },
+        .{ .name = "variable-channels", .invocation = "meta.call($hwb, var(--channels))" },
+        .{ .name = "hue-none", .invocation = "meta.call($hwb, none 10% 20%)" },
+        .{ .name = "whiteness-none", .invocation = "meta.call($hwb, 120 none 20%)" },
+        .{ .name = "blackness-none", .invocation = "meta.call($hwb, 120 10% none)" },
+        .{ .name = "alpha-none", .invocation = "meta.call($hwb, 120 10% 20% / none)" },
+        .{ .name = "function", .invocation = "meta.call($hwb, meta.get-function(\"inspect\", $module: \"meta\") 10% 20%)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; $hwb: meta.get-function(\"hwb\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-hwb-argument-limit.scss",
+            "@use \"sass:meta\"; $hwb: meta.get-function(\"hwb\"); .a { value: meta.call($hwb, 120 10% 20%); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -11356,7 +11535,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"hwb\"), 120 40% 50%); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"lab\"), 50% 10 20); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
