@@ -14176,6 +14176,233 @@ test "native Sass meta call rejects unavailable lightness forms arguments and li
     );
 }
 
+test "native Sass meta call invokes whiteness function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global-exists: meta.function-exists("whiteness");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module: meta.get-function("whiteness", $module: "color");
+        \\$alias: meta.get-function("whiteness", $module: "palette");
+        \\$lightness: meta.get-function("lightness", $module: "color");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("whiteness");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (hsl(45deg 20% 30%),);
+        \\$map-args: ("color": hwb(75deg 20% 30%));
+        \\.values {
+        \\  global-exists: $global-exists;
+        \\  module-exists: meta.function-exists("whiteness", "color");
+        \\  alias-exists: meta.function-exists("whiteness", "palette");
+        \\  type: meta.type-of($module);
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  whiteness-lightness-same: $module == $lightness;
+        \\  inspect-module: meta.inspect($module);
+        \\  named: meta.call($module, $color: hsl(90deg 30% 20%));
+        \\  transparent: meta.call($module, transparent);
+        \\  rgb: meta.call($module, rgb(10 20 30 / .4));
+        \\  hsl: meta.call($module, hsl(120deg 50% 25%));
+        \\  hwb: meta.call($module, hwb(240deg 10% 20%));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, hsl(135deg 50% 25%)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, hsl(150deg 50% 25%)));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-whiteness-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:false;module-exists:true;alias-exists:true;type:function;module-alias-same:true;star-module-same:true;whiteness-lightness-same:false;inspect-module:get-function(\"whiteness\");named:14%;transparent:0%;rgb:3.9215686275%;hsl:12.5%;hwb:10%;list-splat:24%;map-splat:20%;ordered:12.5%;trace:12;result-type:number}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 9), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.whiteness() is deprecated. Use color.channel($color, \"whiteness\", $space: hwb).",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$whiteness: m.get-function("whiteness", $module: "palette")
+        \\$arguments: ("color": hwb(75deg 20% 30%))
+        \\.sass
+        \\  type: m.type-of($whiteness)
+        \\  plain: m.call($whiteness, hsl(210deg 50% 40%))
+        \\  rgb: m.call($whiteness, rgb(10 20 30))
+        \\  map: m.call($whiteness, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-whiteness-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:20%;rgb:3.9215686275%;map:20%}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 3), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.whiteness() is deprecated. Use color.channel($color, \"whiteness\", $space: hwb).",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseWhitenessFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseWhitenessFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\$whiteness: meta.get-function("whiteness", $module: "color");
+        \\.allocation {
+        \\  hsl: meta.call($whiteness, hsl(210deg 50% 40%));
+        \\  rgb: meta.call($whiteness, rgb(10 20 30));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-whiteness-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{hsl:20%;rgb:3.9215686275%}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable whiteness forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($whiteness)" },
+        .{ .name = "extra", .invocation = "meta.call($whiteness, red, rgb)" },
+        .{ .name = "unknown", .invocation = "meta.call($whiteness, $other: red)" },
+        .{ .name = "duplicate", .invocation = "meta.call($whiteness, red, $color: blue)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($whiteness, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($whiteness, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($whiteness, true)" },
+        .{ .name = "number", .invocation = "meta.call($whiteness, 1)" },
+        .{ .name = "quoted", .invocation = "meta.call($whiteness, \"whiteness\")" },
+        .{ .name = "unquoted", .invocation = "meta.call($whiteness, whiteness)" },
+        .{ .name = "list", .invocation = "meta.call($whiteness, (red, blue))" },
+        .{ .name = "map", .invocation = "meta.call($whiteness, (a: red))" },
+        .{ .name = "callable", .invocation = "meta.call($whiteness, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "space", .invocation = "meta.call($whiteness, red, $space: hwb)" },
+        .{ .name = "display-p3", .invocation = "meta.call($whiteness, color(display-p3 .3 .4 .5))" },
+        .{ .name = "xyz", .invocation = "meta.call($whiteness, color(xyz .1 .2 .3))" },
+        .{ .name = "lab", .invocation = "meta.call($whiteness, lab(50% 10 20))" },
+        .{ .name = "lch", .invocation = "meta.call($whiteness, lch(50% 20 30deg))" },
+        .{ .name = "oklab", .invocation = "meta.call($whiteness, oklab(50% .1 .2))" },
+        .{ .name = "oklch", .invocation = "meta.call($whiteness, oklch(50% .1 30deg))" },
+        .{ .name = "variable", .invocation = "meta.call($whiteness, var(--color))" },
+        .{ .name = "calculation", .invocation = "meta.call($whiteness, calc(1 + var(--x)))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $whiteness: meta.get-function(\"whiteness\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-whiteness-global.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $whiteness: meta.get-function(\"whiteness\"); .a { value: meta.call($whiteness, red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-whiteness-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"whiteness\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-whiteness-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-whiteness-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $whiteness: meta.get-function(\"whiteness\", $module: \"color\"); .a { value: meta.call($whiteness, red); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
