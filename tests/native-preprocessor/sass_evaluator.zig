@@ -15385,6 +15385,289 @@ test "native Sass meta call rejects unavailable color darken forms arguments and
     );
 }
 
+test "native Sass meta call invokes legacy color saturate function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("saturate");
+        \\$module: meta.get-function("saturate", $module: "color");
+        \\$alias: meta.get-function("saturate", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("saturate");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (hsl(120deg 20% 25%), 10%);
+        \\$map-args: ("color": hwb(240deg 10% 20%), "amount": 25%);
+        \\$filter-list: (20%,);
+        \\$filter-map: ("amount": 20%);
+        \\.values {
+        \\  global-exists: meta.function-exists("saturate");
+        \\  module-exists: meta.function-exists("saturate", "color");
+        \\  alias-exists: meta.function-exists("saturate", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  filter: meta.call($global, 20%);
+        \\  filter-type: meta.type-of(meta.call($global, $amount: 20%));
+        \\  filter-unit: meta.call($global, 2px);
+        \\  filter-variable: meta.call($global, var(--amount));
+        \\  filter-calculation: meta.call($global, calc(10% + var(--amount)));
+        \\  filter-list-splat: meta.call($global, $filter-list...);
+        \\  filter-map-splat: meta.call($global, $filter-map...);
+        \\  global: meta.call($global, #669966, 20%);
+        \\  named: meta.call($global, $amount: 20%, $color: #669966);
+        \\  unitless: meta.call($global, #669966, 20);
+        \\  unitful: meta.call($global, #669966, 20px);
+        \\  transparent: meta.call($global, transparent, 20%);
+        \\  alpha: meta.call($global, rgba(102, 153, 102, .5), 20%);
+        \\  hsl: meta.call($global, hsl(120deg 20% 25%), 10%);
+        \\  hwb: meta.call($global, hwb(240deg 10% 20%), 25%);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  zero: meta.call($global, #669966, 0%);
+        \\  full: meta.call($global, #669966, 100%);
+        \\  ordered: meta.call(mark(1, $global), $amount: mark(3, 20%), $color: mark(2, #669966));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, #669966, 20%));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-saturate-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"saturate\");inspect-module:get-function(\"saturate\");filter:saturate(20%);filter-type:string;filter-unit:saturate(2px);filter-variable:saturate(var(--amount));filter-calculation:saturate(calc(10% + var(--amount)));filter-list-splat:saturate(20%);filter-map-splat:saturate(20%);global:hsl(120,40%,50%);named:hsl(120,40%,50%);unitless:hsl(120,40%,50%);unitful:hsl(120,40%,50%);transparent:rgba(0,0,0,0);alpha:hsla(120,40%,50%,.5);hsl:hsl(120,30%,25%);hwb:rgb(0,0,229.5);list-splat:hsl(120,30%,25%);map-splat:rgb(0,0,229.5);zero:#696;full:lime;ordered:hsl(120,40%,50%);trace:132;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 28), diagnostics.len);
+    var global_warnings: usize = 0;
+    var saturate_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "saturate() is deprecated. Use color.adjust($color, $saturation: $amount).",
+        )) {
+            saturate_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 14), global_warnings);
+    try std.testing.expectEqual(@as(usize, 14), saturate_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$saturate: m.get-function("saturate")
+        \\$module: m.get-function("saturate", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20%), "amount": 25%)
+        \\.sass
+        \\  type: m.type-of($saturate)
+        \\  module-type: m.type-of($module)
+        \\  filter: m.call($saturate, 20%)
+        \\  plain: m.call($saturate, hsl(120deg 20% 25%), 10%)
+        \\  named: m.call($saturate, $color: #669966, $amount: 20%)
+        \\  map: m.call($saturate, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-saturate-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;filter:saturate(20%);plain:hsl(120,30%,25%);named:hsl(120,40%,50%);map:rgb(0,0,229.5);module-inspect:get-function(\"saturate\")}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), sass_diagnostics.len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorSaturateFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorSaturateFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$saturate: meta.get-function("saturate");
+        \\.allocation {
+        \\  filter: meta.call($saturate, 20%);
+        \\  percent: meta.call($saturate, #669966, 20%);
+        \\  unitful: meta.call($saturate, red, 10px);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-saturate-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{filter:saturate(20%);percent:hsl(120,40%,50%);unitful:red}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 4), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color saturate forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($saturate)" },
+        .{ .name = "missing-amount", .invocation = "meta.call($saturate, red)" },
+        .{ .name = "filter-null", .invocation = "meta.call($saturate, null)" },
+        .{ .name = "filter-boolean", .invocation = "meta.call($saturate, true)" },
+        .{ .name = "filter-quoted", .invocation = "meta.call($saturate, \"20%\")" },
+        .{ .name = "filter-unquoted", .invocation = "meta.call($saturate, amount)" },
+        .{ .name = "filter-list", .invocation = "meta.call($saturate, (10%, 20%))" },
+        .{ .name = "filter-map", .invocation = "meta.call($saturate, (amount: 10%))" },
+        .{ .name = "filter-callable", .invocation = "meta.call($saturate, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "extra", .invocation = "meta.call($saturate, red, 10%, hsl)" },
+        .{ .name = "unknown", .invocation = "meta.call($saturate, red, $other: 10%)" },
+        .{ .name = "duplicate", .invocation = "meta.call($saturate, red, 10%, $amount: 20%)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($saturate, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($saturate, null, 10%)" },
+        .{ .name = "boolean", .invocation = "meta.call($saturate, true, 10%)" },
+        .{ .name = "number", .invocation = "meta.call($saturate, 1, 10%)" },
+        .{ .name = "quoted", .invocation = "meta.call($saturate, \"red\", 10%)" },
+        .{ .name = "unquoted", .invocation = "meta.call($saturate, red-name, 10%)" },
+        .{ .name = "list", .invocation = "meta.call($saturate, (red, blue), 10%)" },
+        .{ .name = "map", .invocation = "meta.call($saturate, (tone: red), 10%)" },
+        .{ .name = "callable", .invocation = "meta.call($saturate, meta.get-function(\"inspect\", $module: \"meta\"), 10%)" },
+        .{ .name = "null-amount", .invocation = "meta.call($saturate, red, null)" },
+        .{ .name = "boolean-amount", .invocation = "meta.call($saturate, red, true)" },
+        .{ .name = "color-amount", .invocation = "meta.call($saturate, red, blue)" },
+        .{ .name = "string-amount", .invocation = "meta.call($saturate, red, \"10%\")" },
+        .{ .name = "list-amount", .invocation = "meta.call($saturate, red, (10%, 20%))" },
+        .{ .name = "map-amount", .invocation = "meta.call($saturate, red, (amount: 10%))" },
+        .{ .name = "callable-amount", .invocation = "meta.call($saturate, red, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "calculation-amount", .invocation = "meta.call($saturate, red, calc(5% + var(--amount)))" },
+        .{ .name = "compound-amount", .invocation = "meta.call($saturate, red, math.div(10px, 1s))" },
+        .{ .name = "negative-amount", .invocation = "meta.call($saturate, red, -1%)" },
+        .{ .name = "high-amount", .invocation = "meta.call($saturate, red, 101%)" },
+        .{ .name = "rgb-missing", .invocation = "meta.call($saturate, rgb(none 0 0), 10%)" },
+        .{ .name = "hsl-missing", .invocation = "meta.call($saturate, hsl(none 10% 20%), 10%)" },
+        .{ .name = "hwb-missing", .invocation = "meta.call($saturate, hwb(none 10% 20%), 10%)" },
+        .{ .name = "lab", .invocation = "meta.call($saturate, lab(50% 10 20), 10%)" },
+        .{ .name = "lch", .invocation = "meta.call($saturate, lch(50% 20 30deg), 10%)" },
+        .{ .name = "oklab", .invocation = "meta.call($saturate, oklab(50% .1 .2), 10%)" },
+        .{ .name = "oklch", .invocation = "meta.call($saturate, oklch(50% .1 30deg), 10%)" },
+        .{ .name = "srgb", .invocation = "meta.call($saturate, color(srgb .1 .2 .3), 10%)" },
+        .{ .name = "srgb-linear", .invocation = "meta.call($saturate, color(srgb-linear .1 .2 .3), 10%)" },
+        .{ .name = "display-p3", .invocation = "meta.call($saturate, color(display-p3 .1 .2 .3), 10%)" },
+        .{ .name = "a98-rgb", .invocation = "meta.call($saturate, color(a98-rgb .1 .2 .3), 10%)" },
+        .{ .name = "prophoto-rgb", .invocation = "meta.call($saturate, color(prophoto-rgb .1 .2 .3), 10%)" },
+        .{ .name = "rec2020", .invocation = "meta.call($saturate, color(rec2020 .1 .2 .3), 10%)" },
+        .{ .name = "xyz-d50", .invocation = "meta.call($saturate, color(xyz-d50 .1 .2 .3), 10%)" },
+        .{ .name = "xyz-d65", .invocation = "meta.call($saturate, color(xyz-d65 .1 .2 .3), 10%)" },
+        .{ .name = "variable", .invocation = "meta.call($saturate, var(--color), 10%)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:math\"; $saturate: meta.get-function(\"saturate\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-saturate-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"saturate\", $module: \"color\"), red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-saturate-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-saturate-removed-module.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $saturate: meta.get-function(\"saturate\", $module: \"color\"); .a { value: meta.call($saturate, red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-saturate-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.saturate(red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-saturate-argument-limit.scss",
+            "@use \"sass:meta\"; $saturate: meta.get-function(\"saturate\"); .a { value: meta.call($saturate, red, 10%); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -15498,7 +15781,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"saturate\"), #123, 10%); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"desaturate\"), #123, 10%); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

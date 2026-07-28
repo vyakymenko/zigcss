@@ -8722,6 +8722,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorSaturateFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -12039,6 +12046,135 @@ const Engine = struct {
                     .type_mismatch,
                     span,
                     "native legacy darken() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
+    fn invokeColorSaturateFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .saturate) return null;
+        if (reference.owner) |owner| {
+            if (owner != .color) return null;
+            try self.report(
+                .unsupported_feature,
+                span,
+                "saturate() is not callable from the sass:color module",
+            );
+            return error.InvalidExpression;
+        }
+
+        const filter_form = blk: {
+            if (arguments.positional.items.len == 0 and arguments.keywords.items.len == 0) {
+                break :blk true;
+            }
+            if (arguments.positional.items.len == 1 and arguments.keywords.items.len == 0) {
+                break :blk true;
+            }
+            if (arguments.positional.items.len != 0 or arguments.keywords.items.len != 1) {
+                break :blk false;
+            }
+            const keyword = arguments.keywords.items[0];
+            break :blk if (keyword.normalize_name)
+                native_arguments.nameEql(keyword.name, "amount")
+            else
+                std.mem.eql(u8, keyword.name, "amount");
+        };
+        if (filter_form) {
+            const parameters = [_]native_arguments.Parameter{.{ .name = "amount" }};
+            var bound = try self.bindEvaluatedArguments(
+                &parameters,
+                parameters.len,
+                arguments,
+                span,
+            );
+            defer bound.deinit();
+
+            const amount = bound.values[0].?;
+            const valid_filter = switch (amount.*) {
+                .number => true,
+                else => isDeferredColorValue(amount.*),
+            };
+            if (!valid_filter) {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "saturate() CSS filter amount requires a number or deferred CSS value",
+                );
+                return error.InvalidExpression;
+            }
+            const rendered = [_]*const native_value.Value{amount};
+            return self.preservePlainCssFunction("saturate", &rendered, false);
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "amount" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const color = try self.legacySaturateColorArgument(bound.values[0].?.*, span);
+        const amount = try self.legacyColorAmount(bound.values[1].?.*, 0, 100, span);
+        const result = native_color.adjustSaturation(color, amount) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            &.{},
+        );
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "saturate() is deprecated. Use color.adjust($color, $saturation: $amount).",
+            &.{},
+        );
+        return self.values.own(.{ .color = result });
+    }
+
+    fn legacySaturateColorArgument(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "saturate() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy saturate() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy saturate() supports only RGB, HSL, or HWB colors",
                 );
                 return error.InvalidExpression;
             },
@@ -15425,6 +15561,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "mix")) return .mix;
     if (kind == .color and sassNameEql(name, "lighten")) return .lighten;
     if (kind == .color and sassNameEql(name, "darken")) return .darken;
+    if (kind == .color and sassNameEql(name, "saturate")) return .saturate;
     return null;
 }
 
