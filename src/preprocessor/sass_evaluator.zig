@@ -8584,6 +8584,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorHslFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -9804,6 +9811,146 @@ const Engine = struct {
         return self.values.own(.{ .color = color });
     }
 
+    fn invokeColorHslFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null or reference.builtin != .hsl) return null;
+
+        var has_channels = false;
+        for (arguments.keywords.items) |keyword| {
+            has_channels = has_channels or evaluatedKeywordNameEql(keyword, "channels");
+        }
+
+        const channels_parameters = [_]native_arguments.Parameter{
+            .{ .name = "channels" },
+        };
+        const hsl_parameters = [_]native_arguments.Parameter{
+            .{ .name = "hue" },
+            .{ .name = "saturation" },
+            .{ .name = "lightness" },
+            .{ .name = "alpha", .required = false },
+        };
+        const channels_overload = has_channels or
+            (arguments.positional.items.len == 1 and arguments.keywords.items.len == 0);
+        const parameters: []const native_arguments.Parameter = if (channels_overload)
+            &channels_parameters
+        else
+            &hsl_parameters;
+        var bound = try self.bindEvaluatedArguments(
+            parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        if (channels_overload) {
+            return try self.callHslChannelsValue(bound.values[0].?.*, span);
+        }
+        return try self.callHslValues(
+            bound.values[0].?.*,
+            bound.values[1].?.*,
+            bound.values[2].?.*,
+            if (bound.values[3]) |alpha| alpha.* else null,
+            span,
+        );
+    }
+
+    fn callHslChannelsValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const outer = switch (value) {
+            .list => |list| list,
+            else => return self.invalidHslChannels(span),
+        };
+        if (outer.bracketed) return self.invalidHslChannels(span);
+
+        var channels = outer;
+        var alpha: ?native_value.Value = null;
+        if (outer.separator == .slash or outer.separator == .legacy_slash) {
+            if (outer.items.len != 2) return self.invalidHslChannels(span);
+            channels = switch (outer.items[0]) {
+                .list => |list| list,
+                else => return self.invalidHslChannels(span),
+            };
+            alpha = outer.items[1];
+        }
+        if (channels.bracketed or channels.separator != .space) {
+            return self.invalidHslChannels(span);
+        }
+        if (channels.items.len == 2 and channels.items[1] == .string and
+            !channels.items[1].string.quoted)
+        {
+            const percentages = parseHslPercentagePair(channels.items[1].string.bytes) orelse
+                return self.invalidHslChannels(span);
+            const color = native_color.hsl(
+                try self.colorHue(channels.items[0], span),
+                percentages[0],
+                percentages[1],
+                if (alpha) |alpha_channel| try self.colorAlpha(alpha_channel, span) else 1,
+            ) catch |err| return self.colorTransformFailure(err, span);
+            return self.values.own(.{ .color = color });
+        }
+        if (channels.items.len != 3) return self.invalidHslChannels(span);
+        return try self.callHslValues(
+            channels.items[0],
+            channels.items[1],
+            channels.items[2],
+            alpha,
+            span,
+        );
+    }
+
+    fn callHslValues(
+        self: *Engine,
+        hue_value: native_value.Value,
+        saturation_value: native_value.Value,
+        lightness_value: native_value.Value,
+        alpha_value: ?native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = native_color.hsl(
+            try self.colorHue(hue_value, span),
+            try self.requiredColorPercentage(saturation_value, span),
+            try self.requiredColorPercentage(lightness_value, span),
+            if (alpha_value) |alpha| try self.colorAlpha(alpha, span) else 1,
+        ) catch |err| return self.colorTransformFailure(err, span);
+        return self.values.own(.{ .color = color });
+    }
+
+    fn requiredColorPercentage(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(item, span);
+        if (number.numerator_units.len == 1 and
+            std.mem.eql(u8, number.numerator_units[0], "%"))
+        {
+            return number.value;
+        }
+        try self.report(.type_mismatch, span, "HSL saturation and lightness require percentages");
+        return error.InvalidExpression;
+    }
+
+    fn invalidHslChannels(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "hsl() channels require an unbracketed three-item space list and optional slash alpha",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
     fn invalidRgbChannels(
         self: *Engine,
         span: native_source.Span,
@@ -10099,7 +10246,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, or rgba, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, or hsl, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -14215,6 +14362,32 @@ fn isDeferredColorValue(item: native_value.Value) bool {
             containsDeferredCssCalculation(string.bytes),
         else => false,
     };
+}
+
+fn parseHslPercentagePair(input: []const u8) ?[2]f64 {
+    const trimmed = trimWhitespace(input);
+    var separator: usize = 0;
+    while (separator < trimmed.len and !isExpressionWhitespace(trimmed[separator])) {
+        separator += 1;
+    }
+    if (separator == 0 or separator == trimmed.len) return null;
+    var second_start = separator;
+    while (second_start < trimmed.len and isExpressionWhitespace(trimmed[second_start])) {
+        second_start += 1;
+    }
+    if (second_start == trimmed.len) return null;
+    for (trimmed[second_start..]) |byte| {
+        if (isExpressionWhitespace(byte)) return null;
+    }
+    const pieces = [2][]const u8{ trimmed[0..separator], trimmed[second_start..] };
+    var result: [2]f64 = undefined;
+    for (pieces, 0..) |piece, index| {
+        if (piece.len < 2 or piece[piece.len - 1] != '%') return null;
+        const value = std.fmt.parseFloat(f64, piece[0 .. piece.len - 1]) catch return null;
+        if (!std.math.isFinite(value)) return null;
+        result[index] = value;
+    }
+    return result;
 }
 
 fn isExpressionWhitespace(byte: u8) bool {

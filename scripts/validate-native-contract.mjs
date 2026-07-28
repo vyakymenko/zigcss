@@ -215,6 +215,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-color-scale-function-invocation',
       'built-in-meta-color-rgb-function-invocation',
       'built-in-meta-color-rgba-function-invocation',
+      'built-in-meta-color-hsl-function-invocation',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
       'built-in-selector-parse-simple',
