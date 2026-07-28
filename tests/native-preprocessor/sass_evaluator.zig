@@ -15668,6 +15668,272 @@ test "native Sass meta call rejects unavailable color saturate forms arguments a
     );
 }
 
+test "native Sass meta call invokes legacy color desaturate function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("desaturate");
+        \\$module: meta.get-function("desaturate", $module: "color");
+        \\$alias: meta.get-function("desaturate", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("desaturate");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (hsl(120deg 20% 25%), 10%);
+        \\$map-args: ("color": hwb(240deg 10% 20%), "amount": 25%);
+        \\.values {
+        \\  global-exists: meta.function-exists("desaturate");
+        \\  module-exists: meta.function-exists("desaturate", "color");
+        \\  alias-exists: meta.function-exists("desaturate", "palette");
+        \\  type: meta.type-of($global);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, #669966, 20%);
+        \\  named: meta.call($global, $amount: 20%, $color: #669966);
+        \\  unitless: meta.call($global, #669966, 20);
+        \\  unitful: meta.call($global, #669966, 20px);
+        \\  transparent: meta.call($global, transparent, 20%);
+        \\  alpha: meta.call($global, rgba(102, 153, 102, .5), 20%);
+        \\  hsl: meta.call($global, hsl(120deg 20% 25%), 10%);
+        \\  hwb: meta.call($global, hwb(240deg 10% 20%), 25%);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  zero: meta.call($global, #669966, 0%);
+        \\  full: meta.call($global, #669966, 100%);
+        \\  ordered: meta.call(mark(1, $global), $amount: mark(3, 20%), $color: mark(2, #669966));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, #669966, 20%));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-desaturate-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"desaturate\");inspect-module:get-function(\"desaturate\");global:hsl(0,0%,50%);named:hsl(0,0%,50%);unitless:hsl(0,0%,50%);unitful:hsl(0,0%,50%);transparent:rgba(0,0,0,0);alpha:hsla(0,0%,50%,.5);hsl:hsl(120,10%,25%);hwb:hsl(240,52.7777777778%,45%);list-splat:hsl(120,10%,25%);map-splat:hsl(240,52.7777777778%,45%);zero:#696;full:hsl(0,0%,50%);ordered:hsl(0,0%,50%);trace:132;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 28), diagnostics.len);
+    var global_warnings: usize = 0;
+    var desaturate_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "desaturate() is deprecated. Use color.adjust($color, $saturation: -$amount).",
+        )) {
+            desaturate_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 14), global_warnings);
+    try std.testing.expectEqual(@as(usize, 14), desaturate_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$desaturate: m.get-function("desaturate")
+        \\$module: m.get-function("desaturate", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20%), "amount": 25%)
+        \\.sass
+        \\  type: m.type-of($desaturate)
+        \\  module-type: m.type-of($module)
+        \\  plain: m.call($desaturate, hsl(120deg 20% 25%), 10%)
+        \\  named: m.call($desaturate, $color: #669966, $amount: 20%)
+        \\  map: m.call($desaturate, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-desaturate-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;plain:hsl(120,10%,25%);named:hsl(0,0%,50%);map:hsl(240,52.7777777778%,45%);module-inspect:get-function(\"desaturate\")}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), sass_diagnostics.len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorDesaturateFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorDesaturateFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$desaturate: meta.get-function("desaturate");
+        \\.allocation {
+        \\  percent: meta.call($desaturate, #669966, 20%);
+        \\  unitful: meta.call($desaturate, red, 10px);
+        \\  hwb: meta.call($desaturate, hwb(240deg 10% 20%), 25%);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-desaturate-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{percent:hsl(0,0%,50%);unitful:hsl(0,90%,50%);hwb:hsl(240,52.7777777778%,45%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color desaturate forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($desaturate)" },
+        .{ .name = "missing-amount", .invocation = "meta.call($desaturate, red)" },
+        .{ .name = "extra", .invocation = "meta.call($desaturate, red, 10%, hsl)" },
+        .{ .name = "unknown", .invocation = "meta.call($desaturate, red, $other: 10%)" },
+        .{ .name = "duplicate", .invocation = "meta.call($desaturate, red, 10%, $amount: 20%)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($desaturate, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($desaturate, null, 10%)" },
+        .{ .name = "boolean", .invocation = "meta.call($desaturate, true, 10%)" },
+        .{ .name = "number", .invocation = "meta.call($desaturate, 1, 10%)" },
+        .{ .name = "quoted", .invocation = "meta.call($desaturate, \"red\", 10%)" },
+        .{ .name = "unquoted", .invocation = "meta.call($desaturate, red-name, 10%)" },
+        .{ .name = "list", .invocation = "meta.call($desaturate, (red, blue), 10%)" },
+        .{ .name = "map", .invocation = "meta.call($desaturate, (tone: red), 10%)" },
+        .{ .name = "callable", .invocation = "meta.call($desaturate, meta.get-function(\"inspect\", $module: \"meta\"), 10%)" },
+        .{ .name = "null-amount", .invocation = "meta.call($desaturate, red, null)" },
+        .{ .name = "boolean-amount", .invocation = "meta.call($desaturate, red, true)" },
+        .{ .name = "color-amount", .invocation = "meta.call($desaturate, red, blue)" },
+        .{ .name = "string-amount", .invocation = "meta.call($desaturate, red, \"10%\")" },
+        .{ .name = "list-amount", .invocation = "meta.call($desaturate, red, (10%, 20%))" },
+        .{ .name = "map-amount", .invocation = "meta.call($desaturate, red, (amount: 10%))" },
+        .{ .name = "callable-amount", .invocation = "meta.call($desaturate, red, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "calculation-amount", .invocation = "meta.call($desaturate, red, calc(5% + var(--amount)))" },
+        .{ .name = "compound-amount", .invocation = "meta.call($desaturate, red, math.div(10px, 1s))" },
+        .{ .name = "negative-amount", .invocation = "meta.call($desaturate, red, -1%)" },
+        .{ .name = "high-amount", .invocation = "meta.call($desaturate, red, 101%)" },
+        .{ .name = "rgb-missing", .invocation = "meta.call($desaturate, rgb(none 0 0), 10%)" },
+        .{ .name = "hsl-missing", .invocation = "meta.call($desaturate, hsl(none 10% 20%), 10%)" },
+        .{ .name = "hwb-missing", .invocation = "meta.call($desaturate, hwb(none 10% 20%), 10%)" },
+        .{ .name = "lab", .invocation = "meta.call($desaturate, lab(50% 10 20), 10%)" },
+        .{ .name = "lch", .invocation = "meta.call($desaturate, lch(50% 20 30deg), 10%)" },
+        .{ .name = "oklab", .invocation = "meta.call($desaturate, oklab(50% .1 .2), 10%)" },
+        .{ .name = "oklch", .invocation = "meta.call($desaturate, oklch(50% .1 30deg), 10%)" },
+        .{ .name = "srgb", .invocation = "meta.call($desaturate, color(srgb .1 .2 .3), 10%)" },
+        .{ .name = "srgb-linear", .invocation = "meta.call($desaturate, color(srgb-linear .1 .2 .3), 10%)" },
+        .{ .name = "display-p3", .invocation = "meta.call($desaturate, color(display-p3 .1 .2 .3), 10%)" },
+        .{ .name = "a98-rgb", .invocation = "meta.call($desaturate, color(a98-rgb .1 .2 .3), 10%)" },
+        .{ .name = "prophoto-rgb", .invocation = "meta.call($desaturate, color(prophoto-rgb .1 .2 .3), 10%)" },
+        .{ .name = "rec2020", .invocation = "meta.call($desaturate, color(rec2020 .1 .2 .3), 10%)" },
+        .{ .name = "xyz-d50", .invocation = "meta.call($desaturate, color(xyz-d50 .1 .2 .3), 10%)" },
+        .{ .name = "xyz-d65", .invocation = "meta.call($desaturate, color(xyz-d65 .1 .2 .3), 10%)" },
+        .{ .name = "variable", .invocation = "meta.call($desaturate, var(--color), 10%)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:math\"; $desaturate: meta.get-function(\"desaturate\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-desaturate-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"desaturate\", $module: \"color\"), red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-desaturate-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-desaturate-removed-module.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $desaturate: meta.get-function(\"desaturate\", $module: \"color\"); .a { value: meta.call($desaturate, red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-desaturate-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.desaturate(red, 10%); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-desaturate-argument-limit.scss",
+            "@use \"sass:meta\"; $desaturate: meta.get-function(\"desaturate\"); .a { value: meta.call($desaturate, red, 10%); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -15781,7 +16047,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"desaturate\"), #123, 10%); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"adjust-hue\"), #123, 10deg); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

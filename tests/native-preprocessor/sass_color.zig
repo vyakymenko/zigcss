@@ -277,6 +277,14 @@ test "native Sass legacy color manipulation matches closed conversion rules" {
             .value = try color.adjustSaturation(try color.hwb(240, 10, 20, 1), 25),
             .expected = "rgb(0,0,229.5)",
         },
+        .{
+            .value = try color.adjustSaturation(try color.hsl(120, 20, 25, 1), -10),
+            .expected = "hsl(120,10%,25%)",
+        },
+        .{
+            .value = try color.adjustSaturation(try color.hwb(240, 10, 20, 1), -25),
+            .expected = "hsl(240,52.7777777778%,45%)",
+        },
         .{ .value = try color.adjustHue(base, 30), .expected = "#121256" },
         .{ .value = try color.adjustHue(base, 180), .expected = "#563412" },
         .{ .value = try color.grayscale(base), .expected = "#343434" },

@@ -442,7 +442,11 @@ pub fn adjustSaturation(input: native_value.Color, amount: f64) Error!native_val
     if (!std.math.isFinite(amount)) return error.InvalidColor;
     var channels = try toHsl(input);
     channels[1] = clamp(channels[1] + amount, 0, 100);
-    return rgbFromChannels(hslToRgb(channels));
+    return switch (input.space) {
+        .rgb => rgbFromChannels(hslToRgb(channels)),
+        .hsl, .hwb => hsl(channels[0], channels[1], channels[2], channels[3]),
+        else => error.InvalidColor,
+    };
 }
 
 pub fn adjustHue(input: native_value.Color, amount: f64) Error!native_value.Color {

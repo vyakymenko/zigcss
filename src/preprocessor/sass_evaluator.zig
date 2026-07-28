@@ -8729,6 +8729,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorDesaturateFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -12181,6 +12188,92 @@ const Engine = struct {
         }
     }
 
+    fn invokeColorDesaturateFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .desaturate) return null;
+        if (reference.owner) |owner| {
+            if (owner != .color) return null;
+            try self.report(
+                .unsupported_feature,
+                span,
+                "desaturate() is not callable from the sass:color module",
+            );
+            return error.InvalidExpression;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "amount" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const color = try self.legacyDesaturateColorArgument(bound.values[0].?.*, span);
+        const amount = try self.legacyColorAmount(bound.values[1].?.*, 0, 100, span);
+        const result = native_color.adjustSaturation(color, -amount) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            &.{},
+        );
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "desaturate() is deprecated. Use color.adjust($color, $saturation: -$amount).",
+            &.{},
+        );
+        return self.values.own(.{ .color = result });
+    }
+
+    fn legacyDesaturateColorArgument(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "desaturate() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy desaturate() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy desaturate() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -15562,6 +15655,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "lighten")) return .lighten;
     if (kind == .color and sassNameEql(name, "darken")) return .darken;
     if (kind == .color and sassNameEql(name, "saturate")) return .saturate;
+    if (kind == .color and sassNameEql(name, "desaturate")) return .desaturate;
     return null;
 }
 
