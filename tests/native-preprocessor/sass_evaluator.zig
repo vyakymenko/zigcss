@@ -11938,6 +11938,185 @@ test "native Sass meta call rejects unavailable oklab forms arguments and limits
     );
 }
 
+test "native Sass meta call invokes oklch function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("oklch");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module-exists: meta.function-exists("oklch", "color");
+        \\$alias-exists: meta.function-exists("oklch", "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("oklch");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$negative-chroma: -10%;
+        \\$negative-unitless-chroma: -.04;
+        \\$negative-hue: -30deg;
+        \\$list-args: (50% 10% 30deg / .4,);
+        \\$map-args: ("channels": 50% 10% 30deg / 40%);
+        \\$high-lightness: 120%;
+        \\$negative-lightness: -10%;
+        \\.values {
+        \\  global-exists: meta.function-exists("oklch");
+        \\  module-exists: $module-exists;
+        \\  alias-exists: $alias-exists;
+        \\  type: meta.type-of($global);
+        \\  star-same: $global == $star;
+        \\  inspect: meta.inspect($global);
+        \\  plain: meta.call($global, 50% 10% 30deg / .4);
+        \\  named: meta.call($global, $channels: 50% 10% 30deg / .4);
+        \\  unitless-light: meta.call($global, .5 .04 30deg);
+        \\  percent-chroma: meta.call($global, 50% 10% 30deg);
+        \\  unitless-high: meta.call($global, 50 .04 30deg);
+        \\  turn-hue: meta.call($global, 50% .04 .25turn);
+        \\  alpha-percent: meta.call($global, 50% 10% 30deg / 40%);
+        \\  clamped: meta.call($global, $high-lightness $negative-unitless-chroma 390deg / 2);
+        \\  negative-light: meta.call($global, $negative-lightness .04 $negative-hue);
+        \\  negative-chroma: meta.call($global, 50% $negative-chroma 30deg);
+        \\  missing: meta.call($global, none none none / none);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  ordered: meta.call(mark(1, $global), mark(2, 50% 10% 30deg / .4));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, 50% .04 30deg));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-oklch-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;star-same:true;inspect:get-function(\"oklch\");plain:oklch(.5 .04 30/.4);named:oklch(.5 .04 30/.4);unitless-light:oklch(.5 .04 30);percent-chroma:oklch(.5 .04 30);unitless-high:oklch(1 .04 30);turn-hue:oklch(.5 .04 90);alpha-percent:oklch(.5 .04 30/.4);clamped:oklch(1 0 30);negative-light:oklch(0 .04 330);negative-chroma:oklch(.5 0 30);missing:oklch(none none none/none);list-splat:oklch(.5 .04 30/.4);map-splat:oklch(.5 .04 30/.4);ordered:oklch(.5 .04 30/.4);trace:12;result-type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$oklch: m.get-function("oklch")
+        \\$arguments: ("channels": 50% 10% 30deg / .4)
+        \\.sass
+        \\  type: m.type-of($oklch)
+        \\  plain: m.call($oklch, 50% 10% 30deg / .4)
+        \\  named: m.call($oklch, $channels: 50% .04 30deg)
+        \\  map: m.call($oklch, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-oklch-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:oklch(.5 .04 30/.4);named:oklch(.5 .04 30);map:oklch(.5 .04 30/.4)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseOklchFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseOklchFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$oklch: meta.get-function("oklch");
+        \\.allocation {
+        \\  value: meta.call($oklch, 50% 10% 30deg / .4);
+        \\  type: meta.type-of(meta.call($oklch, $channels: 50% .04 30deg));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-oklch-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:oklch(.5 .04 30/.4);type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable oklch forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "module-reference", .invocation = "meta.get-function(\"oklch\", $module: \"color\")" },
+        .{ .name = "missing", .invocation = "meta.call($oklch)" },
+        .{ .name = "extra", .invocation = "meta.call($oklch, 50% 10% 30deg, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($oklch, $other: 50% 10% 30deg)" },
+        .{ .name = "duplicate", .invocation = "meta.call($oklch, 50% 10% 30deg, $channels: 50% 10% 30deg)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($oklch, ()...)" },
+        .{ .name = "legacy-positional", .invocation = "meta.call($oklch, 50%, 10%, 30deg)" },
+        .{ .name = "legacy-named", .invocation = "meta.call($oklch, $lightness: 50%, $chroma: 10%, $hue: 30deg)" },
+        .{ .name = "null", .invocation = "meta.call($oklch, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($oklch, true)" },
+        .{ .name = "quoted", .invocation = "meta.call($oklch, \"50% 10% 30deg\")" },
+        .{ .name = "number", .invocation = "meta.call($oklch, 50)" },
+        .{ .name = "two-channels", .invocation = "meta.call($oklch, 50% 10%)" },
+        .{ .name = "four-channels", .invocation = "meta.call($oklch, 50% 10% 30deg 40)" },
+        .{ .name = "comma-list", .invocation = "meta.call($oklch, (50%, 10%, 30deg))" },
+        .{ .name = "map-value", .invocation = "meta.call($oklch, (a: 1))" },
+        .{ .name = "color", .invocation = "meta.call($oklch, red)" },
+        .{ .name = "bracketed", .invocation = "meta.call($oklch, [50% 10% 30deg])" },
+        .{ .name = "lightness-unit", .invocation = "meta.call($oklch, 50px 10% 30deg)" },
+        .{ .name = "chroma-unit", .invocation = "meta.call($oklch, 50% 10px 30deg)" },
+        .{ .name = "hue-unit", .invocation = "meta.call($oklch, 50% 10% 30px)" },
+        .{ .name = "hue-percentage", .invocation = "meta.call($oklch, 50% 10% 30%)" },
+        .{ .name = "alpha-unit", .invocation = "meta.call($oklch, 50% 10% 30deg / 1px)" },
+        .{ .name = "deferred-variable", .invocation = "meta.call($oklch, var(--channels))" },
+        .{ .name = "lightness-calculation", .invocation = "meta.call($oklch, calc(50% + var(--l)) 10% 30deg)" },
+        .{ .name = "chroma-calculation", .invocation = "meta.call($oklch, 50% calc(10% + var(--c)) 30deg)" },
+        .{ .name = "hue-calculation", .invocation = "meta.call($oklch, 50% 10% calc(30deg + var(--h)))" },
+        .{ .name = "alpha-calculation", .invocation = "meta.call($oklch, 50% 10% 30deg / calc(.4 + var(--a)))" },
+        .{ .name = "function", .invocation = "meta.call($oklch, meta.get-function(\"inspect\", $module: \"meta\") 10% 30deg)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $oklch: meta.get-function(\"oklch\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-oklch-argument-limit.scss",
+            "@use \"sass:meta\"; $oklch: meta.get-function(\"oklch\"); .a { value: meta.call($oklch, 50% 10% 30deg); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -12051,7 +12230,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"oklch\"), 50% 10% 30deg); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"color\"), display-p3 .1 .2 .3); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

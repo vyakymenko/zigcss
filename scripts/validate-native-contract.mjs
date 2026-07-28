@@ -221,6 +221,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-color-lab-function-invocation',
       'built-in-meta-color-lch-function-invocation',
       'built-in-meta-color-oklab-function-invocation',
+      'built-in-meta-color-oklch-function-invocation',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
       'built-in-selector-parse-simple',
