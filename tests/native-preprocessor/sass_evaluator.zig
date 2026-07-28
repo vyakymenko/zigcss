@@ -12117,6 +12117,182 @@ test "native Sass meta call rejects unavailable oklch forms arguments and limits
     );
 }
 
+test "native Sass meta call invokes color function references" {
+    const input =
+        \\@use "sass:meta";
+        \\$global: meta.get-function("color");
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$module-exists: meta.function-exists("color", "color");
+        \\$alias-exists: meta.function-exists("color", "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("color");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$space: display-p3;
+        \\$first: 30%;
+        \\$second: -10%;
+        \\$third: .5;
+        \\$list-args: (display-p3 .3 .4 .5 / .4,);
+        \\$map-args: ("description": display-p3 .3 .4 .5 / 40%);
+        \\.values {
+        \\  global-exists: meta.function-exists("color");
+        \\  module-exists: $module-exists;
+        \\  alias-exists: $alias-exists;
+        \\  type: meta.type-of($global);
+        \\  star-same: $global == $star;
+        \\  inspect: meta.inspect($global);
+        \\  plain: meta.call($global, display-p3 .3 .4 .5 / .4);
+        \\  named: meta.call($global, $description: display-p3 .3 .4 .5 / .4);
+        \\  srgb: meta.call($global, srgb .1 .2 .3);
+        \\  linear: meta.call($global, srgb-linear .1 .2 .3);
+        \\  a98: meta.call($global, a98-rgb .1 .2 .3);
+        \\  prophoto: meta.call($global, prophoto-rgb .1 .2 .3);
+        \\  rec2020: meta.call($global, rec2020 .1 .2 .3);
+        \\  xyz: meta.call($global, xyz .1 .2 .3);
+        \\  xyz50: meta.call($global, xyz-d50 .1 .2 .3);
+        \\  xyz65: meta.call($global, xyz-d65 .1 .2 .3);
+        \\  percent: meta.call($global, display-p3 30% 40% 50% / 40%);
+        \\  outside: meta.call($global, $space 120% $second .5 / 2);
+        \\  variables: meta.call($global, $space $first $second $third);
+        \\  missing: meta.call($global, display-p3 none none none / none);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  ordered: meta.call(mark(1, $global), mark(2, display-p3 .3 .4 .5 / .4));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, display-p3 .3 .4 .5));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;star-same:true;inspect:get-function(\"color\");plain:color(display-p3 .3 .4 .5/.4);named:color(display-p3 .3 .4 .5/.4);srgb:color(srgb .1 .2 .3);linear:color(srgb-linear .1 .2 .3);a98:color(a98-rgb .1 .2 .3);prophoto:color(prophoto-rgb .1 .2 .3);rec2020:color(rec2020 .1 .2 .3);xyz:color(xyz .1 .2 .3);xyz50:color(xyz-d50 .1 .2 .3);xyz65:color(xyz .1 .2 .3);percent:color(display-p3 .3 .4 .5/.4);outside:color(display-p3 1.2 -0.1 .5);variables:color(display-p3 .3 -0.1 .5);missing:color(display-p3 none none none/none);list-splat:color(display-p3 .3 .4 .5/.4);map-splat:color(display-p3 .3 .4 .5/.4);ordered:color(display-p3 .3 .4 .5/.4);trace:12;result-type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$color: m.get-function("color")
+        \\$arguments: ("description": display-p3 30% 40% 50% / .4)
+        \\.sass
+        \\  type: m.type-of($color)
+        \\  plain: m.call($color, display-p3 .3 .4 .5 / .4)
+        \\  named: m.call($color, $description: xyz-d65 .1 .2 .3)
+        \\  map: m.call($color, $arguments...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:color(display-p3 .3 .4 .5/.4);named:color(xyz .1 .2 .3);map:color(display-p3 .3 .4 .5/.4)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$color: meta.get-function("color");
+        \\.allocation {
+        \\  value: meta.call($color, display-p3 .3 .4 .5 / .4);
+        \\  type: meta.type-of(meta.call($color, $description: xyz-d65 .1 .2 .3));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:color(display-p3 .3 .4 .5/.4);type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "module-reference", .invocation = "meta.get-function(\"color\", $module: \"color\")" },
+        .{ .name = "missing", .invocation = "meta.call($color)" },
+        .{ .name = "extra", .invocation = "meta.call($color, display-p3 .3 .4 .5, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($color, $other: display-p3 .3 .4 .5)" },
+        .{ .name = "duplicate", .invocation = "meta.call($color, display-p3 .3 .4 .5, $description: display-p3 .3 .4 .5)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($color, ()...)" },
+        .{ .name = "legacy-positional", .invocation = "meta.call($color, display-p3, .3 .4 .5)" },
+        .{ .name = "legacy-named", .invocation = "meta.call($color, $space: display-p3, $channels: .3 .4 .5)" },
+        .{ .name = "null", .invocation = "meta.call($color, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($color, true)" },
+        .{ .name = "quoted", .invocation = "meta.call($color, \"display-p3 .3 .4 .5\")" },
+        .{ .name = "number", .invocation = "meta.call($color, 50)" },
+        .{ .name = "two-channels", .invocation = "meta.call($color, display-p3 .3 .4)" },
+        .{ .name = "four-channels", .invocation = "meta.call($color, display-p3 .3 .4 .5 .6)" },
+        .{ .name = "comma-list", .invocation = "meta.call($color, (display-p3, .3, .4, .5))" },
+        .{ .name = "map-value", .invocation = "meta.call($color, (a: 1))" },
+        .{ .name = "color", .invocation = "meta.call($color, red)" },
+        .{ .name = "bracketed", .invocation = "meta.call($color, [display-p3 .3 .4 .5])" },
+        .{ .name = "unknown-space", .invocation = "meta.call($color, unknown .3 .4 .5)" },
+        .{ .name = "channel-unit", .invocation = "meta.call($color, display-p3 .3px .4 .5)" },
+        .{ .name = "alpha-unit", .invocation = "meta.call($color, display-p3 .3 .4 .5 / 1px)" },
+        .{ .name = "deferred-variable", .invocation = "meta.call($color, var(--description))" },
+        .{ .name = "deferred-channel", .invocation = "meta.call($color, display-p3 calc(.3 + var(--x)) .4 .5)" },
+        .{ .name = "function", .invocation = "meta.call($color, meta.get-function(\"inspect\", $module: \"meta\") .3 .4 .5)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:color\"; $color: meta.get-function(\"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-argument-limit.scss",
+            "@use \"sass:meta\"; $color: meta.get-function(\"color\"); .a { value: meta.call($color, display-p3 .3 .4 .5); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -12230,7 +12406,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"color\"), display-p3 .1 .2 .3); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"red\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

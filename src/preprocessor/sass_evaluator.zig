@@ -6385,15 +6385,7 @@ const Engine = struct {
                 return error.InvalidExpression;
             },
         };
-        if (std.ascii.eqlIgnoreCase(name, "srgb")) return .srgb;
-        if (std.ascii.eqlIgnoreCase(name, "srgb-linear")) return .srgb_linear;
-        if (std.ascii.eqlIgnoreCase(name, "display-p3")) return .display_p3;
-        if (std.ascii.eqlIgnoreCase(name, "a98-rgb")) return .a98_rgb;
-        if (std.ascii.eqlIgnoreCase(name, "prophoto-rgb")) return .prophoto_rgb;
-        if (std.ascii.eqlIgnoreCase(name, "rec2020")) return .rec2020;
-        if (std.ascii.eqlIgnoreCase(name, "xyz-d50")) return .xyz_d50;
-        if (std.ascii.eqlIgnoreCase(name, "xyz") or
-            std.ascii.eqlIgnoreCase(name, "xyz-d65")) return .xyz;
+        if (predefinedColorSpaceName(name)) |space| return space;
         try self.report(.invalid_operation, span, "unknown predefined color() space");
         return error.InvalidExpression;
     }
@@ -8626,6 +8618,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -10727,6 +10726,204 @@ const Engine = struct {
             .type_mismatch,
             span,
             "oklch() channels require an unbracketed three-item space list and optional slash alpha",
+        ) catch |err| return err;
+        return error.InvalidExpression;
+    }
+
+    fn invokeColorFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner != null or reference.builtin != .color) return null;
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "description" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return try self.callPredefinedColorDescriptionValue(
+            bound.values[0].?.*,
+            span,
+        );
+    }
+
+    fn callPredefinedColorDescriptionValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var description = value;
+        var alpha: ?native_value.Value = null;
+        if (value == .list) {
+            const outer = value.list;
+            if (outer.bracketed) return self.invalidPredefinedColorDescription(span);
+            if (outer.separator == .slash or outer.separator == .legacy_slash) {
+                if (outer.items.len != 2) {
+                    return self.invalidPredefinedColorDescription(span);
+                }
+                description = outer.items[0];
+                alpha = outer.items[1];
+            }
+        }
+
+        var space: ?native_value.ColorSpace = null;
+        var channels = [4]f64{ 0, 0, 0, 1 };
+        var missing_mask: u4 = 0;
+        var component_index: usize = 0;
+        try self.populatePredefinedColorDescription(
+            description,
+            &space,
+            &channels,
+            &missing_mask,
+            &component_index,
+            span,
+        );
+        if (component_index != 4 or space == null) {
+            return self.invalidPredefinedColorDescription(span);
+        }
+        if (alpha) |alpha_value| {
+            const channel = try self.predefinedColorDescriptionChannel(
+                alpha_value,
+                .alpha,
+                span,
+            );
+            channels[3] = channel.value;
+            if (channel.missing) missing_mask |= 0b1000;
+        }
+        const color = native_color.predefined(
+            space.?,
+            channels,
+            missing_mask,
+        ) catch |err| return self.colorTransformFailure(err, span);
+        return self.values.own(.{ .color = color });
+    }
+
+    fn populatePredefinedColorDescription(
+        self: *Engine,
+        value: native_value.Value,
+        space: *?native_value.ColorSpace,
+        channels: *[4]f64,
+        missing_mask: *u4,
+        component_index: *usize,
+        span: native_source.Span,
+    ) Error!void {
+        switch (value) {
+            .string => |string| {
+                if (string.quoted) return self.invalidPredefinedColorDescription(span);
+                const trimmed = trimWhitespace(string.bytes);
+                var cursor: usize = 0;
+                while (cursor < trimmed.len) {
+                    while (cursor < trimmed.len and isExpressionWhitespace(trimmed[cursor])) {
+                        cursor += 1;
+                    }
+                    const start = cursor;
+                    while (cursor < trimmed.len and !isExpressionWhitespace(trimmed[cursor])) {
+                        cursor += 1;
+                    }
+                    if (start == cursor or component_index.* >= 4) {
+                        return self.invalidPredefinedColorDescription(span);
+                    }
+                    try self.appendPredefinedColorDescriptionString(
+                        trimmed[start..cursor],
+                        space,
+                        channels,
+                        missing_mask,
+                        component_index,
+                        span,
+                    );
+                }
+            },
+            .list => |list| {
+                if (list.bracketed or list.separator != .space) {
+                    return self.invalidPredefinedColorDescription(span);
+                }
+                for (list.items) |item| {
+                    if (item == .string) {
+                        try self.populatePredefinedColorDescription(
+                            item,
+                            space,
+                            channels,
+                            missing_mask,
+                            component_index,
+                            span,
+                        );
+                        continue;
+                    }
+                    if (component_index.* == 0 or component_index.* >= 4) {
+                        return self.invalidPredefinedColorDescription(span);
+                    }
+                    const channel = try self.predefinedColorDescriptionChannel(
+                        item,
+                        .predefined,
+                        span,
+                    );
+                    const channel_index = component_index.* - 1;
+                    channels[channel_index] = channel.value;
+                    if (channel.missing) {
+                        missing_mask.* |= @as(u4, 1) << @intCast(channel_index);
+                    }
+                    component_index.* += 1;
+                }
+            },
+            else => return self.invalidPredefinedColorDescription(span),
+        }
+    }
+
+    fn appendPredefinedColorDescriptionString(
+        self: *Engine,
+        component: []const u8,
+        space: *?native_value.ColorSpace,
+        channels: *[4]f64,
+        missing_mask: *u4,
+        component_index: *usize,
+        span: native_source.Span,
+    ) Error!void {
+        if (component_index.* == 0) {
+            space.* = predefinedColorSpaceName(component) orelse
+                return self.invalidPredefinedColorDescription(span);
+        } else {
+            const channel = parseStaticModernColorChannel(
+                component,
+                .predefined,
+            ) orelse return self.invalidPredefinedColorDescription(span);
+            const channel_index = component_index.* - 1;
+            channels[channel_index] = channel.value;
+            if (channel.missing) {
+                missing_mask.* |= @as(u4, 1) << @intCast(channel_index);
+            }
+        }
+        component_index.* += 1;
+    }
+
+    fn predefinedColorDescriptionChannel(
+        self: *Engine,
+        value: native_value.Value,
+        kind: ModernColorChannelKind,
+        span: native_source.Span,
+    ) Error!ModernColorChannel {
+        if (value == .string and !value.string.quoted) {
+            return parseStaticModernColorChannel(value.string.bytes, kind) orelse
+                self.invalidPredefinedColorDescription(span);
+        }
+        return self.modernColorChannel(value, kind, span);
+    }
+
+    fn invalidPredefinedColorDescription(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "color() description requires an unbracketed predefined space and three static channels with optional slash alpha",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -14106,7 +14303,8 @@ fn moduleFunctionExists(kind: BuiltinModule, name: []const u8) bool {
         (sassNameEql(name, "lab") or
             sassNameEql(name, "lch") or
             sassNameEql(name, "oklab") or
-            sassNameEql(name, "oklch"));
+            sassNameEql(name, "oklch") or
+            sassNameEql(name, "color"));
 }
 
 // Built-in function identity includes its owner: a legacy global and the
@@ -15238,8 +15436,22 @@ fn parseStaticModernColorChannel(
         .oklab_axis => if (percentage) value * 0.004 else value,
         .lch_chroma => if (percentage) value * 1.5 else value,
         .oklch_chroma => if (percentage) value * 0.004 else value,
-        else => return null,
+        .predefined, .alpha => if (percentage) value / 100 else value,
+        .hue => unreachable,
     } };
+}
+
+fn predefinedColorSpaceName(name: []const u8) ?native_value.ColorSpace {
+    if (std.ascii.eqlIgnoreCase(name, "srgb")) return .srgb;
+    if (std.ascii.eqlIgnoreCase(name, "srgb-linear")) return .srgb_linear;
+    if (std.ascii.eqlIgnoreCase(name, "display-p3")) return .display_p3;
+    if (std.ascii.eqlIgnoreCase(name, "a98-rgb")) return .a98_rgb;
+    if (std.ascii.eqlIgnoreCase(name, "prophoto-rgb")) return .prophoto_rgb;
+    if (std.ascii.eqlIgnoreCase(name, "rec2020")) return .rec2020;
+    if (std.ascii.eqlIgnoreCase(name, "xyz-d50")) return .xyz_d50;
+    if (std.ascii.eqlIgnoreCase(name, "xyz") or
+        std.ascii.eqlIgnoreCase(name, "xyz-d65")) return .xyz;
+    return null;
 }
 
 fn parseStaticColorHue(input: []const u8) ?ModernColorChannel {
