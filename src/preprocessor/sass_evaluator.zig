@@ -1979,66 +1979,120 @@ const Engine = struct {
         );
         defer evaluated.deinit();
 
-        var forwarded = EvaluatedCallArguments{ .allocator = self.allocator };
-        defer forwarded.deinit();
-        var target: ?*const native_value.Value = null;
-        if (evaluated.positional.items.len > 0) {
-            target = evaluated.positional.items[0];
-            for (evaluated.positional.items[1..]) |item| {
-                try self.appendEvaluatedPositional(&forwarded, item, span);
-            }
-        }
-        for (evaluated.keywords.items) |keyword| {
+        try self.invokeMetaApply(
+            &evaluated,
+            caller_scope,
+            content_block,
+            content_parameters,
+            span,
+            depth,
+            context,
+        );
+    }
+
+    fn invokeMetaApply(
+        self: *Engine,
+        evaluated: *const EvaluatedCallArguments,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        var mixin_keyword_index: ?usize = null;
+        for (evaluated.keywords.items, 0..) |keyword, index| {
             if (evaluatedKeywordNameEql(keyword, "mixin")) {
-                if (target != null) {
-                    return self.argumentsFailure(error.DuplicateArgument, span);
-                }
-                target = keyword.value;
-                continue;
+                mixin_keyword_index = index;
+                break;
             }
-            try self.appendEvaluatedKeyword(&forwarded, keyword, span);
         }
 
-        const target_value = target orelse
-            return self.argumentsFailure(error.MissingArgument, span);
-        const callable = switch (target_value.*) {
-            .callable => |value| value,
-            else => {
-                try self.report(
-                    .type_mismatch,
-                    span,
-                    "native Sass meta.apply() requires a mixin reference",
-                );
-                return error.InvalidExpression;
-            },
-        };
-        switch (callable.kind) {
-            .mixin => try self.invokeUserMixin(
-                callable.id,
-                &forwarded,
-                caller_scope,
-                content_block,
-                content_parameters,
-                span,
-                depth,
-                context,
-            ),
-            .builtin_mixin => {
-                try self.report(
-                    .unsupported_feature,
-                    span,
-                    "native Sass built-in mixin application is not implemented yet",
-                );
-                return error.UnsupportedFeature;
-            },
-            .builtin_function, .user_function => {
-                try self.report(
-                    .type_mismatch,
-                    span,
-                    "native Sass meta.apply() requires a mixin reference",
-                );
-                return error.InvalidExpression;
-            },
+        var positional_start: usize = 0;
+        var mixin_keyword_consumed = false;
+        while (true) {
+            const target_value = if (positional_start < evaluated.positional.items.len) blk: {
+                if (mixin_keyword_index != null and !mixin_keyword_consumed) {
+                    return self.argumentsFailure(error.DuplicateArgument, span);
+                }
+                const target = evaluated.positional.items[positional_start];
+                positional_start += 1;
+                break :blk target;
+            } else if (mixin_keyword_index) |index| blk: {
+                if (mixin_keyword_consumed) {
+                    return self.argumentsFailure(error.MissingArgument, span);
+                }
+                mixin_keyword_consumed = true;
+                break :blk evaluated.keywords.items[index].value;
+            } else return self.argumentsFailure(error.MissingArgument, span);
+
+            const callable = switch (target_value.*) {
+                .callable => |value| value,
+                else => {
+                    try self.report(
+                        .type_mismatch,
+                        span,
+                        "native Sass meta.apply() requires a mixin reference",
+                    );
+                    return error.InvalidExpression;
+                },
+            };
+            switch (callable.kind) {
+                .mixin => {
+                    var forwarded = EvaluatedCallArguments{ .allocator = self.allocator };
+                    defer forwarded.deinit();
+                    for (evaluated.positional.items[positional_start..]) |item| {
+                        try self.appendEvaluatedPositional(&forwarded, item, span);
+                    }
+                    for (evaluated.keywords.items, 0..) |keyword, index| {
+                        if (mixin_keyword_consumed and index == mixin_keyword_index.?) continue;
+                        try self.appendEvaluatedKeyword(&forwarded, keyword, span);
+                    }
+                    try self.invokeUserMixin(
+                        callable.id,
+                        &forwarded,
+                        caller_scope,
+                        content_block,
+                        content_parameters,
+                        span,
+                        depth,
+                        context,
+                    );
+                    return;
+                },
+                .builtin_mixin => {
+                    const builtin = std.meta.intToEnum(BuiltinMixin, callable.id) catch {
+                        try self.report(
+                            .unsupported_feature,
+                            span,
+                            "native Sass built-in mixin application is not implemented yet",
+                        );
+                        return error.UnsupportedFeature;
+                    };
+                    switch (builtin) {
+                        .meta_apply => {
+                            try self.transaction.consumeOperations(1);
+                            continue;
+                        },
+                        .meta_load_css => {
+                            try self.report(
+                                .unsupported_feature,
+                                span,
+                                "native Sass meta.load-css() is not implemented yet",
+                            );
+                            return error.UnsupportedFeature;
+                        },
+                    }
+                },
+                .builtin_function, .user_function => {
+                    try self.report(
+                        .type_mismatch,
+                        span,
+                        "native Sass meta.apply() requires a mixin reference",
+                    );
+                    return error.InvalidExpression;
+                },
+            }
         }
     }
 

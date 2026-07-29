@@ -19343,6 +19343,193 @@ fn exerciseMetaApplyInvocationAllocationFailures(allocator: std.mem.Allocator) !
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Sass meta apply invokes reflected apply mixin references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@mixin paint($first, $second: default) {
+        \\  first: $first;
+        \\  second: $second;
+        \\}
+        \\@mixin slot($value) {
+        \\  before: $value;
+        \\  @content($value);
+        \\  after: $value;
+        \\}
+        \\$apply: meta.get-mixin("apply", $module: "meta");
+        \\$alias-apply: reflect.get-mixin("apply", $module: "reflect");
+        \\$paint: meta.get-mixin("paint");
+        \\$slot: meta.get-mixin("slot");
+        \\$list: ($apply, $paint, list-first, list-second);
+        \\$map: (first: map-first, second: map-second);
+        \\.positional {
+        \\  @include meta.apply($apply, $paint, one, $second: two);
+        \\}
+        \\.double {
+        \\  @include meta.apply(
+        \\    $apply,
+        \\    $apply,
+        \\    $paint,
+        \\    deep,
+        \\    $second: value
+        \\  );
+        \\}
+        \\.list {
+        \\  @include reflect.apply($list...);
+        \\}
+        \\.map {
+        \\  @include meta.apply($alias-apply, $paint, $map...);
+        \\}
+        \\.ordered {
+        \\  @include meta.apply(
+        \\    mark(1, $apply),
+        \\    mark(2, $paint),
+        \\    mark(3, ordered-first),
+        \\    $second: mark(4, ordered-second)
+        \\  );
+        \\  trace: $trace;
+        \\}
+        \\.content {
+        \\  @include meta.apply($apply, $slot, payload) using ($item) {
+        \\    nested: $item;
+        \\  }
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-apply-reflected-apply.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".positional{first:one;second:two}.double{first:deep;second:value}.list{first:list-first;second:list-second}.map{first:map-first;second:map-second}.ordered{first:ordered-first;second:ordered-second;trace:1234}.content{before:payload;nested:payload;after:payload}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const star =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as *;
+        \\@mixin paint($value) { value: $value; }
+        \\$apply: meta.get-mixin("apply", $module: "meta");
+        \\$paint: get-mixin("paint");
+        \\.star { @include apply($apply, $paint, ok); }
+    ;
+    var star_result = try compile(
+        std.testing.allocator,
+        "meta-apply-reflected-apply-star.scss",
+        star,
+        .scss,
+        .{},
+    );
+    defer star_result.deinit();
+    try std.testing.expectEqualStrings(".star{value:ok}", star_result.css());
+    try std.testing.expectEqual(@as(usize, 0), star_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@mixin paint($value, $tone: blue)
+        \\  value: $value
+        \\  tone: $tone
+        \\$apply: m.get-mixin("apply", $module: "m")
+        \\$paint: m.get-mixin("paint")
+        \\.sass
+        \\  @include m.apply($apply, $paint, ok, $tone: red)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-apply-reflected-apply.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{value:ok;tone:red}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseReflectedMetaApplyInvocationAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseReflectedMetaApplyInvocationAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@mixin paint($value) { value: $value; }
+        \\$apply: meta.get-mixin("apply", $module: "meta");
+        \\$paint: meta.get-mixin("paint");
+        \\.allocation { @include meta.apply($apply, $paint, ok); }
+    ;
+    var result = try compile(
+        allocator,
+        "meta-apply-reflected-apply-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".allocation{value:ok}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta apply rejects invalid reflected apply invocation" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-apply-reflected-apply-missing-target.scss",
+            .input = "@use \"sass:meta\"; $apply: meta.get-mixin(\"apply\", $module: \"meta\"); .a { @include meta.apply($apply); }",
+        },
+        .{
+            .name = "meta-apply-reflected-apply-nested-missing-target.scss",
+            .input = "@use \"sass:meta\"; $apply: meta.get-mixin(\"apply\", $module: \"meta\"); .a { @include meta.apply($apply, $apply); }",
+        },
+        .{
+            .name = "meta-apply-reflected-apply-non-callable.scss",
+            .input = "@use \"sass:meta\"; $apply: meta.get-mixin(\"apply\", $module: \"meta\"); .a { @include meta.apply($apply, 1); }",
+        },
+        .{
+            .name = "meta-apply-reflected-apply-function.scss",
+            .input = "@use \"sass:meta\"; @function fn($value) { @return $value; } $apply: meta.get-mixin(\"apply\", $module: \"meta\"); .a { @include meta.apply($apply, meta.get-function(\"fn\"), ok); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-apply-reflected-apply-argument-limit.scss",
+            "@use \"sass:meta\"; @mixin plain {} $apply: meta.get-mixin(\"apply\", $module: \"meta\"); .a { @include meta.apply($apply, $apply, meta.get-mixin(\"plain\")); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta apply rejects unavailable or invalid mixin application" {
     const invalid = [_]struct {
         name: []const u8,
@@ -19412,8 +19599,8 @@ test "native Sass meta apply rejects unavailable or invalid mixin application" {
         error.UnsupportedFeature,
         compile(
             std.testing.allocator,
-            "meta-apply-builtin-target-unavailable.scss",
-            "@use \"sass:meta\"; @mixin plain {} .a { @include meta.apply(meta.get-mixin(\"apply\", $module: \"meta\"), meta.get-mixin(\"plain\")); }",
+            "meta-apply-load-css-target-unavailable.scss",
+            "@use \"sass:meta\"; .a { @include meta.apply(meta.get-mixin(\"load-css\", $module: \"meta\"), \"missing\"); }",
             .scss,
             .{},
         ),

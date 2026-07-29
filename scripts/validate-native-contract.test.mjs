@@ -85,6 +85,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-get-mixin-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-reflected-if-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-user-mixin-application'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-apply-mixin-application'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-content-acceptance-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-calculation-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-existence-function-invocation'), true)
