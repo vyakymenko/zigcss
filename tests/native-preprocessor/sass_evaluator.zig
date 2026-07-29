@@ -19764,6 +19764,142 @@ test "native Sass meta call rejects unavailable color desaturate forms arguments
     );
 }
 
+test "native Sass expands direct legacy color adjust hue splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: adjust-hue((mark(1, #123456), mark(2, 30deg))...);
+        \\  map: adjust-hue(("color": mark(3, hsl(120deg 20% 25%)), "degrees": mark(4, 30deg))...);
+        \\  direct-map: adjust-hue(mark(5, hwb(240deg 10% 20%)), ("degrees": mark(6, 30deg))...);
+        \\  override: adjust-hue($color: #123456, $degrees: 60deg, ("degrees": mark(7, 30deg))...);
+        \\  unitless: adjust-hue((#123456, 30)...);
+        \\  unitful: adjust-hue((#123456, 30px)...);
+        \\  grad: adjust-hue((#123456, 33.333333333333grad)...);
+        \\  rad: adjust-hue((#123456, 0.5235987755982988rad)...);
+        \\  turn: adjust-hue((#123456, 0.0833333333333333turn)...);
+        \\  negative: adjust-hue((#123456, -30deg)...);
+        \\  wrapped: adjust-hue((#123456, 390deg)...);
+        \\  alpha: adjust-hue((rgba(18, 52, 86, .5), 30deg)...);
+        \\  type: meta.type-of(adjust-hue((#123456, 30deg)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-adjust-hue-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:#121256;map:hsl(150,20%,25%);direct-map:rgb(114.75,25.5,204);override:#121256;unitless:#121256;unitful:#121256;grad:#121256;rad:#121256;turn:#121256;negative:#125656;wrapped:#121256;alpha:rgba(18,18,86,.5);type:color;trace:1234567}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 26), diagnostics.len);
+    var global_warnings: usize = 0;
+    var adjust_hue_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "adjust-hue() is deprecated. Use color.adjust($color, $hue: $degrees).",
+        )) {
+            adjust_hue_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 13), global_warnings);
+    try std.testing.expectEqual(@as(usize, 13), adjust_hue_warnings);
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: adjust-hue((mark(1, hsl(120deg 20% 25%)), mark(2, 30deg))...)
+        \\  map: adjust-hue((color: mark(3, hwb(240deg 10% 20%)), degrees: mark(4, 30deg))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-adjust-hue-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:hsl(150,20%,25%);map:rgb(114.75,25.5,204);trace:1234}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorAdjustHueSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorAdjustHueSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: adjust-hue((#123456, 30deg)...);
+        \\  map: adjust-hue(("color": hsl(120deg 20% 25%), "degrees": 30deg)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-adjust-hue-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:#121256;map:hsl(150,20%,25%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 4), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes legacy color adjust hue function references" {
     const input =
         \\@use "sass:meta";
@@ -19977,6 +20113,36 @@ test "native Sass meta call rejects unavailable color adjust hue forms arguments
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "adjust-hue(()...)" },
+        .{ .name = "legacy-direct-short-list-splat", .invocation = "adjust-hue((red,)...)" },
+        .{ .name = "legacy-direct-overfull-list-splat", .invocation = "adjust-hue((#123456, 30deg, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "adjust-hue((color: #123456, other: 30deg)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "adjust-hue((1: #123456, degrees: 30deg)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "adjust-hue(#123456, 30deg, (degrees: 60deg)...)" },
+        .{ .name = "legacy-direct-deferred-degrees", .invocation = "adjust-hue((#123456, calc(30deg + var(--degrees)))...)" },
+        .{ .name = "legacy-direct-compound-degrees", .invocation = "adjust-hue((#123456, math.div(30deg, 1s))...)" },
+        .{ .name = "legacy-direct-rgb-missing", .invocation = "adjust-hue((rgb(none 0 0), 30deg)...)" },
+        .{ .name = "legacy-direct-hsl-missing", .invocation = "adjust-hue((hsl(none 20% 25%), 30deg)...)" },
+        .{ .name = "legacy-direct-hwb-missing", .invocation = "adjust-hue((hwb(none 20% 25%), 30deg)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "adjust-hue((color(display-p3 .1 .2 .3), 30deg)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:math\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     try std.testing.expectError(
         error.InvalidExpression,
         compile(
@@ -20017,6 +20183,16 @@ test "native Sass meta call rejects unavailable color adjust hue forms arguments
             .{},
         ),
     );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-adjust-hue-direct-module-splat.scss",
+            "@use \"sass:color\"; .a { value: color.adjust-hue((red, 30deg)...); }",
+            .scss,
+            .{},
+        ),
+    );
 
     var argument_limits = sass_evaluator.Limits{};
     argument_limits.max_function_arguments = 1;
@@ -20026,6 +20202,16 @@ test "native Sass meta call rejects unavailable color adjust hue forms arguments
             std.testing.allocator,
             "meta-call-color-adjust-hue-argument-limit.scss",
             "@use \"sass:meta\"; $adjust: meta.get-function(\"adjust-hue\"); .a { value: meta.call($adjust, red, 30deg); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-adjust-hue-direct-splat-argument-limit.scss",
+            ".a { value: adjust-hue((#123456, 30deg)...); }",
             .scss,
             argument_limits,
         ),
