@@ -5323,7 +5323,6 @@ const Engine = struct {
             .hue,
             .saturation,
             .lightness,
-            .complement,
             .grayscale,
             .invert,
             .opacify,
@@ -5399,6 +5398,25 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .complement => {
+                if (module_builtin != null) {
+                    return try self.callDirectColorComplementRaw(
+                        body,
+                        ranges.items,
+                        scope,
+                        span,
+                    );
+                }
+                return try self.callFixedBuiltinRaw(
+                    builtin,
+                    false,
+                    raw,
+                    body,
+                    ranges.items,
+                    scope,
+                    span,
+                );
+            },
             .lighten => {
                 const legacy_splat = if (module_builtin == null) blk: {
                     for (ranges.items) |range| {
@@ -16632,6 +16650,22 @@ const Engine = struct {
         )) orelse unreachable;
     }
 
+    fn callDirectColorComplementRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        return (try self.invokeColorComplementFunction(
+            builtinFunctionCallable(.complement, .color),
+            &evaluated,
+            span,
+        )) orelse unreachable;
+    }
+
     fn callDirectColorMixRaw(
         self: *Engine,
         module_owned: bool,
@@ -19056,6 +19090,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "whiteness")) return .whiteness;
     if (sassNameEql(name, "blackness")) return .blackness;
     if (sassNameEql(name, "mix")) return .mix;
+    if (sassNameEql(name, "complement")) return .complement;
     if (sassNameEql(name, "space")) return .space;
     if (sassNameEql(name, "to-space")) return .to_space;
     if (sassNameEql(name, "is-legacy")) return .is_legacy;

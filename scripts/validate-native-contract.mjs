@@ -277,6 +277,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-color-adjust-hue-function-invocation',
       'built-in-color-legacy-adjust-hue-direct-splat-expansion',
       'built-in-meta-color-complement-function-invocation',
+      'built-in-color-module-complement-direct-splat-expansion',
       'built-in-meta-color-grayscale-function-invocation',
       'built-in-meta-color-invert-function-invocation',
       'built-in-meta-color-opacify-function-invocation',
