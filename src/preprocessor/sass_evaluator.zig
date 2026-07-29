@@ -5342,6 +5342,7 @@ const Engine = struct {
             .is_missing,
             .is_in_gamut,
             .to_gamut,
+            .channel,
             .ie_hex_str,
             => return try self.callFixedBuiltinRaw(
                 builtin,
@@ -5393,7 +5394,6 @@ const Engine = struct {
             // outside these evidence-closed slices.
             .whiteness,
             .blackness,
-            .channel,
             .same,
             .is_powerless,
             .str_unique_id,
@@ -6371,6 +6371,155 @@ const Engine = struct {
             return self.colorTransformFailure(failure, span);
         };
         return self.values.own(.{ .color = result });
+    }
+
+    fn callColorChannelQuery(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 2 or arguments.len > 3) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.channel() requires a color, quoted channel, and optional target space",
+            );
+            return error.InvalidExpression;
+        }
+        return self.callColorChannelQueryValue(
+            arguments[0].*,
+            arguments[1].*,
+            if (arguments.len == 3) arguments[2].* else null,
+            span,
+        );
+    }
+
+    fn callColorChannelQueryValue(
+        self: *Engine,
+        color_value: native_value.Value,
+        channel_value: native_value.Value,
+        space_value: ?native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (color_value) {
+            .color => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "color.channel() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass color.channel() does not yet admit missing color channels",
+            );
+            return error.InvalidExpression;
+        }
+
+        const target = if (space_value) |item| switch (item) {
+            .null_value => color.space,
+            else => try self.colorChannelTarget(item, span),
+        } else color.space;
+        const working = if (target == color.space)
+            color
+        else
+            native_color.convert(color, target) catch |failure|
+                return self.colorTransformFailure(failure, span);
+
+        const channel = switch (channel_value) {
+            .string => |value| value,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.channel() channel must be a quoted string",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        if (!channel.quoted) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.channel() channel must be a quoted string",
+            );
+            return error.InvalidExpression;
+        }
+        const decoded = native_string.decodeAlloc(
+            self.allocator,
+            channel.bytes,
+            true,
+            self.limits.max_temporary_bytes,
+        ) catch |err| return self.stringFailure(err, span);
+        defer self.allocator.free(decoded);
+        const index = colorMissingChannelIndex(working.space, decoded) orelse {
+            try self.report(
+                .invalid_operation,
+                span,
+                "color.channel() channel is not available in the color space",
+            );
+            return error.InvalidExpression;
+        };
+
+        var value = working.channels[index];
+        const unit: ?[]const u8 = switch (working.space) {
+            .hsl, .hwb => if (index == 0) "deg" else if (index < 3) "%" else null,
+            .lab => if (index == 0) "%" else null,
+            .lch => if (index == 0) "%" else if (index == 2) "deg" else null,
+            .oklab => if (index == 0) "%" else null,
+            .oklch => if (index == 0) "%" else if (index == 2) "deg" else null,
+            .rgb,
+            .srgb,
+            .srgb_linear,
+            .display_p3,
+            .a98_rgb,
+            .prophoto_rgb,
+            .rec2020,
+            .xyz_d50,
+            .xyz,
+            => null,
+        };
+        if ((working.space == .oklab or working.space == .oklch) and index == 0) {
+            value *= 100;
+        }
+        if (unit) |name| {
+            const units = [_][]const u8{name};
+            return self.values.own(.{ .number = .{
+                .value = value,
+                .numerator_units = &units,
+            } });
+        }
+        return self.values.own(.{ .number = .{ .value = value } });
+    }
+
+    fn colorChannelTarget(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.ColorSpace {
+        const string = switch (item) {
+            .string => |value| value,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.channel() target must be an unquoted string or null",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        if (string.quoted) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.channel() target must be an unquoted string or null",
+            );
+            return error.InvalidExpression;
+        }
+        if (colorSpaceName(string.bytes)) |target| return target;
+        try self.report(.invalid_operation, span, "unknown native Sass color.channel() target");
+        return error.InvalidExpression;
     }
 
     fn colorToGamutTarget(
@@ -9871,6 +10020,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorToGamutFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorChannelFunction(
                     callable,
                     &forwarded,
                     span,
@@ -14519,6 +14675,39 @@ const Engine = struct {
         );
     }
 
+    fn invokeColorChannelFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .color or
+            reference.builtin != .channel)
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "channel" },
+            .{ .name = "space", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return self.callColorChannelQueryValue(
+            bound.values[0].?.*,
+            bound.values[1].?.*,
+            if (bound.values[2]) |value| value.* else null,
+            span,
+        );
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -14826,7 +15015,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, is-in-gamut, or to-gamut, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, is-in-gamut, to-gamut, or channel, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -16219,6 +16408,11 @@ const Engine = struct {
                 .{ .name = "space", .required = false },
                 .{ .name = "method", .required = false },
             },
+            .channel => &.{
+                .{ .name = "color" },
+                .{ .name = "channel" },
+                .{ .name = "space", .required = false },
+            },
             .mix => &.{
                 .{ .name = "color1" },
                 .{ .name = "color2" },
@@ -16493,6 +16687,7 @@ const Engine = struct {
             .is_missing => self.callColorIsMissing(arguments, span),
             .is_in_gamut => self.callColorIsInGamut(arguments, span),
             .to_gamut => self.callColorToGamut(arguments, span),
+            .channel => self.callColorChannelQuery(arguments, span),
             .ie_hex_str => self.callIeHexStr(arguments, span),
             .mix,
             .lighten,
@@ -18183,6 +18378,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "is-missing")) return .is_missing;
     if (sassNameEql(name, "is-in-gamut")) return .is_in_gamut;
     if (sassNameEql(name, "to-gamut")) return .to_gamut;
+    if (sassNameEql(name, "channel")) return .channel;
     if (sassNameEql(name, "ie-hex-str")) return .ie_hex_str;
     return null;
 }

@@ -19488,8 +19488,8 @@ test "native Sass meta module function enumeration rejects invalid and unsupport
             .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
         },
         .{
-            .name = "meta-call-module-functions-color-channel-unsupported.scss",
-            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"channel\", $module: \"color\"), red, \"red\"); }",
+            .name = "meta-call-module-functions-color-same-unsupported.scss",
+            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"same\", $module: \"color\"), red, red); }",
         },
         .{
             .name = "meta-call-module-functions-string-split-unsupported.scss",
@@ -19700,8 +19700,8 @@ test "native Sass color space function rejects invalid and unavailable invocatio
         .{ .name = "missing-alpha", .invocation = "color.space(rgb(0 0 0 / none))" },
         .{ .name = "modern-missing", .invocation = "color.space(lab(none 10 20))" },
         .{
-            .name = "channel",
-            .invocation = "meta.call(meta.get-function(\"channel\", $module: \"color\"), red, \"red\")",
+            .name = "same",
+            .invocation = "meta.call(meta.get-function(\"same\", $module: \"color\"), red, red)",
         },
     };
     for (invalid) |case| {
@@ -20934,6 +20934,295 @@ test "native Sass color to-gamut function rejects invalid and unavailable invoca
             "@use \"sass:color\"; @use \"sass:meta\"; $to-gamut: meta.get-function(\"to-gamut\", $module: \"color\"); .a { value: meta.call($to-gamut, red, rgb, clip); }",
             .scss,
             argument_limits,
+        ),
+    );
+}
+
+test "native Sass color channel function queries direct and reflected spaces" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$channel-name: red;
+        \\$module: meta.get-function("channel", $module: "color");
+        \\$alias: meta.get-function("channel", $module: "palette");
+        \\$star: meta.get-function("channel");
+        \\$list-args: (color(display-p3 .1 .2 .3 / .4), "green");
+        \\$map-args: (space: hsl, channel: "hue", color: red);
+        \\.values {
+        \\  exists: meta.function-exists("channel", "color");
+        \\  alias-exists: meta.function-exists("channel", "palette");
+        \\  global-exists: meta.function-exists("channel");
+        \\  type: meta.type-of($module);
+        \\  same: $module == $alias;
+        \\  star-same: $module == $star;
+        \\  rgb-red: color.channel(rgb(12.5 20 30 / .4), "red");
+        \\  rgb-alpha: color.channel(rgb(12.5 20 30 / .4), "alpha");
+        \\  hsl-hue: color.channel(hsl(25deg 20% 30%), "hue");
+        \\  hsl-saturation: color.channel(hsl(25deg 20% 30%), "saturation");
+        \\  hsl-lightness: color.channel(hsl(25deg 20% 30%), "lightness");
+        \\  hwb-hue: color.channel(hwb(25deg 20% 30%), "hue");
+        \\  hwb-whiteness: color.channel(hwb(25deg 20% 30%), "whiteness");
+        \\  hwb-blackness: color.channel(hwb(25deg 20% 30%), "blackness");
+        \\  lab-lightness: color.channel(lab(25% 20 30), "lightness");
+        \\  lab-a: color.channel(lab(25% 20 30), "a");
+        \\  lab-b: color.channel(lab(25% 20 30), "b");
+        \\  lch-lightness: color.channel(lch(25% 20 30deg), "lightness");
+        \\  lch-chroma: color.channel(lch(25% 20 30deg), "chroma");
+        \\  lch-hue: color.channel(lch(25% 20 30deg), "hue");
+        \\  oklab-lightness: color.channel(oklab(.25 .2 .3), "lightness");
+        \\  oklab-a: color.channel(oklab(.25 .2 .3), "a");
+        \\  oklab-b: color.channel(oklab(.25 .2 .3), "b");
+        \\  oklch-lightness: color.channel(oklch(.25 .2 30deg), "lightness");
+        \\  oklch-chroma: color.channel(oklch(.25 .2 30deg), "chroma");
+        \\  oklch-hue: color.channel(oklch(.25 .2 30deg), "hue");
+        \\  srgb-red: color.channel(color(srgb .1 .2 .3), "red");
+        \\  linear-green: color.channel(color(srgb-linear .1 .2 .3), "green");
+        \\  p3-blue: color.channel(color(display-p3 .1 .2 .3), "blue");
+        \\  p3-extended: color.channel(color(display-p3 1.2 -.1 .5), "red");
+        \\  a98-red: color.channel(color(a98-rgb .1 .2 .3), "red");
+        \\  prophoto-green: color.channel(color(prophoto-rgb .1 .2 .3), "green");
+        \\  rec2020-blue: color.channel(color(rec2020 .1 .2 .3), "blue");
+        \\  d50-x: color.channel(color(xyz-d50 .1 .2 .3), "x");
+        \\  d50-y: color.channel(color(xyz-d50 .1 .2 .3), "y");
+        \\  d50-z: color.channel(color(xyz-d50 .1 .2 .3), "z");
+        \\  xyz-x: color.channel(color(xyz .1 .2 .3), "x");
+        \\  convert-rgb-red: color.channel(color(display-p3 .1 .2 .3), "red", $space: rgb);
+        \\  convert-hsl-hue: color.channel(red, "hue", hsl);
+        \\  convert-p3-green: color.channel(red, "green", DISPLAY-P3);
+        \\  convert-xyz-alias: color.channel(red, "x", XYZ-D65);
+        \\  null-space: color.channel(red, "red", null);
+        \\  alpha-space: color.channel(rgb(1 2 3 / .4), "alpha", oklab);
+        \\  escaped: color.channel(red, "\72 ed");
+        \\  interpolated: color.channel(red, "#{$channel-name}");
+        \\  alias: palette.channel(color(display-p3 .1 .2 .3), "red");
+        \\  star: channel(color(display-p3 .1 .2 .3), "red");
+        \\  reflected: meta.call($module, color(display-p3 .1 .2 .3), "red");
+        \\  named: meta.call($module, $space: hsl, $channel: "hue", $color: red);
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, red), mark(3, "red"), $space: mark(4, rgb));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, red, "red"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-channel-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;alias-exists:true;global-exists:true;type:function;same:true;star-same:true;rgb-red:12.5;rgb-alpha:.4;hsl-hue:25deg;hsl-saturation:20%;hsl-lightness:30%;hwb-hue:25deg;hwb-whiteness:20%;hwb-blackness:30%;lab-lightness:25%;lab-a:20;lab-b:30;lch-lightness:25%;lch-chroma:20;lch-hue:30deg;oklab-lightness:25%;oklab-a:.2;oklab-b:.3;oklch-lightness:25%;oklch-chroma:.2;oklch-hue:30deg;srgb-red:.1;linear-green:.2;p3-blue:.3;p3-extended:1.2;a98-red:.1;prophoto-green:.2;rec2020-blue:.3;d50-x:.1;d50-y:.2;d50-z:.3;xyz-x:.1;convert-rgb-red:15.1358007651;convert-hsl-hue:0deg;convert-p3-green:.2002868077;convert-xyz-alias:.4123907993;null-space:255;alpha-space:.4;escaped:255;interpolated:255;alias:.1;star:.1;reflected:.1;named:0deg;list-splat:.2;map-splat:0deg;ordered:255;trace:1234;result-type:number}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const plain_css =
+        \\@use "sass:meta";
+        \\.plain {
+        \\  exists: meta.function-exists("channel");
+        \\  value: channel(red, "red");
+        \\}
+    ;
+    var plain_result = try compile(
+        std.testing.allocator,
+        "color-channel-plain-css.scss",
+        plain_css,
+        .scss,
+        .{},
+    );
+    defer plain_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{exists:false;value:channel(red, \"red\")}",
+        plain_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), plain_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$reference: m.get-function("channel", $module: "palette")
+        \\.sass
+        \\  exists: m.function-exists("channel", "palette")
+        \\  global-exists: m.function-exists("channel")
+        \\  type: m.type-of($reference)
+        \\  red: m.call($reference, red, "red")
+        \\  hue: palette.channel(red, "hue", hsl)
+        \\  p3: palette.channel(red, "red", display-p3)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-channel-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{exists:true;global-exists:false;type:function;red:255;hue:0deg;p3:.9174875573}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorChannelFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorChannelFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:color";
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("channel", $module: "color");
+        \\.allocation {
+        \\  direct: color.channel(color(display-p3 .1 .2 .3), "red");
+        \\  reflected: meta.call($reference, red, "green", display-p3);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-channel-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:.1;reflected:.2002868077}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass color channel function rejects invalid and unavailable invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "color.channel()" },
+        .{ .name = "missing-channel", .invocation = "color.channel(red)" },
+        .{ .name = "extra", .invocation = "meta.call($channel, red, \"red\", rgb, extra)" },
+        .{ .name = "unknown", .invocation = "color.channel(red, \"red\", $other: rgb)" },
+        .{ .name = "duplicate", .invocation = "meta.call($channel, red, \"red\", $color: blue)" },
+        .{ .name = "null-color", .invocation = "color.channel(null, \"red\")" },
+        .{ .name = "boolean-color", .invocation = "color.channel(true, \"red\")" },
+        .{ .name = "number-color", .invocation = "color.channel(1, \"red\")" },
+        .{ .name = "string-color", .invocation = "color.channel(\"red\", \"red\")" },
+        .{ .name = "list-color", .invocation = "color.channel((red, blue), \"red\")" },
+        .{ .name = "map-color", .invocation = "color.channel((tone: red), \"red\")" },
+        .{ .name = "deferred-color", .invocation = "color.channel(var(--color), \"red\")" },
+        .{ .name = "null-channel", .invocation = "color.channel(red, null)" },
+        .{ .name = "boolean-channel", .invocation = "color.channel(red, true)" },
+        .{ .name = "number-channel", .invocation = "color.channel(red, 1)" },
+        .{ .name = "unquoted-channel", .invocation = "color.channel(red, red)" },
+        .{ .name = "uppercase-channel", .invocation = "color.channel(red, \"RED\")" },
+        .{ .name = "wrong-stored-channel", .invocation = "color.channel(hsl(1 2% 3%), \"red\")" },
+        .{ .name = "wrong-target-channel", .invocation = "color.channel(red, \"x\", rgb)" },
+        .{ .name = "boolean-space", .invocation = "color.channel(red, \"red\", true)" },
+        .{ .name = "number-space", .invocation = "color.channel(red, \"red\", 1)" },
+        .{ .name = "quoted-space", .invocation = "color.channel(red, \"red\", \"rgb\")" },
+        .{ .name = "color-space", .invocation = "color.channel(red, \"red\", blue)" },
+        .{ .name = "list-space", .invocation = "color.channel(red, \"red\", (rgb, hsl))" },
+        .{ .name = "map-space", .invocation = "color.channel(red, \"red\", (space: rgb))" },
+        .{ .name = "deferred-space", .invocation = "color.channel(red, \"red\", var(--space))" },
+        .{ .name = "unknown-space", .invocation = "color.channel(red, \"red\", custom)" },
+        .{ .name = "underscore-space", .invocation = "color.channel(red, \"red\", display_p3)" },
+        .{
+            .name = "missing-selected",
+            .invocation = "color.channel(color(display-p3 none .2 .3), \"red\")",
+        },
+        .{
+            .name = "missing-other",
+            .invocation = "color.channel(color(display-p3 none .2 .3), \"green\")",
+        },
+        .{
+            .name = "missing-cross-space",
+            .invocation = "color.channel(color(display-p3 none .2 .3), \"green\", srgb)",
+        },
+        .{
+            .name = "missing-alpha",
+            .invocation = "color.channel(rgb(1 2 3 / none), \"alpha\")",
+        },
+        .{
+            .name = "same",
+            .invocation = "meta.call(meta.get-function(\"same\", $module: \"color\"), red, red)",
+        },
+    };
+    for (invalid) |case| {
+        const case_source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; @use \"sass:meta\"; $channel: meta.get-function(\"channel\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(case_source);
+        const name = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "meta-call-color-channel-{s}.scss",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(name);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, name, case_source, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-channel-global-reference.scss",
+            "@use \"sass:meta\"; $channel: meta.get-function(\"channel\"); .a { value: meta.call($channel, red, \"red\"); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-channel-module-not-loaded.scss",
+            "@use \"sass:meta\"; $channel: meta.get-function(\"channel\", $module: \"color\"); .a { value: meta.call($channel, red, \"red\"); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-channel-argument-limit.scss",
+            "@use \"sass:color\"; @use \"sass:meta\"; $channel: meta.get-function(\"channel\", $module: \"color\"); .a { value: meta.call($channel, red, \"red\", rgb); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 2;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-channel-temporary-limit.scss",
+            "@use \"sass:color\"; .a { value: color.channel(red, \"red\"); }",
+            .scss,
+            temporary_limits,
         ),
     );
 }
