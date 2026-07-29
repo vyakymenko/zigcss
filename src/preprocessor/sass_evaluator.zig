@@ -8757,6 +8757,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorInvertFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -12594,6 +12601,168 @@ const Engine = struct {
         }
     }
 
+    fn invokeColorInvertFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .invert or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "weight", .required = false },
+            .{ .name = "space", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        if (bound.values[2] != null) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native invert() interpolation spaces are not implemented",
+            );
+            return error.UnsupportedFeature;
+        }
+
+        const argument = bound.values[0].?;
+        const result = switch (argument.*) {
+            .color => |color| blk: {
+                const legacy = try self.legacyInvertColorArgument(color, span);
+                const weight = if (bound.values[1]) |value|
+                    try self.legacyInvertWeight(value.*, span)
+                else
+                    100;
+                const inverted = native_color.invert(legacy, weight) catch |failure| {
+                    return self.colorTransformFailure(failure, span);
+                };
+                break :blk try self.values.own(.{ .color = inverted });
+            },
+            .number => blk: {
+                if (bound.values[1] != null) {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "invert() CSS filter form accepts only one argument",
+                    );
+                    return error.InvalidExpression;
+                }
+                if (reference.owner != null) {
+                    try self.transaction.report(
+                        .warning,
+                        .invalid_operation,
+                        span,
+                        "Passing a number to color.invert() is deprecated.",
+                        &.{},
+                    );
+                }
+                const rendered = [_]*const native_value.Value{argument};
+                break :blk try self.preservePlainCssFunction(
+                    "invert",
+                    &rendered,
+                    false,
+                );
+            },
+            else => blk: {
+                if (reference.owner == null and
+                    bound.values[1] == null and
+                    isDeferredColorValue(argument.*))
+                {
+                    const rendered = [_]*const native_value.Value{argument};
+                    break :blk try self.preservePlainCssFunction(
+                        "invert",
+                        &rendered,
+                        false,
+                    );
+                }
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "invert() requires a color or one CSS filter amount",
+                );
+                return error.InvalidExpression;
+            },
+        };
+
+        if (reference.owner == null and argument.* == .color) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        return result;
+    }
+
+    fn legacyInvertColorArgument(
+        self: *Engine,
+        color: native_value.Color,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy invert() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb, .hsl, .hwb => return color,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy invert() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
+    fn legacyInvertWeight(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = switch (value) {
+            .number => |number| number,
+            else => {
+                try self.report(.type_mismatch, span, "invert() weight requires a percentage");
+                return error.InvalidExpression;
+            },
+        };
+        if (number.numerator_units.len != 1 or
+            number.denominator_units.len != 0 or
+            !std.mem.eql(u8, number.numerator_units[0], "%"))
+        {
+            try self.report(.type_mismatch, span, "invert() weight requires a percentage");
+            return error.InvalidExpression;
+        }
+        if (!std.math.isFinite(number.value) or number.value < 0 or number.value > 100) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "invert() weight must be between 0% and 100%",
+            );
+            return error.InvalidExpression;
+        }
+        return number.value;
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -15979,6 +16148,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "adjust-hue")) return .adjust_hue;
     if (kind == .color and sassNameEql(name, "complement")) return .complement;
     if (kind == .color and sassNameEql(name, "grayscale")) return .grayscale;
+    if (kind == .color and sassNameEql(name, "invert")) return .invert;
     return null;
 }
 
