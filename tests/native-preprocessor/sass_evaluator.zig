@@ -17546,6 +17546,236 @@ test "native Sass meta call rejects unavailable color fade in forms arguments an
     );
 }
 
+test "native Sass meta call invokes legacy color transparentize function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("transparentize");
+        \\$module: meta.get-function("transparentize", $module: "color");
+        \\$alias: meta.get-function("transparentize", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("transparentize");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (rgba(18, 52, 86, .6), .2);
+        \\$map-args: ("color": hsla(120, 20%, 25%, .6), "amount": .2%);
+        \\.values {
+        \\  global-exists: meta.function-exists("transparentize");
+        \\  module-exists: meta.function-exists("transparentize", "color");
+        \\  alias-exists: meta.function-exists("transparentize", "palette");
+        \\  type: meta.type-of($global);
+        \\  module-type: meta.type-of($module);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, rgba(18, 52, 86, .6), .2);
+        \\  named: meta.call($global, $amount: .2px, $color: rgba(18, 52, 86, .6));
+        \\  transparent: meta.call($global, transparent, .2);
+        \\  opaque: meta.call($global, #123456, .2);
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .1), .2);
+        \\  hsl: meta.call($global, hsla(120, 20%, 25%, .6), .2);
+        \\  hwb: meta.call($global, hwb(240deg 10% 20% / .6), .2);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  zero: meta.call($global, rgba(18, 52, 86, .6), 0);
+        \\  full: meta.call($global, rgba(18, 52, 86, .6), 1);
+        \\  ordered: meta.call(mark(1, $global), $amount: mark(3, .2), $color: mark(2, rgba(18, 52, 86, .6)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, rgba(18, 52, 86, .6), .2));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-transparentize-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;module-type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"transparentize\");inspect-module:get-function(\"transparentize\");global:rgba(18,52,86,.4);named:rgba(18,52,86,.4);transparent:rgba(0,0,0,0);opaque:rgba(18,52,86,.8);alpha:rgba(18,52,86,0);hsl:rgba(51,76.5,51,.4);hwb:rgba(25.5,25.5,204,.4);list-splat:rgba(18,52,86,.4);map-splat:rgba(51,76.5,51,.4);zero:rgba(18,52,86,.6);full:rgba(18,52,86,0);ordered:rgba(18,52,86,.4);trace:132;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 26), diagnostics.len);
+    var global_warnings: usize = 0;
+    var transparentize_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "transparentize() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+        )) {
+            transparentize_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 13), global_warnings);
+    try std.testing.expectEqual(@as(usize, 13), transparentize_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$transparentize: m.get-function("transparentize")
+        \\$module: m.get-function("transparentize", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20% / .6), "amount": .2)
+        \\.sass
+        \\  type: m.type-of($transparentize)
+        \\  module-type: m.type-of($module)
+        \\  plain: m.call($transparentize, hsla(120, 20%, 25%, .6), .2)
+        \\  named: m.call($transparentize, $color: rgba(18, 52, 86, .6), $amount: .2)
+        \\  map: m.call($transparentize, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-transparentize-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;plain:rgba(51,76.5,51,.4);named:rgba(18,52,86,.4);map:rgba(25.5,25.5,204,.4);module-inspect:get-function(\"transparentize\")}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorTransparentizeFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorTransparentizeFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$transparentize: meta.get-function("transparentize");
+        \\.allocation {
+        \\  rgb: meta.call($transparentize, rgba(18, 52, 86, .6), .2);
+        \\  hsl: meta.call($transparentize, hsla(120, 20%, 25%, .6), .2px);
+        \\  hwb: meta.call($transparentize, hwb(240deg 10% 20% / .6), .2%);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-transparentize-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{rgb:rgba(18,52,86,.4);hsl:rgba(51,76.5,51,.4);hwb:rgba(25.5,25.5,204,.4)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color transparentize forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($transparentize)" },
+        .{ .name = "missing-amount", .invocation = "meta.call($transparentize, red)" },
+        .{ .name = "extra", .invocation = "meta.call($transparentize, red, .2, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($transparentize, red, $other: .2)" },
+        .{ .name = "duplicate-color", .invocation = "meta.call($transparentize, red, .2, $color: blue)" },
+        .{ .name = "duplicate-amount", .invocation = "meta.call($transparentize, red, .2, $amount: .3)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($transparentize, ()...)" },
+        .{ .name = "non-color", .invocation = "meta.call($transparentize, 1, .2)" },
+        .{ .name = "non-number", .invocation = "meta.call($transparentize, red, true)" },
+        .{ .name = "compound-amount", .invocation = "meta.call($transparentize, red, math.div(.2px, 1s))" },
+        .{ .name = "calculation-amount", .invocation = "meta.call($transparentize, red, calc(.1 + var(--amount)))" },
+        .{ .name = "negative-amount", .invocation = "meta.call($transparentize, red, -.1)" },
+        .{ .name = "high-amount", .invocation = "meta.call($transparentize, red, 1.1)" },
+        .{ .name = "missing-channel", .invocation = "meta.call($transparentize, rgb(none 0 0 / .6), .2)" },
+        .{ .name = "modern-space", .invocation = "meta.call($transparentize, lab(50% 10 20 / .6), .2)" },
+        .{ .name = "deferred-color", .invocation = "meta.call($transparentize, var(--color), .2)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:math\"; $transparentize: meta.get-function(\"transparentize\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-transparentize-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"transparentize\", $module: \"color\"), red, .2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-transparentize-removed-module.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $transparentize: meta.get-function(\"transparentize\", $module: \"color\"); .a { value: meta.call($transparentize, rgba(1, 2, 3, .6), .2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-transparentize-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.transparentize(rgba(1, 2, 3, .6), .2); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-transparentize-argument-limit.scss",
+            "@use \"sass:meta\"; $transparentize: meta.get-function(\"transparentize\"); .a { value: meta.call($transparentize, red, .2); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -17659,7 +17889,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"transparentize\"), #123, .1); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"fade-out\"), #123, .1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
