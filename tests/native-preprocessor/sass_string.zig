@@ -116,6 +116,65 @@ test "native Sass strings insert with clamped indexes and fold ASCII only" {
     try std.testing.expectEqualStrings("abc-É-ẞ-i", lower);
 }
 
+test "native Sass strings split decoded values into bounded bracket items" {
+    const allocator = std.testing.allocator;
+    var quoted = try string.splitAlloc(
+        allocator,
+        "a💚b💚c",
+        true,
+        "💚",
+        true,
+        null,
+        1024,
+    );
+    defer quoted.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 3), quoted.items.len);
+    try std.testing.expectEqualStrings("a", quoted.items[0]);
+    try std.testing.expectEqualStrings("b", quoted.items[1]);
+    try std.testing.expectEqualStrings("c", quoted.items[2]);
+
+    var limited = try string.splitAlloc(
+        allocator,
+        "a-b-c",
+        true,
+        "-",
+        true,
+        1,
+        1024,
+    );
+    defer limited.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), limited.items.len);
+    try std.testing.expectEqualStrings("a", limited.items[0]);
+    try std.testing.expectEqualStrings("b-c", limited.items[1]);
+
+    var scalars = try string.splitAlloc(
+        allocator,
+        "a💚b",
+        true,
+        "",
+        true,
+        1,
+        1024,
+    );
+    defer scalars.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 3), scalars.items.len);
+    try std.testing.expectEqualStrings("a", scalars.items[0]);
+    try std.testing.expectEqualStrings("💚", scalars.items[1]);
+    try std.testing.expectEqualStrings("b", scalars.items[2]);
+
+    var empty = try string.splitAlloc(
+        allocator,
+        "",
+        true,
+        "-",
+        true,
+        null,
+        1024,
+    );
+    defer empty.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), empty.items.len);
+}
+
 test "native Sass strings fail closed on malformed data and output ceilings" {
     const allocator = std.testing.allocator;
     try std.testing.expectError(
@@ -137,5 +196,9 @@ test "native Sass strings fail closed on malformed data and output ceilings" {
     try std.testing.expectError(
         error.OutputLimitExceeded,
         string.reencodeAlloc(allocator, "\\", false, true, 1),
+    );
+    try std.testing.expectError(
+        error.OutputLimitExceeded,
+        string.splitAlloc(allocator, "a-b-c-d", true, "-", true, null, 48),
     );
 }

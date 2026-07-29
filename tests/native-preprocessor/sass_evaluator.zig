@@ -10162,6 +10162,214 @@ test "native Sass meta call rejects invalid string lower case arguments and limi
     );
 }
 
+test "native Sass invokes direct and reflected string split functions" {
+    const input =
+        \\@use "sass:list";
+        \\@use "sass:meta";
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$custom: meta.get-function("split", $module: "text");
+        \\$default: meta.get-function("split", $module: "string");
+        \\$star: meta.get-function("split");
+        \\$list-args: ("a-b-c", "-", 1);
+        \\$map-args: (string: "a💚b💚c", separator: "💚", limit: 1);
+        \\$parts: meta.call($default, "a-b-c", "-");
+        \\.values {
+        \\  exists: meta.function-exists("split", "string");
+        \\  type: meta.type-of($default);
+        \\  same: $custom == $default;
+        \\  star-same: $star == $default;
+        \\  direct: meta.inspect(string.split("a-b-c", "-"));
+        \\  quoted: meta.inspect(meta.call($default, "a-b-c", "-"));
+        \\  unquoted: meta.inspect(meta.call($default, foo-bar-baz, "-"));
+        \\  unicode: meta.inspect(meta.call($default, "a💚b💚c", "💚"));
+        \\  combining: meta.inspect(meta.call($default, "éx́y", "́"));
+        \\  zwj: meta.inspect(meta.call($default, "👩‍💻", "‍"));
+        \\  escaped: meta.inspect(meta.call($default, "a\62 c", "b"));
+        \\  unquoted-escaped: meta.inspect(meta.call($default, a\62 c, b));
+        \\  multi: meta.inspect(meta.call($default, "aaaaa", "aa"));
+        \\  absent: meta.inspect(meta.call($default, "abc", "x"));
+        \\  empties: meta.inspect(meta.call($default, "-a--b-", "-"));
+        \\  empty-string: meta.inspect(meta.call($default, "", "-"));
+        \\  empty-separator: meta.inspect(meta.call($default, "a💚b", ""));
+        \\  limit-one: meta.inspect(meta.call($default, "a-b-c", "-", 1));
+        \\  limit-two: meta.inspect(meta.call($default, "a-b-c-d", "-", 2));
+        \\  limit-null: meta.inspect(meta.call($default, "a-b-c", "-", null));
+        \\  unit-limit: meta.inspect(meta.call($default, "a-b-c", "-", 1px));
+        \\  fuzzy-limit: meta.inspect(meta.call($default, "a-b-c", "-", 1.000000000001));
+        \\  list-splat: meta.inspect(meta.call($custom, $list-args...));
+        \\  map-splat: meta.inspect(meta.call($default, $map-args...));
+        \\  bracketed: list.is-bracketed($parts);
+        \\  separator: list.separator($parts);
+        \\  length: list.length($parts);
+        \\  item-type: meta.type-of(list.nth($parts, 1));
+        \\  ordered: meta.inspect(meta.call(mark(1, $star), $limit: mark(2, 1), $string: mark(3, "a-b-c"), $separator: mark(4, "-")));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($default, "a-b", "-"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-string-split-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;same:true;star-same:true;direct:[\"a\", \"b\", \"c\"];quoted:[\"a\", \"b\", \"c\"];unquoted:[foo, bar, baz];unicode:[\"a\", \"b\", \"c\"];combining:[\"e\", \"x\", \"y\"];zwj:[\"👩\", \"💻\"];escaped:[\"a\", \"c\"];unquoted-escaped:[a, c];multi:[\"\", \"\", \"a\"];absent:[\"abc\",];empties:[\"\", \"a\", \"\", \"b\", \"\"];empty-string:[];empty-separator:[\"a\", \"💚\", \"b\"];limit-one:[\"a\", \"b-c\"];limit-two:[\"a\", \"b\", \"c-d\"];limit-null:[\"a\", \"b\", \"c\"];unit-limit:[\"a\", \"b-c\"];fuzzy-limit:[\"a\", \"b-c\"];list-splat:[\"a\", \"b-c\"];map-splat:[\"a\", \"b💚c\"];bracketed:true;separator:comma;length:3;item-type:string;ordered:[\"a\", \"b-c\"];trace:1234;result-type:list}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:string" as text
+        \\$split: m.get-function("split", $module: "text")
+        \\.sass
+        \\  type: m.type-of($split)
+        \\  plain: m.inspect(m.call($split, "a-b-c", "-"))
+        \\  named: m.inspect(m.call($split, $limit: 1, $separator: "💚", $string: "a💚b💚c"))
+        \\  direct: m.inspect(text.split("a--b", "--"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-string-split-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;plain:[\"a\", \"b\", \"c\"];named:[\"a\", \"b💚c\"];direct:[\"a\", \"b\"]}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass string split preserves the closed global boundary" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:string";
+        \\.boundary {
+        \\  exists: meta.function-exists("split");
+        \\  module-exists: meta.function-exists("split", "string");
+        \\  bare: split("a-b", "-");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "string-split-global-boundary.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".boundary{exists:false;module-exists:true;bare:split(\"a-b\", \"-\")}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass string split rejects invalid arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($split, a)" },
+        .{ .name = "extra", .invocation = "meta.call($split, a, b, 1, 2)" },
+        .{ .name = "unknown", .invocation = "meta.call($split, $string: a, $separator: b, $other: 1)" },
+        .{ .name = "duplicate", .invocation = "meta.call($split, a, b, $string: c)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($split, ()...)" },
+        .{ .name = "null-string", .invocation = "meta.call($split, null, b)" },
+        .{ .name = "boolean-string", .invocation = "meta.call($split, true, b)" },
+        .{ .name = "number-string", .invocation = "meta.call($split, 1, b)" },
+        .{ .name = "list-string", .invocation = "meta.call($split, (a, b), b)" },
+        .{ .name = "map-string", .invocation = "meta.call($split, (a: b), b)" },
+        .{ .name = "color-string", .invocation = "meta.call($split, red, b)" },
+        .{ .name = "calculation-string", .invocation = "meta.call($split, calc(1px + var(--x)), b)" },
+        .{ .name = "null-separator", .invocation = "meta.call($split, a, null)" },
+        .{ .name = "number-separator", .invocation = "meta.call($split, a, 1)" },
+        .{ .name = "color-separator", .invocation = "meta.call($split, red, red)" },
+        .{ .name = "calculation-separator", .invocation = "meta.call($split, a, calc(1 + var(--x)))" },
+        .{ .name = "boolean-limit", .invocation = "meta.call($split, a, b, true)" },
+        .{ .name = "string-limit", .invocation = "meta.call($split, a, b, one)" },
+        .{ .name = "calculation-limit", .invocation = "meta.call($split, a, b, calc(1 + var(--x)))" },
+        .{ .name = "fraction-limit", .invocation = "meta.call($split, a, b, 1.5)" },
+        .{ .name = "zero-limit", .invocation = "meta.call($split, a, b, 0)" },
+        .{ .name = "negative-limit", .invocation = "meta.call($split, a, b, -1)" },
+    };
+    for (invalid) |case| {
+        const case_source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:string\"; $split: meta.get-function(\"split\", $module: \"string\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(case_source);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case_source, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-string-split-module-not-loaded.scss",
+            "@use \"sass:meta\"; $split: meta.get-function(\"split\", $module: \"string\"); .a { value: meta.call($split, a, b); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var temporary = sass_evaluator.Limits{};
+    temporary.max_temporary_bytes = 48;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-string-split-temporary-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:string\"; $split: meta.get-function(\"split\", $module: \"string\"); .a { value: meta.call($split, \"a-b-c-d-e-f\", \"-\"); }",
+            .scss,
+            temporary,
+        ),
+    );
+
+    var collections = sass_evaluator.Limits{};
+    collections.values.max_collection_items = 2;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-string-split-collection-limit.scss",
+            "@use \"sass:string\"; .a { value: string.split(\"a-b-c\", \"-\"); }",
+            .scss,
+            collections,
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-string-split-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:string\" as *; $split: meta.get-function(\"split\"); .a { value: meta.call($split, \"a-b-c\", \"-\", 1); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes color adjust function references" {
     const input =
         \\@use "sass:meta";
@@ -19488,8 +19696,8 @@ test "native Sass meta module function enumeration rejects invalid and unsupport
             .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
         },
         .{
-            .name = "meta-call-module-functions-string-split-unsupported.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:string\"; $functions: meta.module-functions(\"string\"); .a { value: meta.call(meta.get-function(\"split\", $module: \"string\"), \"a-b\", \"-\"); }",
+            .name = "meta-call-module-functions-string-unique-id-unsupported.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:string\"; $functions: meta.module-functions(\"string\"); .a { value: meta.call(meta.get-function(\"unique-id\", $module: \"string\")); }",
         },
     };
     for (invalid) |case| {
@@ -29495,6 +29703,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  string-insert-function-call: meta.call(meta.get-function("insert", $module: "text"), "a💚b", "🌍", 2);
         \\  string-upper-case-function-call: meta.call(meta.get-function("to-upper-case", $module: "text"), "a💚éßıiẞb");
         \\  string-lower-case-function-call: meta.call(meta.get-function("to-lower-case", $module: "text"), "A💚ÉẞIİB");
+        \\  string-split-function-call: meta.inspect(meta.call(meta.get-function("split", $module: "text"), "a💚b💚c", "💚", 1));
         \\  color-adjust-function-call: meta.call(meta.get-function("adjust", $module: "palette"), #123456, $red: 10);
         \\  color-change-function-call: meta.call(meta.get-function("change", $module: "palette"), #123456, $red: 28);
         \\  color-scale-function-call: meta.call(meta.get-function("scale", $module: "palette"), #123456, $red: 50%);
@@ -29529,7 +29738,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;string-slice-function-call:\"💚\";string-insert-function-call:\"a🌍💚b\";string-upper-case-function-call:\"A💚éßıIẞB\";string-lower-case-function-call:\"a💚Éẞiİb\";color-adjust-function-call:#1c3456;color-change-function-call:#1c3456;color-scale-function-call:rgb(136.5,52,86);color-rgb-function-call:#123456;color-rgba-function-call:rgba(18,52,86,.4);color-hsl-function-call:hsla(120,40%,50%,.4);color-hsla-function-call:hsla(120,40%,50%,.4);selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;string-slice-function-call:\"💚\";string-insert-function-call:\"a🌍💚b\";string-upper-case-function-call:\"A💚éßıIẞB\";string-lower-case-function-call:\"a💚Éẞiİb\";string-split-function-call:[\"a\", \"b💚c\"];color-adjust-function-call:#1c3456;color-change-function-call:#1c3456;color-scale-function-call:rgb(136.5,52,86);color-rgb-function-call:#123456;color-rgba-function-call:rgba(18,52,86,.4);color-hsl-function-call:hsla(120,40%,50%,.4);color-hsla-function-call:hsla(120,40%,50%,.4);selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);

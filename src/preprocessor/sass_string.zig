@@ -18,6 +18,17 @@ pub const Case = enum {
     lower,
 };
 
+pub const SplitResult = struct {
+    items: [][]u8,
+    temporary_bytes: usize,
+
+    pub fn deinit(self: *SplitResult, allocator: std.mem.Allocator) void {
+        for (self.items) |item| allocator.free(item);
+        if (self.items.len != 0) allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
 pub fn length(
     allocator: std.mem.Allocator,
     raw: []const u8,
@@ -125,6 +136,109 @@ pub fn changeCaseAlloc(
         };
     }
     return encodeAlloc(allocator, decoded, quoted, maximum_bytes);
+}
+
+pub fn splitAlloc(
+    allocator: std.mem.Allocator,
+    raw: []const u8,
+    quoted: bool,
+    separator_raw: []const u8,
+    separator_quoted: bool,
+    maximum_splits: ?usize,
+    maximum_bytes: usize,
+) Error!SplitResult {
+    const decoded = try decodeAlloc(allocator, raw, quoted, maximum_bytes);
+    defer allocator.free(decoded);
+    const separator_budget = maximum_bytes - decoded.len;
+    const separator = try decodeAlloc(
+        allocator,
+        separator_raw,
+        separator_quoted,
+        separator_budget,
+    );
+    defer allocator.free(separator);
+
+    if (decoded.len == 0) return .{ .items = &.{}, .temporary_bytes = 0 };
+
+    const item_count = if (separator.len == 0)
+        codepointLength(decoded) catch return error.InvalidString
+    else
+        splitItemCount(decoded, separator, maximum_splits);
+    const metadata_bytes = std.math.mul(usize, item_count, @sizeOf([]u8)) catch
+        return error.OutputLimitExceeded;
+    const decoding_bytes = std.math.add(usize, decoded.len, separator.len) catch
+        return error.OutputLimitExceeded;
+    if (metadata_bytes > maximum_bytes - decoding_bytes) {
+        return error.OutputLimitExceeded;
+    }
+
+    const items = try allocator.alloc([]u8, item_count);
+    var initialized: usize = 0;
+    errdefer {
+        for (items[0..initialized]) |item| allocator.free(item);
+        allocator.free(items);
+    }
+
+    var resident_bytes = metadata_bytes;
+    if (separator.len == 0) {
+        var start: usize = 0;
+        while (start < decoded.len) {
+            const scalar_length = std.unicode.utf8ByteSequenceLength(decoded[start]) catch
+                return error.InvalidString;
+            const end = std.math.add(usize, start, scalar_length) catch
+                return error.InvalidString;
+            if (end > decoded.len) return error.InvalidString;
+            _ = std.unicode.utf8Decode(decoded[start..end]) catch
+                return error.InvalidString;
+            items[initialized] = try encodeAlloc(
+                allocator,
+                decoded[start..end],
+                quoted,
+                maximum_bytes - decoding_bytes - resident_bytes,
+            );
+            resident_bytes = std.math.add(
+                usize,
+                resident_bytes,
+                items[initialized].len,
+            ) catch return error.OutputLimitExceeded;
+            initialized += 1;
+            start = end;
+        }
+    } else {
+        var start: usize = 0;
+        var splits: usize = 0;
+        const split_limit = maximum_splits orelse std.math.maxInt(usize);
+        while (splits < split_limit) : (splits += 1) {
+            const match = std.mem.indexOfPos(u8, decoded, start, separator) orelse break;
+            items[initialized] = try encodeAlloc(
+                allocator,
+                decoded[start..match],
+                quoted,
+                maximum_bytes - decoding_bytes - resident_bytes,
+            );
+            resident_bytes = std.math.add(
+                usize,
+                resident_bytes,
+                items[initialized].len,
+            ) catch return error.OutputLimitExceeded;
+            initialized += 1;
+            start = match + separator.len;
+        }
+        items[initialized] = try encodeAlloc(
+            allocator,
+            decoded[start..],
+            quoted,
+            maximum_bytes - decoding_bytes - resident_bytes,
+        );
+        resident_bytes = std.math.add(
+            usize,
+            resident_bytes,
+            items[initialized].len,
+        ) catch return error.OutputLimitExceeded;
+        initialized += 1;
+    }
+    std.debug.assert(initialized == item_count);
+    return .{ .items = items, .temporary_bytes = resident_bytes };
 }
 
 pub fn decodeAlloc(
@@ -300,6 +414,24 @@ fn byteOffset(bytes: []const u8, target: usize) error{InvalidString}!usize {
         if (index > bytes.len) return error.InvalidString;
     }
     return index;
+}
+
+fn splitItemCount(
+    bytes: []const u8,
+    separator: []const u8,
+    maximum_splits: ?usize,
+) usize {
+    std.debug.assert(bytes.len != 0 and separator.len != 0);
+    var count: usize = 1;
+    var start: usize = 0;
+    var splits: usize = 0;
+    const split_limit = maximum_splits orelse std.math.maxInt(usize);
+    while (splits < split_limit) : (splits += 1) {
+        const match = std.mem.indexOfPos(u8, bytes, start, separator) orelse break;
+        count += 1;
+        start = match + separator.len;
+    }
+    return count;
 }
 
 fn appendHexEscape(

@@ -5367,6 +5367,7 @@ const Engine = struct {
             .str_index,
             .str_slice,
             .str_insert,
+            .str_split,
             .to_upper_case,
             .to_lower_case,
             => return try self.callStringBuiltinRaw(
@@ -5397,7 +5398,6 @@ const Engine = struct {
             .whiteness,
             .blackness,
             .str_unique_id,
-            .str_split,
             => return null,
             .rgb, .rgba, .hsl, .hsla, .hwb => return try self.callColorConstructorRaw(
                 builtin,
@@ -11338,6 +11338,7 @@ const Engine = struct {
             reference.builtin != .str_index and
             reference.builtin != .str_slice and
             reference.builtin != .str_insert and
+            reference.builtin != .str_split and
             reference.builtin != .to_upper_case and
             reference.builtin != .to_lower_case) or
             (reference.owner != null and reference.owner.? != .string))
@@ -11420,6 +11421,34 @@ const Engine = struct {
                     bound.values[0].?,
                     bound.values[1].?,
                     bound.values[2].?,
+                };
+                break :blk try self.callStringBuiltin(reference.builtin, &ordered, span);
+            },
+            .str_split => blk: {
+                const parameters = [_]native_arguments.Parameter{
+                    .{ .name = "string" },
+                    .{ .name = "separator" },
+                    .{ .name = "limit", .required = false },
+                };
+                var bound = try self.bindEvaluatedArguments(
+                    &parameters,
+                    parameters.len,
+                    arguments,
+                    span,
+                );
+                defer bound.deinit();
+
+                if (bound.values[2]) |limit| {
+                    const ordered = [_]*const native_value.Value{
+                        bound.values[0].?,
+                        bound.values[1].?,
+                        limit,
+                    };
+                    break :blk try self.callStringBuiltin(reference.builtin, &ordered, span);
+                }
+                const ordered = [_]*const native_value.Value{
+                    bound.values[0].?,
+                    bound.values[1].?,
                 };
                 break :blk try self.callStringBuiltin(reference.builtin, &ordered, span);
             },
@@ -15189,7 +15218,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, is-in-gamut, to-gamut, channel, same, or is-powerless, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, lower-case, or split, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, is-in-gamut, to-gamut, channel, same, or is-powerless, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -16181,6 +16210,70 @@ const Engine = struct {
                     .quoted = string.quoted,
                 } });
             },
+            .str_split => {
+                if (arguments.len != 2 and arguments.len != 3) {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "string.split() requires a string, separator, and optional limit",
+                    );
+                    return error.InvalidExpression;
+                }
+                const string = try self.stringArgument(arguments[0].*, span);
+                const separator = try self.stringArgument(arguments[1].*, span);
+                if ((!string.quoted and isSassCalculationValue(string.bytes)) or
+                    (!separator.quoted and isSassCalculationValue(separator.bytes)))
+                {
+                    try self.report(
+                        .type_mismatch,
+                        span,
+                        "native Sass string function requires a string",
+                    );
+                    return error.InvalidExpression;
+                }
+                const limit = if (arguments.len == 3)
+                    try self.stringSplitLimit(arguments[2].*, span)
+                else
+                    null;
+                var split = native_string.splitAlloc(
+                    self.allocator,
+                    string.bytes,
+                    string.quoted,
+                    separator.bytes,
+                    separator.quoted,
+                    limit,
+                    self.limits.max_temporary_bytes,
+                ) catch |err| return self.stringFailure(err, span);
+                defer split.deinit(self.allocator);
+
+                const value_bytes = std.math.mul(
+                    usize,
+                    split.items.len,
+                    @sizeOf(native_value.Value),
+                ) catch return self.stringTemporaryFailure(span);
+                const temporary_bytes = std.math.add(
+                    usize,
+                    split.temporary_bytes,
+                    value_bytes,
+                ) catch return self.stringTemporaryFailure(span);
+                if (temporary_bytes > self.limits.max_temporary_bytes) {
+                    return self.stringTemporaryFailure(span);
+                }
+                const items = try self.allocator.alloc(native_value.Value, split.items.len);
+                defer self.allocator.free(items);
+                for (split.items, 0..) |item, index| {
+                    try self.transaction.consumeOperations(1);
+                    items[index] = .{ .string = .{
+                        .bytes = item,
+                        .quoted = string.quoted,
+                    } };
+                }
+                return self.values.own(.{ .list = .{
+                    .items = items,
+                    .separator = .comma,
+                    .bracketed = true,
+                } });
+            },
             .to_upper_case, .to_lower_case => {
                 if (arguments.len != 1) {
                     try self.report(.invalid_operation, span, "case conversion requires exactly one string");
@@ -16237,6 +16330,11 @@ const Engine = struct {
                 .{ .name = "string" },
                 .{ .name = "insert" },
                 .{ .name = "index" },
+            },
+            .str_split => &.{
+                .{ .name = "string" },
+                .{ .name = "separator" },
+                .{ .name = "limit", .required = false },
             },
             else => unreachable,
         };
@@ -16960,6 +17058,52 @@ const Engine = struct {
         if (number.value > 2_147_483_647) return std.math.maxInt(i64);
         if (number.value < -2_147_483_647) return std.math.minInt(i64);
         return @intFromFloat(number.value);
+    }
+
+    fn stringSplitLimit(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!?usize {
+        if (item == .null_value) return null;
+        const number = switch (item) {
+            .number => |value| value,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native Sass string split limit must be a positive integer or null",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        const rounded = @round(number.value);
+        if (!std.math.isFinite(number.value) or
+            !fuzzyNumberEqual(number.value, rounded) or
+            rounded < 1)
+        {
+            try self.report(
+                .invalid_operation,
+                span,
+                "native Sass string split limit must be a positive integer or null",
+            );
+            return error.InvalidExpression;
+        }
+        const maximum: f64 = @floatFromInt(std.math.maxInt(usize));
+        if (rounded >= maximum) return std.math.maxInt(usize);
+        return @intFromFloat(rounded);
+    }
+
+    fn stringTemporaryFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .resource_limit,
+            span,
+            "native Sass string temporary limit exceeded",
+        ) catch |err| return err;
+        return error.TemporaryLimitExceeded;
     }
 
     fn stringFailure(
@@ -18841,9 +18985,16 @@ fn stringModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "index")) return .str_index;
     if (sassNameEql(name, "slice")) return .str_slice;
     if (sassNameEql(name, "insert")) return .str_insert;
+    if (sassNameEql(name, "split")) return .str_split;
     if (sassNameEql(name, "to-upper-case")) return .to_upper_case;
     if (sassNameEql(name, "to-lower-case")) return .to_lower_case;
     return null;
+}
+
+fn fuzzyNumberEqual(left: f64, right: f64) bool {
+    if (left == right) return true;
+    if (@abs(left - right) > 1e-11) return false;
+    return @round(left * 1e11) == @round(right * 1e11);
 }
 
 fn calculationDimensionsProvablyIncompatible(
