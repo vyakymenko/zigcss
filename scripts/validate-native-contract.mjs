@@ -171,6 +171,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-map-mutation-function-invocation',
       'built-in-meta-inspection-function-invocation',
       'built-in-meta-keywords-function-invocation',
+      'built-in-meta-content-existence-function-invocation',
       'built-in-meta-content-acceptance-function-invocation',
       'built-in-meta-calculation-function-invocation',
       'built-in-meta-existence-function-invocation',

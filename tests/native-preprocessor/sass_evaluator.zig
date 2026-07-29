@@ -18269,6 +18269,210 @@ test "native Sass meta call invokes meta content acceptance function references"
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass meta call invokes meta content existence function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@mixin probe($label) {
+        \\  $module: meta.get-function("content-exists", $module: "meta");
+        \\  $alias: reflect.get-function("content_exists", $module: "reflect");
+        \\  $global: meta.get-function("content-exists");
+        \\  $empty-list: [];
+        \\  $empty-map: ();
+        \\  .#{$label} {
+        \\    module-exists: meta.function-exists("content-exists", "meta");
+        \\    global-exists: meta.function-exists("content-exists");
+        \\    module-type: meta.type-of($module);
+        \\    global-type: meta.type-of($global);
+        \\    module-alias-same: $module == $alias;
+        \\    module-global-same: $module == $global;
+        \\    plain: meta.call($module);
+        \\    named-function: meta.call($function: $module);
+        \\    empty-list: meta.call($module, $empty-list...);
+        \\    empty-map: meta.call($module, $empty-map...);
+        \\    global: meta.call($global);
+        \\    ordered: meta.call(mark(1, $module));
+        \\    trace: $trace;
+        \\  }
+        \\  @if meta.call($module) { @content; }
+        \\}
+        \\@include probe(filled) { .payload { ok: yes; } }
+        \\@include probe(empty);
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-content-existence-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".filled{module-exists:true;global-exists:true;module-type:function;global-type:function;module-alias-same:true;module-global-same:false;plain:true;named-function:true;empty-list:true;empty-map:true;global:true;ordered:true;trace:1}.payload{ok:yes}.empty{module-exists:true;global-exists:true;module-type:function;global-type:function;module-alias-same:true;module-global-same:false;plain:false;named-function:false;empty-list:false;empty-map:false;global:false;ordered:false;trace:11}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const star =
+        \\@use "sass:meta" as *;
+        \\@mixin probe {
+        \\  $function: get-function("content-exists");
+        \\  .star { type: type-of($function); value: call($function); }
+        \\  @if call($function) { @content; }
+        \\}
+        \\@include probe { .payload { star: yes; } }
+    ;
+    var star_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-content-existence-star.scss",
+        star,
+        .scss,
+        .{},
+    );
+    defer star_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".star{type:function;value:true}.payload{star:yes}",
+        star_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), star_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@mixin probe
+        \\  $function: m.get-function("content-exists", $module: "m")
+        \\  .sass
+        \\    type: m.type-of($function)
+        \\    value: m.call($function)
+        \\  @if m.call($function)
+        \\    @content
+        \\@include probe
+        \\  .payload
+        \\    ok: yes
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-content-existence-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;value:true}.payload{ok:yes}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMetaContentExistenceFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseMetaContentExistenceFunctionAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@mixin probe {
+        \\  $function: meta.get-function("content-exists", $module: "meta");
+        \\  .allocation { value: meta.call($function); }
+        \\  @if meta.call($function) { @content; }
+        \\}
+        \\@include probe { .payload { ok: yes; } }
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-meta-content-existence-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:true}.payload{ok:yes}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects invalid content existence invocation" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-call-content-exists-at-root.scss",
+            .input = "@use \"sass:meta\"; $function: meta.get-function(\"content-exists\", $module: \"meta\"); .a { value: meta.call($function); }",
+        },
+        .{
+            .name = "meta-call-content-exists-in-function.scss",
+            .input = "@use \"sass:meta\"; @function nested($function) { @return meta.call($function); } @mixin probe { $function: meta.get-function(\"content-exists\", $module: \"meta\"); .a { value: nested($function); } @content; } @include probe { .payload { ok: yes; } }",
+        },
+        .{
+            .name = "meta-call-content-exists-in-caller-content.scss",
+            .input = "@use \"sass:meta\"; @mixin probe { @content; } @include probe { $function: meta.get-function(\"content-exists\", $module: \"meta\"); .a { value: meta.call($function); } }",
+        },
+        .{
+            .name = "meta-call-content-exists-positional.scss",
+            .input = "@use \"sass:meta\"; @mixin probe { $function: meta.get-function(\"content-exists\", $module: \"meta\"); .a { value: meta.call($function, 1); } } @include probe;",
+        },
+        .{
+            .name = "meta-call-content-exists-keyword.scss",
+            .input = "@use \"sass:meta\"; @mixin probe { $function: meta.get-function(\"content-exists\", $module: \"meta\"); .a { value: meta.call($function, $other: 1); } } @include probe;",
+        },
+        .{
+            .name = "meta-call-content-exists-list-splat.scss",
+            .input = "@use \"sass:meta\"; @mixin probe { $function: meta.get-function(\"content-exists\", $module: \"meta\"); .a { value: meta.call($function, (1,)...); } } @include probe;",
+        },
+        .{
+            .name = "meta-call-content-exists-map-splat.scss",
+            .input = "@use \"sass:meta\"; @mixin probe { $function: meta.get-function(\"content-exists\", $module: \"meta\"); $arguments: (other: 1); .a { value: meta.call($function, $arguments...); } } @include probe;",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-content-exists-argument-limit.scss",
+            "@use \"sass:meta\"; @mixin probe { $function: meta.get-function(\"content-exists\"); .a { value: meta.call($function, 1); } } @include probe;",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call preserves the legacy warning" {
     const input =
         \\@use "sass:meta";

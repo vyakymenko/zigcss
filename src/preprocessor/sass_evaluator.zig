@@ -8472,6 +8472,13 @@ const Engine = struct {
                 if (try self.invokeMetaKeywordsFunction(callable, &forwarded, span)) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMetaContentExistenceFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeMetaContentAcceptanceFunction(
                     callable,
                     &forwarded,
@@ -9206,6 +9213,31 @@ const Engine = struct {
 
         const ordered = [_]*const native_value.Value{bound.values[0].?};
         return try self.callMetaKeywords(&ordered, span);
+    }
+
+    fn invokeMetaContentExistenceFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .meta_content_exists or
+            (reference.owner != null and reference.owner.? != .meta))
+        {
+            return null;
+        }
+
+        const parameters = [0]native_arguments.Parameter{};
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        return try self.callMetaContentExists(reference.owner != null, span);
     }
 
     fn invokeMetaContentAcceptanceFunction(
@@ -13299,7 +13331,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, or lab, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, or lab, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
