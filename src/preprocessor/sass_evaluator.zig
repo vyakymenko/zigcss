@@ -16319,6 +16319,7 @@ const Engine = struct {
             (builtin == .quote or
                 builtin == .unquote or
                 builtin == .str_length or
+                builtin == .str_index or
                 builtin == .to_upper_case or
                 builtin == .to_lower_case))
         blk: {

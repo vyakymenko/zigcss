@@ -10192,6 +10192,124 @@ fn exerciseDirectStringIndexSplatAllocationFailures(
     );
 }
 
+test "native Sass expands direct legacy string index splats once in source order" {
+    const input =
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: str-index((mark(1, "A💚É"), mark(2, "💚"))...);
+        \\  map: str-index((string: mark(3, "ÉX"), substring: mark(4, "́"))...);
+        \\  escaped: str-index((string: mark(5, FOO\ BAR), substring: mark(6, \ ))...);
+        \\  direct-map: str-index(mark(7, abcdef), (substring: mark(8, cd))...);
+        \\  override: str-index($string: WRONG, $substring: nope, (string: mark(9, ITEM-#{2}), substring: mark(1, EM))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-string-index-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:2;map:2;escaped:4;direct-map:3;override:3;trace:1234567891}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 5), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: str-index((mark(1, "A💚É"), mark(2, "💚"))...)
+        \\  map: str-index((string: mark(3, "ÉX"), substring: mark(4, "́"))...)
+        \\  direct-map: str-index(mark(5, abcdef), (substring: mark(6, cd))...)
+        \\  override: str-index($string: WRONG, $substring: nope, (string: mark(7, ITEM-#{2}), substring: mark(8, EM))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-string-index-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:2;map:2;direct-map:3;override:3;trace:12345678}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyStringIndexSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyStringIndexSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: str-index(("A💚É", "💚")...);
+        \\  map: str-index((string: "ÉX", substring: "́")...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-string-index-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:2;map:2}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call preserves string index ownership" {
     const input =
         \\@use "sass:meta";
@@ -10319,6 +10437,31 @@ test "native Sass meta call rejects invalid string index arguments and limits" {
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "str-index(()...)" },
+        .{ .name = "legacy-direct-short-list-splat", .invocation = "str-index((abc,)...)" },
+        .{ .name = "legacy-direct-extra-list-splat", .invocation = "str-index((abc, b, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "str-index((string: abc, substring: b, other: c)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "str-index((1: abc, substring: b)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "str-index(abc, (string: abc, substring: b)...)" },
+        .{ .name = "legacy-direct-substring-map-duplicate", .invocation = "str-index(abc, b, (substring: b)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     var direct_argument_limits = sass_evaluator.Limits{};
     direct_argument_limits.max_function_arguments = 2;
     try std.testing.expectError(
@@ -10327,6 +10470,16 @@ test "native Sass meta call rejects invalid string index arguments and limits" {
             std.testing.allocator,
             "string-index-direct-splat-argument-limit.scss",
             "@use \"sass:string\"; .a { value: string.index((value, substring, other)...); }",
+            .scss,
+            direct_argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-string-index-direct-splat-argument-limit.scss",
+            ".a { value: str-index((value, substring, other)...); }",
             .scss,
             direct_argument_limits,
         ),
