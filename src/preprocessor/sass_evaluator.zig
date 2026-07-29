@@ -16317,7 +16317,8 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         if (builtin == .str_split or
             (module_owned and
-                (builtin == .str_length or
+                (builtin == .quote or
+                    builtin == .str_length or
                     builtin == .str_index or
                     builtin == .str_slice or
                     builtin == .str_insert or
