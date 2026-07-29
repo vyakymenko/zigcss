@@ -19036,6 +19036,247 @@ test "native Sass meta call rejects invalid meta get-mixin invocation" {
     );
 }
 
+test "native Sass meta module mixin enumeration preserves ownership and source order" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:map";
+        \\@use "sass:math" as numbers;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("module-mixins", $module: "meta");
+        \\$alias: reflect.get-function("module_mixins", $module: "reflect");
+        \\$global: meta.get-function("module-mixins");
+        \\$direct: meta.module-mixins(mark(1, "meta"));
+        \\$named: reflect.module_mixins($module: mark(2, "reflect"));
+        \\$list: (mark(3, "meta"),);
+        \\$list-result: meta.call($module, $list...);
+        \\$map-args: (module: mark(4, "reflect"));
+        \\$map-result: meta.call($module, $map-args...);
+        \\$reflected: meta.call($module, "meta");
+        \\$legacy: meta.call($global, "meta");
+        \\$empty: meta.module-mixins("numbers");
+        \\.values {
+        \\  exists: meta.function-exists("module-mixins", "meta");
+        \\  global-exists: meta.function-exists("module-mixins");
+        \\  type: meta.type-of($module);
+        \\  same: $module == $alias;
+        \\  global-same: $module == $global;
+        \\  plain: meta.inspect($direct);
+        \\  named: meta.inspect($named);
+        \\  list-splat: meta.inspect($list-result);
+        \\  map-splat: meta.inspect($map-result);
+        \\  reflected: meta.inspect($reflected);
+        \\  load: map.get($direct, "load-css") == meta.get-mixin("load-css", "meta");
+        \\  apply: map.get($direct, "apply") == meta.get-mixin("apply", "reflect");
+        \\  empty: meta.inspect($empty);
+        \\  trace: $trace;
+        \\  legacy: meta.inspect($legacy);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-module-mixins.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;global-exists:true;type:function;same:true;global-same:false;plain:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"));named:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"));list-splat:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"));map-splat:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"));reflected:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"));load:true;apply:true;empty:();trace:1234;legacy:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"))}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+
+    const star =
+        \\@use "sass:meta" as *;
+        \\@use "sass:meta" as reflect;
+        \\$mixins: module-mixins("reflect");
+        \\.star {
+        \\  type: type-of($mixins);
+        \\  same: $mixins == module_mixins("reflect");
+        \\  plain: inspect($mixins);
+        \\}
+    ;
+    var star_result = try compile(
+        std.testing.allocator,
+        "meta-module-mixins-star.scss",
+        star,
+        .scss,
+        .{},
+    );
+    defer star_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".star{type:map;same:true;plain:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"))}",
+        star_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), star_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:meta" as reflect
+        \\$reference: m.get-function("module-mixins", $module: "reflect")
+        \\$mixins: m.call($reference, $module: "m")
+        \\.sass
+        \\  type: m.type-of($mixins)
+        \\  plain: m.inspect($mixins)
+        \\  load: m.accepts-content(m.get-mixin("load-css", "m"))
+        \\  apply: m.accepts-content(m.get-mixin("apply", "reflect"))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-module-mixins.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:map;plain:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"));load:false;apply:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var legacy_result = try compile(
+        std.testing.allocator,
+        "meta-module-mixins-global.scss",
+        "@use \"sass:meta\"; $mixins: module-mixins(\"meta\"); .global { value: meta.inspect($mixins); }",
+        .scss,
+        .{},
+    );
+    defer legacy_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".global{value:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"))}",
+        legacy_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), legacy_result.nativeDiagnostics().len);
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        legacy_result.nativeDiagnostics()[0].message,
+    );
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMetaModuleMixinsAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseMetaModuleMixinsAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("module-mixins", $module: "meta");
+        \\$mixins: meta.call($reference, "meta");
+        \\.allocation { value: meta.inspect($mixins); }
+    ;
+    var result = try compile(
+        allocator,
+        "meta-module-mixins-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:(\"load-css\": get-mixin(\"load-css\"), \"apply\": get-mixin(\"apply\"))}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta module mixin enumeration rejects invalid invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-module-mixins-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins()); }",
+        },
+        .{
+            .name = "meta-module-mixins-extra.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins(\"meta\", extra)); }",
+        },
+        .{
+            .name = "meta-module-mixins-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins($other: \"meta\")); }",
+        },
+        .{
+            .name = "meta-module-mixins-duplicate.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins(\"meta\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-module-mixins-null.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins(null)); }",
+        },
+        .{
+            .name = "meta-module-mixins-number.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins(1)); }",
+        },
+        .{
+            .name = "meta-module-mixins-unloaded.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins(\"reflect\")); }",
+        },
+        .{
+            .name = "meta-call-module-mixins-missing.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-mixins\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference)); }",
+        },
+        .{
+            .name = "meta-call-module-mixins-duplicate.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-mixins\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-module-mixins-argument-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins(\"meta\", extra)); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    var collection_limits = sass_evaluator.Limits{};
+    collection_limits.values.max_collection_items = 1;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-module-mixins-collection-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-mixins(\"meta\")); }",
+            .scss,
+            collection_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes reflected legacy if" {
     const input =
         \\@use "sass:meta";
