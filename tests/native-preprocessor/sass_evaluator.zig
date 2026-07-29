@@ -10307,6 +10307,96 @@ test "native Sass meta call rejects invalid string insert arguments and limits" 
     );
 }
 
+test "native Sass expands direct string module upper case arguments once in source order" {
+    const input =
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: string.to-upper-case((mark(1, "a💚é"),)...);
+        \\  map: text.to-upper-case((string: mark(2, "éx"))...);
+        \\  star: to-upper-case((string: mark(3, "a👩‍💻z"))...);
+        \\  override: string.to-upper-case($string: "wrong", (string: mark(4, "abcé"))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "string-upper-case-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:\"A💚é\";map:\"ÉX\";star:\"A👩‍💻Z\";override:\"ABCé\";trace:1234}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:string" as text
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: text.to-upper-case((mark(1, "a💚é"),)...)
+        \\  map: text.to-upper-case((string: mark(2, "éx"))...)
+        \\  override: text.to-upper-case($string: "wrong", (string: mark(3, "abcé"))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "string-upper-case-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:\"A💚é\";map:\"ÉX\";override:\"ABCé\";trace:123}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectStringUpperCaseSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectStringUpperCaseSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:string" as text;
+        \\.allocation {
+        \\  list: text.to-upper-case(("a💚é",)...);
+        \\  map: text.to-upper-case((string: "éx")...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "string-upper-case-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:\"A💚é\";map:\"ÉX\"}",
+        result.css(),
+    );
+}
+
 test "native Sass meta call invokes string upper case function references" {
     const input =
         \\@use "sass:meta";
@@ -10485,6 +10575,63 @@ test "native Sass meta call rejects invalid string upper case arguments and limi
             "@use \"sass:meta\"; @use \"sass:string\" as *; $upper: meta.get-function(\"to-upper-case\"); .a { value: meta.call($upper, value); }",
             .scss,
             argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "string.to-upper-case(()...)" },
+        .{ .name = "direct-extra-list-splat", .invocation = "string.to-upper-case((a, b)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "string.to-upper-case((string: a, other: b)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "string.to-upper-case((1: a)...)" },
+        .{ .name = "direct-positional-map-duplicate", .invocation = "string.to-upper-case(a, (string: b)...)" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:string\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-string-upper-case-direct-splat.scss",
+            "$args: (abc,); .a { value: to-upper-case($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "string-lower-case-direct-splat.scss",
+            "@use \"sass:string\"; .a { value: string.to-lower-case((ABC,)...); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var direct_argument_limits = sass_evaluator.Limits{};
+    direct_argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-upper-case-direct-splat-argument-limit.scss",
+            "@use \"sass:string\"; .a { value: string.to-upper-case((value, other)...); }",
+            .scss,
+            direct_argument_limits,
         ),
     );
 }
