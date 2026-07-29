@@ -5339,6 +5339,7 @@ const Engine = struct {
             .space,
             .to_space,
             .is_legacy,
+            .is_missing,
             .ie_hex_str,
             => return try self.callFixedBuiltinRaw(
                 builtin,
@@ -5390,7 +5391,6 @@ const Engine = struct {
             // outside these evidence-closed slices.
             .whiteness,
             .blackness,
-            .is_missing,
             .is_in_gamut,
             .to_gamut,
             .channel,
@@ -6185,6 +6185,77 @@ const Engine = struct {
             else => false,
         };
         return self.values.own(.{ .boolean = is_legacy });
+    }
+
+    fn callColorIsMissing(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.is-missing() requires exactly one color and one channel",
+            );
+            return error.InvalidExpression;
+        }
+        return self.callColorIsMissingValue(
+            arguments[0].*,
+            arguments[1].*,
+            span,
+        );
+    }
+
+    fn callColorIsMissingValue(
+        self: *Engine,
+        color_value: native_value.Value,
+        channel_value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (color_value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "color.is-missing() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        const channel = switch (channel_value) {
+            .string => |channel| channel,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.is-missing() channel must be a quoted string",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        if (!channel.quoted) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.is-missing() channel must be a quoted string",
+            );
+            return error.InvalidExpression;
+        }
+        const decoded = native_string.decodeAlloc(
+            self.allocator,
+            channel.bytes,
+            true,
+            self.limits.max_temporary_bytes,
+        ) catch |err| return self.stringFailure(err, span);
+        defer self.allocator.free(decoded);
+        const index = colorMissingChannelIndex(color.space, decoded) orelse {
+            try self.report(
+                .invalid_operation,
+                span,
+                "color.is-missing() channel is not available in the color space",
+            );
+            return error.InvalidExpression;
+        };
+        const bit = @as(u4, 1) << @intCast(index);
+        return self.values.own(.{ .boolean = (color.missing_mask & bit) != 0 });
     }
 
     fn callIeHexStrValue(
@@ -9589,6 +9660,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorIsLegacyFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorIsMissingFunction(
                     callable,
                     &forwarded,
                     span,
@@ -14142,6 +14220,37 @@ const Engine = struct {
         return self.callColorIsLegacyValue(bound.values[0].?.*, span);
     }
 
+    fn invokeColorIsMissingFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .color or
+            reference.builtin != .is_missing)
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "channel" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return self.callColorIsMissingValue(
+            bound.values[0].?.*,
+            bound.values[1].?.*,
+            span,
+        );
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -14449,7 +14558,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, or is-legacy, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, or is-missing, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -15829,6 +15938,10 @@ const Engine = struct {
                 .{ .name = "color" },
                 .{ .name = "space" },
             },
+            .is_missing => &.{
+                .{ .name = "color" },
+                .{ .name = "channel" },
+            },
             .mix => &.{
                 .{ .name = "color1" },
                 .{ .name = "color2" },
@@ -16095,6 +16208,7 @@ const Engine = struct {
             .space => self.callColorSpace(arguments, span),
             .to_space => self.callColorToSpace(arguments, span),
             .is_legacy => self.callColorIsLegacy(arguments, span),
+            .is_missing => self.callColorIsMissing(arguments, span),
             .ie_hex_str => self.callIeHexStr(arguments, span),
             .mix,
             .lighten,
@@ -17710,6 +17824,70 @@ fn metaFeatureExists(name: []const u8) bool {
     return false;
 }
 
+fn colorMissingChannelIndex(
+    space: native_value.ColorSpace,
+    channel: []const u8,
+) ?usize {
+    if (std.mem.eql(u8, channel, "alpha")) return 3;
+    return switch (space) {
+        .rgb,
+        .srgb,
+        .srgb_linear,
+        .display_p3,
+        .a98_rgb,
+        .prophoto_rgb,
+        .rec2020,
+        => if (std.mem.eql(u8, channel, "red"))
+            0
+        else if (std.mem.eql(u8, channel, "green"))
+            1
+        else if (std.mem.eql(u8, channel, "blue"))
+            2
+        else
+            null,
+        .hsl => if (std.mem.eql(u8, channel, "hue"))
+            0
+        else if (std.mem.eql(u8, channel, "saturation"))
+            1
+        else if (std.mem.eql(u8, channel, "lightness"))
+            2
+        else
+            null,
+        .hwb => if (std.mem.eql(u8, channel, "hue"))
+            0
+        else if (std.mem.eql(u8, channel, "whiteness"))
+            1
+        else if (std.mem.eql(u8, channel, "blackness"))
+            2
+        else
+            null,
+        .lab, .oklab => if (std.mem.eql(u8, channel, "lightness"))
+            0
+        else if (std.mem.eql(u8, channel, "a"))
+            1
+        else if (std.mem.eql(u8, channel, "b"))
+            2
+        else
+            null,
+        .lch, .oklch => if (std.mem.eql(u8, channel, "lightness"))
+            0
+        else if (std.mem.eql(u8, channel, "chroma"))
+            1
+        else if (std.mem.eql(u8, channel, "hue"))
+            2
+        else
+            null,
+        .xyz_d50, .xyz => if (std.mem.eql(u8, channel, "x"))
+            0
+        else if (std.mem.eql(u8, channel, "y"))
+            1
+        else if (std.mem.eql(u8, channel, "z"))
+            2
+        else
+            null,
+    };
+}
+
 fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "adjust")) return .adjust_color;
     if (sassNameEql(name, "change")) return .change_color;
@@ -17718,6 +17896,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "space")) return .space;
     if (sassNameEql(name, "to-space")) return .to_space;
     if (sassNameEql(name, "is-legacy")) return .is_legacy;
+    if (sassNameEql(name, "is-missing")) return .is_missing;
     if (sassNameEql(name, "ie-hex-str")) return .ie_hex_str;
     return null;
 }

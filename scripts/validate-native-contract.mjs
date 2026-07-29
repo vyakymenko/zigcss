@@ -260,6 +260,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-color-space-function-invocation',
       'built-in-meta-color-to-space-function-invocation',
       'built-in-meta-color-is-legacy-function-invocation',
+      'built-in-meta-color-is-missing-function-invocation',
       'built-in-meta-calc-function-reference-rejection',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
