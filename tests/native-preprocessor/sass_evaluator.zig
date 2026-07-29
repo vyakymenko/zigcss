@@ -17316,6 +17316,236 @@ test "native Sass meta call rejects unavailable color opacify forms arguments an
     );
 }
 
+test "native Sass meta call invokes legacy color fade in function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("fade-in");
+        \\$module: meta.get-function("fade-in", $module: "color");
+        \\$alias: meta.get-function("fade-in", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("fade-in");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (rgba(18, 52, 86, .4), .2);
+        \\$map-args: ("color": hsla(120, 20%, 25%, .4), "amount": .2%);
+        \\.values {
+        \\  global-exists: meta.function-exists("fade-in");
+        \\  module-exists: meta.function-exists("fade-in", "color");
+        \\  alias-exists: meta.function-exists("fade-in", "palette");
+        \\  type: meta.type-of($global);
+        \\  module-type: meta.type-of($module);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, rgba(18, 52, 86, .4), .2);
+        \\  named: meta.call($global, $amount: .2px, $color: rgba(18, 52, 86, .4));
+        \\  transparent: meta.call($global, transparent, .2);
+        \\  opaque: meta.call($global, #123456, .2);
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .9), .2);
+        \\  hsl: meta.call($global, hsla(120, 20%, 25%, .4), .2);
+        \\  hwb: meta.call($global, hwb(240deg 10% 20% / .4), .2);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  zero: meta.call($global, rgba(18, 52, 86, .4), 0);
+        \\  full: meta.call($global, rgba(18, 52, 86, .4), 1);
+        \\  ordered: meta.call(mark(1, $global), $amount: mark(3, .2), $color: mark(2, rgba(18, 52, 86, .4)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, rgba(18, 52, 86, .4), .2));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-fade-in-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;module-type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"fade-in\");inspect-module:get-function(\"fade-in\");global:rgba(18,52,86,.6);named:rgba(18,52,86,.6);transparent:rgba(0,0,0,.2);opaque:#123456;alpha:#123456;hsl:rgba(51,76.5,51,.6);hwb:rgba(25.5,25.5,204,.6);list-splat:rgba(18,52,86,.6);map-splat:rgba(51,76.5,51,.6);zero:rgba(18,52,86,.4);full:#123456;ordered:rgba(18,52,86,.6);trace:132;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 26), diagnostics.len);
+    var global_warnings: usize = 0;
+    var fade_in_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "fade-in() is deprecated. Use color.adjust($color, $alpha: $amount).",
+        )) {
+            fade_in_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 13), global_warnings);
+    try std.testing.expectEqual(@as(usize, 13), fade_in_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$fade-in: m.get-function("fade-in")
+        \\$module: m.get-function("fade-in", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20% / .4), "amount": .2)
+        \\.sass
+        \\  type: m.type-of($fade-in)
+        \\  module-type: m.type-of($module)
+        \\  plain: m.call($fade-in, hsla(120, 20%, 25%, .4), .2)
+        \\  named: m.call($fade-in, $color: rgba(18, 52, 86, .4), $amount: .2)
+        \\  map: m.call($fade-in, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-fade-in-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;plain:rgba(51,76.5,51,.6);named:rgba(18,52,86,.6);map:rgba(25.5,25.5,204,.6);module-inspect:get-function(\"fade-in\")}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorFadeInFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorFadeInFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$fade-in: meta.get-function("fade-in");
+        \\.allocation {
+        \\  rgb: meta.call($fade-in, rgba(18, 52, 86, .4), .2);
+        \\  hsl: meta.call($fade-in, hsla(120, 20%, 25%, .4), .2px);
+        \\  hwb: meta.call($fade-in, hwb(240deg 10% 20% / .4), .2%);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-fade-in-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{rgb:rgba(18,52,86,.6);hsl:rgba(51,76.5,51,.6);hwb:rgba(25.5,25.5,204,.6)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color fade in forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($fade-in)" },
+        .{ .name = "missing-amount", .invocation = "meta.call($fade-in, red)" },
+        .{ .name = "extra", .invocation = "meta.call($fade-in, red, .2, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($fade-in, red, $other: .2)" },
+        .{ .name = "duplicate-color", .invocation = "meta.call($fade-in, red, .2, $color: blue)" },
+        .{ .name = "duplicate-amount", .invocation = "meta.call($fade-in, red, .2, $amount: .3)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($fade-in, ()...)" },
+        .{ .name = "non-color", .invocation = "meta.call($fade-in, 1, .2)" },
+        .{ .name = "non-number", .invocation = "meta.call($fade-in, red, true)" },
+        .{ .name = "compound-amount", .invocation = "meta.call($fade-in, red, math.div(.2px, 1s))" },
+        .{ .name = "calculation-amount", .invocation = "meta.call($fade-in, red, calc(.1 + var(--amount)))" },
+        .{ .name = "negative-amount", .invocation = "meta.call($fade-in, red, -.1)" },
+        .{ .name = "high-amount", .invocation = "meta.call($fade-in, red, 1.1)" },
+        .{ .name = "missing-channel", .invocation = "meta.call($fade-in, rgb(none 0 0 / .4), .2)" },
+        .{ .name = "modern-space", .invocation = "meta.call($fade-in, lab(50% 10 20 / .4), .2)" },
+        .{ .name = "deferred-color", .invocation = "meta.call($fade-in, var(--color), .2)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:math\"; $fade-in: meta.get-function(\"fade-in\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-fade-in-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"fade-in\", $module: \"color\"), red, .2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-fade-in-removed-module.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $fade-in: meta.get-function(\"fade-in\", $module: \"color\"); .a { value: meta.call($fade-in, rgba(1, 2, 3, .4), .2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-fade-in-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.fade-in(rgba(1, 2, 3, .4), .2); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-fade-in-argument-limit.scss",
+            "@use \"sass:meta\"; $fade-in: meta.get-function(\"fade-in\"); .a { value: meta.call($fade-in, red, .2); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -17429,7 +17659,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"fade-in\"), #123, .1); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"transparentize\"), #123, .1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

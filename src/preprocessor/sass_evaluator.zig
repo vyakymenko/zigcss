@@ -8764,7 +8764,7 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
-                if (try self.invokeColorOpacifyFunction(
+                if (try self.invokeColorIncreaseAlphaFunction(
                     callable,
                     &forwarded,
                     span,
@@ -12770,20 +12770,24 @@ const Engine = struct {
         return number.value;
     }
 
-    fn invokeColorOpacifyFunction(
+    fn invokeColorIncreaseAlphaFunction(
         self: *Engine,
         callable: native_value.Callable,
         arguments: *const EvaluatedCallArguments,
         span: native_source.Span,
     ) Error!?*const native_value.Value {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
-        if (reference.builtin != .opacify) return null;
+        if (reference.builtin != .opacify and reference.builtin != .fade_in) return null;
         if (reference.owner) |owner| {
             if (owner != .color) return null;
             try self.report(
                 .unsupported_feature,
                 span,
-                "opacify() is not callable from the sass:color module",
+                switch (reference.builtin) {
+                    .opacify => "opacify() is not callable from the sass:color module",
+                    .fade_in => "fade-in() is not callable from the sass:color module",
+                    else => unreachable,
+                },
             );
             return error.InvalidExpression;
         }
@@ -12800,8 +12804,16 @@ const Engine = struct {
         );
         defer bound.deinit();
 
-        const color = try self.legacyOpacifyColorArgument(bound.values[0].?.*, span);
-        const amount = try self.legacyOpacifyAmount(bound.values[1].?.*, span);
+        const color = try self.legacyIncreaseAlphaColorArgument(
+            reference.builtin,
+            bound.values[0].?.*,
+            span,
+        );
+        const amount = try self.legacyIncreaseAlphaAmount(
+            reference.builtin,
+            bound.values[1].?.*,
+            span,
+        );
         const result = native_color.adjustAlpha(color, amount) catch |failure| {
             return self.colorTransformFailure(failure, span);
         };
@@ -12817,21 +12829,34 @@ const Engine = struct {
             .warning,
             .invalid_operation,
             span,
-            "opacify() is deprecated. Use color.adjust($color, $alpha: $amount).",
+            switch (reference.builtin) {
+                .opacify => "opacify() is deprecated. Use color.adjust($color, $alpha: $amount).",
+                .fade_in => "fade-in() is deprecated. Use color.adjust($color, $alpha: $amount).",
+                else => unreachable,
+            },
             &.{},
         );
         return self.values.own(.{ .color = result });
     }
 
-    fn legacyOpacifyColorArgument(
+    fn legacyIncreaseAlphaColorArgument(
         self: *Engine,
+        builtin: Builtin,
         value: native_value.Value,
         span: native_source.Span,
     ) Error!native_value.Color {
         const color = switch (value) {
             .color => |color| color,
             else => {
-                try self.report(.type_mismatch, span, "opacify() requires a color");
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    switch (builtin) {
+                        .opacify => "opacify() requires a color",
+                        .fade_in => "fade-in() requires a color",
+                        else => unreachable,
+                    },
+                );
                 return error.InvalidExpression;
             },
         };
@@ -12839,7 +12864,11 @@ const Engine = struct {
             try self.report(
                 .unsupported_feature,
                 span,
-                "native legacy opacify() does not support missing color channels",
+                switch (builtin) {
+                    .opacify => "native legacy opacify() does not support missing color channels",
+                    .fade_in => "native legacy fade-in() does not support missing color channels",
+                    else => unreachable,
+                },
             );
             return error.UnsupportedFeature;
         }
@@ -12862,15 +12891,20 @@ const Engine = struct {
                 try self.report(
                     .type_mismatch,
                     span,
-                    "native legacy opacify() supports only RGB, HSL, or HWB colors",
+                    switch (builtin) {
+                        .opacify => "native legacy opacify() supports only RGB, HSL, or HWB colors",
+                        .fade_in => "native legacy fade-in() supports only RGB, HSL, or HWB colors",
+                        else => unreachable,
+                    },
                 );
                 return error.InvalidExpression;
             },
         }
     }
 
-    fn legacyOpacifyAmount(
+    fn legacyIncreaseAlphaAmount(
         self: *Engine,
+        builtin: Builtin,
         value: native_value.Value,
         span: native_source.Span,
     ) Error!f64 {
@@ -12879,7 +12913,11 @@ const Engine = struct {
             try self.report(
                 .invalid_operation,
                 span,
-                "opacify() amount must be between zero and one",
+                switch (builtin) {
+                    .opacify => "opacify() amount must be between zero and one",
+                    .fade_in => "fade-in() amount must be between zero and one",
+                    else => unreachable,
+                },
             );
             return error.InvalidExpression;
         }
@@ -16273,6 +16311,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "grayscale")) return .grayscale;
     if (kind == .color and sassNameEql(name, "invert")) return .invert;
     if (kind == .color and sassNameEql(name, "opacify")) return .opacify;
+    if (kind == .color and sassNameEql(name, "fade-in")) return .fade_in;
     return null;
 }
 
