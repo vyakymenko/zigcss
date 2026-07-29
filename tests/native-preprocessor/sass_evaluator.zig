@@ -18807,10 +18807,6 @@ test "native Sass meta call rejects invalid meta get-function invocation" {
             .name = "meta-call-get-function-css-reference.scss",
             .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.type-of(meta.call($get, \"future\", $css: true)); }",
         },
-        .{
-            .name = "meta-call-get-function-if-invocation.scss",
-            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); $conditional: meta.call($get, \"if\"); .a { value: meta.call($conditional, true, yes, no); }",
-        },
     };
     for (invalid) |case| {
         try std.testing.expectError(
@@ -19034,6 +19030,178 @@ test "native Sass meta call rejects invalid meta get-mixin invocation" {
             std.testing.allocator,
             "meta-call-get-mixin-argument-limit.scss",
             "@use \"sass:meta\"; $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, \"load-css\", \"meta\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
+test "native Sass meta call invokes reflected legacy if" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("if");
+        \\$alias: reflect.get-function("if");
+        \\$global: get-function("if");
+        \\$list: (true, list-yes, list-no);
+        \\$map: (condition: false, if-true: map-yes, if-false: map-no);
+        \\$ordered: meta.call(
+        \\  mark(1, $module),
+        \\  mark(2, true),
+        \\  mark(3, ordered-yes),
+        \\  mark(4, ordered-no)
+        \\);
+        \\.values {
+        \\  exists: meta.function-exists("if");
+        \\  type: meta.type-of($module);
+        \\  inspect: meta.inspect($module);
+        \\  alias-same: $module == $alias;
+        \\  global-same: $module == $global;
+        \\  truthy: meta.call($module, true, yes, no);
+        \\  falsey: meta.call($module, false, yes, no);
+        \\  nullish: meta.call($module, null, yes, no);
+        \\  zero: meta.call($module, 0, yes, no);
+        \\  named: meta.call(
+        \\    $module,
+        \\    $if-false: named-no,
+        \\    $condition: false,
+        \\    $if-true: named-yes
+        \\  );
+        \\  list-splat: meta.call($module, $list...);
+        \\  map-splat: meta.call($module, $map...);
+        \\  ordered: $ordered;
+        \\  trace: $trace;
+        \\  global: meta.call($global, true, global-yes, global-no);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-reflected-if.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;type:function;inspect:get-function(\"if\");alias-same:true;global-same:true;truthy:yes;falsey:no;nullish:no;zero:yes;named:named-no;list-splat:list-yes;map-splat:map-no;ordered:ordered-yes;trace:1234;global:global-yes}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$reference: m.get-function("if")
+        \\$list: false, yes, no
+        \\.sass
+        \\  type: m.type-of($reference)
+        \\  value: m.call($reference, false, yes, no)
+        \\  list: m.call($reference, $list...)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-reflected-if.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;value:no;list:no}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseReflectedIfInvocationAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseReflectedIfInvocationAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("if");
+        \\.allocation { value: meta.call($reference, true, yes, no); }
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-reflected-if-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".allocation{value:yes}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects invalid reflected legacy if invocation" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-call-reflected-if-missing.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"if\"); .a { value: meta.call($reference, true, yes); }",
+        },
+        .{
+            .name = "meta-call-reflected-if-extra.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"if\"); .a { value: meta.call($reference, true, yes, no, extra); }",
+        },
+        .{
+            .name = "meta-call-reflected-if-unknown.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"if\"); .a { value: meta.call($reference, $condition: true, $if-true: yes, $if-false: no, $other: extra); }",
+        },
+        .{
+            .name = "meta-call-reflected-if-duplicate.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"if\"); .a { value: meta.call($reference, true, $condition: false, $if-true: yes, $if-false: no); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+    try std.testing.expectError(
+        error.UndefinedVariable,
+        compile(
+            std.testing.allocator,
+            "meta-call-reflected-if-eager.scss",
+            "@use \"sass:meta\"; $reference: meta.get-function(\"if\"); .a { value: meta.call($reference, true, yes, $missing); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-reflected-if-argument-limit.scss",
+            "@use \"sass:meta\"; $reference: meta.get-function(\"if\"); .a { value: meta.call($reference, true, yes, no); }",
             .scss,
             argument_limits,
         ),
