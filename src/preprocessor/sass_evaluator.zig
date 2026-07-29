@@ -16316,7 +16316,10 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         const legacy_string_splat = if (!module_owned and
-            (builtin == .quote or builtin == .unquote or builtin == .to_upper_case))
+            (builtin == .quote or
+                builtin == .unquote or
+                builtin == .to_upper_case or
+                builtin == .to_lower_case))
         blk: {
             for (ranges) |range| {
                 if (std.mem.endsWith(
