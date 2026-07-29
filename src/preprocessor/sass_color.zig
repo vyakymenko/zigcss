@@ -349,6 +349,50 @@ pub fn convert(
     return result;
 }
 
+/// Reports whether a color is within the bounded channels of its stored or
+/// requested color space. Per Sass, alpha and hue are excluded from gamut
+/// checks, missing channels are treated as zero, and perceptual/XYZ spaces are
+/// unbounded. Cross-space conversion remains fail-closed for missing channels.
+pub fn isInGamut(
+    input: native_value.Color,
+    target: ?native_value.ColorSpace,
+) Error!bool {
+    const color = if (target) |space| try convert(input, space) else input;
+    return switch (color.space) {
+        .rgb => gamutChannelsWithin(color, 0, 3, 0, 255),
+        .hsl, .hwb => gamutChannelsWithin(color, 1, 3, 0, 100),
+        .srgb,
+        .srgb_linear,
+        .display_p3,
+        .a98_rgb,
+        .prophoto_rgb,
+        .rec2020,
+        => gamutChannelsWithin(color, 0, 3, 0, 1),
+        .lab, .lch, .oklab, .oklch, .xyz_d50, .xyz => true,
+    };
+}
+
+fn gamutChannelsWithin(
+    color: native_value.Color,
+    start: usize,
+    end: usize,
+    minimum: f64,
+    maximum: f64,
+) bool {
+    for (start..end) |index| {
+        const channel = if (channelMissing(color.missing_mask, index))
+            0
+        else
+            color.channels[index];
+        if ((channel < minimum and !fuzzyEqual(channel, minimum)) or
+            (channel > maximum and !fuzzyEqual(channel, maximum)))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 fn rgbToHsl(channels: [4]f64) [4]f64 {
     const red = channels[0] / 255;
     const green = channels[1] / 255;
@@ -1859,6 +1903,11 @@ fn approximatelyEqual(left: f64, right: f64) bool {
     if (left == right) return true;
     const scale = @max(1, @max(@abs(left), @abs(right)));
     return @abs(left - right) <= 1e-10 * scale;
+}
+
+fn fuzzyEqual(left: f64, right: f64) bool {
+    if (@abs(left - right) > 1e-11) return false;
+    return @round(left * 1e11) == @round(right * 1e11);
 }
 
 fn compressible(value: u8) bool {

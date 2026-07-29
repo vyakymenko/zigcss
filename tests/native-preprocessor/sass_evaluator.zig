@@ -19488,8 +19488,8 @@ test "native Sass meta module function enumeration rejects invalid and unsupport
             .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
         },
         .{
-            .name = "meta-call-module-functions-color-is-in-gamut-unsupported.scss",
-            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"is-in-gamut\", $module: \"color\"), red); }",
+            .name = "meta-call-module-functions-color-to-gamut-unsupported.scss",
+            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"to-gamut\", $module: \"color\"), red); }",
         },
         .{
             .name = "meta-call-module-functions-string-split-unsupported.scss",
@@ -19700,8 +19700,8 @@ test "native Sass color space function rejects invalid and unavailable invocatio
         .{ .name = "missing-alpha", .invocation = "color.space(rgb(0 0 0 / none))" },
         .{ .name = "modern-missing", .invocation = "color.space(lab(none 10 20))" },
         .{
-            .name = "is-in-gamut",
-            .invocation = "meta.call(meta.get-function(\"is-in-gamut\", $module: \"color\"), red)",
+            .name = "to-gamut",
+            .invocation = "meta.call(meta.get-function(\"to-gamut\", $module: \"color\"), red)",
         },
     };
     for (invalid) |case| {
@@ -20458,6 +20458,252 @@ test "native Sass color is-missing function rejects invalid and unavailable invo
             "@use \"sass:color\"; .a { value: color.is-missing(lab(none 10 20), \"lightness\"); }",
             .scss,
             temporary_limits,
+        ),
+    );
+}
+
+test "native Sass color is-in-gamut function checks direct and reflected bounded spaces" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("is-in-gamut", $module: "color");
+        \\$alias: meta.get-function("is_in_gamut", $module: "palette");
+        \\$star: meta.get-function("is-in-gamut");
+        \\$list-args: (color(display-p3 0 1 0), rgb);
+        \\$map-args: (space: display-p3, color: color(display-p3 0 1 0));
+        \\.values {
+        \\  exists: meta.function-exists("is-in-gamut", "color");
+        \\  alias-exists: meta.function-exists("is_in_gamut", "palette");
+        \\  global-exists: meta.function-exists("is-in-gamut");
+        \\  type: meta.type-of($module);
+        \\  same: $module == $alias;
+        \\  star-same: $module == $star;
+        \\  rgb: color.is-in-gamut(#369);
+        \\  hsl-in: color.is-in-gamut(hsl(120 50% 50%));
+        \\  hsl-saturation: color.is-in-gamut(hsl(120 120% 50%));
+        \\  hsl-lightness: color.is-in-gamut(hsl(120 50% -10%));
+        \\  hwb-in: color.is-in-gamut(hwb(120 20% 30%));
+        \\  hwb-negative: color.is-in-gamut(hwb(120 -10% 20%));
+        \\  p3-in: color.is-in-gamut(color(display-p3 0 1 0));
+        \\  p3-out: color.is-in-gamut(color(display-p3 1.2 -.1 .5));
+        \\  p3-green-rgb: color.is-in-gamut(color(display-p3 0 1 0), rgb);
+        \\  p3-green-hsl: color.is-in-gamut(color(display-p3 0 1 0), hsl);
+        \\  p3-green-hwb: color.is-in-gamut(color(display-p3 0 1 0), hwb);
+        \\  p3-green-srgb: color.is-in-gamut(color(display-p3 0 1 0), srgb);
+        \\  p3-green-linear: color.is-in-gamut(color(display-p3 0 1 0), srgb-linear);
+        \\  p3-green-p3: color.is-in-gamut(color(display-p3 0 1 0), display-p3);
+        \\  p3-green-a98: color.is-in-gamut(color(display-p3 0 1 0), a98-rgb);
+        \\  p3-green-prophoto: color.is-in-gamut(color(display-p3 0 1 0), prophoto-rgb);
+        \\  p3-green-rec2020: color.is-in-gamut(color(display-p3 0 1 0), rec2020);
+        \\  p3-green-lab: color.is-in-gamut(color(display-p3 0 1 0), lab);
+        \\  p3-green-lch: color.is-in-gamut(color(display-p3 0 1 0), lch);
+        \\  p3-green-oklab: color.is-in-gamut(color(display-p3 0 1 0), oklab);
+        \\  p3-green-oklch: color.is-in-gamut(color(display-p3 0 1 0), oklch);
+        \\  p3-green-xyz50: color.is-in-gamut(color(display-p3 0 1 0), xyz-d50);
+        \\  p3-green-xyz65: color.is-in-gamut(color(display-p3 0 1 0), xyz-d65);
+        \\  p3-green-xyz: color.is-in-gamut(color(display-p3 0 1 0), xyz);
+        \\  missing-default: color.is-in-gamut(color(display-p3 none .2 .3 / none));
+        \\  missing-same: color.is-in-gamut(color(display-p3 none .2 .3 / none), display-p3);
+        \\  alpha: color.is-in-gamut(color(display-p3 .1 .2 .3 / none));
+        \\  null-space: color.is-in-gamut(red, null);
+        \\  uppercase: color.is-in-gamut(red, DISPLAY-P3);
+        \\  tolerance-upper: color.is-in-gamut(color(srgb 1.000000000004 0 0));
+        \\  beyond-upper: color.is-in-gamut(color(srgb 1.000000000006 0 0));
+        \\  tolerance-lower: color.is-in-gamut(color(srgb -.000000000004 0 0));
+        \\  beyond-lower: color.is-in-gamut(color(srgb -.000000000006 0 0));
+        \\  alias: palette.is_in_gamut(color(display-p3 0 1 0), rgb);
+        \\  star: is-in-gamut(red);
+        \\  reflected: meta.call($module, color(display-p3 0 1 0), rgb);
+        \\  named: meta.call($module, $space: display-p3, $color: color(display-p3 0 1 0));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, color(display-p3 0 1 0)), mark(3, display-p3));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, red));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-is-in-gamut-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;alias-exists:true;global-exists:true;type:function;same:true;star-same:true;rgb:true;hsl-in:true;hsl-saturation:false;hsl-lightness:false;hwb-in:true;hwb-negative:false;p3-in:true;p3-out:false;p3-green-rgb:false;p3-green-hsl:false;p3-green-hwb:false;p3-green-srgb:false;p3-green-linear:false;p3-green-p3:true;p3-green-a98:false;p3-green-prophoto:true;p3-green-rec2020:true;p3-green-lab:true;p3-green-lch:true;p3-green-oklab:true;p3-green-oklch:true;p3-green-xyz50:true;p3-green-xyz65:true;p3-green-xyz:true;missing-default:true;missing-same:true;alpha:true;null-space:true;uppercase:true;tolerance-upper:true;beyond-upper:false;tolerance-lower:true;beyond-lower:false;alias:false;star:true;reflected:false;named:true;list-splat:false;map-splat:true;ordered:true;trace:123;result-type:bool}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const plain_css =
+        \\@use "sass:meta";
+        \\.plain {
+        \\  exists: meta.function-exists("is-in-gamut");
+        \\  value: is-in-gamut(red);
+        \\}
+    ;
+    var plain_result = try compile(
+        std.testing.allocator,
+        "color-is-in-gamut-plain-css.scss",
+        plain_css,
+        .scss,
+        .{},
+    );
+    defer plain_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{exists:false;value:is-in-gamut(red)}",
+        plain_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), plain_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$reference: m.get-function("is-in-gamut", $module: "palette")
+        \\.sass
+        \\  exists: m.function-exists("is-in-gamut", "palette")
+        \\  global-exists: m.function-exists("is-in-gamut")
+        \\  type: m.type-of($reference)
+        \\  default: m.call($reference, color(display-p3 0 1 0))
+        \\  named: m.call($reference, $space: rgb, $color: color(display-p3 0 1 0))
+        \\  direct: palette.is-in-gamut(color(display-p3 0 1 0), display-p3)
+        \\  unbounded: palette.is_in_gamut(color(display-p3 0 1 0), oklab)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-is-in-gamut-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{exists:true;global-exists:false;type:function;default:true;named:false;direct:true;unbounded:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorIsInGamutFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorIsInGamutFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:color";
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("is-in-gamut", $module: "color");
+        \\.allocation {
+        \\  direct: color.is-in-gamut(color(display-p3 0 1 0), rgb);
+        \\  reflected: meta.call($reference, color(display-p3 0 1 0), display-p3);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-is-in-gamut-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:false;reflected:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass color is-in-gamut function rejects invalid and unavailable invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "color.is-in-gamut()" },
+        .{ .name = "extra", .invocation = "meta.call($is-in-gamut, red, rgb, extra)" },
+        .{ .name = "unknown", .invocation = "color.is-in-gamut($other: red)" },
+        .{ .name = "duplicate", .invocation = "meta.call($is-in-gamut, red, $color: blue)" },
+        .{ .name = "null-color", .invocation = "color.is-in-gamut(null)" },
+        .{ .name = "boolean-color", .invocation = "color.is-in-gamut(true)" },
+        .{ .name = "number-color", .invocation = "color.is-in-gamut(1)" },
+        .{ .name = "string-color", .invocation = "color.is-in-gamut(\"red\")" },
+        .{ .name = "list-color", .invocation = "color.is-in-gamut((red, blue))" },
+        .{ .name = "map-color", .invocation = "color.is-in-gamut((tone: red))" },
+        .{ .name = "deferred-color", .invocation = "color.is-in-gamut(var(--color))" },
+        .{ .name = "boolean-space", .invocation = "color.is-in-gamut(red, true)" },
+        .{ .name = "number-space", .invocation = "color.is-in-gamut(red, 1)" },
+        .{ .name = "quoted-space", .invocation = "color.is-in-gamut(red, \"rgb\")" },
+        .{ .name = "color-space", .invocation = "color.is-in-gamut(red, blue)" },
+        .{ .name = "list-space", .invocation = "color.is-in-gamut(red, (rgb, hsl))" },
+        .{ .name = "map-space", .invocation = "color.is-in-gamut(red, (space: rgb))" },
+        .{ .name = "deferred-space", .invocation = "color.is-in-gamut(red, var(--space))" },
+        .{ .name = "unknown-space", .invocation = "color.is-in-gamut(red, custom)" },
+        .{ .name = "underscore-space", .invocation = "color.is-in-gamut(red, display_p3)" },
+        .{
+            .name = "missing-cross-space",
+            .invocation = "color.is-in-gamut(color(display-p3 none .2 .3), srgb)",
+        },
+    };
+    for (invalid) |case| {
+        const case_source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; @use \"sass:meta\"; $is-in-gamut: meta.get-function(\"is-in-gamut\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(case_source);
+        const name = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "meta-call-color-is-in-gamut-{s}.scss",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(name);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, name, case_source, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-in-gamut-global-reference.scss",
+            "@use \"sass:meta\"; $is-in-gamut: meta.get-function(\"is-in-gamut\"); .a { value: meta.call($is-in-gamut, red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-in-gamut-module-not-loaded.scss",
+            "@use \"sass:meta\"; $is-in-gamut: meta.get-function(\"is-in-gamut\", $module: \"color\"); .a { value: meta.call($is-in-gamut, red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-in-gamut-argument-limit.scss",
+            "@use \"sass:color\"; @use \"sass:meta\"; $is-in-gamut: meta.get-function(\"is-in-gamut\", $module: \"color\"); .a { value: meta.call($is-in-gamut, red, rgb); }",
+            .scss,
+            argument_limits,
         ),
     );
 }

@@ -5340,6 +5340,7 @@ const Engine = struct {
             .to_space,
             .is_legacy,
             .is_missing,
+            .is_in_gamut,
             .ie_hex_str,
             => return try self.callFixedBuiltinRaw(
                 builtin,
@@ -5391,7 +5392,6 @@ const Engine = struct {
             // outside these evidence-closed slices.
             .whiteness,
             .blackness,
-            .is_in_gamut,
             .to_gamut,
             .channel,
             .same,
@@ -6136,22 +6136,7 @@ const Engine = struct {
             try self.report(.type_mismatch, span, "color.to-space() target must be an unquoted string");
             return error.InvalidExpression;
         }
-        if (std.ascii.eqlIgnoreCase(string.bytes, "rgb")) return .rgb;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "hsl")) return .hsl;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "hwb")) return .hwb;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "lab")) return .lab;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "lch")) return .lch;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "oklab")) return .oklab;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "oklch")) return .oklch;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "srgb")) return .srgb;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "srgb-linear")) return .srgb_linear;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "display-p3")) return .display_p3;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "a98-rgb")) return .a98_rgb;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "prophoto-rgb")) return .prophoto_rgb;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "rec2020")) return .rec2020;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "xyz-d50")) return .xyz_d50;
-        if (std.ascii.eqlIgnoreCase(string.bytes, "xyz") or
-            std.ascii.eqlIgnoreCase(string.bytes, "xyz-d65")) return .xyz;
+        if (colorSpaceName(string.bytes)) |target| return target;
         try self.report(.invalid_operation, span, "unknown native Sass color.to-space() target");
         return error.InvalidExpression;
     }
@@ -6256,6 +6241,82 @@ const Engine = struct {
         };
         const bit = @as(u4, 1) << @intCast(index);
         return self.values.own(.{ .boolean = (color.missing_mask & bit) != 0 });
+    }
+
+    fn callColorIsInGamut(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 1 or arguments.len > 2) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.is-in-gamut() requires a color and optional target space",
+            );
+            return error.InvalidExpression;
+        }
+        return self.callColorIsInGamutValue(
+            arguments[0].*,
+            if (arguments.len == 2) arguments[1].* else null,
+            span,
+        );
+    }
+
+    fn callColorIsInGamutValue(
+        self: *Engine,
+        color_value: native_value.Value,
+        space_value: ?native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (color_value) {
+            .color => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "color.is-in-gamut() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        const target = if (space_value) |item| switch (item) {
+            .null_value => null,
+            else => try self.colorIsInGamutTarget(item, span),
+        } else null;
+        const result = native_color.isInGamut(color, target) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+        return self.values.own(.{ .boolean = result });
+    }
+
+    fn colorIsInGamutTarget(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.ColorSpace {
+        const string = switch (item) {
+            .string => |value| value,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.is-in-gamut() target must be an unquoted string or null",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        if (string.quoted) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.is-in-gamut() target must be an unquoted string or null",
+            );
+            return error.InvalidExpression;
+        }
+        if (colorSpaceName(string.bytes)) |target| return target;
+        try self.report(
+            .invalid_operation,
+            span,
+            "unknown native Sass color.is-in-gamut() target",
+        );
+        return error.InvalidExpression;
     }
 
     fn callIeHexStrValue(
@@ -9667,6 +9728,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorIsMissingFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorIsInGamutFunction(
                     callable,
                     &forwarded,
                     span,
@@ -14251,6 +14319,37 @@ const Engine = struct {
         );
     }
 
+    fn invokeColorIsInGamutFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .color or
+            reference.builtin != .is_in_gamut)
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "space", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return self.callColorIsInGamutValue(
+            bound.values[0].?.*,
+            if (bound.values[1]) |value| value.* else null,
+            span,
+        );
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -14558,7 +14657,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, or is-missing, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, or is-in-gamut, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -15942,6 +16041,10 @@ const Engine = struct {
                 .{ .name = "color" },
                 .{ .name = "channel" },
             },
+            .is_in_gamut => &.{
+                .{ .name = "color" },
+                .{ .name = "space", .required = false },
+            },
             .mix => &.{
                 .{ .name = "color1" },
                 .{ .name = "color2" },
@@ -16209,6 +16312,7 @@ const Engine = struct {
             .to_space => self.callColorToSpace(arguments, span),
             .is_legacy => self.callColorIsLegacy(arguments, span),
             .is_missing => self.callColorIsMissing(arguments, span),
+            .is_in_gamut => self.callColorIsInGamut(arguments, span),
             .ie_hex_str => self.callIeHexStr(arguments, span),
             .mix,
             .lighten,
@@ -17897,6 +18001,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "to-space")) return .to_space;
     if (sassNameEql(name, "is-legacy")) return .is_legacy;
     if (sassNameEql(name, "is-missing")) return .is_missing;
+    if (sassNameEql(name, "is-in-gamut")) return .is_in_gamut;
     if (sassNameEql(name, "ie-hex-str")) return .ie_hex_str;
     return null;
 }
@@ -18900,6 +19005,17 @@ fn predefinedColorSpaceName(name: []const u8) ?native_value.ColorSpace {
     if (std.ascii.eqlIgnoreCase(name, "xyz") or
         std.ascii.eqlIgnoreCase(name, "xyz-d65")) return .xyz;
     return null;
+}
+
+fn colorSpaceName(name: []const u8) ?native_value.ColorSpace {
+    if (std.ascii.eqlIgnoreCase(name, "rgb")) return .rgb;
+    if (std.ascii.eqlIgnoreCase(name, "hsl")) return .hsl;
+    if (std.ascii.eqlIgnoreCase(name, "hwb")) return .hwb;
+    if (std.ascii.eqlIgnoreCase(name, "lab")) return .lab;
+    if (std.ascii.eqlIgnoreCase(name, "lch")) return .lch;
+    if (std.ascii.eqlIgnoreCase(name, "oklab")) return .oklab;
+    if (std.ascii.eqlIgnoreCase(name, "oklch")) return .oklch;
+    return predefinedColorSpaceName(name);
 }
 
 fn parseStaticColorHue(input: []const u8) ?ModernColorChannel {

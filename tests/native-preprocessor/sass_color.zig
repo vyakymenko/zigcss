@@ -667,3 +667,70 @@ test "native Sass modern color transforms operate in a selected native space" {
         try color.serialize(out_of_range_alpha, &pretty_buffer, false),
     );
 }
+
+test "native Sass color gamut checks bounded spaces without mapping" {
+    const p3_green = try color.predefined(.display_p3, .{ 0, 1, 0, 1 }, 0);
+    try std.testing.expect(try color.isInGamut(p3_green, null));
+    try std.testing.expect(!(try color.isInGamut(p3_green, .rgb)));
+    try std.testing.expect(!(try color.isInGamut(p3_green, .hsl)));
+    try std.testing.expect(!(try color.isInGamut(p3_green, .hwb)));
+    try std.testing.expect(!(try color.isInGamut(p3_green, .srgb)));
+    try std.testing.expect(!(try color.isInGamut(p3_green, .srgb_linear)));
+    try std.testing.expect(try color.isInGamut(p3_green, .display_p3));
+    try std.testing.expect(!(try color.isInGamut(p3_green, .a98_rgb)));
+    try std.testing.expect(try color.isInGamut(p3_green, .prophoto_rgb));
+    try std.testing.expect(try color.isInGamut(p3_green, .rec2020));
+    try std.testing.expect(try color.isInGamut(p3_green, .lab));
+    try std.testing.expect(try color.isInGamut(p3_green, .lch));
+    try std.testing.expect(try color.isInGamut(p3_green, .oklab));
+    try std.testing.expect(try color.isInGamut(p3_green, .oklch));
+    try std.testing.expect(try color.isInGamut(p3_green, .xyz_d50));
+    try std.testing.expect(try color.isInGamut(p3_green, .xyz));
+
+    try std.testing.expect(try color.isInGamut(
+        try color.hsl(120, 50, 50, 1),
+        null,
+    ));
+    try std.testing.expect(!(try color.isInGamut(
+        try color.hsl(120, 120, 50, 1),
+        null,
+    )));
+    try std.testing.expect(!(try color.isInGamut(
+        try color.hsl(120, 50, -10, 1),
+        null,
+    )));
+    try std.testing.expect(try color.isInGamut(
+        try color.hwb(120, 20, 30, 1),
+        null,
+    ));
+    try std.testing.expect(!(try color.isInGamut(
+        try color.hwb(120, -10, 20, 1),
+        null,
+    )));
+
+    try std.testing.expect(try color.isInGamut(
+        try color.predefined(.srgb, .{ 1.000000000004, 0, 0, 1 }, 0),
+        null,
+    ));
+    try std.testing.expect(!(try color.isInGamut(
+        try color.predefined(.srgb, .{ 1.000000000006, 0, 0, 1 }, 0),
+        null,
+    )));
+    try std.testing.expect(try color.isInGamut(
+        try color.predefined(.srgb, .{ -0.000000000004, 0, 0, 1 }, 0),
+        null,
+    ));
+    try std.testing.expect(!(try color.isInGamut(
+        try color.predefined(.srgb, .{ -0.000000000006, 0, 0, 1 }, 0),
+        null,
+    )));
+
+    const missing = try color.predefined(
+        .display_p3,
+        .{ 0, 0.2, 0.3, 0 },
+        0b1001,
+    );
+    try std.testing.expect(try color.isInGamut(missing, null));
+    try std.testing.expect(try color.isInGamut(missing, .display_p3));
+    try std.testing.expectError(error.InvalidColor, color.isInGamut(missing, .srgb));
+}
