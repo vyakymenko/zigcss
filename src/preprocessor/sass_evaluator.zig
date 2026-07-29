@@ -5372,6 +5372,7 @@ const Engine = struct {
             .to_lower_case,
             => return try self.callStringBuiltinRaw(
                 builtin,
+                module_builtin != null,
                 body,
                 ranges.items,
                 scope,
@@ -16308,16 +16309,17 @@ const Engine = struct {
     fn callStringBuiltinRaw(
         self: *Engine,
         builtin: Builtin,
+        module_owned: bool,
         body: []const u8,
         ranges: []const ExpressionRange,
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        if (builtin == .str_split) {
+        if (builtin == .str_split or (builtin == .str_length and module_owned)) {
             var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
             defer evaluated.deinit();
             return (try self.invokeStringFunction(
-                builtinFunctionCallable(.str_split, .string),
+                builtinFunctionCallable(builtin, .string),
                 &evaluated,
                 span,
             )) orelse unreachable;
