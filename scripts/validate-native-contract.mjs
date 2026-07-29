@@ -224,6 +224,7 @@ const expectedImplementations = Object.freeze([
       'built-in-string-split-direct-splat-expansion',
       'built-in-string-module-length-direct-splat-expansion',
       'built-in-string-module-index-direct-splat-expansion',
+      'built-in-string-module-slice-direct-splat-expansion',
       'built-in-meta-color-adjust-function-invocation',
       'built-in-meta-color-change-function-invocation',
       'built-in-meta-color-scale-function-invocation',

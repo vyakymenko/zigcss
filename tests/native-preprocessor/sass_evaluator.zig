@@ -9718,6 +9718,98 @@ test "native Sass meta call invokes string slice function references" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct string module slice arguments once in source order" {
+    const input =
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list-two: string.slice((mark(1, "a💚b"), mark(2, 2))...);
+        \\  list-three: text.slice((mark(3, "éx"), mark(4, 2), mark(5, 2))...);
+        \\  map-three: slice((string: mark(6, "👩‍💻x"), start-at: mark(7, 3), end-at: mark(8, 4))...);
+        \\  direct-map: string.slice(mark(9, "abcdef"), (start-at: mark(1, 2), end-at: mark(2, 4))...);
+        \\  override: string.slice($string: "wrong", $start-at: 1, $end-at: 1, (string: "abcdef", start-at: 2, end-at: 3)...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "string-slice-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list-two:\"💚b\";list-three:\"́\";map-three:\"💻x\";direct-map:\"bcd\";override:\"bc\";trace:12345678912}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:string" as text
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list-two: text.slice((mark(1, "a💚b"), mark(2, 2))...)
+        \\  map-three: text.slice((string: mark(3, "👩‍💻x"), start-at: mark(4, 3), end-at: mark(5, 4))...)
+        \\  direct-map: text.slice(mark(6, "abcdef"), (start-at: mark(7, 2), end-at: mark(8, 4))...)
+        \\  override: text.slice($string: "wrong", $start-at: 1, $end-at: 1, (string: "abcdef", start-at: 2, end-at: 3)...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "string-slice-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list-two:\"💚b\";map-three:\"💻x\";direct-map:\"bcd\";override:\"bc\";trace:12345678}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectStringSliceSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectStringSliceSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:string" as text;
+        \\.allocation {
+        \\  list: text.slice(("a💚b", 2)...);
+        \\  map: text.slice((string: "éx", start-at: 2, end-at: 2)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "string-slice-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:\"💚b\";map:\"́\"}",
+        result.css(),
+    );
+}
+
 test "native Sass meta call preserves string slice ownership" {
     const input =
         \\@use "sass:meta";
@@ -9821,6 +9913,56 @@ test "native Sass meta call rejects invalid string slice arguments and limits" {
             "@use \"sass:meta\"; @use \"sass:string\" as *; $slice: meta.get-function(\"slice\"); .a { value: meta.call($slice, value, 1, 3); }",
             .scss,
             argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "string.slice(()...)" },
+        .{ .name = "direct-short-list-splat", .invocation = "string.slice((abc,)...)" },
+        .{ .name = "direct-extra-list-splat", .invocation = "string.slice((abc, 1, 2, 3)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "string.slice((string: abc, start-at: 1, other: 2)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "string.slice((1: abc, start-at: 1)...)" },
+        .{ .name = "direct-positional-string-map-duplicate", .invocation = "string.slice(abc, (string: def, start-at: 1)...)" },
+        .{ .name = "direct-positional-start-map-duplicate", .invocation = "string.slice(abc, 1, (start-at: 2)...)" },
+        .{ .name = "direct-positional-end-map-duplicate", .invocation = "string.slice(abc, 1, 2, (end-at: 3)...)" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:string\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-string-slice-direct-splat.scss",
+            "$args: (abc, 1); .a { value: str-slice($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var direct_argument_limits = sass_evaluator.Limits{};
+    direct_argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-slice-direct-splat-argument-limit.scss",
+            "@use \"sass:string\"; .a { value: string.slice((value, 1, 2, other)...); }",
+            .scss,
+            direct_argument_limits,
         ),
     );
 }
@@ -28397,11 +28539,6 @@ test "native Sass string module rejects unowned calls" {
             .name = "string-module-lower-case-calculation.scss",
             .input = "@use \"sass:string\"; .a { value: string.to-lower-case(calc(1px + var(--x))); }",
             .expected = error.InvalidExpression,
-        },
-        .{
-            .name = "unsupported-string-slice-direct-splat.scss",
-            .input = "@use \"sass:string\"; $args: (abc, 1); .a { value: string.slice($args...); }",
-            .expected = error.UnsupportedFeature,
         },
     };
     for (invalid) |case| {
