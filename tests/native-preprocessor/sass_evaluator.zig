@@ -10947,6 +10947,122 @@ fn exerciseDirectStringUpperCaseSplatAllocationFailures(
     );
 }
 
+test "native Sass expands direct legacy string upper case splats once in source order" {
+    const input =
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: to-upper-case((mark(1, "a💚é"),)...);
+        \\  map: to-upper-case((string: mark(2, "éx"))...);
+        \\  escaped: to-upper-case((string: mark(3, foo\ bar))...);
+        \\  override: to-upper-case($string: wrong, (string: mark(4, item-#{2}))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-string-upper-case-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:\"A💚é\";map:\"ÉX\";escaped:FOO\\ BAR;override:ITEM-2;trace:1234}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: to-upper-case((mark(1, "a💚é"),)...)
+        \\  map: to-upper-case((string: mark(2, "éx"))...)
+        \\  override: to-upper-case($string: wrong, (string: mark(3, item-#{2}))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-string-upper-case-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:\"A💚é\";map:\"ÉX\";override:ITEM-2;trace:123}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 3), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyStringUpperCaseSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyStringUpperCaseSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: to-upper-case(("a💚é",)...);
+        \\  map: to-upper-case((string: "éx")...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-string-upper-case-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:\"A💚é\";map:\"ÉX\"}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes string upper case function references" {
     const input =
         \\@use "sass:meta";
@@ -11151,16 +11267,29 @@ test "native Sass meta call rejects invalid string upper case arguments and limi
         );
     }
 
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "to-upper-case(()...)" },
+        .{ .name = "legacy-direct-extra-list-splat", .invocation = "to-upper-case((a, b)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "to-upper-case((string: a, other: b)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "to-upper-case((1: a)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "to-upper-case(a, (string: b)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
             std.testing.allocator,
-            "legacy-string-upper-case-direct-splat.scss",
-            "$args: (abc,); .a { value: to-upper-case($args...); }",
-            .scss,
-            .{},
-        ),
-    );
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     var direct_argument_limits = sass_evaluator.Limits{};
     direct_argument_limits.max_function_arguments = 1;
     try std.testing.expectError(
@@ -11169,6 +11298,16 @@ test "native Sass meta call rejects invalid string upper case arguments and limi
             std.testing.allocator,
             "string-upper-case-direct-splat-argument-limit.scss",
             "@use \"sass:string\"; .a { value: string.to-upper-case((value, other)...); }",
+            .scss,
+            direct_argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-string-upper-case-direct-splat-argument-limit.scss",
+            ".a { value: to-upper-case((VALUE, OTHER)...); }",
             .scss,
             direct_argument_limits,
         ),
