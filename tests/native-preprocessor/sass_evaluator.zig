@@ -10662,6 +10662,125 @@ fn exerciseDirectStringSliceSplatAllocationFailures(
     );
 }
 
+test "native Sass expands direct legacy string slice splats once in source order" {
+    const input =
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list-two: str-slice((mark(1, "a💚b"), mark(2, 2))...);
+        \\  map-three: str-slice((string: mark(3, "éx"), start-at: mark(4, 2), end-at: mark(5, 2))...);
+        \\  direct-map: str-slice(mark(6, "abcdef"), (start-at: mark(7, 2), end-at: mark(8, 4))...);
+        \\  override: str-slice($string: "wrong", $start-at: 1, $end-at: 1, (string: mark(9, "👩‍💻x"), start-at: mark(1, 3), end-at: mark(2, 4))...);
+        \\  escaped: str-slice((string: mark(3, foo\ bar), start-at: mark(4, 4), end-at: mark(5, 5))...);
+        \\  interpolated: str-slice((string: mark(6, item-#{2345}), start-at: mark(7, 2), end-at: mark(8, 4))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-string-slice-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list-two:\"💚b\";map-three:\"́\";direct-map:\"bcd\";override:\"💻x\";escaped:\\ ;interpolated:tem;trace:12345678912345678}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list-two: str-slice((mark(1, "a💚b"), mark(2, 2))...)
+        \\  map-three: str-slice((string: mark(3, "👩‍💻x"), start-at: mark(4, 3), end-at: mark(5, 4))...)
+        \\  direct-map: str-slice(mark(6, "abcdef"), (start-at: mark(7, 2), end-at: mark(8, 4))...)
+        \\  override: str-slice($string: "wrong", $start-at: 1, $end-at: 1, (string: mark(9, "abcdef"), start-at: mark(1, 2), end-at: mark(2, 3))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-string-slice-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list-two:\"💚b\";map-three:\"💻x\";direct-map:\"bcd\";override:\"bc\";trace:12345678912}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyStringSliceSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyStringSliceSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: str-slice(("a💚b", 2)...);
+        \\  map: str-slice((string: "éx", start-at: 2, end-at: 2)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-string-slice-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:\"💚b\";map:\"́\"}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call preserves string slice ownership" {
     const input =
         \\@use "sass:meta";
@@ -10794,16 +10913,31 @@ test "native Sass meta call rejects invalid string slice arguments and limits" {
         );
     }
 
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "str-slice(()...)" },
+        .{ .name = "legacy-direct-short-list-splat", .invocation = "str-slice((abc,)...)" },
+        .{ .name = "legacy-direct-extra-list-splat", .invocation = "str-slice((abc, 1, 2, 3)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "str-slice((string: abc, start-at: 1, other: 2)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "str-slice((1: abc, start-at: 1)...)" },
+        .{ .name = "legacy-direct-positional-string-map-duplicate", .invocation = "str-slice(abc, (string: def, start-at: 1)...)" },
+        .{ .name = "legacy-direct-positional-start-map-duplicate", .invocation = "str-slice(abc, 1, (start-at: 2)...)" },
+        .{ .name = "legacy-direct-positional-end-map-duplicate", .invocation = "str-slice(abc, 1, 2, (end-at: 3)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
             std.testing.allocator,
-            "legacy-string-slice-direct-splat.scss",
-            "$args: (abc, 1); .a { value: str-slice($args...); }",
-            .scss,
-            .{},
-        ),
-    );
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
 
     var direct_argument_limits = sass_evaluator.Limits{};
     direct_argument_limits.max_function_arguments = 3;
@@ -10813,6 +10947,16 @@ test "native Sass meta call rejects invalid string slice arguments and limits" {
             std.testing.allocator,
             "string-slice-direct-splat-argument-limit.scss",
             "@use \"sass:string\"; .a { value: string.slice((value, 1, 2, other)...); }",
+            .scss,
+            direct_argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-string-slice-direct-splat-argument-limit.scss",
+            ".a { value: str-slice((value, 1, 2, other)...); }",
             .scss,
             direct_argument_limits,
         ),

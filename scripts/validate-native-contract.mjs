@@ -230,6 +230,7 @@ const expectedImplementations = Object.freeze([
       'built-in-string-legacy-lower-case-direct-splat-expansion',
       'built-in-string-legacy-length-direct-splat-expansion',
       'built-in-string-legacy-index-direct-splat-expansion',
+      'built-in-string-legacy-slice-direct-splat-expansion',
       'built-in-string-module-length-direct-splat-expansion',
       'built-in-string-module-index-direct-splat-expansion',
       'built-in-string-module-slice-direct-splat-expansion',
