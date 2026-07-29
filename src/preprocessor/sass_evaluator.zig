@@ -12779,7 +12779,8 @@ const Engine = struct {
         const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
         if (reference.builtin != .opacify and
             reference.builtin != .fade_in and
-            reference.builtin != .transparentize) return null;
+            reference.builtin != .transparentize and
+            reference.builtin != .fade_out) return null;
         if (reference.owner) |owner| {
             if (owner != .color) return null;
             try self.report(
@@ -12789,6 +12790,7 @@ const Engine = struct {
                     .opacify => "opacify() is not callable from the sass:color module",
                     .fade_in => "fade-in() is not callable from the sass:color module",
                     .transparentize => "transparentize() is not callable from the sass:color module",
+                    .fade_out => "fade-out() is not callable from the sass:color module",
                     else => unreachable,
                 },
             );
@@ -12817,7 +12819,8 @@ const Engine = struct {
             bound.values[1].?.*,
             span,
         );
-        const delta = if (reference.builtin == .transparentize) -amount else amount;
+        const delta = if (reference.builtin == .transparentize or
+            reference.builtin == .fade_out) -amount else amount;
         const result = native_color.adjustAlpha(color, delta) catch |failure| {
             return self.colorTransformFailure(failure, span);
         };
@@ -12837,6 +12840,7 @@ const Engine = struct {
                 .opacify => "opacify() is deprecated. Use color.adjust($color, $alpha: $amount).",
                 .fade_in => "fade-in() is deprecated. Use color.adjust($color, $alpha: $amount).",
                 .transparentize => "transparentize() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+                .fade_out => "fade-out() is deprecated. Use color.adjust($color, $alpha: -$amount).",
                 else => unreachable,
             },
             &.{},
@@ -12860,6 +12864,7 @@ const Engine = struct {
                         .opacify => "opacify() requires a color",
                         .fade_in => "fade-in() requires a color",
                         .transparentize => "transparentize() requires a color",
+                        .fade_out => "fade-out() requires a color",
                         else => unreachable,
                     },
                 );
@@ -12874,6 +12879,7 @@ const Engine = struct {
                     .opacify => "native legacy opacify() does not support missing color channels",
                     .fade_in => "native legacy fade-in() does not support missing color channels",
                     .transparentize => "native legacy transparentize() does not support missing color channels",
+                    .fade_out => "native legacy fade-out() does not support missing color channels",
                     else => unreachable,
                 },
             );
@@ -12902,6 +12908,7 @@ const Engine = struct {
                         .opacify => "native legacy opacify() supports only RGB, HSL, or HWB colors",
                         .fade_in => "native legacy fade-in() supports only RGB, HSL, or HWB colors",
                         .transparentize => "native legacy transparentize() supports only RGB, HSL, or HWB colors",
+                        .fade_out => "native legacy fade-out() supports only RGB, HSL, or HWB colors",
                         else => unreachable,
                     },
                 );
@@ -12925,6 +12932,7 @@ const Engine = struct {
                     .opacify => "opacify() amount must be between zero and one",
                     .fade_in => "fade-in() amount must be between zero and one",
                     .transparentize => "transparentize() amount must be between zero and one",
+                    .fade_out => "fade-out() amount must be between zero and one",
                     else => unreachable,
                 },
             );
@@ -16322,6 +16330,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "opacify")) return .opacify;
     if (kind == .color and sassNameEql(name, "fade-in")) return .fade_in;
     if (kind == .color and sassNameEql(name, "transparentize")) return .transparentize;
+    if (kind == .color and sassNameEql(name, "fade-out")) return .fade_out;
     return null;
 }
 
