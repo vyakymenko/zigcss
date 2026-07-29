@@ -734,3 +734,84 @@ test "native Sass color gamut checks bounded spaces without mapping" {
     try std.testing.expect(try color.isInGamut(missing, .display_p3));
     try std.testing.expectError(error.InvalidColor, color.isInGamut(missing, .srgb));
 }
+
+test "native Sass color gamut mapping clips or reduces local chroma" {
+    const out_of_gamut = try color.predefined(
+        .display_p3,
+        .{ 1.2, -0.1, 0.5, 1 },
+        0,
+    );
+    const cases = [_]struct {
+        value: preprocessor.value.Color,
+        expected: []const u8,
+    }{
+        .{
+            .value = try color.toGamut(out_of_gamut, null, .clip),
+            .expected = "color(display-p3 1 0 .5)",
+        },
+        .{
+            .value = try color.toGamut(out_of_gamut, null, .local_minde),
+            .expected = "color(display-p3 1 .4368902261 .568893654)",
+        },
+        .{
+            .value = try color.toGamut(
+                try color.predefined(.display_p3, .{ 0, 1, 0, 1 }, 0),
+                .rgb,
+                .clip,
+            ),
+            .expected = "color(display-p3 .4584015902 .9852645833 .2982947078)",
+        },
+        .{
+            .value = try color.toGamut(
+                try color.predefined(.display_p3, .{ 0, 1, 0, 1 }, 0),
+                .rgb,
+                .local_minde,
+            ),
+            .expected = "color(display-p3 .4514736911 .9712271355 .3318864125)",
+        },
+        .{
+            .value = try color.toGamut(out_of_gamut, .oklab, .clip),
+            .expected = "color(display-p3 1.2 -0.1 .5)",
+        },
+    };
+    for (cases) |case| {
+        var buffer: [color.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(
+            case.expected,
+            try color.serialize(case.value, &buffer, true),
+        );
+    }
+
+    const hsl_clipped = try color.toGamut(
+        try color.hsl(120, 120, -10, 1),
+        null,
+        .clip,
+    );
+    var hsl_buffer: [color.max_serialized_bytes]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "#000",
+        try color.serialize(hsl_clipped, &hsl_buffer, true),
+    );
+
+    const missing = try color.predefined(
+        .display_p3,
+        .{ 0, 1.2, -0.1, 0 },
+        0b1001,
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.toGamut(missing, null, .clip),
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.toGamut(missing, .srgb, .local_minde),
+    );
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.toGamut(
+            try color.hsl(120, 120, -10, 1),
+            null,
+            .local_minde,
+        ),
+    );
+}

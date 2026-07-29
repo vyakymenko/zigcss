@@ -170,6 +170,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-is-legacy-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-is-missing-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-is-in-gamut-function-invocation'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-color-to-gamut-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-calc-function-reference-rejection'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-content-acceptance'), true)
   assert.equal(sassCore.capabilities.includes('plain-css-function-argument-evaluation'), true)

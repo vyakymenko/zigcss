@@ -19,6 +19,11 @@ pub const TransformKind = enum {
     scale,
 };
 
+pub const GamutMapMethod = enum {
+    clip,
+    local_minde,
+};
+
 pub const RgbTransform = struct {
     red: ?f64 = null,
     green: ?f64 = null,
@@ -370,6 +375,148 @@ pub fn isInGamut(
         => gamutChannelsWithin(color, 0, 3, 0, 1),
         .lab, .lch, .oklab, .oklch, .xyz_d50, .xyz => true,
     };
+}
+
+/// Maps a complete color into a bounded stored or requested space and converts
+/// it back to its original space. Missing-channel propagation remains
+/// deliberately unavailable until the native value model can preserve Sass's
+/// analogous-channel rules across conversions.
+pub fn toGamut(
+    input: native_value.Color,
+    target: ?native_value.ColorSpace,
+    method: GamutMapMethod,
+) Error!native_value.Color {
+    if (input.missing_mask != 0 or !allFinite(input.channels)) {
+        return error.InvalidColor;
+    }
+    const target_space = target orelse input.space;
+    if (!isBoundedSpace(target_space)) return input;
+
+    var working = try convert(input, target_space);
+    var mapped = false;
+    if (!(try isInGamut(working, null))) {
+        working = switch (method) {
+            .clip => clipGamut(working),
+            .local_minde => try localMindeGamut(working),
+        };
+        mapped = true;
+    }
+
+    var result = if (working.space == input.space)
+        working
+    else
+        try convert(working, input.space);
+    if (mapped and method == .local_minde and legacyPolarHuePowerless(result)) {
+        return error.InvalidColor;
+    }
+    result.computed = input.computed or mapped or target_space != input.space;
+    return result;
+}
+
+fn clipGamut(input: native_value.Color) native_value.Color {
+    var result = input;
+    switch (result.space) {
+        .rgb => clampGamutChannels(&result, 0, 3, 0, 255),
+        .hsl, .hwb => clampGamutChannels(&result, 1, 3, 0, 100),
+        .srgb,
+        .srgb_linear,
+        .display_p3,
+        .a98_rgb,
+        .prophoto_rgb,
+        .rec2020,
+        => clampGamutChannels(&result, 0, 3, 0, 1),
+        .lab, .lch, .oklab, .oklch, .xyz_d50, .xyz => {},
+    }
+    return result;
+}
+
+fn clampGamutChannels(
+    color: *native_value.Color,
+    start: usize,
+    end: usize,
+    minimum: f64,
+    maximum: f64,
+) void {
+    for (start..end) |index| {
+        if (channelMissing(color.missing_mask, index)) continue;
+        color.channels[index] = clamp(color.channels[index], minimum, maximum);
+    }
+}
+
+fn localMindeGamut(input: native_value.Color) Error!native_value.Color {
+    const origin_oklch = try convert(input, .oklch);
+    const lightness = origin_oklch.channels[0];
+    const hue = origin_oklch.channels[2];
+    const alpha = origin_oklch.channels[3];
+    if (lightness > 1 or fuzzyEqual(lightness, 1)) {
+        return whiteInSpace(input.space, alpha);
+    }
+    if (lightness < 0 or fuzzyEqual(lightness, 0)) {
+        return try convert(rgbUnchecked(0, 0, 0, alpha), input.space);
+    }
+
+    var clipped = clipGamut(input);
+    if (try deltaEOk(clipped, input) < 0.02) return clipped;
+
+    var maximum = origin_oklch.channels[1];
+    var minimum: f64 = 0;
+    var minimum_in_gamut = true;
+    var iteration: usize = 0;
+    while (maximum - minimum > 0.0001) : (iteration += 1) {
+        if (iteration >= 2048) return error.InvalidColor;
+        const chroma = (minimum + maximum) / 2;
+        const oklch = native_value.Color{
+            .space = .oklch,
+            .channels = .{ lightness, chroma, hue, alpha },
+        };
+        const current = try convert(oklch, input.space);
+        const current_in_gamut = try isInGamut(current, null);
+        if (minimum_in_gamut and current_in_gamut) {
+            minimum = chroma;
+            continue;
+        }
+        clipped = if (current_in_gamut) current else clipGamut(current);
+        const difference = try deltaEOk(clipped, current);
+        if (difference < 0.02) {
+            if (0.02 - difference < 0.0001) return clipped;
+            minimum = chroma;
+            minimum_in_gamut = false;
+        } else {
+            maximum = chroma;
+        }
+    }
+    return clipped;
+}
+
+fn whiteInSpace(
+    space: native_value.ColorSpace,
+    alpha: f64,
+) Error!native_value.Color {
+    return switch (space) {
+        .rgb, .hsl, .hwb => try convert(rgbUnchecked(255, 255, 255, alpha), space),
+        .srgb,
+        .srgb_linear,
+        .display_p3,
+        .a98_rgb,
+        .prophoto_rgb,
+        .rec2020,
+        => colorFromChannels(space, .{ 1, 1, 1 }, alpha, 0),
+        .lab, .lch, .oklab, .oklch, .xyz_d50, .xyz => error.InvalidColor,
+    };
+}
+
+fn deltaEOk(
+    left: native_value.Color,
+    right: native_value.Color,
+) Error!f64 {
+    const left_oklab = try convert(left, .oklab);
+    const right_oklab = try convert(right, .oklab);
+    var sum: f64 = 0;
+    for (left_oklab.channels[0..3], right_oklab.channels[0..3]) |a, b| {
+        const difference = a - b;
+        sum += difference * difference;
+    }
+    return @sqrt(sum);
 }
 
 fn gamutChannelsWithin(
@@ -1058,8 +1205,8 @@ pub fn serializeIeHex(input: native_value.Color, buffer: *[9]u8) Error![]const u
     else
         (try convert(input, .rgb)).channels;
     // Dart Sass gamut-maps typed colors before producing its legacy IE form.
-    // Until that mapping is native, accept exact in-gamut conversions and
-    // reject typed out-of-gamut values instead of silently clipping them.
+    // That function's exact implicit method and missing-channel behavior remain
+    // a separate slice, so accept only exact in-gamut conversions here.
     if (!legacy) {
         for (channels[0..3]) |channel| {
             if (channel < 0 or channel > 255) return error.InvalidColor;
@@ -1739,6 +1886,31 @@ fn isPredefinedSpace(space: native_value.ColorSpace) bool {
 
 fn isTypedColorSpace(space: native_value.ColorSpace) bool {
     return isLabSpace(space) or isPredefinedSpace(space);
+}
+
+fn isBoundedSpace(space: native_value.ColorSpace) bool {
+    return switch (space) {
+        .rgb,
+        .hsl,
+        .hwb,
+        .srgb,
+        .srgb_linear,
+        .display_p3,
+        .a98_rgb,
+        .prophoto_rgb,
+        .rec2020,
+        => true,
+        .lab, .lch, .oklab, .oklch, .xyz_d50, .xyz => false,
+    };
+}
+
+fn legacyPolarHuePowerless(color: native_value.Color) bool {
+    return switch (color.space) {
+        .hsl => fuzzyEqual(color.channels[1], 0),
+        .hwb => color.channels[1] + color.channels[2] > 100 or
+            fuzzyEqual(color.channels[1] + color.channels[2], 100),
+        else => false,
+    };
 }
 
 fn channelMissing(mask: u4, index: usize) bool {

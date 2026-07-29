@@ -5341,6 +5341,7 @@ const Engine = struct {
             .is_legacy,
             .is_missing,
             .is_in_gamut,
+            .to_gamut,
             .ie_hex_str,
             => return try self.callFixedBuiltinRaw(
                 builtin,
@@ -5392,7 +5393,6 @@ const Engine = struct {
             // outside these evidence-closed slices.
             .whiteness,
             .blackness,
-            .to_gamut,
             .channel,
             .same,
             .is_powerless,
@@ -6316,6 +6316,135 @@ const Engine = struct {
             span,
             "unknown native Sass color.is-in-gamut() target",
         );
+        return error.InvalidExpression;
+    }
+
+    fn callColorToGamut(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 1 or arguments.len > 3) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.to-gamut() requires a color, optional target space, and method",
+            );
+            return error.InvalidExpression;
+        }
+        return self.callColorToGamutValue(
+            arguments[0].*,
+            if (arguments.len >= 2) arguments[1].* else null,
+            if (arguments.len == 3) arguments[2].* else null,
+            span,
+        );
+    }
+
+    fn callColorToGamutValue(
+        self: *Engine,
+        color_value: native_value.Value,
+        space_value: ?native_value.Value,
+        method_value: ?native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (color_value) {
+            .color => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "color.to-gamut() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass color.to-gamut() does not yet admit missing color channels",
+            );
+            return error.InvalidExpression;
+        }
+        const target = if (space_value) |item| switch (item) {
+            .null_value => null,
+            else => try self.colorToGamutTarget(item, span),
+        } else null;
+        const method = try self.colorToGamutMethod(method_value, span);
+        const result = native_color.toGamut(color, target, method) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+        return self.values.own(.{ .color = result });
+    }
+
+    fn colorToGamutTarget(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.ColorSpace {
+        const string = switch (item) {
+            .string => |value| value,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.to-gamut() target must be an unquoted string or null",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        if (string.quoted) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.to-gamut() target must be an unquoted string or null",
+            );
+            return error.InvalidExpression;
+        }
+        if (colorSpaceName(string.bytes)) |target| return target;
+        try self.report(.invalid_operation, span, "unknown native Sass color.to-gamut() target");
+        return error.InvalidExpression;
+    }
+
+    fn colorToGamutMethod(
+        self: *Engine,
+        item: ?native_value.Value,
+        span: native_source.Span,
+    ) Error!native_color.GamutMapMethod {
+        const value = item orelse {
+            try self.report(
+                .invalid_operation,
+                span,
+                "color.to-gamut() requires an explicit mapping method",
+            );
+            return error.InvalidExpression;
+        };
+        if (value == .null_value) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "color.to-gamut() requires an explicit mapping method",
+            );
+            return error.InvalidExpression;
+        }
+        const string = switch (value) {
+            .string => |method| method,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "color.to-gamut() method must be an unquoted string",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        if (string.quoted) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "color.to-gamut() method must be an unquoted string",
+            );
+            return error.InvalidExpression;
+        }
+        if (std.mem.eql(u8, string.bytes, "clip")) return .clip;
+        if (std.mem.eql(u8, string.bytes, "local-minde")) return .local_minde;
+        try self.report(.invalid_operation, span, "unknown native Sass color.to-gamut() method");
         return error.InvalidExpression;
     }
 
@@ -9735,6 +9864,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorIsInGamutFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorToGamutFunction(
                     callable,
                     &forwarded,
                     span,
@@ -14350,6 +14486,39 @@ const Engine = struct {
         );
     }
 
+    fn invokeColorToGamutFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .color or
+            reference.builtin != .to_gamut)
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "space", .required = false },
+            .{ .name = "method", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return self.callColorToGamutValue(
+            bound.values[0].?.*,
+            if (bound.values[1]) |value| value.* else null,
+            if (bound.values[2]) |value| value.* else null,
+            span,
+        );
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -14657,7 +14826,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, or is-in-gamut, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, is-in-gamut, or to-gamut, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -16045,6 +16214,11 @@ const Engine = struct {
                 .{ .name = "color" },
                 .{ .name = "space", .required = false },
             },
+            .to_gamut => &.{
+                .{ .name = "color" },
+                .{ .name = "space", .required = false },
+                .{ .name = "method", .required = false },
+            },
             .mix => &.{
                 .{ .name = "color1" },
                 .{ .name = "color2" },
@@ -16152,6 +16326,11 @@ const Engine = struct {
             // `$module` may be supplied by name while `$css` is omitted.
             // Materialize both canonical defaults before filling bound slots.
             ordered[1] = &false_option;
+            ordered[2] = &null_option;
+        } else if (builtin == .to_gamut) {
+            // `$method` may be supplied by name while `$space` is omitted.
+            // Materialize both null defaults before filling bound slots.
+            ordered[1] = &null_option;
             ordered[2] = &null_option;
         }
         var count: usize = 0;
@@ -16313,6 +16492,7 @@ const Engine = struct {
             .is_legacy => self.callColorIsLegacy(arguments, span),
             .is_missing => self.callColorIsMissing(arguments, span),
             .is_in_gamut => self.callColorIsInGamut(arguments, span),
+            .to_gamut => self.callColorToGamut(arguments, span),
             .ie_hex_str => self.callIeHexStr(arguments, span),
             .mix,
             .lighten,
@@ -18002,6 +18182,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "is-legacy")) return .is_legacy;
     if (sassNameEql(name, "is-missing")) return .is_missing;
     if (sassNameEql(name, "is-in-gamut")) return .is_in_gamut;
+    if (sassNameEql(name, "to-gamut")) return .to_gamut;
     if (sassNameEql(name, "ie-hex-str")) return .ie_hex_str;
     return null;
 }

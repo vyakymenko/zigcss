@@ -19488,8 +19488,8 @@ test "native Sass meta module function enumeration rejects invalid and unsupport
             .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
         },
         .{
-            .name = "meta-call-module-functions-color-to-gamut-unsupported.scss",
-            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"to-gamut\", $module: \"color\"), red); }",
+            .name = "meta-call-module-functions-color-channel-unsupported.scss",
+            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"channel\", $module: \"color\"), red, \"red\"); }",
         },
         .{
             .name = "meta-call-module-functions-string-split-unsupported.scss",
@@ -19700,8 +19700,8 @@ test "native Sass color space function rejects invalid and unavailable invocatio
         .{ .name = "missing-alpha", .invocation = "color.space(rgb(0 0 0 / none))" },
         .{ .name = "modern-missing", .invocation = "color.space(lab(none 10 20))" },
         .{
-            .name = "to-gamut",
-            .invocation = "meta.call(meta.get-function(\"to-gamut\", $module: \"color\"), red)",
+            .name = "channel",
+            .invocation = "meta.call(meta.get-function(\"channel\", $module: \"color\"), red, \"red\")",
         },
     };
     for (invalid) |case| {
@@ -20702,6 +20702,236 @@ test "native Sass color is-in-gamut function rejects invalid and unavailable inv
             std.testing.allocator,
             "meta-call-color-is-in-gamut-argument-limit.scss",
             "@use \"sass:color\"; @use \"sass:meta\"; $is-in-gamut: meta.get-function(\"is-in-gamut\", $module: \"color\"); .a { value: meta.call($is-in-gamut, red, rgb); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
+test "native Sass color to-gamut function maps direct and reflected bounded spaces" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("to-gamut", $module: "color");
+        \\$alias: meta.get-function("to_gamut", $module: "palette");
+        \\$star: meta.get-function("to-gamut");
+        \\$list-args: (color(display-p3 1.2 -.1 .5), srgb, clip);
+        \\$map-args: (method: clip, color: color(display-p3 1.2 -.1 .5), space: display-p3);
+        \\.values {
+        \\  exists: meta.function-exists("to-gamut", "color");
+        \\  alias-exists: meta.function-exists("to_gamut", "palette");
+        \\  global-exists: meta.function-exists("to-gamut");
+        \\  type: meta.type-of($module);
+        \\  same: $module == $alias;
+        \\  star-same: $module == $star;
+        \\  red: color.to-gamut(red, $method: clip);
+        \\  p3-clip: color.to-gamut(color(display-p3 1.2 -.1 .5), $method: clip);
+        \\  p3-local: color.to-gamut(color(display-p3 1.2 -.1 .5), $method: local-minde);
+        \\  p3-green-rgb-clip: color.to-gamut(color(display-p3 0 1 0), rgb, clip);
+        \\  p3-green-rgb-local: color.to-gamut(color(display-p3 0 1 0), rgb, local-minde);
+        \\  hsl-clip: color.to-gamut(hsl(120 120% -10%), $method: clip);
+        \\  hwb-clip: color.to-gamut(hwb(120 -10% 120%), $method: clip);
+        \\  unbounded: color.to-gamut(color(display-p3 1.2 -.1 .5), oklab, clip);
+        \\  alpha: color.to-gamut(color(display-p3 1.2 -.1 .5 / .4), $method: clip);
+        \\  uppercase-space: color.to-gamut(color(display-p3 1.2 -.1 .5), DISPLAY-P3, clip);
+        \\  alias: palette.to_gamut(color(display-p3 1.2 -.1 .5), $method: clip);
+        \\  star: to-gamut(color(display-p3 1.2 -.1 .5), $method: local-minde);
+        \\  reflected: meta.call($module, color(display-p3 1.2 -.1 .5), display-p3, clip);
+        \\  named: meta.call($module, $method: clip, $space: display-p3, $color: color(display-p3 1.2 -.1 .5));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, color(display-p3 1.2 -.1 .5)), mark(3, display-p3), mark(4, clip));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, red, $method: clip));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-to-gamut-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;alias-exists:true;global-exists:true;type:function;same:true;star-same:true;red:red;p3-clip:color(display-p3 1 0 .5);p3-local:color(display-p3 1 .4368902261 .568893654);p3-green-rgb-clip:color(display-p3 .4584015902 .9852645833 .2982947078);p3-green-rgb-local:color(display-p3 .4514736911 .9712271355 .3318864125);hsl-clip:#000;hwb-clip:#000;unbounded:color(display-p3 1.2 -0.1 .5);alpha:color(display-p3 1 0 .5/.4);uppercase-space:color(display-p3 1 0 .5);alias:color(display-p3 1 0 .5);star:color(display-p3 1 .4368902261 .568893654);reflected:color(display-p3 1 0 .5);named:color(display-p3 1 0 .5);list-splat:color(display-p3 .9174875573 .2002868077 .4897982442);map-splat:color(display-p3 1 0 .5);ordered:color(display-p3 1 0 .5);trace:1234;result-type:color}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const plain_css =
+        \\@use "sass:meta";
+        \\.plain {
+        \\  exists: meta.function-exists("to-gamut");
+        \\  value: to-gamut(red);
+        \\}
+    ;
+    var plain_result = try compile(
+        std.testing.allocator,
+        "color-to-gamut-plain-css.scss",
+        plain_css,
+        .scss,
+        .{},
+    );
+    defer plain_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{exists:false;value:to-gamut(red)}",
+        plain_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), plain_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$reference: m.get-function("to-gamut", $module: "palette")
+        \\.sass
+        \\  exists: m.function-exists("to-gamut", "palette")
+        \\  global-exists: m.function-exists("to-gamut")
+        \\  type: m.type-of($reference)
+        \\  clipped: m.call($reference, color(display-p3 1.2 -.1 .5), $method: clip)
+        \\  local: m.call($reference, $method: local-minde, $color: color(display-p3 1.2 -.1 .5))
+        \\  direct: palette.to-gamut(color(display-p3 0 1 0), rgb, clip)
+        \\  unbounded: palette.to_gamut(color(display-p3 1.2 -.1 .5), xyz, local-minde)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-to-gamut-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{exists:true;global-exists:false;type:function;clipped:color(display-p3 1 0 .5);local:color(display-p3 1 .4368902261 .568893654);direct:color(display-p3 .4584015902 .9852645833 .2982947078);unbounded:color(display-p3 1.2 -0.1 .5)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorToGamutFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorToGamutFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:color";
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("to-gamut", $module: "color");
+        \\.allocation {
+        \\  direct: color.to-gamut(color(display-p3 1.2 -.1 .5), $method: clip);
+        \\  reflected: meta.call($reference, color(display-p3 1.2 -.1 .5), rgb, local-minde);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-to-gamut-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:color(display-p3 1 0 .5);reflected:color(display-p3 .9339934588 .5040521527 .5929350611)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass color to-gamut function rejects invalid and unavailable invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "color.to-gamut()" },
+        .{ .name = "missing-method", .invocation = "color.to-gamut(red)" },
+        .{ .name = "null-method", .invocation = "color.to-gamut(red, $method: null)" },
+        .{ .name = "extra", .invocation = "meta.call($to-gamut, red, rgb, clip, extra)" },
+        .{ .name = "unknown", .invocation = "color.to-gamut(red, $other: clip)" },
+        .{ .name = "duplicate", .invocation = "meta.call($to-gamut, red, $color: blue, $method: clip)" },
+        .{ .name = "null-color", .invocation = "color.to-gamut(null, $method: clip)" },
+        .{ .name = "boolean-color", .invocation = "color.to-gamut(true, $method: clip)" },
+        .{ .name = "number-color", .invocation = "color.to-gamut(1, $method: clip)" },
+        .{ .name = "string-color", .invocation = "color.to-gamut(\"red\", $method: clip)" },
+        .{ .name = "deferred-color", .invocation = "color.to-gamut(var(--color), $method: clip)" },
+        .{ .name = "boolean-space", .invocation = "color.to-gamut(red, true, clip)" },
+        .{ .name = "quoted-space", .invocation = "color.to-gamut(red, \"rgb\", clip)" },
+        .{ .name = "unknown-space", .invocation = "color.to-gamut(red, custom, clip)" },
+        .{ .name = "underscore-space", .invocation = "color.to-gamut(red, display_p3, clip)" },
+        .{ .name = "boolean-method", .invocation = "color.to-gamut(red, $method: true)" },
+        .{ .name = "quoted-method", .invocation = "color.to-gamut(red, $method: \"clip\")" },
+        .{ .name = "unknown-method", .invocation = "color.to-gamut(red, $method: custom)" },
+        .{ .name = "uppercase-method", .invocation = "color.to-gamut(red, $method: CLIP)" },
+        .{
+            .name = "missing-same-space",
+            .invocation = "color.to-gamut(color(display-p3 none 1.2 -.1), $method: clip)",
+        },
+        .{
+            .name = "missing-cross-space",
+            .invocation = "color.to-gamut(color(display-p3 none 1.2 -.1), srgb, local-minde)",
+        },
+        .{
+            .name = "legacy-powerless-local-minde",
+            .invocation = "color.to-gamut(hsl(120 120% -10%), $method: local-minde)",
+        },
+    };
+    for (invalid) |case| {
+        const case_source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; @use \"sass:meta\"; $to-gamut: meta.get-function(\"to-gamut\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(case_source);
+        const name = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "meta-call-color-to-gamut-{s}.scss",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(name);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, name, case_source, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-to-gamut-global-reference.scss",
+            "@use \"sass:meta\"; $to-gamut: meta.get-function(\"to-gamut\"); .a { value: meta.call($to-gamut, red, $method: clip); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-to-gamut-module-not-loaded.scss",
+            "@use \"sass:meta\"; $to-gamut: meta.get-function(\"to-gamut\", $module: \"color\"); .a { value: meta.call($to-gamut, red, $method: clip); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-to-gamut-argument-limit.scss",
+            "@use \"sass:color\"; @use \"sass:meta\"; $to-gamut: meta.get-function(\"to-gamut\", $module: \"color\"); .a { value: meta.call($to-gamut, red, rgb, clip); }",
             .scss,
             argument_limits,
         ),
