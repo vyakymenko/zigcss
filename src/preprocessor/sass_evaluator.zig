@@ -5343,6 +5343,7 @@ const Engine = struct {
             .is_in_gamut,
             .to_gamut,
             .channel,
+            .same,
             .ie_hex_str,
             => return try self.callFixedBuiltinRaw(
                 builtin,
@@ -5394,7 +5395,6 @@ const Engine = struct {
             // outside these evidence-closed slices.
             .whiteness,
             .blackness,
-            .same,
             .is_powerless,
             .str_unique_id,
             .str_split,
@@ -6491,6 +6491,32 @@ const Engine = struct {
             } });
         }
         return self.values.own(.{ .number = .{ .value = value } });
+    }
+
+    fn callColorSame(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2) {
+            try self.report(.type_mismatch, span, "color.same() requires two colors");
+            return error.InvalidExpression;
+        }
+        const left = switch (arguments[0].*) {
+            .color => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "color.same() requires two colors");
+                return error.InvalidExpression;
+            },
+        };
+        const right = switch (arguments[1].*) {
+            .color => |value| value,
+            else => {
+                try self.report(.type_mismatch, span, "color.same() requires two colors");
+                return error.InvalidExpression;
+            },
+        };
+        return self.values.own(.{ .boolean = native_color.same(left, right) });
     }
 
     fn colorChannelTarget(
@@ -10027,6 +10053,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorChannelFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorSameFunction(
                     callable,
                     &forwarded,
                     span,
@@ -14708,6 +14741,37 @@ const Engine = struct {
         );
     }
 
+    fn invokeColorSameFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .color or
+            reference.builtin != .same)
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color1" },
+            .{ .name = "color2" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+            bound.values[1].?,
+        };
+        return try self.callColorSame(&ordered, span);
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -15015,7 +15079,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, is-in-gamut, to-gamut, or channel, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, is-in-gamut, to-gamut, channel, or same, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -16413,6 +16477,10 @@ const Engine = struct {
                 .{ .name = "channel" },
                 .{ .name = "space", .required = false },
             },
+            .same => &.{
+                .{ .name = "color1" },
+                .{ .name = "color2" },
+            },
             .mix => &.{
                 .{ .name = "color1" },
                 .{ .name = "color2" },
@@ -16688,6 +16756,7 @@ const Engine = struct {
             .is_in_gamut => self.callColorIsInGamut(arguments, span),
             .to_gamut => self.callColorToGamut(arguments, span),
             .channel => self.callColorChannelQuery(arguments, span),
+            .same => self.callColorSame(arguments, span),
             .ie_hex_str => self.callIeHexStr(arguments, span),
             .mix,
             .lighten,
@@ -18379,6 +18448,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "is-in-gamut")) return .is_in_gamut;
     if (sassNameEql(name, "to-gamut")) return .to_gamut;
     if (sassNameEql(name, "channel")) return .channel;
+    if (sassNameEql(name, "same")) return .same;
     if (sassNameEql(name, "ie-hex-str")) return .ie_hex_str;
     return null;
 }

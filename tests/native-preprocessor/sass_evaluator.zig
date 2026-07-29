@@ -19488,10 +19488,6 @@ test "native Sass meta module function enumeration rejects invalid and unsupport
             .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
         },
         .{
-            .name = "meta-call-module-functions-color-same-unsupported.scss",
-            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"same\", $module: \"color\"), red, red); }",
-        },
-        .{
             .name = "meta-call-module-functions-string-split-unsupported.scss",
             .input = "@use \"sass:meta\"; @use \"sass:string\"; $functions: meta.module-functions(\"string\"); .a { value: meta.call(meta.get-function(\"split\", $module: \"string\"), \"a-b\", \"-\"); }",
         },
@@ -19699,10 +19695,6 @@ test "native Sass color space function rejects invalid and unavailable invocatio
         .{ .name = "missing-rgb", .invocation = "color.space(rgb(none 0 0))" },
         .{ .name = "missing-alpha", .invocation = "color.space(rgb(0 0 0 / none))" },
         .{ .name = "modern-missing", .invocation = "color.space(lab(none 10 20))" },
-        .{
-            .name = "same",
-            .invocation = "meta.call(meta.get-function(\"same\", $module: \"color\"), red, red)",
-        },
     };
     for (invalid) |case| {
         const case_source = try std.fmt.allocPrint(
@@ -21155,10 +21147,6 @@ test "native Sass color channel function rejects invalid and unavailable invocat
             .name = "missing-alpha",
             .invocation = "color.channel(rgb(1 2 3 / none), \"alpha\")",
         },
-        .{
-            .name = "same",
-            .invocation = "meta.call(meta.get-function(\"same\", $module: \"color\"), red, red)",
-        },
     };
     for (invalid) |case| {
         const case_source = try std.fmt.allocPrint(
@@ -21223,6 +21211,245 @@ test "native Sass color channel function rejects invalid and unavailable invocat
             "@use \"sass:color\"; .a { value: color.channel(red, \"red\"); }",
             .scss,
             temporary_limits,
+        ),
+    );
+}
+
+test "native Sass color same function compares direct and reflected colors" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("same", $module: "color");
+        \\$alias: meta.get-function("same", $module: "palette");
+        \\$star: meta.get-function("same");
+        \\$list-args: (red, color.to-space(red, lab));
+        \\$map-args: (color2: color.to-space(red, oklab), color1: red);
+        \\.values {
+        \\  exists: meta.function-exists("same", "color");
+        \\  alias-exists: meta.function-exists("same", "palette");
+        \\  global-exists: meta.function-exists("same");
+        \\  type: meta.type-of($module);
+        \\  same-ref: $module == $alias;
+        \\  star-ref: $module == $star;
+        \\  exact: color.same(red, red);
+        \\  legacy-name: color.same(red, #f00);
+        \\  legacy-hsl: color.same(hsl(0 100% 50%), red);
+        \\  legacy-hwb: color.same(hwb(0 0% 0%), red);
+        \\  rgb: color.same(rgb(1 2 3 / .4), rgb(1 2 3 / .4));
+        \\  hsl: color.same(hsl(25 20% 30% / .4), hsl(25 20% 30% / .4));
+        \\  hwb: color.same(hwb(25 20% 30% / .4), hwb(25 20% 30% / .4));
+        \\  lab: color.same(lab(25% 20 30 / .4), lab(25% 20 30 / .4));
+        \\  lch: color.same(lch(25% 20 30 / .4), lch(25% 20 30 / .4));
+        \\  oklab: color.same(oklab(.25 .2 .3 / .4), oklab(.25 .2 .3 / .4));
+        \\  oklch: color.same(oklch(.25 .2 30 / .4), oklch(.25 .2 30 / .4));
+        \\  srgb: color.same(color(srgb .1 .2 .3 / .4), color(srgb .1 .2 .3 / .4));
+        \\  linear: color.same(color(srgb-linear .1 .2 .3 / .4), color(srgb-linear .1 .2 .3 / .4));
+        \\  p3: color.same(color(display-p3 .1 .2 .3 / .4), color(display-p3 .1 .2 .3 / .4));
+        \\  a98: color.same(color(a98-rgb .1 .2 .3 / .4), color(a98-rgb .1 .2 .3 / .4));
+        \\  prophoto: color.same(color(prophoto-rgb .1 .2 .3 / .4), color(prophoto-rgb .1 .2 .3 / .4));
+        \\  rec2020: color.same(color(rec2020 .1 .2 .3 / .4), color(rec2020 .1 .2 .3 / .4));
+        \\  d50: color.same(color(xyz-d50 .1 .2 .3 / .4), color(xyz-d50 .1 .2 .3 / .4));
+        \\  xyz: color.same(color(xyz .1 .2 .3 / .4), color(xyz .1 .2 .3 / .4));
+        \\  different: color.same(red, blue);
+        \\  fuzzy-in: color.same(color(srgb .1 .2 .3), color(srgb .100000000004 .2 .3));
+        \\  fuzzy-out: color.same(color(srgb .1 .2 .3), color(srgb .100000000005 .2 .3));
+        \\  missing-same: color.same(color(display-p3 none .2 .3 / none), color(display-p3 0 .2 .3 / 0));
+        \\  missing-different: color.same(color(display-p3 none .2 .3), color(display-p3 .1 .2 .3));
+        \\  missing-cross: color.same(color(display-p3 none .2 .3 / none), color.to-space(color(display-p3 0 .2 .3 / 0), xyz));
+        \\  powerless-hsl: color.same(hsl(0 0% 50%), hsl(120 0% 50%));
+        \\  powerless-lch: color.same(lch(50% 0 0), lch(50% 0 120));
+        \\  xyz-alias: color.same(color(xyz .1 .2 .3), color(xyz-d65 .1 .2 .3));
+        \\  direct-alias: palette.same(red, color.to-space(red, display-p3));
+        \\  star: same(red, color.to-space(red, rec2020));
+        \\  reflected: meta.call($module, red, color.to-space(red, lab));
+        \\  named: meta.call($module, $color2: color.to-space(red, lch), $color1: red);
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, red), mark(3, color.to-space(red, xyz)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, red, red));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-same-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;alias-exists:true;global-exists:true;type:function;same-ref:true;star-ref:true;exact:true;legacy-name:true;legacy-hsl:true;legacy-hwb:true;rgb:true;hsl:true;hwb:true;lab:true;lch:true;oklab:true;oklch:true;srgb:true;linear:true;p3:true;a98:true;prophoto:true;rec2020:true;d50:true;xyz:true;different:false;fuzzy-in:true;fuzzy-out:false;missing-same:true;missing-different:false;missing-cross:true;powerless-hsl:false;powerless-lch:false;xyz-alias:true;direct-alias:true;star:true;reflected:true;named:true;list-splat:true;map-splat:true;ordered:true;trace:123;result-type:bool}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const plain_css =
+        \\@use "sass:meta";
+        \\.plain {
+        \\  exists: meta.function-exists("same");
+        \\  value: same(red, red);
+        \\}
+    ;
+    var plain_result = try compile(
+        std.testing.allocator,
+        "color-same-plain-css.scss",
+        plain_css,
+        .scss,
+        .{},
+    );
+    defer plain_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{exists:false;value:same(red, red)}",
+        plain_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), plain_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$reference: m.get-function("same", $module: "palette")
+        \\.sass
+        \\  exists: m.function-exists("same", "palette")
+        \\  global-exists: m.function-exists("same")
+        \\  type: m.type-of($reference)
+        \\  exact: m.call($reference, red, red)
+        \\  cross: palette.same(red, palette.to-space(red, oklab))
+        \\  different: palette.same(red, blue)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-same-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{exists:true;global-exists:false;type:function;exact:true;cross:true;different:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorSameFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorSameFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:color";
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("same", $module: "color");
+        \\.allocation {
+        \\  direct: color.same(color(display-p3 none .2 .3 / none), color(display-p3 0 .2 .3 / 0));
+        \\  reflected: meta.call($reference, red, color.to-space(red, lab));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-same-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:true;reflected:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass color same function rejects invalid and unavailable invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "color.same()" },
+        .{ .name = "missing-second", .invocation = "color.same(red)" },
+        .{ .name = "extra", .invocation = "meta.call($same, red, red, blue)" },
+        .{ .name = "unknown", .invocation = "color.same(red, red, $other: blue)" },
+        .{ .name = "duplicate", .invocation = "meta.call($same, red, red, $color1: blue)" },
+        .{ .name = "null-first", .invocation = "color.same(null, red)" },
+        .{ .name = "boolean-first", .invocation = "color.same(true, red)" },
+        .{ .name = "number-first", .invocation = "color.same(1, red)" },
+        .{ .name = "string-first", .invocation = "color.same(\"red\", red)" },
+        .{ .name = "list-first", .invocation = "color.same((red, blue), red)" },
+        .{ .name = "map-first", .invocation = "color.same((tone: red), red)" },
+        .{ .name = "deferred-first", .invocation = "color.same(var(--color), red)" },
+        .{ .name = "null-second", .invocation = "color.same(red, null)" },
+        .{ .name = "boolean-second", .invocation = "color.same(red, true)" },
+        .{ .name = "number-second", .invocation = "color.same(red, 1)" },
+        .{ .name = "string-second", .invocation = "color.same(red, \"red\")" },
+        .{ .name = "list-second", .invocation = "color.same(red, (red, blue))" },
+        .{ .name = "map-second", .invocation = "color.same(red, (tone: red))" },
+        .{ .name = "deferred-second", .invocation = "color.same(red, var(--color))" },
+        .{
+            .name = "is-powerless",
+            .invocation = "meta.call(meta.get-function(\"is-powerless\", $module: \"color\"), red, \"red\")",
+        },
+    };
+    for (invalid) |case| {
+        const case_source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; @use \"sass:meta\"; $same: meta.get-function(\"same\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(case_source);
+        const name = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "meta-call-color-same-{s}.scss",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(name);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, name, case_source, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-same-global-reference.scss",
+            "@use \"sass:meta\"; $same: meta.get-function(\"same\"); .a { value: meta.call($same, red, red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-same-module-not-loaded.scss",
+            "@use \"sass:meta\"; $same: meta.get-function(\"same\", $module: \"color\"); .a { value: meta.call($same, red, red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-same-argument-limit.scss",
+            "@use \"sass:color\"; @use \"sass:meta\"; $same: meta.get-function(\"same\", $module: \"color\"); .a { value: meta.call($same, red, red); }",
+            .scss,
+            argument_limits,
         ),
     );
 }

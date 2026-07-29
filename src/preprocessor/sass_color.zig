@@ -592,6 +592,20 @@ pub fn equal(left: native_value.Color, right: native_value.Color) bool {
     return true;
 }
 
+/// Implements sass:color.same() without changing the broader Sass equality
+/// operator. Missing components are replaced with zero before comparison.
+/// Colors in different spaces are compared after conversion to XYZ D65.
+pub fn same(left: native_value.Color, right: native_value.Color) bool {
+    const complete_left = replaceMissingWithZero(left);
+    const complete_right = replaceMissingWithZero(right);
+    if (left.space == right.space) {
+        return fuzzyChannelsEqual(complete_left.channels, complete_right.channels);
+    }
+    const xyz_left = convert(complete_left, .xyz) catch return false;
+    const xyz_right = convert(complete_right, .xyz) catch return false;
+    return fuzzyChannelsEqual(xyz_left.channels, xyz_right.channels);
+}
+
 pub fn mix(
     first: native_value.Color,
     second: native_value.Color,
@@ -2080,6 +2094,22 @@ fn approximatelyEqual(left: f64, right: f64) bool {
 fn fuzzyEqual(left: f64, right: f64) bool {
     if (@abs(left - right) > 1e-11) return false;
     return @round(left * 1e11) == @round(right * 1e11);
+}
+
+fn fuzzyChannelsEqual(left: [4]f64, right: [4]f64) bool {
+    for (left, right) |left_channel, right_channel| {
+        if (!fuzzyEqual(left_channel, right_channel)) return false;
+    }
+    return true;
+}
+
+fn replaceMissingWithZero(input: native_value.Color) native_value.Color {
+    var result = input;
+    for (&result.channels, 0..) |*channel, index| {
+        if (channelMissing(input.missing_mask, index)) channel.* = 0;
+    }
+    result.missing_mask = 0;
+    return result;
 }
 
 fn compressible(value: u8) bool {

@@ -200,6 +200,42 @@ test "native Sass predefined colors compare within canonical space identity" {
     ));
 }
 
+test "native Sass color same compares zero-filled channels and cross-space XYZ values" {
+    const red = color.parseLiteral("red").?;
+    try std.testing.expect(color.same(red, try color.hsl(0, 100, 50, 1)));
+    try std.testing.expect(color.same(red, try color.convert(red, .display_p3)));
+    try std.testing.expect(!color.same(red, color.parseLiteral("blue").?));
+
+    try std.testing.expect(color.same(
+        try color.predefined(.display_p3, .{ 99, 0.2, 0.3, 7 }, 0b1001),
+        try color.predefined(.display_p3, .{ 0, 0.2, 0.3, 0 }, 0),
+    ));
+    try std.testing.expect(color.same(
+        try color.predefined(.display_p3, .{ 99, 0.2, 0.3, 7 }, 0b1001),
+        try color.convert(
+            try color.predefined(.display_p3, .{ 0, 0.2, 0.3, 0 }, 0),
+            .xyz,
+        ),
+    ));
+    try std.testing.expect(!color.same(
+        try color.predefined(.display_p3, .{ 99, 0.2, 0.3, 1 }, 0b0001),
+        try color.predefined(.display_p3, .{ 0.1, 0.2, 0.3, 1 }, 0),
+    ));
+
+    try std.testing.expect(color.same(
+        try color.predefined(.srgb, .{ 0.1, 0.2, 0.3, 1 }, 0),
+        try color.predefined(.srgb, .{ 0.100000000004, 0.2, 0.3, 1 }, 0),
+    ));
+    try std.testing.expect(!color.same(
+        try color.predefined(.srgb, .{ 0.1, 0.2, 0.3, 1 }, 0),
+        try color.predefined(.srgb, .{ 0.100000000005, 0.2, 0.3, 1 }, 0),
+    ));
+    try std.testing.expect(!color.same(
+        try color.hsl(0, 0, 50, 1),
+        try color.hsl(120, 0, 50, 1),
+    ));
+}
+
 test "native Sass color conversion spans every owned CSS Color 4 family" {
     const source = try color.rgb(51, 102, 153, 0.7);
     const cases = [_]struct {

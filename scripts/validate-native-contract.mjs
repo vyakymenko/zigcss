@@ -264,6 +264,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-color-is-in-gamut-function-invocation',
       'built-in-meta-color-to-gamut-function-invocation',
       'built-in-meta-color-channel-function-invocation',
+      'built-in-meta-color-same-function-invocation',
       'built-in-meta-calc-function-reference-rejection',
       'built-in-meta-content-acceptance',
       'plain-css-function-argument-evaluation',
