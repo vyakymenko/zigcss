@@ -10611,17 +10611,6 @@ test "native Sass meta call rejects invalid string upper case arguments and limi
             .{},
         ),
     );
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
-            std.testing.allocator,
-            "string-lower-case-direct-splat.scss",
-            "@use \"sass:string\"; .a { value: string.to-lower-case((ABC,)...); }",
-            .scss,
-            .{},
-        ),
-    );
-
     var direct_argument_limits = sass_evaluator.Limits{};
     direct_argument_limits.max_function_arguments = 1;
     try std.testing.expectError(
@@ -10633,6 +10622,96 @@ test "native Sass meta call rejects invalid string upper case arguments and limi
             .scss,
             direct_argument_limits,
         ),
+    );
+}
+
+test "native Sass expands direct string module lower case arguments once in source order" {
+    const input =
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: string.to-lower-case((mark(1, "A💚É"),)...);
+        \\  map: text.to-lower-case((string: mark(2, "ÉX"))...);
+        \\  star: to-lower-case((string: mark(3, "A👩‍💻Z"))...);
+        \\  override: string.to-lower-case($string: "wrong", (string: mark(4, "ABCÉ"))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "string-lower-case-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:\"a💚É\";map:\"éx\";star:\"a👩‍💻z\";override:\"abcÉ\";trace:1234}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:string" as text
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: text.to-lower-case((mark(1, "A💚É"),)...)
+        \\  map: text.to-lower-case((string: mark(2, "ÉX"))...)
+        \\  override: text.to-lower-case($string: "wrong", (string: mark(3, "ABCÉ"))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "string-lower-case-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:\"a💚É\";map:\"éx\";override:\"abcÉ\";trace:123}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectStringLowerCaseSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectStringLowerCaseSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:string" as text;
+        \\.allocation {
+        \\  list: text.to-lower-case(("A💚É",)...);
+        \\  map: text.to-lower-case((string: "ÉX")...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "string-lower-case-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:\"a💚É\";map:\"éx\"}",
+        result.css(),
     );
 }
 
@@ -10814,6 +10893,53 @@ test "native Sass meta call rejects invalid string lower case arguments and limi
             "@use \"sass:meta\"; @use \"sass:string\" as *; $lower: meta.get-function(\"to-lower-case\"); .a { value: meta.call($lower, VALUE); }",
             .scss,
             argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "string.to-lower-case(()...)" },
+        .{ .name = "direct-extra-list-splat", .invocation = "string.to-lower-case((A, B)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "string.to-lower-case((string: A, other: B)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "string.to-lower-case((1: A)...)" },
+        .{ .name = "direct-positional-map-duplicate", .invocation = "string.to-lower-case(A, (string: B)...)" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:string\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-string-lower-case-direct-splat.scss",
+            "$args: (ABC,); .a { value: to-lower-case($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var direct_argument_limits = sass_evaluator.Limits{};
+    direct_argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-lower-case-direct-splat-argument-limit.scss",
+            "@use \"sass:string\"; .a { value: string.to-lower-case((VALUE, OTHER)...); }",
+            .scss,
+            direct_argument_limits,
         ),
     );
 }
