@@ -9088,6 +9088,122 @@ fn exerciseDirectStringUnquoteSplatAllocationFailures(
     );
 }
 
+test "native Sass expands direct legacy string unquote splats once in source order" {
+    const input =
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: unquote((mark(1, "plain value"),)...);
+        \\  map: unquote((string: mark(2, "already quoted"))...);
+        \\  escaped: unquote((string: mark(3, "foo\ bar"))...);
+        \\  override: unquote($string: "wrong", (string: mark(4, "item-#{2}"))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-string-unquote-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:plain value;map:already quoted;escaped:foo bar;override:item-2;trace:1234}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: unquote((mark(1, "plain value"),)...)
+        \\  map: unquote((string: mark(2, "already quoted"))...)
+        \\  override: unquote($string: "wrong", (string: mark(3, "item-#{2}"))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-string-unquote-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:plain value;map:already quoted;override:item-2;trace:123}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 3), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyStringUnquoteSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyStringUnquoteSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: unquote(("plain value",)...);
+        \\  map: unquote((string: "already quoted")...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-string-unquote-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:plain value;map:already quoted}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes string unquote function references" {
     const input =
         \\@use "sass:meta";
@@ -9295,16 +9411,27 @@ test "native Sass meta call rejects invalid string unquote arguments and limits"
         );
     }
 
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "unquote(()...)" },
+        .{ .name = "legacy-direct-extra-list-splat", .invocation = "unquote((\"a\", \"b\")...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "unquote((string: \"a\", other: \"b\")...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "unquote((1: \"a\")...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
             std.testing.allocator,
-            "legacy-string-unquote-direct-splat.scss",
-            "$args: (\"legacy value\",); .a { value: unquote($args...); }",
-            .scss,
-            .{},
-        ),
-    );
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
 
     var direct_argument_limits = sass_evaluator.Limits{};
     direct_argument_limits.max_function_arguments = 1;
@@ -9314,6 +9441,16 @@ test "native Sass meta call rejects invalid string unquote arguments and limits"
             std.testing.allocator,
             "string-unquote-direct-splat-argument-limit.scss",
             "@use \"sass:string\"; .a { value: string.unquote((VALUE, OTHER)...); }",
+            .scss,
+            direct_argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-string-unquote-direct-splat-argument-limit.scss",
+            ".a { value: unquote((VALUE, OTHER)...); }",
             .scss,
             direct_argument_limits,
         ),

@@ -16315,6 +16315,26 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
+        const legacy_unquote_splat = if (!module_owned and builtin == .unquote) blk: {
+            for (ranges) |range| {
+                if (std.mem.endsWith(
+                    u8,
+                    trimWhitespace(body[range.start..range.end]),
+                    "...",
+                )) break :blk true;
+            }
+            break :blk false;
+        } else false;
+        if (legacy_unquote_splat) {
+            var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+            defer evaluated.deinit();
+            return (try self.invokeStringFunction(
+                builtinFunctionCallable(builtin, null),
+                &evaluated,
+                span,
+            )) orelse unreachable;
+        }
+
         if (builtin == .str_split or
             (module_owned and
                 (builtin == .quote or
