@@ -8398,7 +8398,16 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
         defer evaluated.deinit();
+        return self.callMetaCallEvaluated(module_owned, &evaluated, scope, span);
+    }
 
+    fn callMetaCallEvaluated(
+        self: *Engine,
+        module_owned: bool,
+        evaluated: *const EvaluatedCallArguments,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
         var function_name = [_]u8{ 'f', 'u', 'n', 'c', 't', 'i', 'o', 'n' };
         var arguments_name = [_]u8{ 'a', 'r', 'g', 's' };
         const parameters = [_]CallableParameter{
@@ -8412,7 +8421,7 @@ const Engine = struct {
                 .rest = true,
             },
         };
-        var bound = try self.bindCallableArguments(&parameters, &evaluated, span);
+        var bound = try self.bindCallableArguments(&parameters, evaluated, span);
         defer bound.deinit();
 
         if (!module_owned) {
@@ -8457,6 +8466,14 @@ const Engine = struct {
             else
                 self.metaCallFunctionFailure(span),
             .builtin_function => blk: {
+                if (try self.invokeMetaCallFunction(
+                    callable,
+                    &forwarded,
+                    scope,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeListFunction(callable, &forwarded, span)) |value| {
                     break :blk value;
                 }
@@ -8863,6 +8880,27 @@ const Engine = struct {
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
         };
+    }
+
+    fn invokeMetaCallFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .meta_call or
+            (reference.owner != null and reference.owner.? != .meta))
+        {
+            return null;
+        }
+        return try self.callMetaCallEvaluated(
+            reference.owner != null,
+            arguments,
+            scope,
+            span,
+        );
     }
 
     fn invokeListFunction(
