@@ -260,6 +260,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-color-saturation-function-invocation',
       'built-in-meta-color-lightness-function-invocation',
       'built-in-meta-color-whiteness-function-invocation',
+      'built-in-color-module-whiteness-direct-function-invocation',
       'built-in-meta-color-blackness-function-invocation',
       'built-in-meta-color-mix-function-invocation',
       'built-in-meta-color-lighten-function-invocation',

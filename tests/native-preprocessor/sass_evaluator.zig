@@ -16801,6 +16801,131 @@ fn exerciseWhitenessFunctionAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
 }
 
+test "native Sass invokes direct color whiteness functions once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  default: color.whiteness(hsl(210deg 50% 40%));
+        \\  alias: palette.whiteness(rgb(10 20 30));
+        \\  star: whiteness(hwb(75deg 20% 30%));
+        \\  named: color.whiteness($color: hsl(90deg 30% 20%));
+        \\  list: color.whiteness((mark(1, hsl(45deg 20% 30%)),)...);
+        \\  map: color.whiteness(("color": mark(2, hwb(75deg 20% 30%)))...);
+        \\  override: color.whiteness($color: red, ("color": mark(3, hsl(135deg 50% 25%)))...);
+        \\  ordered: color.whiteness(mark(4, hsl(120deg 50% 25%)));
+        \\  type: meta.type-of(color.whiteness(red));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "color-whiteness-direct-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{default:20%;alias:3.9215686275%;star:20%;named:14%;list:24%;map:20%;override:12.5%;ordered:12.5%;type:number;trace:1234}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 9), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.whiteness() is deprecated. Use color.channel($color, \"whiteness\", $space: hwb).",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:color" as palette
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  alias: palette.whiteness(mark(1, hsl(210deg 50% 40%)))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "color-whiteness-direct-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{alias:20%;trace:1}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.whiteness() is deprecated. Use color.channel($color, \"whiteness\", $space: hwb).",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectWhitenessFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectWhitenessFunctionAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:color";
+        \\.allocation {
+        \\  hsl: color.whiteness((hsl(210deg 50% 40%),)...);
+        \\  rgb: color.whiteness(("color": rgb(10 20 30))...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "color-whiteness-direct-function-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{hsl:20%;rgb:3.9215686275%}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call rejects unavailable whiteness forms arguments and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -16881,6 +17006,42 @@ test "native Sass meta call rejects unavailable whiteness forms arguments and li
             std.testing.allocator,
             "meta-call-whiteness-argument-limit.scss",
             "@use \"sass:meta\"; @use \"sass:color\"; $whiteness: meta.get-function(\"whiteness\", $module: \"color\"); .a { value: meta.call($whiteness, red); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "color.whiteness(()...)" },
+        .{ .name = "direct-overfull-list-splat", .invocation = "color.whiteness((red, blue)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "color.whiteness((color: red, other: blue)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "color.whiteness((1: red)...)" },
+        .{ .name = "direct-positional-map-duplicate", .invocation = "color.whiteness(red, (color: blue)...)" },
+        .{ .name = "direct-modern-color", .invocation = "color.whiteness(color(display-p3 .3 .4 .5))" },
+        .{ .name = "direct-deferred", .invocation = "color.whiteness(var(--color))" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "color-whiteness-direct-function-argument-limit.scss",
+            "@use \"sass:color\"; .a { value: color.whiteness((red, blue)...); }",
             .scss,
             argument_limits,
         ),

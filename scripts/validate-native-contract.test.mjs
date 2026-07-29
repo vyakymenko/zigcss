@@ -168,6 +168,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-saturation-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-lightness-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-whiteness-function-invocation'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-color-module-whiteness-direct-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-blackness-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-mix-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-lighten-function-invocation'), true)

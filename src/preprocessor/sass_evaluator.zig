@@ -5393,10 +5393,14 @@ const Engine = struct {
                 scope,
                 span,
             ),
-            // Dart Sass 1.101.0 exposes whiteness and blackness only as
-            // sass:color callable references here. Direct calls remain
-            // outside these evidence-closed slices.
-            .whiteness,
+            .whiteness => return try self.callDirectColorWhitenessRaw(
+                body,
+                ranges.items,
+                scope,
+                span,
+            ),
+            // Dart Sass 1.101.0 blackness remains admitted only through the
+            // separately verified sass:color callable-reference boundary.
             .blackness,
             .str_unique_id,
             => return null,
@@ -16422,6 +16426,22 @@ const Engine = struct {
         return self.callStringBuiltin(builtin, arguments[0..count], span);
     }
 
+    fn callDirectColorWhitenessRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        return (try self.invokeColorWhitenessFunction(
+            builtinFunctionCallable(.whiteness, .color),
+            &evaluated,
+            span,
+        )) orelse unreachable;
+    }
+
     fn callMathVariadicRaw(
         self: *Engine,
         builtin: Builtin,
@@ -18746,6 +18766,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "change")) return .change_color;
     if (sassNameEql(name, "scale")) return .scale_color;
     if (sassNameEql(name, "hwb")) return .hwb;
+    if (sassNameEql(name, "whiteness")) return .whiteness;
     if (sassNameEql(name, "space")) return .space;
     if (sassNameEql(name, "to-space")) return .to_space;
     if (sassNameEql(name, "is-legacy")) return .is_legacy;
