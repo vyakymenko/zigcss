@@ -18006,6 +18006,202 @@ test "native Sass meta call rejects unavailable color fade out forms arguments a
     );
 }
 
+test "native Sass meta call invokes color ie hex str function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("ie-hex-str");
+        \\$module: meta.get-function("ie-hex-str", $module: "color");
+        \\$alias: meta.get-function("ie-hex-str", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("ie-hex-str");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (rgba(18, 52, 86, .6),);
+        \\$map-args: ("color": hsla(120, 20%, 25%, .6));
+        \\.values {
+        \\  global-exists: meta.function-exists("ie-hex-str");
+        \\  module-exists: meta.function-exists("ie-hex-str", "color");
+        \\  alias-exists: meta.function-exists("ie-hex-str", "palette");
+        \\  type: meta.type-of($global);
+        \\  module-type: meta.type-of($module);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, rgba(18, 52, 86, .6));
+        \\  named: meta.call($global, $color: rgba(18, 52, 86, .6));
+        \\  transparent: meta.call($global, transparent);
+        \\  opaque: meta.call($global, #123456);
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .1));
+        \\  hsl: meta.call($global, hsla(120, 20%, 25%, .6));
+        \\  hwb: meta.call($global, hwb(240deg 10% 20% / .6));
+        \\  lab: meta.call($global, lab(41.5208239274 -4.5730899326 -33.4941945924 / .7));
+        \\  lch: meta.call($global, lch(41.5208239274 33.8049437646 262.2252620788 / .7));
+        \\  oklab: meta.call($global, oklab(.4993144558 -.0330434876 -.0929665921 / .7));
+        \\  oklch: meta.call($global, oklch(.4993144558 .0986643771 250.4330574202 / .7));
+        \\  srgb: meta.call($global, color(srgb .2 .4 .6 / .7));
+        \\  srgb-linear: meta.call($global, color(srgb-linear .0331047666 .1328683216 .3185467781 / .7));
+        \\  display-p3: meta.call($global, color(display-p3 .2498513331 .3952400722 .5840337708 / .7));
+        \\  a98-rgb: meta.call($global, color(a98-rgb .2814316253 .3994051501 .5878866513 / .7));
+        \\  prophoto-rgb: meta.call($global, color(prophoto-rgb .2876613559 .3195515327 .5045379079 / .7));
+        \\  rec2020: meta.call($global, color(rec2020 .2501283074 .3367053823 .5377935675 / .7));
+        \\  xyz-d50: meta.call($global, color(xyz-d50 .1111874591 .121927404 .2408340301 / .7));
+        \\  xyz: meta.call($global, color(xyz .1186553058 .1250592561 .3192661072 / .7));
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  module: meta.call($module, rgba(18, 52, 86, .6));
+        \\  alias: meta.call($alias, rgba(18, 52, 86, .6));
+        \\  star: meta.call($star, rgba(18, 52, 86, .6));
+        \\  direct-module: color.ie-hex-str(rgba(18, 52, 86, .6));
+        \\  ordered: meta.call(mark(1, $global), $color: mark(2, rgba(18, 52, 86, .6)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, rgba(18, 52, 86, .6)));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-ie-hex-str-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;module-type:function;global-module-same:true;module-alias-same:true;star-module-same:true;star-global-same:true;inspect-global:get-function(\"ie-hex-str\");inspect-module:get-function(\"ie-hex-str\");global:#99123456;named:#99123456;transparent:#00000000;opaque:#FF123456;alpha:#1A123456;hsl:#99334D33;hwb:#991A1ACC;lab:#B3336699;lch:#B3336699;oklab:#B3336699;oklch:#B3336699;srgb:#B3336699;srgb-linear:#B3336699;display-p3:#B3336699;a98-rgb:#B3336699;prophoto-rgb:#B3336699;rec2020:#B3336699;xyz-d50:#B3336699;xyz:#B3336699;list-splat:#99123456;map-splat:#99334D33;module:#99123456;alias:#99123456;star:#99123456;direct-module:#99123456;ordered:#99123456;trace:12;result-type:string}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$global: m.get-function("ie-hex-str")
+        \\$module: m.get-function("ie-hex-str", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20% / .6))
+        \\.sass
+        \\  type: m.type-of($global)
+        \\  module-type: m.type-of($module)
+        \\  plain: m.call($global, hsla(120, 20%, 25%, .6))
+        \\  named: m.call($global, $color: rgba(18, 52, 86, .6))
+        \\  map: m.call($global, $arguments...)
+        \\  module: m.call($module, #123456)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-ie-hex-str-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;plain:#99334D33;named:#99123456;map:#991A1ACC;module:#FF123456;module-inspect:get-function(\"ie-hex-str\")}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorIeHexStrFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorIeHexStrFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\$ie-hex-str: meta.get-function("ie-hex-str", $module: "color");
+        \\.allocation {
+        \\  rgb: meta.call($ie-hex-str, rgba(18, 52, 86, .6));
+        \\  lab: meta.call($ie-hex-str, lab(50% 10 20 / .6));
+        \\  display-p3: meta.call($ie-hex-str, color(display-p3 .1 .2 .3 / .6));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-ie-hex-str-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{rgb:#99123456;lab:#99907055;display-p3:#990F344F}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects invalid color ie hex str arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($ie-hex-str)" },
+        .{ .name = "extra", .invocation = "meta.call($ie-hex-str, red, blue)" },
+        .{ .name = "unknown", .invocation = "meta.call($ie-hex-str, $color: red, $other: blue)" },
+        .{ .name = "duplicate", .invocation = "meta.call($ie-hex-str, red, $color: blue)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($ie-hex-str, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($ie-hex-str, null)" },
+        .{ .name = "boolean", .invocation = "meta.call($ie-hex-str, true)" },
+        .{ .name = "number", .invocation = "meta.call($ie-hex-str, 1)" },
+        .{ .name = "string", .invocation = "meta.call($ie-hex-str, \"red\")" },
+        .{ .name = "list", .invocation = "meta.call($ie-hex-str, (red, blue))" },
+        .{ .name = "map", .invocation = "meta.call($ie-hex-str, (tone: red))" },
+        .{ .name = "deferred", .invocation = "meta.call($ie-hex-str, var(--color))" },
+        .{ .name = "missing-rgb", .invocation = "meta.call($ie-hex-str, rgb(none 0 0 / .6))" },
+        .{ .name = "missing-alpha", .invocation = "meta.call($ie-hex-str, rgb(1 2 3 / none))" },
+        .{ .name = "modern-missing", .invocation = "meta.call($ie-hex-str, lab(none 10 20 / .6))" },
+        .{ .name = "modern-out-of-gamut", .invocation = "meta.call($ie-hex-str, color(xyz .1 .2 .3 / .6))" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; $ie-hex-str: meta.get-function(\"ie-hex-str\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-ie-hex-str-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"ie-hex-str\", $module: \"color\"), red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-ie-hex-str-argument-limit.scss",
+            "@use \"sass:meta\"; $ie-hex-str: meta.get-function(\"ie-hex-str\"); .a { value: meta.call($ie-hex-str, red); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -18116,10 +18312,6 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         .{
             .name = "meta-call-mixin.scss",
             .input = "@use \"sass:meta\"; @mixin local {} .a { value: meta.call(meta.get-mixin(\"local\")); }",
-        },
-        .{
-            .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"ie-hex-str\"), #123); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",

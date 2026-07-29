@@ -5614,9 +5614,27 @@ const Engine = struct {
             try self.report(.type_mismatch, span, "ie-hex-str() requires exactly one color");
             return error.InvalidExpression;
         }
+        return self.callIeHexStrValue(arguments[0].*, span);
+    }
+
+    fn callIeHexStrValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "ie-hex-str() requires exactly one color");
+                return error.InvalidExpression;
+            },
+        };
         var buffer: [9]u8 = undefined;
+        const bytes = native_color.serializeIeHex(color, &buffer) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
         return self.values.own(.{ .string = .{
-            .bytes = try native_color.serializeIeHex(arguments[0].color, &buffer),
+            .bytes = bytes,
         } });
     }
 
@@ -8765,6 +8783,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorLegacyAlphaFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorIeHexStrFunction(
                     callable,
                     &forwarded,
                     span,
@@ -12941,6 +12966,32 @@ const Engine = struct {
         return number.value;
     }
 
+    fn invokeColorIeHexStrFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .ie_hex_str or
+            (reference.owner != null and reference.owner.? != .color))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return self.callIeHexStrValue(bound.values[0].?.*, span);
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -16348,9 +16399,11 @@ fn moduleFunctionExists(kind: BuiltinModule, name: []const u8) bool {
             sassNameEql(name, "color"));
 }
 
-// Built-in function identity includes its owner: a legacy global and the
-// corresponding module member are distinct, while module aliases are equal.
-// Reserve origin zero's largest member for the special legacy `if()` function.
+// Built-in function identity normally includes its owner: a legacy global and
+// the corresponding module member are distinct, while module aliases are
+// equal. Dart Sass exposes ie-hex-str as one shared global/module identity, so
+// that exact callable is canonicalized to the global origin. Reserve origin
+// zero's largest member for the special legacy `if()` function.
 const builtin_function_member_mask: u32 = 0x0fff_ffff;
 const builtin_function_origin_shift: u5 = 28;
 
@@ -16365,7 +16418,11 @@ fn builtinFunctionCallable(
 ) native_value.Callable {
     const member: u32 = @intCast(@intFromEnum(builtin));
     std.debug.assert(member < builtin_function_member_mask);
-    const origin: u32 = if (owner) |kind| @as(u32, @intFromEnum(kind)) + 1 else 0;
+    const canonical_owner = if (builtin == .ie_hex_str) null else owner;
+    const origin: u32 = if (canonical_owner) |kind|
+        @as(u32, @intFromEnum(kind)) + 1
+    else
+        0;
     return .{
         .kind = .builtin_function,
         .id = (origin << builtin_function_origin_shift) | member,
@@ -16498,6 +16555,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "change")) return .change_color;
     if (sassNameEql(name, "scale")) return .scale_color;
     if (sassNameEql(name, "hwb")) return .hwb;
+    if (sassNameEql(name, "ie-hex-str")) return .ie_hex_str;
     return null;
 }
 

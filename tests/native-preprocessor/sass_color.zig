@@ -331,10 +331,49 @@ test "native Sass legacy color manipulation matches closed conversion rules" {
         error.InvalidColor,
         color.mix(color.parseLiteral("red").?, color.parseLiteral("blue").?, 101),
     );
-    var ie_buffer: [9]u8 = undefined;
-    try std.testing.expectEqualStrings(
-        "#66123456",
-        try color.serializeIeHex(try color.rgb(18, 52, 86, 0.4), &ie_buffer),
+    const ie_cases = [_]struct {
+        value: preprocessor.value.Color,
+        expected: []const u8,
+    }{
+        .{
+            .value = try color.rgb(18, 52, 86, 0.4),
+            .expected = "#66123456",
+        },
+        .{
+            .value = try color.modern(.lab, .{ 50, 10, 20, 0.6 }, 0),
+            .expected = "#99907055",
+        },
+        .{
+            .value = try color.modern(.oklch, .{ 0.5, 0.1, 120, 0.6 }, 0),
+            .expected = "#995C6B21",
+        },
+        .{
+            .value = try color.predefined(.display_p3, .{ 0.1, 0.2, 0.3, 0.6 }, 0),
+            .expected = "#990F344F",
+        },
+        .{
+            .value = try color.predefined(
+                .xyz,
+                .{ 0.1186553058, 0.1250592561, 0.3192661072, 0.7 },
+                0,
+            ),
+            .expected = "#B3336699",
+        },
+    };
+    for (ie_cases) |case| {
+        var ie_buffer: [9]u8 = undefined;
+        try std.testing.expectEqualStrings(
+            case.expected,
+            try color.serializeIeHex(case.value, &ie_buffer),
+        );
+    }
+    var out_of_gamut_buffer: [9]u8 = undefined;
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.serializeIeHex(
+            try color.predefined(.xyz, .{ 0.1, 0.2, 0.3, 0.6 }, 0),
+            &out_of_gamut_buffer,
+        ),
     );
 }
 

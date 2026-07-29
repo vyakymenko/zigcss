@@ -989,7 +989,22 @@ fn serializePredefined(
 }
 
 pub fn serializeIeHex(input: native_value.Color, buffer: *[9]u8) Error![]const u8 {
-    const channels = try toRgb(input);
+    const legacy = switch (input.space) {
+        .rgb, .hsl, .hwb => true,
+        else => false,
+    };
+    const channels = if (legacy)
+        try toRgb(input)
+    else
+        (try convert(input, .rgb)).channels;
+    // Dart Sass gamut-maps typed colors before producing its legacy IE form.
+    // Until that mapping is native, accept exact in-gamut conversions and
+    // reject typed out-of-gamut values instead of silently clipping them.
+    if (!legacy) {
+        for (channels[0..3]) |channel| {
+            if (channel < 0 or channel > 255) return error.InvalidColor;
+        }
+    }
     if (!allFinite(channels)) return error.InvalidColor;
     const bytes = [4]u8{
         @intFromFloat(@round(clamp(channels[3], 0, 1) * 255)),
