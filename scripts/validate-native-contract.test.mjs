@@ -155,6 +155,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-transparentize-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-fade-out-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-ie-hex-str-function-invocation'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-meta-calc-function-reference-rejection'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-content-acceptance'), true)
   assert.equal(sassCore.capabilities.includes('plain-css-function-argument-evaluation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-selector-parse-simple'), true)

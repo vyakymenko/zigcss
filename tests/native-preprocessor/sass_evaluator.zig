@@ -19098,6 +19098,102 @@ test "native Sass meta function references reject invalid or unavailable reflect
     );
 }
 
+test "native Sass reflection keeps calc outside callable inventory" {
+    const input =
+        \\@use "sass:meta";
+        \\.values {
+        \\  module: meta.function-exists("calc");
+        \\  legacy: function-exists("calc");
+        \\  direct: calc(1px + 2px);
+        \\  deferred: calc(1px + var(--x));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-calc-function-reference-rejection.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{module:false;legacy:false;direct:3px;deferred:calc(1px + var(--x))}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\.sass
+        \\  module: m.function-exists("calc")
+        \\  legacy: function-exists("calc")
+        \\  direct: calc(1px + 2px)
+        \\  deferred: calc(1px + var(--x))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-calc-function-reference-rejection.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{module:false;legacy:false;direct:3px;deferred:calc(1px + var(--x))}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), sass_diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        sass_diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        sass_diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        sass_diagnostics[0].message,
+    );
+
+    const unavailable = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        syntax: sass.Mode,
+    }{
+        .{
+            .name = "meta-get-calc-function.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.type-of(meta.get-function(\"calc\")); }",
+            .syntax = .scss,
+        },
+        .{
+            .name = "meta-get-calc-function.sass",
+            .input = "@use \"sass:meta\" as m\n.a\n  value: m.type-of(m.get-function(\"calc\"))",
+            .syntax = .sass,
+        },
+    };
+    for (unavailable) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, case.syntax, .{}),
+        );
+    }
+}
+
 test "native Sass evaluates plain CSS function arguments before serialization" {
     const input =
         \\@use "sass:meta";

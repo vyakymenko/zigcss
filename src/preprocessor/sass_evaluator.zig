@@ -16763,6 +16763,7 @@ fn globalCallableBuiltin(name: []const u8) ?Builtin {
         .math_cos,
         .math_tan,
         .math_hypot,
+        .calculation,
         .clamp,
         => null,
         else => builtin,
