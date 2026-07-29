@@ -8764,6 +8764,13 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeColorOpacifyFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeSelectorParseFunction(
                     callable,
                     &forwarded,
@@ -12763,6 +12770,122 @@ const Engine = struct {
         return number.value;
     }
 
+    fn invokeColorOpacifyFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .opacify) return null;
+        if (reference.owner) |owner| {
+            if (owner != .color) return null;
+            try self.report(
+                .unsupported_feature,
+                span,
+                "opacify() is not callable from the sass:color module",
+            );
+            return error.InvalidExpression;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+            .{ .name = "amount" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const color = try self.legacyOpacifyColorArgument(bound.values[0].?.*, span);
+        const amount = try self.legacyOpacifyAmount(bound.values[1].?.*, span);
+        const result = native_color.adjustAlpha(color, amount) catch |failure| {
+            return self.colorTransformFailure(failure, span);
+        };
+
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            &.{},
+        );
+        try self.transaction.report(
+            .warning,
+            .invalid_operation,
+            span,
+            "opacify() is deprecated. Use color.adjust($color, $alpha: $amount).",
+            &.{},
+        );
+        return self.values.own(.{ .color = result });
+    }
+
+    fn legacyOpacifyColorArgument(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!native_value.Color {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "opacify() requires a color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native legacy opacify() does not support missing color channels",
+            );
+            return error.UnsupportedFeature;
+        }
+        switch (color.space) {
+            .rgb => return color,
+            .hsl, .hwb => {
+                const channels = native_color.toRgb(color) catch |failure| {
+                    return self.colorTransformFailure(failure, span);
+                };
+                return native_color.rgb(
+                    channels[0],
+                    channels[1],
+                    channels[2],
+                    channels[3],
+                ) catch |failure| {
+                    return self.colorTransformFailure(failure, span);
+                };
+            },
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native legacy opacify() supports only RGB, HSL, or HWB colors",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
+    fn legacyOpacifyAmount(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!f64 {
+        const number = try self.colorNumber(value, span);
+        if (!std.math.isFinite(number.value) or number.value < 0 or number.value > 1) {
+            try self.report(
+                .invalid_operation,
+                span,
+                "opacify() amount must be between zero and one",
+            );
+            return error.InvalidExpression;
+        }
+        return number.value;
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -16149,6 +16272,7 @@ fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
     if (kind == .color and sassNameEql(name, "complement")) return .complement;
     if (kind == .color and sassNameEql(name, "grayscale")) return .grayscale;
     if (kind == .color and sassNameEql(name, "invert")) return .invert;
+    if (kind == .color and sassNameEql(name, "opacify")) return .opacify;
     return null;
 }
 

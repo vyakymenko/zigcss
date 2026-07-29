@@ -17049,6 +17049,273 @@ test "native Sass meta call rejects unavailable color invert forms arguments and
     );
 }
 
+test "native Sass meta call invokes legacy color opacify function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\$global: meta.get-function("opacify");
+        \\$module: meta.get-function("opacify", $module: "color");
+        \\$alias: meta.get-function("opacify", $module: "palette");
+        \\@use "sass:color" as *;
+        \\$star: meta.get-function("opacify");
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$list-args: (rgba(18, 52, 86, .4), .2);
+        \\$map-args: ("color": hsla(120, 20%, 25%, .4), "amount": .2%);
+        \\.values {
+        \\  global-exists: meta.function-exists("opacify");
+        \\  module-exists: meta.function-exists("opacify", "color");
+        \\  alias-exists: meta.function-exists("opacify", "palette");
+        \\  type: meta.type-of($global);
+        \\  module-type: meta.type-of($module);
+        \\  global-module-same: $global == $module;
+        \\  module-alias-same: $module == $alias;
+        \\  star-module-same: $star == $module;
+        \\  star-global-same: $star == $global;
+        \\  inspect-global: meta.inspect($global);
+        \\  inspect-module: meta.inspect($module);
+        \\  global: meta.call($global, rgba(18, 52, 86, .4), .2);
+        \\  named: meta.call($global, $amount: .2px, $color: rgba(18, 52, 86, .4));
+        \\  transparent: meta.call($global, transparent, .2);
+        \\  opaque: meta.call($global, #123456, .2);
+        \\  alpha: meta.call($global, rgba(18, 52, 86, .9), .2);
+        \\  hsl: meta.call($global, hsla(120, 20%, 25%, .4), .2);
+        \\  hwb: meta.call($global, hwb(240deg 10% 20% / .4), .2);
+        \\  list-splat: meta.call($global, $list-args...);
+        \\  map-splat: meta.call($global, $map-args...);
+        \\  zero: meta.call($global, rgba(18, 52, 86, .4), 0);
+        \\  full: meta.call($global, rgba(18, 52, 86, .4), 1);
+        \\  ordered: meta.call(mark(1, $global), $amount: mark(3, .2), $color: mark(2, rgba(18, 52, 86, .4)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($global, rgba(18, 52, 86, .4), .2));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-opacify-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{global-exists:true;module-exists:true;alias-exists:true;type:function;module-type:function;global-module-same:false;module-alias-same:true;star-module-same:true;star-global-same:false;inspect-global:get-function(\"opacify\");inspect-module:get-function(\"opacify\");global:rgba(18,52,86,.6);named:rgba(18,52,86,.6);transparent:rgba(0,0,0,.2);opaque:#123456;alpha:#123456;hsl:rgba(51,76.5,51,.6);hwb:rgba(25.5,25.5,204,.6);list-splat:rgba(18,52,86,.6);map-splat:rgba(51,76.5,51,.6);zero:rgba(18,52,86,.4);full:#123456;ordered:rgba(18,52,86,.6);trace:132;result-type:color}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 26), diagnostics.len);
+    var global_warnings: usize = 0;
+    var opacify_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "opacify() is deprecated. Use color.adjust($color, $alpha: $amount).",
+        )) {
+            opacify_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 13), global_warnings);
+    try std.testing.expectEqual(@as(usize, 13), opacify_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$opacify: m.get-function("opacify")
+        \\$module: m.get-function("opacify", $module: "palette")
+        \\$arguments: ("color": hwb(240deg 10% 20% / .4), "amount": .2)
+        \\.sass
+        \\  type: m.type-of($opacify)
+        \\  module-type: m.type-of($module)
+        \\  plain: m.call($opacify, hsla(120, 20%, 25%, .4), .2)
+        \\  named: m.call($opacify, $color: rgba(18, 52, 86, .4), $amount: .2)
+        \\  map: m.call($opacify, $arguments...)
+        \\  module-inspect: m.inspect($module)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-opacify-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;module-type:function;plain:rgba(51,76.5,51,.6);named:rgba(18,52,86,.6);map:rgba(25.5,25.5,204,.6);module-inspect:get-function(\"opacify\")}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorOpacifyFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorOpacifyFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$opacify: meta.get-function("opacify");
+        \\.allocation {
+        \\  rgb: meta.call($opacify, rgba(18, 52, 86, .4), .2);
+        \\  hsl: meta.call($opacify, hsla(120, 20%, 25%, .4), .2px);
+        \\  hwb: meta.call($opacify, hwb(240deg 10% 20% / .4), .2%);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-opacify-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{rgb:rgba(18,52,86,.6);hsl:rgba(51,76.5,51,.6);hwb:rgba(25.5,25.5,204,.6)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects unavailable color opacify forms arguments and limits" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "meta.call($opacify)" },
+        .{ .name = "missing-amount", .invocation = "meta.call($opacify, red)" },
+        .{ .name = "extra", .invocation = "meta.call($opacify, red, .2, extra)" },
+        .{ .name = "unknown", .invocation = "meta.call($opacify, red, $other: .2)" },
+        .{ .name = "duplicate-color", .invocation = "meta.call($opacify, red, .2, $color: blue)" },
+        .{ .name = "duplicate-amount", .invocation = "meta.call($opacify, red, .2, $amount: .3)" },
+        .{ .name = "empty-splat", .invocation = "meta.call($opacify, ()...)" },
+        .{ .name = "null", .invocation = "meta.call($opacify, null, .2)" },
+        .{ .name = "boolean", .invocation = "meta.call($opacify, true, .2)" },
+        .{ .name = "number", .invocation = "meta.call($opacify, 1, .2)" },
+        .{ .name = "quoted", .invocation = "meta.call($opacify, \"red\", .2)" },
+        .{ .name = "unquoted", .invocation = "meta.call($opacify, red-name, .2)" },
+        .{ .name = "list", .invocation = "meta.call($opacify, (red, blue), .2)" },
+        .{ .name = "map", .invocation = "meta.call($opacify, (tone: red), .2)" },
+        .{ .name = "callable", .invocation = "meta.call($opacify, meta.get-function(\"inspect\", $module: \"meta\"), .2)" },
+        .{ .name = "null-amount", .invocation = "meta.call($opacify, red, null)" },
+        .{ .name = "boolean-amount", .invocation = "meta.call($opacify, red, true)" },
+        .{ .name = "color-amount", .invocation = "meta.call($opacify, red, blue)" },
+        .{ .name = "string-amount", .invocation = "meta.call($opacify, red, \".2\")" },
+        .{ .name = "list-amount", .invocation = "meta.call($opacify, red, (.1, .2))" },
+        .{ .name = "map-amount", .invocation = "meta.call($opacify, red, (amount: .2))" },
+        .{ .name = "callable-amount", .invocation = "meta.call($opacify, red, meta.get-function(\"inspect\", $module: \"meta\"))" },
+        .{ .name = "compound-amount", .invocation = "meta.call($opacify, red, math.div(.2px, 1s))" },
+        .{ .name = "calculation-amount", .invocation = "meta.call($opacify, red, calc(.1 + var(--amount)))" },
+        .{ .name = "negative-amount", .invocation = "meta.call($opacify, red, -.1)" },
+        .{ .name = "high-amount", .invocation = "meta.call($opacify, red, 1.1)" },
+        .{ .name = "rgb-missing", .invocation = "meta.call($opacify, rgb(none 0 0 / .4), .2)" },
+        .{ .name = "hsl-missing", .invocation = "meta.call($opacify, hsl(none 10% 20% / .4), .2)" },
+        .{ .name = "hwb-missing", .invocation = "meta.call($opacify, hwb(none 10% 20% / .4), .2)" },
+        .{ .name = "alpha-missing", .invocation = "meta.call($opacify, rgb(1 2 3 / none), .2)" },
+        .{ .name = "lab", .invocation = "meta.call($opacify, lab(50% 10 20 / .4), .2)" },
+        .{ .name = "lch", .invocation = "meta.call($opacify, lch(50% 20 30deg / .4), .2)" },
+        .{ .name = "oklab", .invocation = "meta.call($opacify, oklab(50% .1 .2 / .4), .2)" },
+        .{ .name = "oklch", .invocation = "meta.call($opacify, oklch(50% .1 30deg / .4), .2)" },
+        .{ .name = "srgb", .invocation = "meta.call($opacify, color(srgb .1 .2 .3 / .4), .2)" },
+        .{ .name = "srgb-linear", .invocation = "meta.call($opacify, color(srgb-linear .1 .2 .3 / .4), .2)" },
+        .{ .name = "display-p3", .invocation = "meta.call($opacify, color(display-p3 .1 .2 .3 / .4), .2)" },
+        .{ .name = "a98-rgb", .invocation = "meta.call($opacify, color(a98-rgb .1 .2 .3 / .4), .2)" },
+        .{ .name = "prophoto-rgb", .invocation = "meta.call($opacify, color(prophoto-rgb .1 .2 .3 / .4), .2)" },
+        .{ .name = "rec2020", .invocation = "meta.call($opacify, color(rec2020 .1 .2 .3 / .4), .2)" },
+        .{ .name = "xyz-d50", .invocation = "meta.call($opacify, color(xyz-d50 .1 .2 .3 / .4), .2)" },
+        .{ .name = "xyz-d65", .invocation = "meta.call($opacify, color(xyz-d65 .1 .2 .3 / .4), .2)" },
+        .{ .name = "variable", .invocation = "meta.call($opacify, var(--color), .2)" },
+    };
+    for (invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:meta\"; @use \"sass:math\"; $opacify: meta.get-function(\"opacify\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-opacify-module-not-loaded.scss",
+            "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"opacify\", $module: \"color\"), red, .2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-opacify-module-member.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; .a { value: meta.call(meta.get-function(\"tone\", $module: \"color\"), red, .2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-opacify-removed-module.scss",
+            "@use \"sass:meta\"; @use \"sass:color\"; $opacify: meta.get-function(\"opacify\", $module: \"color\"); .a { value: meta.call($opacify, rgba(1, 2, 3, .4), .2); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-opacify-direct-module.scss",
+            "@use \"sass:color\"; .a { value: color.opacify(rgba(1, 2, 3, .4), .2); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-opacify-argument-limit.scss",
+            "@use \"sass:meta\"; $opacify: meta.get-function(\"opacify\"); .a { value: meta.call($opacify, red, .2); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call invokes meta content acceptance function references" {
     const input =
         \\@use "sass:meta";
@@ -17162,7 +17429,7 @@ test "native Sass meta call rejects unavailable callable kinds and invalid bindi
         },
         .{
             .name = "meta-call-unavailable-builtin.scss",
-            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"opacify\"), #123, .1); }",
+            .input = "@use \"sass:meta\"; .a { value: meta.call(meta.get-function(\"fade-in\"), #123, .1); }",
         },
         .{
             .name = "meta-call-math-compatible-missing-number.scss",
