@@ -236,6 +236,91 @@ test "native Sass color same compares zero-filled channels and cross-space XYZ v
     ));
 }
 
+test "native Sass color powerlessness is confined to polar hue dependencies" {
+    try std.testing.expect(color.isPowerless(try color.hsl(10, 0, 50, 1), 0));
+    try std.testing.expect(!color.isPowerless(try color.hsl(10, 1, 50, 1), 0));
+    try std.testing.expect(!color.isPowerless(try color.hsl(10, 0, 50, 1), 1));
+    try std.testing.expect(color.isPowerless(
+        try color.hsl(10, 0.000000000004, 50, 1),
+        0,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.hsl(10, 0.000000000006, 50, 1),
+        0,
+    ));
+
+    try std.testing.expect(color.isPowerless(try color.hwb(10, 60, 40, 1), 0));
+    try std.testing.expect(!color.isPowerless(try color.hwb(10, 49, 50, 1), 0));
+    try std.testing.expect(!color.isPowerless(try color.hwb(10, 60, 40, 1), 1));
+    try std.testing.expect(color.isPowerless(
+        try color.hwb(10, 49.999999999998, 49.999999999998, 1),
+        0,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.hwb(10, 49.999999999997, 49.999999999997, 1),
+        0,
+    ));
+
+    try std.testing.expect(color.isPowerless(
+        try color.modern(.lch, .{ 50, 0, 10, 1 }, 0),
+        2,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.modern(.lch, .{ 50, 1, 10, 1 }, 0),
+        2,
+    ));
+    try std.testing.expect(color.isPowerless(
+        try color.modern(.oklch, .{ 0.5, 0, 10, 1 }, 0),
+        2,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.modern(.oklch, .{ 0.5, 0.01, 10, 1 }, 0),
+        2,
+    ));
+
+    try std.testing.expect(color.isPowerless(
+        try color.modern(.lch, .{ 50, 99, 10, 1 }, 0b0010),
+        2,
+    ));
+    try std.testing.expect(color.isPowerless(
+        try color.modern(.oklch, .{ 0.5, 99, 10, 1 }, 0b0010),
+        2,
+    ));
+    try std.testing.expect(color.isPowerless(
+        try color.modern(.lch, .{ 50, 0.000000000004, 10, 1 }, 0),
+        2,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.modern(.lch, .{ 50, 0.000000000006, 10, 1 }, 0),
+        2,
+    ));
+    try std.testing.expect(color.isPowerless(
+        try color.modern(.oklch, .{ 0.5, 0.000000000004, 10, 1 }, 0),
+        2,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.modern(.oklch, .{ 0.5, 0.000000000006, 10, 1 }, 0),
+        2,
+    ));
+
+    try std.testing.expect(!color.isPowerless(
+        try color.rgb(0, 0, 0, 0),
+        0,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.modern(.lab, .{ 0, 0, 0, 0 }, 0),
+        1,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.predefined(.xyz, .{ 0, 0, 0, 0 }, 0),
+        0,
+    ));
+    try std.testing.expect(!color.isPowerless(
+        try color.predefined(.display_p3, .{ 0, 0, 0, 0 }, 0),
+        3,
+    ));
+}
+
 test "native Sass color conversion spans every owned CSS Color 4 family" {
     const source = try color.rgb(51, 102, 153, 0.7);
     const cases = [_]struct {

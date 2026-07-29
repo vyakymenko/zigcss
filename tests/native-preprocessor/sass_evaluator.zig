@@ -21395,10 +21395,6 @@ test "native Sass color same function rejects invalid and unavailable invocation
         .{ .name = "list-second", .invocation = "color.same(red, (red, blue))" },
         .{ .name = "map-second", .invocation = "color.same(red, (tone: red))" },
         .{ .name = "deferred-second", .invocation = "color.same(red, var(--color))" },
-        .{
-            .name = "is-powerless",
-            .invocation = "meta.call(meta.get-function(\"is-powerless\", $module: \"color\"), red, \"red\")",
-        },
     };
     for (invalid) |case| {
         const case_source = try std.fmt.allocPrint(
@@ -21450,6 +21446,266 @@ test "native Sass color same function rejects invalid and unavailable invocation
             "@use \"sass:color\"; @use \"sass:meta\"; $same: meta.get-function(\"same\", $module: \"color\"); .a { value: meta.call($same, red, red); }",
             .scss,
             argument_limits,
+        ),
+    );
+}
+
+test "native Sass color is-powerless function queries direct and reflected polar channels" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("is-powerless", $module: "color");
+        \\$alias: meta.get-function("is_powerless", $module: "palette");
+        \\$star: meta.get-function("is-powerless");
+        \\$list-args: (hsl(10 0% 50%), "hue");
+        \\$map-args: (channel: "hue", color: lch(50% 0 10));
+        \\.values {
+        \\  exists: meta.function-exists("is-powerless", "color");
+        \\  alias-exists: meta.function-exists("is_powerless", "palette");
+        \\  global-exists: meta.function-exists("is-powerless");
+        \\  type: meta.type-of($module);
+        \\  same-ref: $module == $alias;
+        \\  star-ref: $module == $star;
+        \\  rgb: color.is-powerless(rgb(0 0 0), "red");
+        \\  hsl: color.is-powerless(hsl(10 0% 50%), "hue");
+        \\  hwb: color.is-powerless(hwb(10 60% 40%), "hue");
+        \\  lab: color.is-powerless(lab(50% 0 0), "a");
+        \\  lch: color.is-powerless(lch(50% 0 10), "hue");
+        \\  oklab: color.is-powerless(oklab(.5 0 0), "a");
+        \\  oklch: color.is-powerless(oklch(.5 0 10), "hue");
+        \\  srgb: color.is-powerless(color(srgb 0 0 0), "red");
+        \\  linear: color.is-powerless(color(srgb-linear 0 0 0), "red");
+        \\  p3: color.is-powerless(color(display-p3 0 0 0), "red");
+        \\  a98: color.is-powerless(color(a98-rgb 0 0 0), "red");
+        \\  prophoto: color.is-powerless(color(prophoto-rgb 0 0 0), "red");
+        \\  rec2020: color.is-powerless(color(rec2020 0 0 0), "red");
+        \\  d50: color.is-powerless(color(xyz-d50 0 0 0), "x");
+        \\  xyz: color.is-powerless(color(xyz 0 0 0), "x");
+        \\  hsl-live: color.is-powerless(hsl(10 1% 50%), "hue");
+        \\  hwb-live: color.is-powerless(hwb(10 49% 50%), "hue");
+        \\  lch-live: color.is-powerless(lch(50% 1 10), "hue");
+        \\  oklch-live: color.is-powerless(oklch(.5 .01 10), "hue");
+        \\  hsl-other: color.is-powerless(hsl(10 0% 50%), "saturation");
+        \\  hwb-other: color.is-powerless(hwb(10 60% 40%), "whiteness");
+        \\  lch-other: color.is-powerless(lch(50% 0 10), "chroma");
+        \\  oklch-other: color.is-powerless(oklch(.5 0 10), "chroma");
+        \\  alpha: color.is-powerless(rgb(0 0 0 / .4), "alpha");
+        \\  lch-missing: color.is-powerless(lch(none none none), "hue");
+        \\  oklch-missing: color.is-powerless(oklch(none none none), "hue");
+        \\  hsl-fuzzy-in: color.is-powerless(hsl(10 0.000000000004% 50%), "hue");
+        \\  hsl-fuzzy-out: color.is-powerless(hsl(10 0.000000000006% 50%), "hue");
+        \\  hwb-fuzzy-in: color.is-powerless(hwb(10 49.999999999998% 49.999999999998%), "hue");
+        \\  hwb-fuzzy-out: color.is-powerless(hwb(10 49.999999999% 49.999999999%), "hue");
+        \\  lch-fuzzy-in: color.is-powerless(lch(50% 0.000000000004 10), "hue");
+        \\  lch-fuzzy-out: color.is-powerless(lch(50% 0.000000000006 10), "hue");
+        \\  oklch-fuzzy-in: color.is-powerless(oklch(.5 0.000000000004 10), "hue");
+        \\  oklch-fuzzy-out: color.is-powerless(oklch(.5 0.000000000006 10), "hue");
+        \\  direct-alias: palette.is_powerless(hsl(10 0% 50%), "hue");
+        \\  star: is-powerless(lch(50% 0 10), "hue");
+        \\  reflected: meta.call($module, oklch(.5 0 10), "hue");
+        \\  named: meta.call($module, $channel: "hue", $color: hwb(10 50% 50%));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  escaped: color.is-powerless(hsl(10 0% 50%), "h\75 e");
+        \\  interpolated: color.is-powerless(lch(50% 0 10), "#{hu}e");
+        \\  ordered: meta.call(mark(1, $module), mark(2, hsl(10 0% 50%)), mark(3, "hue"));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, hsl(10 0% 50%), "hue"));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-is-powerless-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;alias-exists:true;global-exists:true;type:function;same-ref:true;star-ref:true;rgb:false;hsl:true;hwb:true;lab:false;lch:true;oklab:false;oklch:true;srgb:false;linear:false;p3:false;a98:false;prophoto:false;rec2020:false;d50:false;xyz:false;hsl-live:false;hwb-live:false;lch-live:false;oklch-live:false;hsl-other:false;hwb-other:false;lch-other:false;oklch-other:false;alpha:false;lch-missing:true;oklch-missing:true;hsl-fuzzy-in:true;hsl-fuzzy-out:false;hwb-fuzzy-in:true;hwb-fuzzy-out:false;lch-fuzzy-in:true;lch-fuzzy-out:false;oklch-fuzzy-in:true;oklch-fuzzy-out:false;direct-alias:true;star:true;reflected:true;named:true;list-splat:true;map-splat:true;escaped:true;interpolated:true;ordered:true;trace:123;result-type:bool}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const plain_css =
+        \\@use "sass:meta";
+        \\.plain {
+        \\  exists: meta.function-exists("is-powerless");
+        \\  value: is-powerless(hsl(10 0% 50%), "hue");
+        \\}
+    ;
+    var plain_result = try compile(
+        std.testing.allocator,
+        "color-is-powerless-plain-css.scss",
+        plain_css,
+        .scss,
+        .{},
+    );
+    defer plain_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{exists:false;value:is-powerless(hsl(10,0%,50%), \"hue\")}",
+        plain_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), plain_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$reference: m.get-function("is-powerless", $module: "palette")
+        \\.sass
+        \\  exists: m.function-exists("is-powerless", "palette")
+        \\  global-exists: m.function-exists("is-powerless")
+        \\  type: m.type-of($reference)
+        \\  hsl: m.call($reference, hsl(10 0% 50%), "hue")
+        \\  hwb: palette.is-powerless(hwb(10 50% 50%), "hue")
+        \\  lch: palette.is-powerless(lch(50% 0 10), "hue")
+        \\  live: palette.is-powerless(oklch(.5 .1 10), "hue")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-is-powerless-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{exists:true;global-exists:false;type:function;hsl:true;hwb:true;lch:true;live:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorIsPowerlessFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorIsPowerlessFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:color";
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("is-powerless", $module: "color");
+        \\.allocation {
+        \\  direct: color.is-powerless(lch(none none none), "h\75 e");
+        \\  reflected: meta.call($reference, oklch(.5 0 10), "hue");
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-is-powerless-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:true;reflected:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass color is-powerless function rejects invalid invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "color.is-powerless()" },
+        .{ .name = "missing-channel", .invocation = "color.is-powerless(red)" },
+        .{ .name = "extra", .invocation = "meta.call($is-powerless, red, \"red\", extra)" },
+        .{ .name = "unknown", .invocation = "color.is-powerless($other: red, $channel: \"red\")" },
+        .{ .name = "duplicate", .invocation = "meta.call($is-powerless, red, \"red\", $color: blue)" },
+        .{ .name = "null-color", .invocation = "color.is-powerless(null, \"red\")" },
+        .{ .name = "boolean-color", .invocation = "color.is-powerless(true, \"red\")" },
+        .{ .name = "number-color", .invocation = "color.is-powerless(1, \"red\")" },
+        .{ .name = "string-color", .invocation = "color.is-powerless(\"red\", \"red\")" },
+        .{ .name = "list-color", .invocation = "color.is-powerless((red, blue), \"red\")" },
+        .{ .name = "map-color", .invocation = "color.is-powerless((tone: red), \"red\")" },
+        .{ .name = "deferred-color", .invocation = "color.is-powerless(var(--color), \"red\")" },
+        .{ .name = "null-channel", .invocation = "color.is-powerless(red, null)" },
+        .{ .name = "unquoted-channel", .invocation = "color.is-powerless(red, red)" },
+        .{ .name = "number-channel", .invocation = "color.is-powerless(red, 1)" },
+        .{ .name = "list-channel", .invocation = "color.is-powerless(red, (\"red\", \"green\"))" },
+        .{ .name = "map-channel", .invocation = "color.is-powerless(red, (channel: \"red\"))" },
+        .{ .name = "deferred-channel", .invocation = "color.is-powerless(red, var(--channel))" },
+        .{ .name = "case-sensitive", .invocation = "color.is-powerless(hsl(10 0% 50%), \"HUE\")" },
+        .{ .name = "wrong-space-channel", .invocation = "color.is-powerless(lab(50% 0 0), \"hue\")" },
+        .{ .name = "legacy-missing-hsl", .invocation = "color.is-powerless(hsl(none none none), \"hue\")" },
+        .{ .name = "legacy-missing-hwb", .invocation = "color.is-powerless(hwb(none none 100%), \"hue\")" },
+    };
+    for (invalid) |case| {
+        const case_source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; @use \"sass:meta\"; $is-powerless: meta.get-function(\"is-powerless\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(case_source);
+        const name = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "meta-call-color-is-powerless-{s}.scss",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(name);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, name, case_source, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-powerless-global-reference.scss",
+            "@use \"sass:meta\"; $is-powerless: meta.get-function(\"is-powerless\"); .a { value: meta.call($is-powerless, red, \"red\"); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-powerless-module-not-loaded.scss",
+            "@use \"sass:meta\"; $is-powerless: meta.get-function(\"is-powerless\", $module: \"color\"); .a { value: meta.call($is-powerless, red, \"red\"); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-powerless-argument-limit.scss",
+            "@use \"sass:color\"; @use \"sass:meta\"; $is-powerless: meta.get-function(\"is-powerless\", $module: \"color\"); .a { value: meta.call($is-powerless, red, \"red\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    var temporary_limits = sass_evaluator.Limits{};
+    temporary_limits.max_temporary_bytes = 2;
+    try std.testing.expectError(
+        error.TemporaryLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-powerless-temporary-limit.scss",
+            "@use \"sass:color\"; .a { value: color.is-powerless(hsl(10 0% 50%), \"hue\"); }",
+            .scss,
+            temporary_limits,
         ),
     );
 }

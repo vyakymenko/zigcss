@@ -606,6 +606,19 @@ pub fn same(left: native_value.Color, right: native_value.Color) bool {
     return fuzzyChannelsEqual(xyz_left.channels, xyz_right.channels);
 }
 
+/// Implements sass:color.is-powerless() for a validated stored-space channel.
+/// Missing dependencies are already represented as zero in owned colors.
+pub fn isPowerless(input: native_value.Color, channel_index: usize) bool {
+    return switch (input.space) {
+        .hsl => channel_index == 0 and powerlessEqual(input.channels[1], 0),
+        .hwb => channel_index == 0 and
+            (input.channels[1] + input.channels[2] > 100 or
+                powerlessEqual(input.channels[1] + input.channels[2], 100)),
+        .lch, .oklch => channel_index == 2 and powerlessEqual(input.channels[1], 0),
+        else => false,
+    };
+}
+
 pub fn mix(
     first: native_value.Color,
     second: native_value.Color,
@@ -2094,6 +2107,10 @@ fn approximatelyEqual(left: f64, right: f64) bool {
 fn fuzzyEqual(left: f64, right: f64) bool {
     if (@abs(left - right) > 1e-11) return false;
     return @round(left * 1e11) == @round(right * 1e11);
+}
+
+fn powerlessEqual(left: f64, right: f64) bool {
+    return @abs(left - right) <= 5e-12;
 }
 
 fn fuzzyChannelsEqual(left: [4]f64, right: [4]f64) bool {
