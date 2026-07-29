@@ -17189,6 +17189,145 @@ fn exerciseBlacknessFunctionAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
 }
 
+test "native Sass invokes direct color blackness functions once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  default: color.blackness(hsl(210deg 50% 40%));
+        \\  alias: palette.blackness(rgb(10 20 30));
+        \\  star: blackness(hwb(75deg 20% 30%));
+        \\  named: color.blackness($color: hsl(90deg 30% 20%));
+        \\  list: color.blackness((mark(1, hsl(45deg 20% 30%)),)...);
+        \\  map: color.blackness(("color": mark(2, hwb(75deg 20% 30%)))...);
+        \\  override: color.blackness($color: red, ("color": mark(3, hsl(135deg 50% 25%)))...);
+        \\  ordered: color.blackness(mark(4, hsl(120deg 50% 25%)));
+        \\  type: meta.type-of(color.blackness(red));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "color-blackness-direct-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{default:40%;alias:88.2352941176%;star:30%;named:74%;list:64%;map:30%;override:62.5%;ordered:62.5%;type:number;trace:1234}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 9), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.blackness() is deprecated. Use color.channel($color, \"blackness\", $space: hwb).",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:color" as palette
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  alias: palette.blackness(mark(1, hsl(210deg 50% 40%)))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "color-blackness-direct-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{alias:40%;trace:1}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "color.blackness() is deprecated. Use color.channel($color, \"blackness\", $space: hwb).",
+            diagnostic.message,
+        );
+    }
+
+    var bare_result = try compile(
+        std.testing.allocator,
+        "color-blackness-direct-function-bare.scss",
+        ".bare { value: blackness(red); }",
+        .scss,
+        .{},
+    );
+    defer bare_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".bare{value:blackness(red)}",
+        bare_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), bare_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectBlacknessFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectBlacknessFunctionAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:color";
+        \\.allocation {
+        \\  hsl: color.blackness((hsl(210deg 50% 40%),)...);
+        \\  rgb: color.blackness(("color": rgb(10 20 30))...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "color-blackness-direct-function-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{hsl:40%;rgb:88.2352941176%}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call rejects unavailable blackness forms arguments and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -17275,6 +17414,42 @@ test "native Sass meta call rejects unavailable blackness forms arguments and li
             std.testing.allocator,
             "meta-call-blackness-argument-limit.scss",
             "@use \"sass:meta\"; @use \"sass:color\"; $blackness: meta.get-function(\"blackness\", $module: \"color\"); .a { value: meta.call($blackness, red); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "color.blackness(()...)" },
+        .{ .name = "direct-overfull-list-splat", .invocation = "color.blackness((red, blue)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "color.blackness((color: red, other: blue)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "color.blackness((1: red)...)" },
+        .{ .name = "direct-positional-map-duplicate", .invocation = "color.blackness(red, (color: blue)...)" },
+        .{ .name = "direct-modern-color", .invocation = "color.blackness(color(display-p3 .3 .4 .5))" },
+        .{ .name = "direct-deferred", .invocation = "color.blackness(var(--color))" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "color-blackness-direct-function-argument-limit.scss",
+            "@use \"sass:color\"; .a { value: color.blackness((red, blue)...); }",
             .scss,
             argument_limits,
         ),
