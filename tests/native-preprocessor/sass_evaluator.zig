@@ -19036,6 +19036,258 @@ test "native Sass meta call rejects invalid meta get-mixin invocation" {
     );
 }
 
+test "native Sass meta module variable enumeration preserves ownership and source order" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:map";
+        \\@use "sass:math";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("module-variables", $module: "meta");
+        \\$alias: reflect.get-function("module_variables", $module: "reflect");
+        \\$global: meta.get-function("module-variables");
+        \\$direct: meta.module-variables(mark(1, "math"));
+        \\$named: reflect.module_variables($module: mark(2, "math"));
+        \\$list: (mark(3, "math"),);
+        \\$list-result: meta.call($module, $list...);
+        \\$map-args: (module: mark(4, "math"));
+        \\$map-result: meta.call($module, $map-args...);
+        \\$reflected: meta.call($module, "math");
+        \\$legacy: meta.call($global, "math");
+        \\$empty: meta.module-variables("meta");
+        \\$epsilon: map.get($direct, "epsilon");
+        \\$max-number: map.get($direct, "max-number");
+        \\.values {
+        \\  exists: meta.function-exists("module-variables", "meta");
+        \\  global-exists: meta.function-exists("module-variables");
+        \\  type: meta.type-of($module);
+        \\  same: $module == $alias;
+        \\  global-same: $module == $global;
+        \\  keys: meta.inspect(map.keys($direct));
+        \\  named: map.get($direct, "e") == map.get($named, "e");
+        \\  list-splat: map.get($direct, "pi") == map.get($list-result, "pi");
+        \\  map-splat: map.get($direct, "epsilon") == map.get($map-result, "epsilon");
+        \\  reflected: map.get($direct, "max-safe-integer") == map.get($reflected, "max-safe-integer");
+        \\  e: map.get($direct, "e");
+        \\  pi: map.get($direct, "pi");
+        \\  epsilon-scaled: $epsilon * 1000000000000000;
+        \\  max-ratio: math.div($max-number, 1e300);
+        \\  max-safe: map.get($direct, "max-safe-integer");
+        \\  min-safe: map.get($direct, "min-safe-integer");
+        \\  min-number: map.get($direct, "min-number");
+        \\  empty: meta.inspect($empty);
+        \\  trace: $trace;
+        \\  legacy: map.get($direct, "pi") == map.get($legacy, "pi");
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-module-variables.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;global-exists:true;type:function;same:true;global-same:false;keys:\"e\", \"pi\", \"epsilon\", \"max-safe-integer\", \"min-safe-integer\", \"max-number\", \"min-number\";named:true;list-splat:true;map-splat:true;reflected:true;e:2.7182818285;pi:3.1415926536;epsilon-scaled:.2220446049;max-ratio:179769313.48623157;max-safe:9007199254740991;min-safe:-9007199254740991;min-number:0;empty:();trace:1234;legacy:true}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+
+    const star =
+        \\@use "sass:meta" as *;
+        \\@use "sass:map";
+        \\@use "sass:math" as numbers;
+        \\$variables: module-variables("numbers");
+        \\.star {
+        \\  type: type-of($variables);
+        \\  same: map.get($variables, "pi") == map.get(module_variables("numbers"), "pi");
+        \\  keys: inspect(map.keys($variables));
+        \\}
+    ;
+    var star_result = try compile(
+        std.testing.allocator,
+        "meta-module-variables-star.scss",
+        star,
+        .scss,
+        .{},
+    );
+    defer star_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".star{type:map;same:true;keys:\"e\", \"pi\", \"epsilon\", \"max-safe-integer\", \"min-safe-integer\", \"max-number\", \"min-number\"}",
+        star_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), star_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:map"
+        \\@use "sass:math" as numbers
+        \\$reference: m.get-function("module-variables", $module: "m")
+        \\$variables: m.call($reference, $module: "numbers")
+        \\.sass
+        \\  type: m.type-of($variables)
+        \\  keys: m.inspect(map.keys($variables))
+        \\  pi: map.get($variables, "pi")
+        \\  safe: map.get($variables, "min-safe-integer")
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-module-variables.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:map;keys:\"e\", \"pi\", \"epsilon\", \"max-safe-integer\", \"min-safe-integer\", \"max-number\", \"min-number\";pi:3.1415926536;safe:-9007199254740991}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var legacy_result = try compile(
+        std.testing.allocator,
+        "meta-module-variables-global.scss",
+        "@use \"sass:meta\"; @use \"sass:map\"; @use \"sass:math\"; $variables: module-variables(\"math\"); .global { value: map.get($variables, \"pi\"); }",
+        .scss,
+        .{},
+    );
+    defer legacy_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".global{value:3.1415926536}",
+        legacy_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), legacy_result.nativeDiagnostics().len);
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        legacy_result.nativeDiagnostics()[0].message,
+    );
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMetaModuleVariablesAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseMetaModuleVariablesAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:map";
+        \\@use "sass:math" as numbers;
+        \\$reference: meta.get-function("module-variables", $module: "meta");
+        \\$variables: meta.call($reference, "numbers");
+        \\.allocation { value: map.get($variables, "pi"); }
+    ;
+    var result = try compile(
+        allocator,
+        "meta-module-variables-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:3.1415926536}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta module variable enumeration rejects invalid invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-module-variables-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-variables()); }",
+        },
+        .{
+            .name = "meta-module-variables-extra.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-variables(\"meta\", extra)); }",
+        },
+        .{
+            .name = "meta-module-variables-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-variables($other: \"meta\")); }",
+        },
+        .{
+            .name = "meta-module-variables-duplicate.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-variables(\"meta\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-module-variables-null.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-variables(null)); }",
+        },
+        .{
+            .name = "meta-module-variables-number.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-variables(1)); }",
+        },
+        .{
+            .name = "meta-module-variables-unloaded.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-variables(\"numbers\")); }",
+        },
+        .{
+            .name = "meta-call-module-variables-missing.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-variables\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference)); }",
+        },
+        .{
+            .name = "meta-call-module-variables-duplicate.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-variables\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-module-variables-argument-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-variables(\"meta\", extra)); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    var collection_limits = sass_evaluator.Limits{};
+    collection_limits.values.max_collection_items = 6;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-module-variables-collection-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:math\"; .a { value: meta.inspect(meta.module-variables(\"math\")); }",
+            .scss,
+            collection_limits,
+        ),
+    );
+}
+
 test "native Sass meta module mixin enumeration preserves ownership and source order" {
     const input =
         \\@use "sass:meta";

@@ -77,7 +77,10 @@ pub const Numeric = struct {
     }
 
     pub fn fromNumber(number: native_value.Number) Error!Numeric {
-        var result = try Numeric.init(number.value, null);
+        var result = if (number.preserve_precision)
+            try Numeric.fromBuiltinConstant(number.value)
+        else
+            try Numeric.init(number.value, null);
         for (number.numerator_units) |unit| try result.mergeTerm(unit, 1);
         for (number.denominator_units) |unit| try result.mergeTerm(unit, -1);
         return result;

@@ -162,6 +162,7 @@ const Builtin = enum {
     meta_keywords,
     meta_mixin_exists,
     meta_module_mixins,
+    meta_module_variables,
     meta_type_of,
     meta_variable_exists,
     selector_append,
@@ -553,12 +554,12 @@ const MathConstantDefinition = struct {
 };
 const math_constants = [_]MathConstantDefinition{
     .{ .name = "e", .value = std.math.e },
-    .{ .name = "epsilon", .value = std.math.floatEps(f64) },
-    .{ .name = "max-number", .value = std.math.floatMax(f64) },
-    .{ .name = "max-safe-integer", .value = 9_007_199_254_740_991.0 },
-    .{ .name = "min-number", .value = std.math.floatTrueMin(f64) },
-    .{ .name = "min-safe-integer", .value = -9_007_199_254_740_991.0 },
     .{ .name = "pi", .value = std.math.pi },
+    .{ .name = "epsilon", .value = std.math.floatEps(f64) },
+    .{ .name = "max-safe-integer", .value = 9_007_199_254_740_991.0 },
+    .{ .name = "min-safe-integer", .value = -9_007_199_254_740_991.0 },
+    .{ .name = "max-number", .value = std.math.floatMax(f64) },
+    .{ .name = "min-number", .value = std.math.floatTrueMin(f64) },
 };
 
 const ModuleBinding = struct {
@@ -4975,7 +4976,10 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!?*const native_value.Value {
         const constant = (try self.tryModuleConstant(raw, span)) orelse return null;
-        return self.values.own(.{ .number = .{ .value = constant } });
+        return self.values.own(.{ .number = .{
+            .value = constant,
+            .preserve_precision = true,
+        } });
     }
 
     fn tryModuleConstant(
@@ -5135,6 +5139,7 @@ const Engine = struct {
             .meta_keywords,
             .meta_mixin_exists,
             .meta_module_mixins,
+            .meta_module_variables,
             .meta_type_of,
             .meta_variable_exists,
             .selector_extend,
@@ -8603,6 +8608,54 @@ const Engine = struct {
         return self.values.own(.{ .map = .{ .entries = entries[0..count] } });
     }
 
+    fn callMetaModuleVariables(
+        self: *Engine,
+        module_owned: bool,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (!module_owned) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.consumeOperations(1);
+
+        if (arguments.len != 1 or arguments[0].* != .string) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "native Sass meta.module-variables() module must be a string namespace",
+            );
+            return error.InvalidExpression;
+        }
+        const module = (try self.metaExistenceModule(arguments[0].*, span)).?;
+
+        var entries: [math_constants.len]native_value.Entry = undefined;
+        var count: usize = 0;
+        if (module == .math) {
+            for (math_constants) |constant| {
+                try self.transaction.consumeOperations(1);
+                entries[count] = .{
+                    .key = .{ .string = .{
+                        .bytes = constant.name,
+                        .quoted = true,
+                    } },
+                    .value = .{ .number = .{
+                        .value = constant.value,
+                        .preserve_precision = true,
+                    } },
+                };
+                count += 1;
+            }
+        }
+        return self.values.own(.{ .map = .{ .entries = entries[0..count] } });
+    }
+
     fn callMetaGetFunction(
         self: *Engine,
         module_owned: bool,
@@ -8778,6 +8831,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeMetaModuleMixinsFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeMetaModuleVariablesFunction(
                     callable,
                     &forwarded,
                     span,
@@ -9354,6 +9414,40 @@ const Engine = struct {
             bound.values[0].?,
         };
         return try self.callMetaModuleMixins(
+            reference.owner != null,
+            &ordered,
+            span,
+        );
+    }
+
+    fn invokeMetaModuleVariablesFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .meta_module_variables or
+            (reference.owner != null and reference.owner.? != .meta))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "module" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+        };
+        return try self.callMetaModuleVariables(
             reference.owner != null,
             &ordered,
             span,
@@ -13826,7 +13920,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module mixin enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, or lab, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module mixin or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, or lab, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -15169,7 +15263,7 @@ const Engine = struct {
             },
             .meta_inspect, .meta_type_of => &.{.{ .name = "value" }},
             .meta_keywords => &.{.{ .name = "args" }},
-            .meta_module_mixins => &.{.{ .name = "module" }},
+            .meta_module_mixins, .meta_module_variables => &.{.{ .name = "module" }},
             .meta_variable_exists => &.{.{ .name = "name" }},
             .selector_is_superselector => &.{
                 .{ .name = "super" },
@@ -15416,6 +15510,11 @@ const Engine = struct {
                 span,
             ),
             .meta_module_mixins => self.callMetaModuleMixins(
+                module_owned,
+                arguments,
+                span,
+            ),
+            .meta_module_variables => self.callMetaModuleVariables(
                 module_owned,
                 arguments,
                 span,
@@ -15737,7 +15836,10 @@ const Engine = struct {
         defer self.allocator.free(normalized);
         if (try self.lookupVisibleVariable(scope, normalized)) |item| return item;
         if (self.unprefixedMathConstant(normalized)) |constant| {
-            return self.values.own(.{ .number = .{ .value = constant } });
+            return self.values.own(.{ .number = .{
+                .value = constant,
+                .preserve_precision = true,
+            } });
         }
         try self.report(.undefined_variable, span, "undefined Sass variable");
         return error.UndefinedVariable;
@@ -17216,6 +17318,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
         .{ .name = "inspect", .builtin = .meta_inspect },
         .{ .name = "mixin-exists", .builtin = .meta_mixin_exists },
         .{ .name = "module-mixins", .builtin = .meta_module_mixins },
+        .{ .name = "module-variables", .builtin = .meta_module_variables },
         .{ .name = "type-of", .builtin = .meta_type_of },
         .{ .name = "variable-exists", .builtin = .meta_variable_exists },
         .{ .name = "quote", .builtin = .quote },
@@ -17319,6 +17422,7 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "keywords")) return .meta_keywords;
     if (sassNameEql(name, "mixin-exists")) return .meta_mixin_exists;
     if (sassNameEql(name, "module-mixins")) return .meta_module_mixins;
+    if (sassNameEql(name, "module-variables")) return .meta_module_variables;
     if (sassNameEql(name, "type-of")) return .meta_type_of;
     if (sassNameEql(name, "variable-exists")) return .meta_variable_exists;
     return null;

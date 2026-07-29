@@ -179,6 +179,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-user-mixin-application',
       'built-in-meta-apply-mixin-application',
       'built-in-meta-module-mixins-function-invocation',
+      'built-in-meta-module-variables-function-invocation',
       'built-in-meta-content-acceptance-function-invocation',
       'built-in-meta-calculation-function-invocation',
       'built-in-meta-existence-function-invocation',

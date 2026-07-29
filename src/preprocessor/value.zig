@@ -42,6 +42,7 @@ pub const Number = struct {
     value: f64,
     numerator_units: []const []const u8 = &.{},
     denominator_units: []const []const u8 = &.{},
+    preserve_precision: bool = false,
 };
 
 pub const Color = struct {
@@ -193,6 +194,7 @@ pub const Store = struct {
             .value = input.value,
             .numerator_units = try self.cloneUnits(input.numerator_units),
             .denominator_units = try self.cloneUnits(input.denominator_units),
+            .preserve_precision = input.preserve_precision,
         };
     }
 
