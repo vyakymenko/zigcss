@@ -19488,8 +19488,8 @@ test "native Sass meta module function enumeration rejects invalid and unsupport
             .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
         },
         .{
-            .name = "meta-call-module-functions-color-is-legacy-unsupported.scss",
-            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"is-legacy\", $module: \"color\"), red); }",
+            .name = "meta-call-module-functions-color-is-missing-unsupported.scss",
+            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"is-missing\", $module: \"color\"), red, red); }",
         },
         .{
             .name = "meta-call-module-functions-string-split-unsupported.scss",
@@ -19700,8 +19700,8 @@ test "native Sass color space function rejects invalid and unavailable invocatio
         .{ .name = "missing-alpha", .invocation = "color.space(rgb(0 0 0 / none))" },
         .{ .name = "modern-missing", .invocation = "color.space(lab(none 10 20))" },
         .{
-            .name = "is-legacy",
-            .invocation = "meta.call(meta.get-function(\"is-legacy\", $module: \"color\"), red)",
+            .name = "is-missing",
+            .invocation = "meta.call(meta.get-function(\"is-missing\", $module: \"color\"), red, red)",
         },
     };
     for (invalid) |case| {
@@ -19991,6 +19991,226 @@ test "native Sass color to-space function rejects invalid and missing-channel co
             std.testing.allocator,
             "meta-call-color-to-space-argument-limit.scss",
             "@use \"sass:color\"; @use \"sass:meta\"; $to-space: meta.get-function(\"to-space\", $module: \"color\"); .a { value: meta.call($to-space, red, rgb); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
+test "native Sass color is-legacy function identifies direct and reflected color spaces" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("is-legacy", $module: "color");
+        \\$alias: meta.get-function("is_legacy", $module: "palette");
+        \\$star: meta.get-function("is-legacy");
+        \\$list-args: (red,);
+        \\$map-args: (color: color(display-p3 .1 .2 .3));
+        \\.values {
+        \\  exists: meta.function-exists("is-legacy", "color");
+        \\  alias-exists: meta.function-exists("is_legacy", "palette");
+        \\  global-exists: meta.function-exists("is-legacy");
+        \\  type: meta.type-of($module);
+        \\  same: $module == $alias;
+        \\  star-same: $module == $star;
+        \\  rgb: color.is-legacy(#369);
+        \\  transparent: color.is-legacy(transparent);
+        \\  hsl: color.is-legacy(hsl(10 20% 30% / .4));
+        \\  hwb: color.is-legacy(hwb(10 20% 30% / .4));
+        \\  lab: color.is-legacy(lab(50% 10 20 / .4));
+        \\  lch: color.is-legacy(lch(50% 10 20 / .4));
+        \\  oklab: color.is-legacy(oklab(50% .1 .2 / .4));
+        \\  oklch: color.is-legacy(oklch(50% .1 20 / .4));
+        \\  srgb: color.is-legacy(color(srgb .1 .2 .3 / .4));
+        \\  srgb-linear: color.is-legacy(color(srgb-linear .1 .2 .3 / .4));
+        \\  display-p3: color.is-legacy(color(display-p3 .1 .2 .3 / .4));
+        \\  a98-rgb: color.is-legacy(color(a98-rgb .1 .2 .3 / .4));
+        \\  prophoto-rgb: color.is-legacy(color(prophoto-rgb .1 .2 .3 / .4));
+        \\  rec2020: color.is-legacy(color(rec2020 .1 .2 .3 / .4));
+        \\  xyz-d50: color.is-legacy(color(xyz-d50 .1 .2 .3 / .4));
+        \\  xyz: color.is-legacy(color(xyz .1 .2 .3 / .4));
+        \\  modern-missing: color.is-legacy(lab(none 10 20 / none));
+        \\  predefined-missing: color.is-legacy(color(display-p3 none .2 .3 / none));
+        \\  converted-rgb: color.is-legacy(color.to-space(color(display-p3 .1 .2 .3), rgb));
+        \\  converted-lab: color.is-legacy(color.to-space(red, lab));
+        \\  alias: palette.is_legacy(red);
+        \\  star: is-legacy(color(display-p3 .1 .2 .3));
+        \\  reflected: meta.call($module, red);
+        \\  named: meta.call($module, $color: color(display-p3 .1 .2 .3));
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, hwb(10 20% 30%)));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, red));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-is-legacy-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;alias-exists:true;global-exists:true;type:function;same:true;star-same:true;rgb:true;transparent:true;hsl:true;hwb:true;lab:false;lch:false;oklab:false;oklch:false;srgb:false;srgb-linear:false;display-p3:false;a98-rgb:false;prophoto-rgb:false;rec2020:false;xyz-d50:false;xyz:false;modern-missing:false;predefined-missing:false;converted-rgb:true;converted-lab:false;alias:true;star:false;reflected:true;named:false;list-splat:true;map-splat:false;ordered:true;trace:12;result-type:bool}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const plain_css =
+        \\@use "sass:meta";
+        \\.plain {
+        \\  exists: meta.function-exists("is-legacy");
+        \\  value: is-legacy(red);
+        \\}
+    ;
+    var plain_result = try compile(
+        std.testing.allocator,
+        "color-is-legacy-plain-css.scss",
+        plain_css,
+        .scss,
+        .{},
+    );
+    defer plain_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{exists:false;value:is-legacy(red)}",
+        plain_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), plain_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$reference: m.get-function("is-legacy", $module: "palette")
+        \\.sass
+        \\  exists: m.function-exists("is-legacy", "palette")
+        \\  global-exists: m.function-exists("is-legacy")
+        \\  type: m.type-of($reference)
+        \\  rgb: m.call($reference, hsl(10 20% 30%))
+        \\  named: m.call($reference, $color: color(display-p3 .1 .2 .3))
+        \\  direct: palette.is-legacy(rgb(1 2 3))
+        \\  modern: palette.is-legacy(lab(none 10 20))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-is-legacy-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{exists:true;global-exists:false;type:function;rgb:true;named:false;direct:true;modern:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorIsLegacyFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorIsLegacyFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:color";
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("is-legacy", $module: "color");
+        \\.allocation {
+        \\  direct: color.is-legacy(rgb(1 2 3));
+        \\  reflected: meta.call($reference, color(display-p3 .1 .2 .3));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-is-legacy-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:true;reflected:false}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass color is-legacy function rejects invalid and unavailable invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "color.is-legacy()" },
+        .{ .name = "extra", .invocation = "meta.call($is-legacy, red, blue)" },
+        .{ .name = "unknown", .invocation = "color.is-legacy($other: red)" },
+        .{ .name = "duplicate", .invocation = "meta.call($is-legacy, red, $color: blue)" },
+        .{ .name = "null", .invocation = "color.is-legacy(null)" },
+        .{ .name = "boolean", .invocation = "color.is-legacy(true)" },
+        .{ .name = "number", .invocation = "color.is-legacy(1)" },
+        .{ .name = "string", .invocation = "color.is-legacy(\"red\")" },
+        .{ .name = "list", .invocation = "color.is-legacy((red, blue))" },
+        .{ .name = "map", .invocation = "color.is-legacy((tone: red))" },
+        .{ .name = "deferred", .invocation = "color.is-legacy(var(--color))" },
+    };
+    for (invalid) |case| {
+        const case_source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; @use \"sass:meta\"; $is-legacy: meta.get-function(\"is-legacy\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(case_source);
+        const name = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "meta-call-color-is-legacy-{s}.scss",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(name);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, name, case_source, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-legacy-global-reference.scss",
+            "@use \"sass:meta\"; $is-legacy: meta.get-function(\"is-legacy\"); .a { value: meta.call($is-legacy, red); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-legacy-module-not-loaded.scss",
+            "@use \"sass:meta\"; $is-legacy: meta.get-function(\"is-legacy\", $module: \"color\"); .a { value: meta.call($is-legacy, red); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-is-legacy-argument-limit.scss",
+            "@use \"sass:color\"; @use \"sass:meta\"; $is-legacy: meta.get-function(\"is-legacy\", $module: \"color\"); .a { value: meta.call($is-legacy, red); }",
             .scss,
             argument_limits,
         ),

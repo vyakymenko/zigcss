@@ -5338,6 +5338,7 @@ const Engine = struct {
             .fade_out,
             .space,
             .to_space,
+            .is_legacy,
             .ie_hex_str,
             => return try self.callFixedBuiltinRaw(
                 builtin,
@@ -5389,7 +5390,6 @@ const Engine = struct {
             // outside these evidence-closed slices.
             .whiteness,
             .blackness,
-            .is_legacy,
             .is_missing,
             .is_in_gamut,
             .to_gamut,
@@ -6154,6 +6154,37 @@ const Engine = struct {
             std.ascii.eqlIgnoreCase(string.bytes, "xyz-d65")) return .xyz;
         try self.report(.invalid_operation, span, "unknown native Sass color.to-space() target");
         return error.InvalidExpression;
+    }
+
+    fn callColorIsLegacy(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.type_mismatch, span, "color.is-legacy() requires exactly one color");
+            return error.InvalidExpression;
+        }
+        return self.callColorIsLegacyValue(arguments[0].*, span);
+    }
+
+    fn callColorIsLegacyValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "color.is-legacy() requires exactly one color");
+                return error.InvalidExpression;
+            },
+        };
+        const is_legacy = switch (color.space) {
+            .rgb, .hsl, .hwb => true,
+            else => false,
+        };
+        return self.values.own(.{ .boolean = is_legacy });
     }
 
     fn callIeHexStrValue(
@@ -9551,6 +9582,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorToSpaceFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorIsLegacyFunction(
                     callable,
                     &forwarded,
                     span,
@@ -14078,6 +14116,32 @@ const Engine = struct {
         );
     }
 
+    fn invokeColorIsLegacyFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .color or
+            reference.builtin != .is_legacy)
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return self.callColorIsLegacyValue(bound.values[0].?.*, span);
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -14385,7 +14449,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, or to-space, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, or is-legacy, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -15758,6 +15822,7 @@ const Engine = struct {
             .complement,
             .grayscale,
             .space,
+            .is_legacy,
             .ie_hex_str,
             => &.{.{ .name = "color" }},
             .to_space => &.{
@@ -16029,6 +16094,7 @@ const Engine = struct {
             .opacity => self.callColorOpacity(raw, arguments, scope, span),
             .space => self.callColorSpace(arguments, span),
             .to_space => self.callColorToSpace(arguments, span),
+            .is_legacy => self.callColorIsLegacy(arguments, span),
             .ie_hex_str => self.callIeHexStr(arguments, span),
             .mix,
             .lighten,
@@ -17651,6 +17717,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "hwb")) return .hwb;
     if (sassNameEql(name, "space")) return .space;
     if (sassNameEql(name, "to-space")) return .to_space;
+    if (sassNameEql(name, "is-legacy")) return .is_legacy;
     if (sassNameEql(name, "ie-hex-str")) return .ie_hex_str;
     return null;
 }
