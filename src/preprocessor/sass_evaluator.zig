@@ -5405,8 +5405,19 @@ const Engine = struct {
                 span,
             ),
             .mix => {
-                if (module_builtin != null) {
+                const legacy_splat = if (module_builtin == null) blk: {
+                    for (ranges.items) |range| {
+                        if (std.mem.endsWith(
+                            u8,
+                            trimWhitespace(body[range.start..range.end]),
+                            "...",
+                        )) break :blk true;
+                    }
+                    break :blk false;
+                } else false;
+                if (module_builtin != null or legacy_splat) {
                     return try self.callDirectColorMixRaw(
+                        module_builtin != null,
                         body,
                         ranges.items,
                         scope,
@@ -16483,6 +16494,7 @@ const Engine = struct {
 
     fn callDirectColorMixRaw(
         self: *Engine,
+        module_owned: bool,
         body: []const u8,
         ranges: []const ExpressionRange,
         scope: native_environment.ScopeId,
@@ -16491,7 +16503,7 @@ const Engine = struct {
         var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
         defer evaluated.deinit();
         return (try self.invokeColorMixFunction(
-            builtinFunctionCallable(.mix, .color),
+            builtinFunctionCallable(.mix, if (module_owned) .color else null),
             &evaluated,
             span,
         )) orelse unreachable;

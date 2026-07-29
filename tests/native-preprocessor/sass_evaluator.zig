@@ -17677,6 +17677,125 @@ fn exerciseDirectColorMixFunctionAllocationFailures(
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct legacy color mix splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: mix((mark(1, red), mark(2, blue), 25%)...);
+        \\  map: mix(("color1": mark(3, red), "color2": mark(4, blue), "weight": 25%)...);
+        \\  direct-map: mix(mark(5, red), ("color2": mark(6, blue), "weight": 25%)...);
+        \\  override: mix($color1: red, $color2: blue, $weight: 75%, ("weight": mark(7, 25%))...);
+        \\  alpha: mix((rgba(255, 0, 0, .5), blue, 25%)...);
+        \\  hsl-hwb: mix((hsl(120deg 50% 25%), hwb(240deg 10% 20%), 25%)...);
+        \\  type: meta.type-of(mix((red, blue)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-mix-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:rgb(63.75,0,191.25);map:rgb(63.75,0,191.25);direct-map:rgb(63.75,0,191.25);override:rgb(63.75,0,191.25);alpha:rgba(25.5,0,229.5,.875);hsl-hwb:rgb(27.09375,43.03125,160.96875);type:color;trace:1234567}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 7), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: mix((mark(1, red), mark(2, blue), 25%)...)
+        \\  map: mix((color1: mark(3, red), color2: mark(4, blue), weight: 25%)...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-mix-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:rgb(63.75,0,191.25);map:rgb(63.75,0,191.25);trace:1234}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorMixSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorMixSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: mix((red, blue)...);
+        \\  map: mix(("color1": red, "color2": blue, "weight": 25%)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-mix-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:hsl(300,100%,25%);map:rgb(63.75,0,191.25)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call rejects unavailable color mix forms arguments and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -17791,12 +17910,50 @@ test "native Sass meta call rejects unavailable color mix forms arguments and li
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "mix(()...)" },
+        .{ .name = "legacy-direct-short-list-splat", .invocation = "mix((red,)...)" },
+        .{ .name = "legacy-direct-overfull-list-splat", .invocation = "mix((red, blue, 25%, rgb)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "mix((color1: red, color2: blue, other: 25%)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "mix((1: red, color2: blue)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "mix(red, blue, (color2: green)...)" },
+        .{ .name = "legacy-direct-unitless-weight", .invocation = "mix((red, blue, 25)...)" },
+        .{ .name = "legacy-direct-method", .invocation = "mix((color1: red, color2: blue, method: rgb)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "mix((color(display-p3 .1 .2 .3), blue)...)" },
+        .{ .name = "legacy-direct-deferred", .invocation = "mix((red, var(--color))...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     try std.testing.expectError(
         error.FunctionArgumentLimitExceeded,
         compile(
             std.testing.allocator,
             "color-mix-direct-function-argument-limit.scss",
             "@use \"sass:color\"; .a { value: color.mix((red, blue)...); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-mix-direct-splat-argument-limit.scss",
+            ".a { value: mix((red, blue)...); }",
             .scss,
             argument_limits,
         ),
