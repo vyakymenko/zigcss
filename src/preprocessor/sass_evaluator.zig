@@ -5323,7 +5323,6 @@ const Engine = struct {
             .hue,
             .saturation,
             .lightness,
-            .mix,
             .lighten,
             .darken,
             .saturate,
@@ -5405,6 +5404,25 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .mix => {
+                if (module_builtin != null) {
+                    return try self.callDirectColorMixRaw(
+                        body,
+                        ranges.items,
+                        scope,
+                        span,
+                    );
+                }
+                return try self.callFixedBuiltinRaw(
+                    builtin,
+                    false,
+                    raw,
+                    body,
+                    ranges.items,
+                    scope,
+                    span,
+                );
+            },
             // Dart Sass 1.101.0 unique-id() remains unavailable because its
             // nondeterministic provider behavior has no admitted native policy.
             .str_unique_id,
@@ -16463,6 +16481,22 @@ const Engine = struct {
         )) orelse unreachable;
     }
 
+    fn callDirectColorMixRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        return (try self.invokeColorMixFunction(
+            builtinFunctionCallable(.mix, .color),
+            &evaluated,
+            span,
+        )) orelse unreachable;
+    }
+
     fn callMathVariadicRaw(
         self: *Engine,
         builtin: Builtin,
@@ -18789,6 +18823,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "hwb")) return .hwb;
     if (sassNameEql(name, "whiteness")) return .whiteness;
     if (sassNameEql(name, "blackness")) return .blackness;
+    if (sassNameEql(name, "mix")) return .mix;
     if (sassNameEql(name, "space")) return .space;
     if (sassNameEql(name, "to-space")) return .to_space;
     if (sassNameEql(name, "is-legacy")) return .is_legacy;

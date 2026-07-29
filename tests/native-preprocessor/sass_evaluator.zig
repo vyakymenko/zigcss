@@ -17582,6 +17582,101 @@ fn exerciseColorMixFunctionAllocationFailures(allocator: std.mem.Allocator) !voi
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Sass invokes direct color mix functions once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  default: color.mix(red, blue);
+        \\  alias: palette.mix(rgba(255, 0, 0, .5), blue);
+        \\  star: mix(hsl(120deg 50% 25%), hwb(240deg 10% 20%), 25%);
+        \\  named: color.mix($weight: 25%, $color2: blue, $color1: red);
+        \\  list: color.mix((mark(1, red), mark(2, blue), 25%)...);
+        \\  map: color.mix(("color1": mark(3, red), "color2": mark(4, blue), "weight": 25%)...);
+        \\  override: color.mix($color1: red, $color2: blue, $weight: 75%, ("weight": mark(5, 25%))...);
+        \\  ordered: color.mix(mark(6, red), $weight: mark(8, 25%), $color2: mark(7, blue));
+        \\  type: meta.type-of(color.mix(red, blue));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "color-mix-direct-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{default:hsl(300,100%,25%);alias:rgba(63.75,0,191.25,.75);star:rgb(27.09375,43.03125,160.96875);named:rgb(63.75,0,191.25);list:rgb(63.75,0,191.25);map:rgb(63.75,0,191.25);override:rgb(63.75,0,191.25);ordered:rgb(63.75,0,191.25);type:color;trace:12345687}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:color" as palette
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  alias: palette.mix(mark(1, red), mark(2, blue), 25%)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "color-mix-direct-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{alias:rgb(63.75,0,191.25);trace:12}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectColorMixFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectColorMixFunctionAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:color";
+        \\.allocation {
+        \\  default: color.mix((red, blue)...);
+        \\  weighted: color.mix(("color1": red, "color2": blue, "weight": 25%)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "color-mix-direct-function-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{default:hsl(300,100%,25%);weighted:rgb(63.75,0,191.25)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call rejects unavailable color mix forms arguments and limits" {
     const invalid = [_]struct {
         name: []const u8,
@@ -17654,17 +17749,6 @@ test "native Sass meta call rejects unavailable color mix forms arguments and li
             .{},
         ),
     );
-    try std.testing.expectError(
-        error.InvalidExpression,
-        compile(
-            std.testing.allocator,
-            "meta-call-color-mix-direct-module.scss",
-            "@use \"sass:color\"; .a { value: color.mix(red, blue); }",
-            .scss,
-            .{},
-        ),
-    );
-
     var argument_limits = sass_evaluator.Limits{};
     argument_limits.max_function_arguments = 1;
     try std.testing.expectError(
@@ -17673,6 +17757,46 @@ test "native Sass meta call rejects unavailable color mix forms arguments and li
             std.testing.allocator,
             "meta-call-color-mix-argument-limit.scss",
             "@use \"sass:meta\"; @use \"sass:color\"; $mix: meta.get-function(\"mix\", $module: \"color\"); .a { value: meta.call($mix, red, blue); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-missing", .invocation = "color.mix(red)" },
+        .{ .name = "direct-empty-splat", .invocation = "color.mix(()...)" },
+        .{ .name = "direct-short-list-splat", .invocation = "color.mix((red,)...)" },
+        .{ .name = "direct-overfull-list-splat", .invocation = "color.mix((red, blue, 25%, rgb)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "color.mix((color1: red, color2: blue, other: 25%)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "color.mix((1: red, color2: blue)...)" },
+        .{ .name = "direct-positional-map-duplicate", .invocation = "color.mix(red, blue, (color2: green)...)" },
+        .{ .name = "direct-unitless-weight", .invocation = "color.mix(red, blue, 25)" },
+        .{ .name = "direct-method", .invocation = "color.mix(red, blue, $method: rgb)" },
+        .{ .name = "direct-modern-color", .invocation = "color.mix(color(display-p3 .1 .2 .3), blue)" },
+        .{ .name = "direct-deferred", .invocation = "color.mix(red, var(--color))" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "color-mix-direct-function-argument-limit.scss",
+            "@use \"sass:color\"; .a { value: color.mix((red, blue)...); }",
             .scss,
             argument_limits,
         ),
