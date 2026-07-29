@@ -16321,6 +16321,7 @@ const Engine = struct {
                 builtin == .str_length or
                 builtin == .str_index or
                 builtin == .str_slice or
+                builtin == .str_insert or
                 builtin == .to_upper_case or
                 builtin == .to_lower_case))
         blk: {

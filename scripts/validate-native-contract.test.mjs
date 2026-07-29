@@ -139,6 +139,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-string-legacy-length-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-legacy-index-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-legacy-slice-direct-splat-expansion'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-string-legacy-insert-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-length-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-index-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-slice-direct-splat-expansion'), true)

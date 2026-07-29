@@ -11141,6 +11141,125 @@ fn exerciseDirectStringInsertSplatAllocationFailures(
     );
 }
 
+test "native Sass expands direct legacy string insert splats once in source order" {
+    const input =
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: str-insert((mark(1, "a💚b"), mark(2, "🌍"), mark(3, 2))...);
+        \\  map: str-insert((string: mark(4, "éx"), insert: mark(5, "*"), index: mark(6, 2))...);
+        \\  direct-map: str-insert(mark(7, "abcdef"), (insert: mark(8, "X"), index: mark(9, 3))...);
+        \\  override: str-insert($string: "wrong", $insert: "?", $index: 1, (string: mark(1, "👩‍💻"), insert: mark(2, "X"), index: mark(3, 3))...);
+        \\  escaped: str-insert((string: foo\ bar, insert: x\ y, index: 4)...);
+        \\  interpolated: str-insert((string: item-#{2345}, insert: X, index: 5)...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-string-insert-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:\"a🌍💚b\";map:\"e*́x\";direct-map:\"abXcdef\";override:\"👩‍X💻\";escaped:foox\\ y\\ bar;interpolated:itemX-2345;trace:123456789123}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 6), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: str-insert((mark(1, "a💚b"), mark(2, "🌍"), mark(3, 2))...)
+        \\  map: str-insert((string: mark(4, "éx"), insert: mark(5, "*"), index: mark(6, 2))...)
+        \\  direct-map: str-insert(mark(7, "abcdef"), (insert: mark(8, "X"), index: mark(9, 3))...)
+        \\  override: str-insert($string: "wrong", $insert: "?", $index: 1, (string: mark(1, "abcdef"), insert: mark(2, "X"), index: mark(3, 3))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-string-insert-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:\"a🌍💚b\";map:\"e*́x\";direct-map:\"abXcdef\";override:\"abXcdef\";trace:123456789123}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyStringInsertSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyStringInsertSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: str-insert(("a💚b", "🌍", 2)...);
+        \\  map: str-insert((string: "éx", insert: "*", index: 2)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-string-insert-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:\"a🌍💚b\";map:\"e*́x\"}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call preserves string insert ownership" {
     const input =
         \\@use "sass:meta";
@@ -11278,16 +11397,31 @@ test "native Sass meta call rejects invalid string insert arguments and limits" 
         );
     }
 
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "str-insert(()...)" },
+        .{ .name = "legacy-direct-short-list-splat", .invocation = "str-insert((abc, x)...)" },
+        .{ .name = "legacy-direct-extra-list-splat", .invocation = "str-insert((abc, x, 1, 2)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "str-insert((string: abc, insert: x, index: 1, other: 2)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "str-insert((1: abc, insert: x, index: 1)...)" },
+        .{ .name = "legacy-direct-positional-string-map-duplicate", .invocation = "str-insert(abc, (string: def, insert: x, index: 1)...)" },
+        .{ .name = "legacy-direct-positional-insert-map-duplicate", .invocation = "str-insert(abc, x, (insert: y, index: 1)...)" },
+        .{ .name = "legacy-direct-positional-index-map-duplicate", .invocation = "str-insert(abc, x, 1, (index: 2)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
             std.testing.allocator,
-            "legacy-string-insert-direct-splat.scss",
-            "$args: (abc, x, 1); .a { value: str-insert($args...); }",
-            .scss,
-            .{},
-        ),
-    );
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
 
     var direct_argument_limits = sass_evaluator.Limits{};
     direct_argument_limits.max_function_arguments = 3;
@@ -11297,6 +11431,16 @@ test "native Sass meta call rejects invalid string insert arguments and limits" 
             std.testing.allocator,
             "string-insert-direct-splat-argument-limit.scss",
             "@use \"sass:string\"; .a { value: string.insert((value, x, 1, other)...); }",
+            .scss,
+            direct_argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-string-insert-direct-splat-argument-limit.scss",
+            ".a { value: str-insert((value, x, 1, other)...); }",
             .scss,
             direct_argument_limits,
         ),
