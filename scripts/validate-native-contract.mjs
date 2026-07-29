@@ -267,6 +267,7 @@ const expectedImplementations = Object.freeze([
       'built-in-color-module-mix-direct-function-invocation',
       'built-in-color-legacy-mix-direct-splat-expansion',
       'built-in-meta-color-lighten-function-invocation',
+      'built-in-color-legacy-lighten-direct-splat-expansion',
       'built-in-meta-color-darken-function-invocation',
       'built-in-meta-color-saturate-function-invocation',
       'built-in-meta-color-desaturate-function-invocation',
