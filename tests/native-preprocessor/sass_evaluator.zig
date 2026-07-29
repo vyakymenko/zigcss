@@ -18638,6 +18638,201 @@ test "native Sass meta call rejects invalid meta call function invocation" {
     );
 }
 
+test "native Sass meta call invokes meta get-function references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:math";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("get-function", $module: "meta");
+        \\$alias: reflect.get-function("get_function", $module: "reflect");
+        \\$global: meta.get-function("get-function");
+        \\$positional: meta.call($module, "abs", false, "math");
+        \\$named: meta.call($module, $name: "ceil", $module: "math");
+        \\$list: meta.call($module, ("floor", false, "math")...);
+        \\$map: meta.call($module, (name: "round", module: "math")...);
+        \\$ordered: meta.call(mark(1, $module), mark(2, "percentage"), $module: mark(3, "math"));
+        \\$global-target: meta.call($global, "abs", false, "math");
+        \\.values {
+        \\  module-exists: meta.function-exists("get-function", "meta");
+        \\  global-exists: meta.function-exists("get-function");
+        \\  module-type: meta.type-of($module);
+        \\  alias-same: $module == $alias;
+        \\  global-same: $module == $global;
+        \\  positional: meta.call($positional, -2px);
+        \\  named: meta.call($named, 1.2px);
+        \\  list-splat: meta.call($list, 1.8px);
+        \\  map-splat: meta.call($map, 1.6px);
+        \\  ordered: meta.call($ordered, .25);
+        \\  trace: $trace;
+        \\  global: meta.call($global-target, -3px);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-get-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{module-exists:true;global-exists:true;module-type:function;alias-same:true;global-same:false;positional:2px;named:2px;list-splat:1px;map-splat:2px;ordered:25%;trace:123;global:3px}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+
+    const star =
+        \\@use "sass:meta" as *;
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:math" as numbers;
+        \\$get: get-function("get-function", $module: "reflect");
+        \\$target: call($get, "abs", $module: "numbers");
+        \\.star { value: call($target, -2px); }
+    ;
+    var star_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-get-function-star.scss",
+        star,
+        .scss,
+        .{},
+    );
+    defer star_result.deinit();
+    try std.testing.expectEqualStrings(".star{value:2px}", star_result.css());
+    try std.testing.expectEqual(@as(usize, 0), star_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:meta" as reflect
+        \\@use "sass:math" as numbers
+        \\$get: m.get-function("get-function", $module: "reflect")
+        \\$target: m.call($get, $name: "abs", $module: "numbers")
+        \\.sass
+        \\  type: m.type-of($target)
+        \\  value: m.call($target, -2px)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-get-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:function;value:2px}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMetaGetFunctionInvocationAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseMetaGetFunctionInvocationAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\$get: meta.get-function("get-function", $module: "meta");
+        \\$target: meta.call($get, "abs", $module: "math");
+        \\.allocation { value: meta.call($target, -2px); }
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-meta-get-function-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".allocation{value:2px}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects invalid meta get-function invocation" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-call-get-function-missing-name.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.call($get); }",
+        },
+        .{
+            .name = "meta-call-get-function-extra.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.call($get, \"abs\", false, null, extra); }",
+        },
+        .{
+            .name = "meta-call-get-function-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.call($get, $other: \"abs\"); }",
+        },
+        .{
+            .name = "meta-call-get-function-duplicate-name.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.call($get, \"abs\", $name: \"ceil\"); }",
+        },
+        .{
+            .name = "meta-call-get-function-non-string.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.call($get, 1); }",
+        },
+        .{
+            .name = "meta-call-get-function-unknown-function.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.call($get, \"not-a-function\"); }",
+        },
+        .{
+            .name = "meta-call-get-function-unloaded-module.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.call($get, \"abs\", $module: \"math\"); }",
+        },
+        .{
+            .name = "meta-call-get-function-css-reference.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.type-of(meta.call($get, \"future\", $css: true)); }",
+        },
+        .{
+            .name = "meta-call-get-function-if-invocation.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); $conditional: meta.call($get, \"if\"); .a { value: meta.call($conditional, true, yes, no); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-get-function-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:math\"; $get: meta.get-function(\"get-function\", $module: \"meta\"); .a { value: meta.call($get, \"abs\", false, \"math\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call preserves the legacy warning" {
     const input =
         \\@use "sass:meta";

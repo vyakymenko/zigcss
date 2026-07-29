@@ -173,6 +173,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-keywords-function-invocation',
       'built-in-meta-content-existence-function-invocation',
       'built-in-meta-call-function-invocation',
+      'built-in-meta-get-function-function-invocation',
       'built-in-meta-content-acceptance-function-invocation',
       'built-in-meta-calculation-function-invocation',
       'built-in-meta-existence-function-invocation',

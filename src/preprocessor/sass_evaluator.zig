@@ -8474,6 +8474,14 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMetaGetFunctionFunction(
+                    callable,
+                    &forwarded,
+                    scope,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeListFunction(callable, &forwarded, span)) |value| {
                     break :blk value;
                 }
@@ -8898,6 +8906,54 @@ const Engine = struct {
         return try self.callMetaCallEvaluated(
             reference.owner != null,
             arguments,
+            scope,
+            span,
+        );
+    }
+
+    fn invokeMetaGetFunctionFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .meta_get_function or
+            (reference.owner != null and reference.owner.? != .meta))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "name" },
+            .{ .name = "css", .required = false },
+            .{ .name = "module", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const false_option = native_value.Value{ .boolean = false };
+        const null_option = native_value.Value{ .null_value = {} };
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+            bound.values[1] orelse &false_option,
+            bound.values[2] orelse &null_option,
+        };
+        const count: usize = if (bound.values[2] != null)
+            3
+        else if (bound.values[1] != null)
+            2
+        else
+            1;
+        return try self.callMetaGetFunction(
+            reference.owner != null,
+            ordered[0..count],
             scope,
             span,
         );
