@@ -16315,7 +16315,9 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        if (builtin == .str_split or (builtin == .str_length and module_owned)) {
+        if (builtin == .str_split or
+            (module_owned and (builtin == .str_length or builtin == .str_index)))
+        {
             var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
             defer evaluated.deinit();
             return (try self.invokeStringFunction(

@@ -9401,6 +9401,98 @@ test "native Sass meta call invokes string index function references" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct string module index arguments once in source order" {
+    const input =
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: string.index((mark(1, "a💚b"), mark(2, "💚"))...);
+        \\  map: text.index((string: mark(3, "éx"), substring: mark(4, "x"))...);
+        \\  star: index((mark(5, "👩‍💻x"), mark(6, "x"))...);
+        \\  direct-map: string.index(mark(7, "abc"), (substring: mark(8, "b"))...);
+        \\  override: string.index($string: "wrong", $substring: "x", (string: "axb")...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "string-index-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:2;map:3;star:4;direct-map:2;override:2;trace:12345678}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:string" as text
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: text.index((mark(1, "a💚b"), mark(2, "💚"))...)
+        \\  map: text.index((string: mark(3, "éx"), substring: mark(4, "x"))...)
+        \\  direct-map: text.index(mark(5, "abc"), (substring: mark(6, "b"))...)
+        \\  override: text.index($string: "wrong", $substring: "x", (string: "axb")...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "string-index-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:2;map:3;direct-map:2;override:2;trace:123456}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectStringIndexSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectStringIndexSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:string" as text;
+        \\.allocation {
+        \\  list: text.index(("a💚b", "💚")...);
+        \\  map: text.index((string: "éx", substring: "x")...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "string-index-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:2;map:3}",
+        result.css(),
+    );
+}
+
 test "native Sass meta call preserves string index ownership" {
     const input =
         \\@use "sass:meta";
@@ -9500,6 +9592,44 @@ test "native Sass meta call rejects invalid string index arguments and limits" {
             "@use \"sass:meta\"; @use \"sass:string\" as *; $index: meta.get-function(\"index\"); .a { value: meta.call($index, value, a); }",
             .scss,
             argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "string.index(()...)" },
+        .{ .name = "direct-short-list-splat", .invocation = "string.index((abc,)...)" },
+        .{ .name = "direct-extra-list-splat", .invocation = "string.index((abc, b, extra)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "string.index((string: abc, other: b)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "string.index((1: abc, substring: b)...)" },
+        .{ .name = "direct-positional-map-duplicate", .invocation = "string.index(abc, (string: abc, substring: b)...)" },
+        .{ .name = "direct-substring-map-duplicate", .invocation = "string.index(abc, b, (substring: b)...)" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:string\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    var direct_argument_limits = sass_evaluator.Limits{};
+    direct_argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-index-direct-splat-argument-limit.scss",
+            "@use \"sass:string\"; .a { value: string.index((value, substring, other)...); }",
+            .scss,
+            direct_argument_limits,
         ),
     );
 }
@@ -28269,8 +28399,8 @@ test "native Sass string module rejects unowned calls" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "unsupported-string-index-direct-splat.scss",
-            .input = "@use \"sass:string\"; $args: (abc, b); .a { value: string.index($args...); }",
+            .name = "unsupported-string-slice-direct-splat.scss",
+            .input = "@use \"sass:string\"; $args: (abc, 1); .a { value: string.slice($args...); }",
             .expected = error.UnsupportedFeature,
         },
     };
