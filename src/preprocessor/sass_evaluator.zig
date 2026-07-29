@@ -16319,7 +16319,8 @@ const Engine = struct {
             (module_owned and
                 (builtin == .str_length or
                     builtin == .str_index or
-                    builtin == .str_slice)))
+                    builtin == .str_slice or
+                    builtin == .str_insert)))
         {
             var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
             defer evaluated.deinit();

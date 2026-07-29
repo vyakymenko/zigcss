@@ -10053,6 +10053,98 @@ test "native Sass meta call invokes string insert function references" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct string module insert arguments once in source order" {
+    const input =
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: string.insert((mark(1, "a💚b"), mark(2, "🌍"), mark(3, 2))...);
+        \\  map: text.insert((string: mark(4, "éx"), insert: mark(5, "*"), index: mark(6, 2))...);
+        \\  star: insert((string: mark(7, "👩‍💻"), insert: mark(8, "X"), index: mark(9, 3))...);
+        \\  direct-map: string.insert(mark(1, "abcdef"), (insert: mark(2, "X"), index: mark(3, 3))...);
+        \\  override: string.insert($string: "wrong", $insert: "?", $index: 1, (string: "abcdef", insert: "X", index: 3)...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "string-insert-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:\"a🌍💚b\";map:\"e*́x\";star:\"👩‍X💻\";direct-map:\"abXcdef\";override:\"abXcdef\";trace:123456789123}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:string" as text
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: text.insert((mark(1, "a💚b"), mark(2, "🌍"), mark(3, 2))...)
+        \\  map: text.insert((string: mark(4, "éx"), insert: mark(5, "*"), index: mark(6, 2))...)
+        \\  direct-map: text.insert(mark(7, "abcdef"), (insert: mark(8, "X"), index: mark(9, 3))...)
+        \\  override: text.insert($string: "wrong", $insert: "?", $index: 1, (string: "abcdef", insert: "X", index: 3)...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "string-insert-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:\"a🌍💚b\";map:\"e*́x\";direct-map:\"abXcdef\";override:\"abXcdef\";trace:123456789}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectStringInsertSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectStringInsertSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:string" as text;
+        \\.allocation {
+        \\  list: text.insert(("a💚b", "🌍", 2)...);
+        \\  map: text.insert((string: "éx", insert: "*", index: 2)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "string-insert-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:\"a🌍💚b\";map:\"e*́x\"}",
+        result.css(),
+    );
+}
+
 test "native Sass meta call preserves string insert ownership" {
     const input =
         \\@use "sass:meta";
@@ -10161,6 +10253,56 @@ test "native Sass meta call rejects invalid string insert arguments and limits" 
             "@use \"sass:meta\"; @use \"sass:string\" as *; $insert: meta.get-function(\"insert\"); .a { value: meta.call($insert, value, x, 3); }",
             .scss,
             argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "string.insert(()...)" },
+        .{ .name = "direct-short-list-splat", .invocation = "string.insert((abc, x)...)" },
+        .{ .name = "direct-extra-list-splat", .invocation = "string.insert((abc, x, 1, 2)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "string.insert((string: abc, insert: x, index: 1, other: 2)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "string.insert((1: abc, insert: x, index: 1)...)" },
+        .{ .name = "direct-positional-string-map-duplicate", .invocation = "string.insert(abc, (string: def, insert: x, index: 1)...)" },
+        .{ .name = "direct-positional-insert-map-duplicate", .invocation = "string.insert(abc, x, (insert: y, index: 1)...)" },
+        .{ .name = "direct-positional-index-map-duplicate", .invocation = "string.insert(abc, x, 1, (index: 2)...)" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:string\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-string-insert-direct-splat.scss",
+            "$args: (abc, x, 1); .a { value: str-insert($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var direct_argument_limits = sass_evaluator.Limits{};
+    direct_argument_limits.max_function_arguments = 3;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-insert-direct-splat-argument-limit.scss",
+            "@use \"sass:string\"; .a { value: string.insert((value, x, 1, other)...); }",
+            .scss,
+            direct_argument_limits,
         ),
     );
 }
