@@ -18403,6 +18403,137 @@ test "native Sass meta call rejects unavailable color lighten forms arguments an
     );
 }
 
+test "native Sass expands direct legacy color darken splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: darken((mark(1, #123456), mark(2, 10%))...);
+        \\  map: darken(("color": mark(3, hsl(120deg 50% 25%)), "amount": mark(4, 10%))...);
+        \\  direct-map: darken(mark(5, hwb(240deg 10% 20%)), ("amount": mark(6, 25%))...);
+        \\  override: darken($color: #123456, $amount: 25%, ("amount": mark(7, 10%))...);
+        \\  unitless: darken((red, 10)...);
+        \\  unitful: darken((red, 10px)...);
+        \\  alpha: darken((rgba(18, 52, 86, .5), 10%)...);
+        \\  type: meta.type-of(darken((red, 10%)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-darken-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:rgb(9.1730769231,26.5,43.8269230769);map:hsl(120,50%,15%);direct-map:hsl(240,77.7777777778%,20%);override:rgb(9.1730769231,26.5,43.8269230769);unitless:#c00;unitful:#c00;alpha:rgba(9.1730769231,26.5,43.8269230769,.5);type:color;trace:1234567}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 16), diagnostics.len);
+    var global_warnings: usize = 0;
+    var darken_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "darken() is deprecated. Use color.adjust($color, $lightness: -$amount).",
+        )) {
+            darken_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 8), global_warnings);
+    try std.testing.expectEqual(@as(usize, 8), darken_warnings);
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: darken((mark(1, hsl(120deg 50% 25%)), mark(2, 10%))...)
+        \\  map: darken((color: mark(3, hwb(240deg 10% 20%)), amount: mark(4, 25%))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-darken-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:hsl(120,50%,15%);map:hsl(240,77.7777777778%,20%);trace:1234}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorDarkenSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorDarkenSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: darken((#123456, 10%)...);
+        \\  map: darken(("color": hsl(120deg 50% 25%), "amount": 10%)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-darken-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:rgb(9.1730769231,26.5,43.8269230769);map:hsl(120,50%,15%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 4), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes legacy color darken function references" {
     const input =
         \\@use "sass:meta";
@@ -18611,6 +18742,35 @@ test "native Sass meta call rejects unavailable color darken forms arguments and
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "darken(()...)" },
+        .{ .name = "legacy-direct-short-list-splat", .invocation = "darken((red,)...)" },
+        .{ .name = "legacy-direct-overfull-list-splat", .invocation = "darken((red, 10%, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "darken((color: red, other: 10%)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "darken((1: red, amount: 10%)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "darken(red, 10%, (amount: 20%)...)" },
+        .{ .name = "legacy-direct-negative-amount", .invocation = "darken((red, -1%)...)" },
+        .{ .name = "legacy-direct-high-amount", .invocation = "darken((red, 101%)...)" },
+        .{ .name = "legacy-direct-deferred-amount", .invocation = "darken((red, var(--amount))...)" },
+        .{ .name = "legacy-direct-missing-channel", .invocation = "darken((rgb(none 0 0), 10%)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "darken((color(display-p3 .1 .2 .3), 10%)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     try std.testing.expectError(
         error.InvalidExpression,
         compile(
@@ -18651,6 +18811,16 @@ test "native Sass meta call rejects unavailable color darken forms arguments and
             .{},
         ),
     );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-darken-direct-module-splat.scss",
+            "@use \"sass:color\"; .a { value: color.darken((red, 10%)...); }",
+            .scss,
+            .{},
+        ),
+    );
 
     var argument_limits = sass_evaluator.Limits{};
     argument_limits.max_function_arguments = 1;
@@ -18660,6 +18830,16 @@ test "native Sass meta call rejects unavailable color darken forms arguments and
             std.testing.allocator,
             "meta-call-color-darken-argument-limit.scss",
             "@use \"sass:meta\"; $darken: meta.get-function(\"darken\"); .a { value: meta.call($darken, red, 10%); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-darken-direct-splat-argument-limit.scss",
+            ".a { value: darken((red, 10%)...); }",
             .scss,
             argument_limits,
         ),
