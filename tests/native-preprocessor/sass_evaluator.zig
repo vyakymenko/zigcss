@@ -19288,6 +19288,248 @@ test "native Sass meta module variable enumeration rejects invalid invocations" 
     );
 }
 
+test "native Sass meta module function enumeration preserves complete built-in inventories" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\@use "sass:color";
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:math";
+        \\@use "sass:selector";
+        \\@use "sass:string";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("module-functions", $module: "meta");
+        \\$alias: reflect.get-function("module_functions", $module: "reflect");
+        \\$global: meta.get-function("module-functions");
+        \\$color: meta.module-functions(mark(1, "color"));
+        \\$list: reflect.module_functions($module: mark(2, "list"));
+        \\$list-args: (mark(3, "map"),);
+        \\$map: meta.call($module, $list-args...);
+        \\$map-args: (module: mark(4, "math"));
+        \\$math: meta.call($module, $map-args...);
+        \\$meta: meta.call($module, "meta");
+        \\$selector: meta.module-functions("selector");
+        \\$string: meta.module-functions("string");
+        \\$legacy: meta.call($global, "selector");
+        \\.values {
+        \\  exists: meta.function-exists("module-functions", "meta");
+        \\  global-exists: meta.function-exists("module-functions");
+        \\  type: meta.type-of($module);
+        \\  same: $module == $alias;
+        \\  global-same: $module == $global;
+        \\  color: meta.inspect($color);
+        \\  list: meta.inspect($list);
+        \\  map: meta.inspect($map);
+        \\  math: meta.inspect($math);
+        \\  meta: meta.inspect($meta);
+        \\  selector: meta.inspect($selector);
+        \\  string: meta.inspect($string);
+        \\  list-ref: map.get($list, "length") == meta.get-function("length", $module: "list");
+        \\  color-opaque: map.get($color, "space") == meta.get-function("space", $module: "color");
+        \\  string-opaque: map.get($string, "split") == meta.get-function("split", $module: "string");
+        \\  distinct: map.get($list, "length") == map.get($string, "length");
+        \\  meta-self: map.get($meta, "module-functions") == $module;
+        \\  trace: $trace;
+        \\  legacy: meta.inspect($legacy);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-module-functions.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;global-exists:true;type:function;same:true;global-same:false;color:(\"red\": get-function(\"red\"), \"green\": get-function(\"green\"), \"blue\": get-function(\"blue\"), \"mix\": get-function(\"mix\"), \"invert\": get-function(\"invert\"), \"hue\": get-function(\"hue\"), \"saturation\": get-function(\"saturation\"), \"lightness\": get-function(\"lightness\"), \"adjust-hue\": get-function(\"adjust-hue\"), \"lighten\": get-function(\"lighten\"), \"darken\": get-function(\"darken\"), \"saturate\": get-function(\"saturate\"), \"desaturate\": get-function(\"desaturate\"), \"grayscale\": get-function(\"grayscale\"), \"hwb\": get-function(\"hwb\"), \"whiteness\": get-function(\"whiteness\"), \"blackness\": get-function(\"blackness\"), \"opacify\": get-function(\"opacify\"), \"fade-in\": get-function(\"fade-in\"), \"transparentize\": get-function(\"transparentize\"), \"fade-out\": get-function(\"fade-out\"), \"alpha\": get-function(\"alpha\"), \"opacity\": get-function(\"opacity\"), \"space\": get-function(\"space\"), \"to-space\": get-function(\"to-space\"), \"is-legacy\": get-function(\"is-legacy\"), \"is-missing\": get-function(\"is-missing\"), \"is-in-gamut\": get-function(\"is-in-gamut\"), \"to-gamut\": get-function(\"to-gamut\"), \"channel\": get-function(\"channel\"), \"same\": get-function(\"same\"), \"is-powerless\": get-function(\"is-powerless\"), \"complement\": get-function(\"complement\"), \"adjust\": get-function(\"adjust\"), \"scale\": get-function(\"scale\"), \"change\": get-function(\"change\"), \"ie-hex-str\": get-function(\"ie-hex-str\"));list:(\"length\": get-function(\"length\"), \"nth\": get-function(\"nth\"), \"set-nth\": get-function(\"set-nth\"), \"join\": get-function(\"join\"), \"append\": get-function(\"append\"), \"zip\": get-function(\"zip\"), \"index\": get-function(\"index\"), \"is-bracketed\": get-function(\"is-bracketed\"), \"separator\": get-function(\"separator\"), \"slash\": get-function(\"slash\"));map:(\"get\": get-function(\"get\"), \"set\": get-function(\"set\"), \"merge\": get-function(\"merge\"), \"remove\": get-function(\"remove\"), \"keys\": get-function(\"keys\"), \"values\": get-function(\"values\"), \"has-key\": get-function(\"has-key\"), \"deep-merge\": get-function(\"deep-merge\"), \"deep-remove\": get-function(\"deep-remove\"));math:(\"abs\": get-function(\"abs\"), \"acos\": get-function(\"acos\"), \"asin\": get-function(\"asin\"), \"atan\": get-function(\"atan\"), \"atan2\": get-function(\"atan2\"), \"ceil\": get-function(\"ceil\"), \"clamp\": get-function(\"clamp\"), \"cos\": get-function(\"cos\"), \"compatible\": get-function(\"compatible\"), \"floor\": get-function(\"floor\"), \"hypot\": get-function(\"hypot\"), \"is-unitless\": get-function(\"is-unitless\"), \"log\": get-function(\"log\"), \"max\": get-function(\"max\"), \"min\": get-function(\"min\"), \"percentage\": get-function(\"percentage\"), \"pow\": get-function(\"pow\"), \"random\": get-function(\"random\"), \"round\": get-function(\"round\"), \"sin\": get-function(\"sin\"), \"sqrt\": get-function(\"sqrt\"), \"tan\": get-function(\"tan\"), \"unit\": get-function(\"unit\"), \"div\": get-function(\"div\"));meta:(\"feature-exists\": get-function(\"feature-exists\"), \"inspect\": get-function(\"inspect\"), \"type-of\": get-function(\"type-of\"), \"keywords\": get-function(\"keywords\"), \"calc-name\": get-function(\"calc-name\"), \"calc-args\": get-function(\"calc-args\"), \"accepts-content\": get-function(\"accepts-content\"), \"global-variable-exists\": get-function(\"global-variable-exists\"), \"variable-exists\": get-function(\"variable-exists\"), \"function-exists\": get-function(\"function-exists\"), \"mixin-exists\": get-function(\"mixin-exists\"), \"content-exists\": get-function(\"content-exists\"), \"module-variables\": get-function(\"module-variables\"), \"module-functions\": get-function(\"module-functions\"), \"module-mixins\": get-function(\"module-mixins\"), \"get-function\": get-function(\"get-function\"), \"get-mixin\": get-function(\"get-mixin\"), \"call\": get-function(\"call\"));selector:(\"is-superselector\": get-function(\"is-superselector\"), \"simple-selectors\": get-function(\"simple-selectors\"), \"parse\": get-function(\"parse\"), \"nest\": get-function(\"nest\"), \"append\": get-function(\"append\"), \"extend\": get-function(\"extend\"), \"replace\": get-function(\"replace\"), \"unify\": get-function(\"unify\"));string:(\"unquote\": get-function(\"unquote\"), \"quote\": get-function(\"quote\"), \"to-upper-case\": get-function(\"to-upper-case\"), \"to-lower-case\": get-function(\"to-lower-case\"), \"length\": get-function(\"length\"), \"insert\": get-function(\"insert\"), \"index\": get-function(\"index\"), \"slice\": get-function(\"slice\"), \"unique-id\": get-function(\"unique-id\"), \"split\": get-function(\"split\"));list-ref:true;color-opaque:true;string-opaque:true;distinct:false;meta-self:true;trace:1234;legacy:(\"is-superselector\": get-function(\"is-superselector\"), \"simple-selectors\": get-function(\"simple-selectors\"), \"parse\": get-function(\"parse\"), \"nest\": get-function(\"nest\"), \"append\": get-function(\"append\"), \"extend\": get-function(\"extend\"), \"replace\": get-function(\"replace\"), \"unify\": get-function(\"unify\"))}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+
+    const star =
+        \\@use "sass:meta" as *;
+        \\@use "sass:string" as text;
+        \\$functions: module-functions("text");
+        \\.star {
+        \\  type: type-of($functions);
+        \\  same: $functions == module_functions("text");
+        \\  plain: inspect($functions);
+        \\}
+    ;
+    var star_result = try compile(
+        std.testing.allocator,
+        "meta-module-functions-star.scss",
+        star,
+        .scss,
+        .{},
+    );
+    defer star_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".star{type:map;same:true;plain:(\"unquote\": get-function(\"unquote\"), \"quote\": get-function(\"quote\"), \"to-upper-case\": get-function(\"to-upper-case\"), \"to-lower-case\": get-function(\"to-lower-case\"), \"length\": get-function(\"length\"), \"insert\": get-function(\"insert\"), \"index\": get-function(\"index\"), \"slice\": get-function(\"slice\"), \"unique-id\": get-function(\"unique-id\"), \"split\": get-function(\"split\"))}",
+        star_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), star_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:map"
+        \\@use "sass:list" as items
+        \\$reference: m.get-function("module-functions", $module: "m")
+        \\$functions: m.call($reference, $module: "items")
+        \\.sass
+        \\  type: m.type-of($functions)
+        \\  plain: m.inspect($functions)
+        \\  length: m.call(map.get($functions, "length"), (a, b, c))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-module-functions.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:map;plain:(\"length\": get-function(\"length\"), \"nth\": get-function(\"nth\"), \"set-nth\": get-function(\"set-nth\"), \"join\": get-function(\"join\"), \"append\": get-function(\"append\"), \"zip\": get-function(\"zip\"), \"index\": get-function(\"index\"), \"is-bracketed\": get-function(\"is-bracketed\"), \"separator\": get-function(\"separator\"), \"slash\": get-function(\"slash\"));length:3}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMetaModuleFunctionsAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseMetaModuleFunctionsAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:map";
+        \\@use "sass:string";
+        \\$reference: meta.get-function("module-functions", $module: "meta");
+        \\$functions: meta.call($reference, "string");
+        \\.allocation { value: meta.inspect(map.get($functions, "split")); }
+    ;
+    var result = try compile(
+        allocator,
+        "meta-module-functions-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:get-function(\"split\")}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta module function enumeration rejects invalid and unsupported invocations" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-module-functions-missing.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions()); }",
+        },
+        .{
+            .name = "meta-module-functions-extra.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions(\"meta\", extra)); }",
+        },
+        .{
+            .name = "meta-module-functions-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions($other: \"meta\")); }",
+        },
+        .{
+            .name = "meta-module-functions-duplicate.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions(\"meta\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-module-functions-null.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions(null)); }",
+        },
+        .{
+            .name = "meta-module-functions-number.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions(1)); }",
+        },
+        .{
+            .name = "meta-module-functions-unloaded.scss",
+            .input = "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions(\"reflect\")); }",
+        },
+        .{
+            .name = "meta-call-module-functions-missing.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference)); }",
+        },
+        .{
+            .name = "meta-call-module-functions-duplicate.scss",
+            .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
+        },
+        .{
+            .name = "meta-call-module-functions-color-space-unsupported.scss",
+            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"space\", $module: \"color\"), red); }",
+        },
+        .{
+            .name = "meta-call-module-functions-string-split-unsupported.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:string\"; $functions: meta.module-functions(\"string\"); .a { value: meta.call(meta.get-function(\"split\", $module: \"string\"), \"a-b\", \"-\"); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-module-functions-argument-limit.scss",
+            "@use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions(\"meta\", extra)); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+
+    var collection_limits = sass_evaluator.Limits{};
+    collection_limits.values.max_collection_items = 36;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-module-functions-collection-limit.scss",
+            "@use \"sass:color\"; @use \"sass:meta\"; .a { value: meta.inspect(meta.module-functions(\"color\")); }",
+            .scss,
+            collection_limits,
+        ),
+    );
+}
+
 test "native Sass meta module mixin enumeration preserves ownership and source order" {
     const input =
         \\@use "sass:meta";

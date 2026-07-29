@@ -161,6 +161,7 @@ const Builtin = enum {
     meta_inspect,
     meta_keywords,
     meta_mixin_exists,
+    meta_module_functions,
     meta_module_mixins,
     meta_module_variables,
     meta_type_of,
@@ -179,6 +180,8 @@ const Builtin = enum {
     str_index,
     str_slice,
     str_insert,
+    str_unique_id,
+    str_split,
     to_upper_case,
     to_lower_case,
     rgb,
@@ -214,6 +217,15 @@ const Builtin = enum {
     fade_in,
     transparentize,
     fade_out,
+    space,
+    to_space,
+    is_legacy,
+    is_missing,
+    is_in_gamut,
+    to_gamut,
+    channel,
+    same,
+    is_powerless,
     ie_hex_str,
     adjust_color,
     change_color,
@@ -561,6 +573,160 @@ const math_constants = [_]MathConstantDefinition{
     .{ .name = "max-number", .value = std.math.floatMax(f64) },
     .{ .name = "min-number", .value = std.math.floatTrueMin(f64) },
 };
+
+const ModuleFunctionDefinition = struct {
+    name: []const u8,
+    builtin: Builtin,
+};
+
+const color_module_functions = [_]ModuleFunctionDefinition{
+    .{ .name = "red", .builtin = .red },
+    .{ .name = "green", .builtin = .green },
+    .{ .name = "blue", .builtin = .blue },
+    .{ .name = "mix", .builtin = .mix },
+    .{ .name = "invert", .builtin = .invert },
+    .{ .name = "hue", .builtin = .hue },
+    .{ .name = "saturation", .builtin = .saturation },
+    .{ .name = "lightness", .builtin = .lightness },
+    .{ .name = "adjust-hue", .builtin = .adjust_hue },
+    .{ .name = "lighten", .builtin = .lighten },
+    .{ .name = "darken", .builtin = .darken },
+    .{ .name = "saturate", .builtin = .saturate },
+    .{ .name = "desaturate", .builtin = .desaturate },
+    .{ .name = "grayscale", .builtin = .grayscale },
+    .{ .name = "hwb", .builtin = .hwb },
+    .{ .name = "whiteness", .builtin = .whiteness },
+    .{ .name = "blackness", .builtin = .blackness },
+    .{ .name = "opacify", .builtin = .opacify },
+    .{ .name = "fade-in", .builtin = .fade_in },
+    .{ .name = "transparentize", .builtin = .transparentize },
+    .{ .name = "fade-out", .builtin = .fade_out },
+    .{ .name = "alpha", .builtin = .alpha },
+    .{ .name = "opacity", .builtin = .opacity },
+    .{ .name = "space", .builtin = .space },
+    .{ .name = "to-space", .builtin = .to_space },
+    .{ .name = "is-legacy", .builtin = .is_legacy },
+    .{ .name = "is-missing", .builtin = .is_missing },
+    .{ .name = "is-in-gamut", .builtin = .is_in_gamut },
+    .{ .name = "to-gamut", .builtin = .to_gamut },
+    .{ .name = "channel", .builtin = .channel },
+    .{ .name = "same", .builtin = .same },
+    .{ .name = "is-powerless", .builtin = .is_powerless },
+    .{ .name = "complement", .builtin = .complement },
+    .{ .name = "adjust", .builtin = .adjust_color },
+    .{ .name = "scale", .builtin = .scale_color },
+    .{ .name = "change", .builtin = .change_color },
+    .{ .name = "ie-hex-str", .builtin = .ie_hex_str },
+};
+
+const list_module_functions = [_]ModuleFunctionDefinition{
+    .{ .name = "length", .builtin = .length },
+    .{ .name = "nth", .builtin = .nth },
+    .{ .name = "set-nth", .builtin = .list_set_nth },
+    .{ .name = "join", .builtin = .list_join },
+    .{ .name = "append", .builtin = .list_append },
+    .{ .name = "zip", .builtin = .list_zip },
+    .{ .name = "index", .builtin = .list_index },
+    .{ .name = "is-bracketed", .builtin = .list_is_bracketed },
+    .{ .name = "separator", .builtin = .list_separator },
+    .{ .name = "slash", .builtin = .list_slash },
+};
+
+const map_module_functions = [_]ModuleFunctionDefinition{
+    .{ .name = "get", .builtin = .map_get },
+    .{ .name = "set", .builtin = .map_set },
+    .{ .name = "merge", .builtin = .map_merge },
+    .{ .name = "remove", .builtin = .map_remove },
+    .{ .name = "keys", .builtin = .map_keys },
+    .{ .name = "values", .builtin = .map_values },
+    .{ .name = "has-key", .builtin = .map_has_key },
+    .{ .name = "deep-merge", .builtin = .map_deep_merge },
+    .{ .name = "deep-remove", .builtin = .map_deep_remove },
+};
+
+const math_module_functions = [_]ModuleFunctionDefinition{
+    .{ .name = "abs", .builtin = .math_abs },
+    .{ .name = "acos", .builtin = .math_acos },
+    .{ .name = "asin", .builtin = .math_asin },
+    .{ .name = "atan", .builtin = .math_atan },
+    .{ .name = "atan2", .builtin = .math_atan2 },
+    .{ .name = "ceil", .builtin = .math_ceil },
+    .{ .name = "clamp", .builtin = .math_clamp },
+    .{ .name = "cos", .builtin = .math_cos },
+    .{ .name = "compatible", .builtin = .math_compatible },
+    .{ .name = "floor", .builtin = .math_floor },
+    .{ .name = "hypot", .builtin = .math_hypot },
+    .{ .name = "is-unitless", .builtin = .math_is_unitless },
+    .{ .name = "log", .builtin = .math_log },
+    .{ .name = "max", .builtin = .math_max },
+    .{ .name = "min", .builtin = .math_min },
+    .{ .name = "percentage", .builtin = .math_percentage },
+    .{ .name = "pow", .builtin = .math_pow },
+    .{ .name = "random", .builtin = .math_random },
+    .{ .name = "round", .builtin = .math_round },
+    .{ .name = "sin", .builtin = .math_sin },
+    .{ .name = "sqrt", .builtin = .math_sqrt },
+    .{ .name = "tan", .builtin = .math_tan },
+    .{ .name = "unit", .builtin = .math_unit },
+    .{ .name = "div", .builtin = .math_div },
+};
+
+const meta_module_functions = [_]ModuleFunctionDefinition{
+    .{ .name = "feature-exists", .builtin = .meta_feature_exists },
+    .{ .name = "inspect", .builtin = .meta_inspect },
+    .{ .name = "type-of", .builtin = .meta_type_of },
+    .{ .name = "keywords", .builtin = .meta_keywords },
+    .{ .name = "calc-name", .builtin = .meta_calc_name },
+    .{ .name = "calc-args", .builtin = .meta_calc_args },
+    .{ .name = "accepts-content", .builtin = .meta_accepts_content },
+    .{ .name = "global-variable-exists", .builtin = .meta_global_variable_exists },
+    .{ .name = "variable-exists", .builtin = .meta_variable_exists },
+    .{ .name = "function-exists", .builtin = .meta_function_exists },
+    .{ .name = "mixin-exists", .builtin = .meta_mixin_exists },
+    .{ .name = "content-exists", .builtin = .meta_content_exists },
+    .{ .name = "module-variables", .builtin = .meta_module_variables },
+    .{ .name = "module-functions", .builtin = .meta_module_functions },
+    .{ .name = "module-mixins", .builtin = .meta_module_mixins },
+    .{ .name = "get-function", .builtin = .meta_get_function },
+    .{ .name = "get-mixin", .builtin = .meta_get_mixin },
+    .{ .name = "call", .builtin = .meta_call },
+};
+
+const selector_module_functions = [_]ModuleFunctionDefinition{
+    .{ .name = "is-superselector", .builtin = .selector_is_superselector },
+    .{ .name = "simple-selectors", .builtin = .selector_simple_selectors },
+    .{ .name = "parse", .builtin = .selector_parse },
+    .{ .name = "nest", .builtin = .selector_nest },
+    .{ .name = "append", .builtin = .selector_append },
+    .{ .name = "extend", .builtin = .selector_extend },
+    .{ .name = "replace", .builtin = .selector_replace },
+    .{ .name = "unify", .builtin = .selector_unify },
+};
+
+const string_module_functions = [_]ModuleFunctionDefinition{
+    .{ .name = "unquote", .builtin = .unquote },
+    .{ .name = "quote", .builtin = .quote },
+    .{ .name = "to-upper-case", .builtin = .to_upper_case },
+    .{ .name = "to-lower-case", .builtin = .to_lower_case },
+    .{ .name = "length", .builtin = .str_length },
+    .{ .name = "insert", .builtin = .str_insert },
+    .{ .name = "index", .builtin = .str_index },
+    .{ .name = "slice", .builtin = .str_slice },
+    .{ .name = "unique-id", .builtin = .str_unique_id },
+    .{ .name = "split", .builtin = .str_split },
+};
+
+fn moduleFunctionDefinitions(kind: BuiltinModule) []const ModuleFunctionDefinition {
+    return switch (kind) {
+        .color => &color_module_functions,
+        .list => &list_module_functions,
+        .map => &map_module_functions,
+        .math => &math_module_functions,
+        .meta => &meta_module_functions,
+        .selector => &selector_module_functions,
+        .string => &string_module_functions,
+    };
+}
 
 const ModuleBinding = struct {
     kind: BuiltinModule,
@@ -5138,6 +5304,7 @@ const Engine = struct {
             .meta_inspect,
             .meta_keywords,
             .meta_mixin_exists,
+            .meta_module_functions,
             .meta_module_mixins,
             .meta_module_variables,
             .meta_type_of,
@@ -5218,7 +5385,20 @@ const Engine = struct {
             // Dart Sass 1.101.0 exposes whiteness and blackness only as
             // sass:color callable references here. Direct calls remain
             // outside these evidence-closed slices.
-            .whiteness, .blackness => return null,
+            .whiteness,
+            .blackness,
+            .space,
+            .to_space,
+            .is_legacy,
+            .is_missing,
+            .is_in_gamut,
+            .to_gamut,
+            .channel,
+            .same,
+            .is_powerless,
+            .str_unique_id,
+            .str_split,
+            => return null,
             .rgb, .rgba, .hsl, .hsla, .hwb => return try self.callColorConstructorRaw(
                 builtin,
                 raw,
@@ -8656,6 +8836,51 @@ const Engine = struct {
         return self.values.own(.{ .map = .{ .entries = entries[0..count] } });
     }
 
+    fn callMetaModuleFunctions(
+        self: *Engine,
+        module_owned: bool,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (!module_owned) {
+            try self.transaction.report(
+                .warning,
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        try self.transaction.consumeOperations(1);
+
+        if (arguments.len != 1 or arguments[0].* != .string) {
+            try self.report(
+                .type_mismatch,
+                span,
+                "native Sass meta.module-functions() module must be a string namespace",
+            );
+            return error.InvalidExpression;
+        }
+        const module = (try self.metaExistenceModule(arguments[0].*, span)).?;
+        const definitions = moduleFunctionDefinitions(module);
+
+        var entries: [color_module_functions.len]native_value.Entry = undefined;
+        for (definitions, 0..) |definition, index| {
+            try self.transaction.consumeOperations(1);
+            entries[index] = .{
+                .key = .{ .string = .{
+                    .bytes = definition.name,
+                    .quoted = true,
+                } },
+                .value = .{ .callable = builtinFunctionCallable(
+                    definition.builtin,
+                    module,
+                ) },
+            };
+        }
+        return self.values.own(.{ .map = .{ .entries = entries[0..definitions.len] } });
+    }
+
     fn callMetaGetFunction(
         self: *Engine,
         module_owned: bool,
@@ -8826,6 +9051,13 @@ const Engine = struct {
                     callable,
                     &forwarded,
                     scope,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeMetaModuleFunctionsFunction(
+                    callable,
+                    &forwarded,
                     span,
                 )) |value| {
                     break :blk value;
@@ -9414,6 +9646,40 @@ const Engine = struct {
             bound.values[0].?,
         };
         return try self.callMetaModuleMixins(
+            reference.owner != null,
+            &ordered,
+            span,
+        );
+    }
+
+    fn invokeMetaModuleFunctionsFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .meta_module_functions or
+            (reference.owner != null and reference.owner.? != .meta))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "module" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+        };
+        return try self.callMetaModuleFunctions(
             reference.owner != null,
             &ordered,
             span,
@@ -13920,7 +14186,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module mixin or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, or lab, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, or lab, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -15263,7 +15529,10 @@ const Engine = struct {
             },
             .meta_inspect, .meta_type_of => &.{.{ .name = "value" }},
             .meta_keywords => &.{.{ .name = "args" }},
-            .meta_module_mixins, .meta_module_variables => &.{.{ .name = "module" }},
+            .meta_module_functions,
+            .meta_module_mixins,
+            .meta_module_variables,
+            => &.{.{ .name = "module" }},
             .meta_variable_exists => &.{.{ .name = "name" }},
             .selector_is_superselector => &.{
                 .{ .name = "super" },
@@ -15507,6 +15776,11 @@ const Engine = struct {
                 module_owned,
                 arguments,
                 scope,
+                span,
+            ),
+            .meta_module_functions => self.callMetaModuleFunctions(
+                module_owned,
+                arguments,
                 span,
             ),
             .meta_module_mixins => self.callMetaModuleMixins(
@@ -16993,30 +17267,9 @@ fn moduleBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
 }
 
 fn moduleCallableBuiltin(kind: BuiltinModule, name: []const u8) ?Builtin {
-    if (moduleBuiltin(kind, name)) |builtin| return builtin;
-    if (kind == .color and sassNameEql(name, "red")) return .red;
-    if (kind == .color and sassNameEql(name, "green")) return .green;
-    if (kind == .color and sassNameEql(name, "blue")) return .blue;
-    if (kind == .color and sassNameEql(name, "alpha")) return .alpha;
-    if (kind == .color and sassNameEql(name, "opacity")) return .opacity;
-    if (kind == .color and sassNameEql(name, "hue")) return .hue;
-    if (kind == .color and sassNameEql(name, "saturation")) return .saturation;
-    if (kind == .color and sassNameEql(name, "lightness")) return .lightness;
-    if (kind == .color and sassNameEql(name, "whiteness")) return .whiteness;
-    if (kind == .color and sassNameEql(name, "blackness")) return .blackness;
-    if (kind == .color and sassNameEql(name, "mix")) return .mix;
-    if (kind == .color and sassNameEql(name, "lighten")) return .lighten;
-    if (kind == .color and sassNameEql(name, "darken")) return .darken;
-    if (kind == .color and sassNameEql(name, "saturate")) return .saturate;
-    if (kind == .color and sassNameEql(name, "desaturate")) return .desaturate;
-    if (kind == .color and sassNameEql(name, "adjust-hue")) return .adjust_hue;
-    if (kind == .color and sassNameEql(name, "complement")) return .complement;
-    if (kind == .color and sassNameEql(name, "grayscale")) return .grayscale;
-    if (kind == .color and sassNameEql(name, "invert")) return .invert;
-    if (kind == .color and sassNameEql(name, "opacify")) return .opacify;
-    if (kind == .color and sassNameEql(name, "fade-in")) return .fade_in;
-    if (kind == .color and sassNameEql(name, "transparentize")) return .transparentize;
-    if (kind == .color and sassNameEql(name, "fade-out")) return .fade_out;
+    for (moduleFunctionDefinitions(kind)) |definition| {
+        if (sassNameEql(name, definition.name)) return definition.builtin;
+    }
     return null;
 }
 
@@ -17317,6 +17570,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
         .{ .name = "global-variable-exists", .builtin = .meta_global_variable_exists },
         .{ .name = "inspect", .builtin = .meta_inspect },
         .{ .name = "mixin-exists", .builtin = .meta_mixin_exists },
+        .{ .name = "module-functions", .builtin = .meta_module_functions },
         .{ .name = "module-mixins", .builtin = .meta_module_mixins },
         .{ .name = "module-variables", .builtin = .meta_module_variables },
         .{ .name = "type-of", .builtin = .meta_type_of },
@@ -17421,6 +17675,7 @@ fn metaModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "inspect")) return .meta_inspect;
     if (sassNameEql(name, "keywords")) return .meta_keywords;
     if (sassNameEql(name, "mixin-exists")) return .meta_mixin_exists;
+    if (sassNameEql(name, "module-functions")) return .meta_module_functions;
     if (sassNameEql(name, "module-mixins")) return .meta_module_mixins;
     if (sassNameEql(name, "module-variables")) return .meta_module_variables;
     if (sassNameEql(name, "type-of")) return .meta_type_of;
