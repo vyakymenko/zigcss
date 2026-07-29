@@ -132,6 +132,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-string-split-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-quote-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-unquote-direct-splat-expansion'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-string-legacy-quote-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-legacy-unquote-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-length-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-index-direct-splat-expansion'), true)

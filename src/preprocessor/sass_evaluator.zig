@@ -16315,7 +16315,9 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        const legacy_unquote_splat = if (!module_owned and builtin == .unquote) blk: {
+        const legacy_string_splat = if (!module_owned and
+            (builtin == .quote or builtin == .unquote))
+        blk: {
             for (ranges) |range| {
                 if (std.mem.endsWith(
                     u8,
@@ -16325,7 +16327,7 @@ const Engine = struct {
             }
             break :blk false;
         } else false;
-        if (legacy_unquote_splat) {
+        if (legacy_string_splat) {
             var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
             defer evaluated.deinit();
             return (try self.invokeStringFunction(
