@@ -223,6 +223,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-string-split-function-invocation',
       'built-in-string-split-direct-splat-expansion',
       'built-in-string-module-quote-direct-splat-expansion',
+      'built-in-string-module-unquote-direct-splat-expansion',
       'built-in-string-module-length-direct-splat-expansion',
       'built-in-string-module-index-direct-splat-expansion',
       'built-in-string-module-slice-direct-splat-expansion',

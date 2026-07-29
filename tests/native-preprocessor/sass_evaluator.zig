@@ -8996,6 +8996,98 @@ test "native Sass meta call rejects invalid string quote arguments and limits" {
     );
 }
 
+test "native Sass expands direct string module unquote arguments once in source order" {
+    const input =
+        \\@use "sass:string";
+        \\@use "sass:string" as text;
+        \\@use "sass:string" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: string.unquote((mark(1, "plain value"),)...);
+        \\  map: text.unquote((string: mark(2, "already quoted"))...);
+        \\  star: unquote((string: mark(3, "foo\ bar"))...);
+        \\  unquoted: string.unquote((already-unquoted,)...);
+        \\  interpolated: string.unquote((string: "item-#{2}")...);
+        \\  override: string.unquote($string: "wrong", (string: mark(4, "item-#{2}"))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "string-unquote-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:plain value;map:already quoted;star:foo bar;unquoted:already-unquoted;interpolated:item-2;override:item-2;trace:1234}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:string" as text
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: text.unquote((mark(1, "plain value"),)...)
+        \\  map: text.unquote((string: mark(2, "already quoted"))...)
+        \\  override: text.unquote($string: "wrong", (string: mark(3, "item-#{2}"))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "string-unquote-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:plain value;map:already quoted;override:item-2;trace:123}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectStringUnquoteSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectStringUnquoteSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:string" as text;
+        \\.allocation {
+        \\  list: text.unquote(("plain value",)...);
+        \\  map: text.unquote((string: "already quoted")...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "string-unquote-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:plain value;map:already quoted}",
+        result.css(),
+    );
+}
+
 test "native Sass meta call invokes string unquote function references" {
     const input =
         \\@use "sass:meta";
@@ -9177,6 +9269,53 @@ test "native Sass meta call rejects invalid string unquote arguments and limits"
             "@use \"sass:meta\"; @use \"sass:string\" as *; $unquote: meta.get-function(\"unquote\"); .a { value: meta.call($unquote, \"value\"); }",
             .scss,
             argument_limits,
+        ),
+    );
+
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "string.unquote(()...)" },
+        .{ .name = "direct-extra-list-splat", .invocation = "string.unquote((\"a\", \"b\")...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "string.unquote((string: \"a\", other: \"b\")...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "string.unquote((1: \"a\")...)" },
+        .{ .name = "direct-positional-map-duplicate", .invocation = "string.unquote(\"a\", (string: \"b\")...)" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:string\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-string-unquote-direct-splat.scss",
+            "$args: (\"legacy value\",); .a { value: unquote($args...); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var direct_argument_limits = sass_evaluator.Limits{};
+    direct_argument_limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-unquote-direct-splat-argument-limit.scss",
+            "@use \"sass:string\"; .a { value: string.unquote((VALUE, OTHER)...); }",
+            .scss,
+            direct_argument_limits,
         ),
     );
 }

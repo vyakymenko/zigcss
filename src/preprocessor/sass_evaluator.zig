@@ -16318,6 +16318,7 @@ const Engine = struct {
         if (builtin == .str_split or
             (module_owned and
                 (builtin == .quote or
+                    builtin == .unquote or
                     builtin == .str_length or
                     builtin == .str_index or
                     builtin == .str_slice or
