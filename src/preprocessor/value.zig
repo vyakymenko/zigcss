@@ -49,6 +49,7 @@ pub const Color = struct {
     space: ColorSpace,
     channels: [4]f64,
     missing_mask: u4 = 0,
+    computed: bool = false,
 };
 
 pub const List = struct {
@@ -352,7 +353,7 @@ fn eqlDepth(left: Value, right: Value, depth: u16) bool {
         .null_value => true,
         .boolean => |item| item == right.boolean,
         .number => |item| eqlNumber(item, right.number),
-        .color => |item| std.meta.eql(item, right.color),
+        .color => |item| eqlColor(item, right.color),
         .string => |item| eqlString(item, right.string),
         .selector => |item| eqlString(item, right.selector),
         .callable => |item| std.meta.eql(item, right.callable),
@@ -405,6 +406,14 @@ fn eqlDepth(left: Value, right: Value, depth: u16) bool {
 
 fn eqlString(left: String, right: String) bool {
     return left.quoted == right.quoted and std.mem.eql(u8, left.bytes, right.bytes);
+}
+
+fn eqlColor(left: Color, right: Color) bool {
+    if (left.space != right.space or left.missing_mask != right.missing_mask) return false;
+    for (left.channels, right.channels) |left_channel, right_channel| {
+        if (left_channel != right_channel) return false;
+    }
+    return true;
 }
 
 fn eqlNumber(left: Number, right: Number) bool {

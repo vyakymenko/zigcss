@@ -157,6 +157,17 @@ test "typed values are deeply owned immutable and structurally comparable" {
 
     const signed_zero = try store.own(.{ .number = .{ .value = -0.0 } });
     try std.testing.expect(std.math.signbit(signed_zero.number.value));
+
+    const authored_color = value.Value{ .color = .{
+        .space = .oklab,
+        .channels = .{ 0.5, -0.04, 0.08, 1 },
+    } };
+    const computed_color = value.Value{ .color = .{
+        .space = .oklab,
+        .channels = .{ 0.5, -0.04, 0.08, 1 },
+        .computed = true,
+    } };
+    try std.testing.expect(value.eql(authored_color, computed_color));
 }
 
 test "typed Sass argument lists deeply own positional keyword and usage state" {

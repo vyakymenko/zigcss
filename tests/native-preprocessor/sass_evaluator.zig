@@ -19488,8 +19488,8 @@ test "native Sass meta module function enumeration rejects invalid and unsupport
             .input = "@use \"sass:meta\"; $reference: meta.get-function(\"module-functions\", $module: \"meta\"); .a { value: meta.inspect(meta.call($reference, \"meta\", $module: \"meta\")); }",
         },
         .{
-            .name = "meta-call-module-functions-color-to-space-unsupported.scss",
-            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"to-space\", $module: \"color\"), red, rgb); }",
+            .name = "meta-call-module-functions-color-is-legacy-unsupported.scss",
+            .input = "@use \"sass:color\"; @use \"sass:meta\"; $functions: meta.module-functions(\"color\"); .a { value: meta.call(meta.get-function(\"is-legacy\", $module: \"color\"), red); }",
         },
         .{
             .name = "meta-call-module-functions-string-split-unsupported.scss",
@@ -19700,8 +19700,8 @@ test "native Sass color space function rejects invalid and unavailable invocatio
         .{ .name = "missing-alpha", .invocation = "color.space(rgb(0 0 0 / none))" },
         .{ .name = "modern-missing", .invocation = "color.space(lab(none 10 20))" },
         .{
-            .name = "to-space",
-            .invocation = "meta.call(meta.get-function(\"to-space\", $module: \"color\"), red, rgb)",
+            .name = "is-legacy",
+            .invocation = "meta.call(meta.get-function(\"is-legacy\", $module: \"color\"), red)",
         },
     };
     for (invalid) |case| {
@@ -19752,6 +19752,245 @@ test "native Sass color space function rejects invalid and unavailable invocatio
             std.testing.allocator,
             "meta-call-color-space-argument-limit.scss",
             "@use \"sass:color\"; @use \"sass:meta\"; $space: meta.get-function(\"space\", $module: \"color\"); .a { value: meta.call($space, red); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
+test "native Sass color to-space function converts direct and reflected colors" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\$module: meta.get-function("to-space", $module: "color");
+        \\$alias: meta.get-function("to-space", $module: "palette");
+        \\$star: meta.get-function("to-space");
+        \\$list-args: (#369, display-p3);
+        \\$map-args: (color: #369, space: lab);
+        \\.values {
+        \\  exists: meta.function-exists("to-space", "color");
+        \\  alias-exists: meta.function-exists("to-space", "palette");
+        \\  global-exists: meta.function-exists("to-space");
+        \\  type: meta.type-of($module);
+        \\  same: $module == $alias;
+        \\  star-same: $module == $star;
+        \\  rgb: color.to-space(#369, rgb);
+        \\  hsl: color.to-space(#369, hsl);
+        \\  hwb: color.to-space(#369, hwb);
+        \\  lab: color.to-space(#369, lab);
+        \\  lch: color.to-space(#369, lch);
+        \\  oklab: color.to-space(#369, oklab);
+        \\  oklch: color.to-space(#369, oklch);
+        \\  srgb: color.to-space(#369, srgb);
+        \\  srgb-linear: color.to-space(#369, srgb-linear);
+        \\  display-p3: color.to-space(#369, display-p3);
+        \\  a98-rgb: color.to-space(#369, a98-rgb);
+        \\  prophoto-rgb: color.to-space(#369, prophoto-rgb);
+        \\  rec2020: color.to-space(#369, rec2020);
+        \\  xyz-d50: color.to-space(#369, xyz-d50);
+        \\  xyz-d65: color.to-space(#369, xyz-d65);
+        \\  xyz: color.to-space(#369, xyz);
+        \\  alpha: color.to-space(rgb(51 102 153 / .7), display-p3);
+        \\  identity: color.to-space(color(display-p3 .1 .2 .3 / .4), display-p3);
+        \\  computed-identity: color.to-space(color.to-space(#369, oklab), oklab);
+        \\  alias: palette.to-space(#369, DISPLAY-P3);
+        \\  star: to-space(#369, oklab);
+        \\  reflected: meta.call($module, #369, rec2020);
+        \\  named: meta.call($module, $color: #369, $space: xyz-d50);
+        \\  reverse-named: meta.call($module, $space: srgb-linear, $color: #369);
+        \\  list-splat: meta.call($module, $list-args...);
+        \\  map-splat: meta.call($module, $map-args...);
+        \\  ordered: meta.call(mark(1, $module), mark(2, #369), mark(3, a98-rgb));
+        \\  trace: $trace;
+        \\  result-type: meta.type-of(meta.call($module, #369, hsl));
+        \\  result-space: color.space(meta.call($module, #369, hsl));
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-color-to-space-function.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{exists:true;alias-exists:true;global-exists:true;type:function;same:true;star-same:true;rgb:#369;hsl:#369;hwb:#369;lab:lab(41.5208239274 -4.5730899326 -33.4941945924);lch:lch(41.5208239274 33.8049437646 262.2252620788);oklab:oklab(.4993144558 -.0330434876 -.0929665921);oklch:oklch(.4993144558 .0986643771 250.4330574202);srgb:color(srgb .2 .4 .6);srgb-linear:color(srgb-linear .0331047666 .1328683216 .3185467781);display-p3:color(display-p3 .2498513331 .3952400722 .5840337708);a98-rgb:color(a98-rgb .2814316253 .3994051501 .5878866513);prophoto-rgb:color(prophoto-rgb .2876613559 .3195515327 .5045379079);rec2020:color(rec2020 .2501283074 .3367053823 .5377935675);xyz-d50:color(xyz-d50 .1111874591 .121927404 .2408340301);xyz-d65:color(xyz .1186553058 .1250592561 .3192661072);xyz:color(xyz .1186553058 .1250592561 .3192661072);alpha:color(display-p3 .2498513331 .3952400722 .5840337708/.7);identity:color(display-p3 .1 .2 .3/.4);computed-identity:oklab(.4993144558 -.0330434876 -.0929665921);alias:color(display-p3 .2498513331 .3952400722 .5840337708);star:oklab(.4993144558 -.0330434876 -.0929665921);reflected:color(rec2020 .2501283074 .3367053823 .5377935675);named:color(xyz-d50 .1111874591 .121927404 .2408340301);reverse-named:color(srgb-linear .0331047666 .1328683216 .3185467781);list-splat:color(display-p3 .2498513331 .3952400722 .5840337708);map-splat:lab(41.5208239274 -4.5730899326 -33.4941945924);ordered:color(a98-rgb .2814316253 .3994051501 .5878866513);trace:123;result-type:color;result-space:hsl}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const plain_css =
+        \\@use "sass:meta";
+        \\.plain {
+        \\  exists: meta.function-exists("to-space");
+        \\  value: to-space(red, rgb);
+        \\}
+    ;
+    var plain_result = try compile(
+        std.testing.allocator,
+        "color-to-space-plain-css.scss",
+        plain_css,
+        .scss,
+        .{},
+    );
+    defer plain_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".plain{exists:false;value:to-space(red, rgb)}",
+        plain_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), plain_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$reference: m.get-function("to-space", $module: "palette")
+        \\.sass
+        \\  exists: m.function-exists("to-space", "palette")
+        \\  global-exists: m.function-exists("to-space")
+        \\  type: m.type-of($reference)
+        \\  plain: m.call($reference, #369, display-p3)
+        \\  named: m.call($reference, $space: lab, $color: #369)
+        \\  direct: palette.to-space(#369, oklab)
+        \\  legacy-space: palette.space(m.call($reference, #369, hsl))
+        \\  same: palette.to-space(color(display-p3 .1 .2 .3 / .4), display-p3)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-color-to-space-function.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{exists:true;global-exists:false;type:function;plain:color(display-p3 .2498513331 .3952400722 .5840337708);named:lab(41.5208239274 -4.5730899326 -33.4941945924);direct:oklab(.4993144558 -.0330434876 -.0929665921);legacy-space:hsl;same:color(display-p3 .1 .2 .3/.4)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseColorToSpaceFunctionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseColorToSpaceFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:color";
+        \\@use "sass:meta";
+        \\$reference: meta.get-function("to-space", $module: "color");
+        \\.allocation {
+        \\  direct: color.to-space(#369, display-p3);
+        \\  reflected: meta.call($reference, #369, lab);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-color-to-space-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:color(display-p3 .2498513331 .3952400722 .5840337708);reflected:lab(41.5208239274 -4.5730899326 -33.4941945924)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass color to-space function rejects invalid and missing-channel conversions" {
+    const invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "missing", .invocation = "color.to-space()" },
+        .{ .name = "missing-space", .invocation = "color.to-space(red)" },
+        .{ .name = "extra", .invocation = "meta.call($to-space, red, rgb, blue)" },
+        .{ .name = "unknown", .invocation = "color.to-space($other: red, $space: rgb)" },
+        .{ .name = "duplicate", .invocation = "meta.call($to-space, red, rgb, $color: blue)" },
+        .{ .name = "null-color", .invocation = "color.to-space(null, rgb)" },
+        .{ .name = "boolean-color", .invocation = "color.to-space(true, rgb)" },
+        .{ .name = "number-color", .invocation = "color.to-space(1, rgb)" },
+        .{ .name = "string-color", .invocation = "color.to-space(\"red\", rgb)" },
+        .{ .name = "list-color", .invocation = "color.to-space((red, blue), rgb)" },
+        .{ .name = "map-color", .invocation = "color.to-space((tone: red), rgb)" },
+        .{ .name = "deferred-color", .invocation = "color.to-space(var(--color), rgb)" },
+        .{ .name = "null-space", .invocation = "color.to-space(red, null)" },
+        .{ .name = "boolean-space", .invocation = "color.to-space(red, true)" },
+        .{ .name = "number-space", .invocation = "color.to-space(red, 1)" },
+        .{ .name = "quoted-space", .invocation = "color.to-space(red, \"rgb\")" },
+        .{ .name = "color-space", .invocation = "color.to-space(red, blue)" },
+        .{ .name = "list-space", .invocation = "color.to-space(red, (rgb, hsl))" },
+        .{ .name = "map-space", .invocation = "color.to-space(red, (space: rgb))" },
+        .{ .name = "deferred-space", .invocation = "color.to-space(red, var(--space))" },
+        .{ .name = "unknown-space", .invocation = "color.to-space(red, custom)" },
+        .{ .name = "underscore-space", .invocation = "color.to-space(red, display_p3)" },
+        .{ .name = "missing-rgb-identity", .invocation = "color.to-space(rgb(none 0 0), rgb)" },
+        .{ .name = "missing-rgb-cross", .invocation = "color.to-space(rgb(none 0 0), hsl)" },
+        .{ .name = "missing-alpha", .invocation = "color.to-space(rgb(0 0 0 / none), lab)" },
+        .{ .name = "modern-missing-identity", .invocation = "color.to-space(lab(none 10 20), lab)" },
+        .{ .name = "modern-missing-cross", .invocation = "color.to-space(lab(none 10 20), oklab)" },
+        .{ .name = "predefined-missing", .invocation = "color.to-space(color(display-p3 none .2 .3), srgb)" },
+    };
+    for (invalid) |case| {
+        const case_source = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; @use \"sass:meta\"; $to-space: meta.get-function(\"to-space\", $module: \"color\"); .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(case_source);
+        const name = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "meta-call-color-to-space-{s}.scss",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(name);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, name, case_source, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-to-space-global-reference.scss",
+            "@use \"sass:meta\"; $to-space: meta.get-function(\"to-space\"); .a { value: meta.call($to-space, red, rgb); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-to-space-module-not-loaded.scss",
+            "@use \"sass:meta\"; $to-space: meta.get-function(\"to-space\", $module: \"color\"); .a { value: meta.call($to-space, red, rgb); }",
+            .scss,
+            .{},
+        ),
+    );
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-to-space-argument-limit.scss",
+            "@use \"sass:color\"; @use \"sass:meta\"; $to-space: meta.get-function(\"to-space\", $module: \"color\"); .a { value: meta.call($to-space, red, rgb); }",
             .scss,
             argument_limits,
         ),

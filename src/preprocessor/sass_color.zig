@@ -854,7 +854,14 @@ fn serializeModern(
             continue;
         }
         var number_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
-        try appendModernNumber(buffer, &cursor, channel, &number_buffer, minified);
+        try appendModernNumber(
+            buffer,
+            &cursor,
+            channel,
+            &number_buffer,
+            minified,
+            input.computed,
+        );
     }
     if (channelMissing(normalized.missing_mask, 3) or
         !approximatelyEqual(normalized.channels[3], 1))
@@ -870,6 +877,7 @@ fn serializeModern(
                 normalized.channels[3],
                 &alpha_buffer,
                 minified,
+                input.computed,
             );
         }
     }
@@ -965,7 +973,14 @@ fn serializePredefined(
             continue;
         }
         var number_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
-        try appendModernNumber(buffer, &cursor, channel, &number_buffer, minified);
+        try appendModernNumber(
+            buffer,
+            &cursor,
+            channel,
+            &number_buffer,
+            minified,
+            input.computed,
+        );
     }
     if (channelMissing(normalized.missing_mask, 3) or
         !approximatelyEqual(normalized.channels[3], 1))
@@ -981,6 +996,7 @@ fn serializePredefined(
                 normalized.channels[3],
                 &alpha_buffer,
                 minified,
+                input.computed,
             );
         }
     }
@@ -1645,9 +1661,10 @@ fn appendModernNumber(
     value: f64,
     number_buffer: *[native_numeric.max_serialized_bytes]u8,
     minified: bool,
+    computed: bool,
 ) Error!void {
     const serialized = try native_numeric.serialize(value, number_buffer, minified);
-    if (serialized.len >= 2 and serialized[0] == '-' and serialized[1] == '.') {
+    if (!computed and serialized.len >= 2 and serialized[0] == '-' and serialized[1] == '.') {
         try append(buffer, cursor, "-0");
         return append(buffer, cursor, serialized[1..]);
     }
