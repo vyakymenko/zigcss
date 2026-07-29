@@ -8482,6 +8482,14 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                if (try self.invokeMetaGetMixinFunction(
+                    callable,
+                    &forwarded,
+                    scope,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
                 if (try self.invokeListFunction(callable, &forwarded, span)) |value| {
                     break :blk value;
                 }
@@ -8952,6 +8960,46 @@ const Engine = struct {
         else
             1;
         return try self.callMetaGetFunction(
+            reference.owner != null,
+            ordered[0..count],
+            scope,
+            span,
+        );
+    }
+
+    fn invokeMetaGetMixinFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.builtin != .meta_get_mixin or
+            (reference.owner != null and reference.owner.? != .meta))
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "name" },
+            .{ .name = "module", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+
+        const null_option = native_value.Value{ .null_value = {} };
+        const ordered = [_]*const native_value.Value{
+            bound.values[0].?,
+            bound.values[1] orelse &null_option,
+        };
+        const count: usize = if (bound.values[1] != null) 2 else 1;
+        return try self.callMetaGetMixin(
             reference.owner != null,
             ordered[0..count],
             scope,

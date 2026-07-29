@@ -18833,6 +18833,213 @@ test "native Sass meta call rejects invalid meta get-function invocation" {
     );
 }
 
+test "native Sass meta call invokes meta get-mixin references" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:meta" as reflect;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@mixin plain {}
+        \\@mixin slot { @content; }
+        \\$module: meta.get-function("get-mixin", $module: "meta");
+        \\$alias: reflect.get-function("get_mixin", $module: "reflect");
+        \\$global: meta.get-function("get-mixin");
+        \\$positional: meta.call($module, "plain");
+        \\$named: meta.call($module, $name: "slot");
+        \\$list: meta.call($module, ("plain",)...);
+        \\$map: meta.call($module, (name: "slot")...);
+        \\$builtin: meta.call($module, "load-css", $module: "reflect");
+        \\$apply: meta.call($module, "apply", $module: "meta");
+        \\$ordered: meta.call(mark(1, $module), mark(2, "plain"), $module: mark(3, null));
+        \\$global-target: meta.call($global, "plain");
+        \\.values {
+        \\  module-exists: meta.function-exists("get-mixin", "meta");
+        \\  global-exists: meta.function-exists("get-mixin");
+        \\  module-type: meta.type-of($module);
+        \\  alias-same: $module == $alias;
+        \\  global-same: $module == $global;
+        \\  positional: meta.inspect($positional);
+        \\  named: meta.accepts-content($named);
+        \\  list-splat: meta.type-of($list);
+        \\  map-splat: meta.inspect($map);
+        \\  builtin: meta.accepts-content($builtin);
+        \\  apply: meta.accepts-content($apply);
+        \\  ordered: meta.inspect($ordered);
+        \\  trace: $trace;
+        \\  global: meta.inspect($global-target);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-get-mixin.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{module-exists:true;global-exists:true;module-type:function;alias-same:true;global-same:false;positional:get-mixin(\"plain\");named:true;list-splat:mixin;map-splat:get-mixin(\"slot\");builtin:false;apply:true;ordered:get-mixin(\"plain\");trace:123;global:get-mixin(\"plain\")}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.warning,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        diagnostics[0].message,
+    );
+
+    const star =
+        \\@use "sass:meta" as *;
+        \\@use "sass:meta" as reflect;
+        \\@mixin plain {}
+        \\$get: get-function("get-mixin", $module: "reflect");
+        \\$target: call($get, "plain");
+        \\.star { type: type-of($target); value: inspect($target); }
+    ;
+    var star_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-get-mixin-star.scss",
+        star,
+        .scss,
+        .{},
+    );
+    defer star_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".star{type:mixin;value:get-mixin(\"plain\")}",
+        star_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), star_result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:meta" as reflect
+        \\@mixin plain
+        \\  $unused: null
+        \\@mixin slot
+        \\  @content
+        \\$get: m.get-function("get-mixin", $module: "reflect")
+        \\$plain: m.call($get, $name: "plain")
+        \\$content: m.call($get, "slot")
+        \\.sass
+        \\  type: m.type-of($plain)
+        \\  inspect: m.inspect($plain)
+        \\  content: m.accepts-content($content)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "meta-call-meta-get-mixin.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{type:mixin;inspect:get-mixin(\"plain\");content:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMetaGetMixinInvocationAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseMetaGetMixinInvocationAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@use "sass:meta";
+        \\@mixin plain {}
+        \\$get: meta.get-function("get-mixin", $module: "meta");
+        \\$target: meta.call($get, "plain");
+        \\.allocation { value: meta.inspect($target); }
+    ;
+    var result = try compile(
+        allocator,
+        "meta-call-meta-get-mixin-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{value:get-mixin(\"plain\")}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass meta call rejects invalid meta get-mixin invocation" {
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "meta-call-get-mixin-missing-name.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get); }",
+        },
+        .{
+            .name = "meta-call-get-mixin-extra.scss",
+            .input = "@use \"sass:meta\"; @mixin plain {} $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, \"plain\", null, extra); }",
+        },
+        .{
+            .name = "meta-call-get-mixin-unknown-keyword.scss",
+            .input = "@use \"sass:meta\"; @mixin plain {} $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, $other: \"plain\"); }",
+        },
+        .{
+            .name = "meta-call-get-mixin-duplicate-name.scss",
+            .input = "@use \"sass:meta\"; @mixin plain {} $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, \"plain\", $name: \"other\"); }",
+        },
+        .{
+            .name = "meta-call-get-mixin-non-string.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, 1); }",
+        },
+        .{
+            .name = "meta-call-get-mixin-non-string-module.scss",
+            .input = "@use \"sass:meta\"; @mixin plain {} $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, \"plain\", $module: 1); }",
+        },
+        .{
+            .name = "meta-call-get-mixin-unknown-mixin.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, \"missing\"); }",
+        },
+        .{
+            .name = "meta-call-get-mixin-unloaded-module.scss",
+            .input = "@use \"sass:meta\"; $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, \"load-css\", $module: \"reflect\"); }",
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var argument_limits = sass_evaluator.Limits{};
+    argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "meta-call-get-mixin-argument-limit.scss",
+            "@use \"sass:meta\"; $get: meta.get-function(\"get-mixin\", $module: \"meta\"); .a { value: meta.call($get, \"load-css\", \"meta\"); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+}
+
 test "native Sass meta call preserves the legacy warning" {
     const input =
         \\@use "sass:meta";
