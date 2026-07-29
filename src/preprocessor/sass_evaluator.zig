@@ -16318,6 +16318,7 @@ const Engine = struct {
         const legacy_string_splat = if (!module_owned and
             (builtin == .quote or
                 builtin == .unquote or
+                builtin == .str_length or
                 builtin == .to_upper_case or
                 builtin == .to_lower_case))
         blk: {

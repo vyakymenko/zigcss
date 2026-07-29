@@ -9731,6 +9731,122 @@ test "native Sass expands direct string module length arguments once in source o
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct legacy string length splats once in source order" {
+    const input =
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: str-length((mark(1, "A💚É"),)...);
+        \\  map: str-length((string: mark(2, "ÉX"))...);
+        \\  escaped: str-length((string: mark(3, FOO\ BAR))...);
+        \\  override: str-length($string: WRONG, (string: mark(4, ITEM-#{2}))...);
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-string-length-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:3;map:3;escaped:8;override:6;trace:1234}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: str-length((mark(1, "A💚É"),)...)
+        \\  map: str-length((string: mark(2, "ÉX"))...)
+        \\  override: str-length($string: WRONG, (string: mark(3, ITEM-#{2}))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-string-length-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:3;map:3;override:6;trace:123}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 3), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyStringLengthSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyStringLengthSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: str-length(("A💚É",)...);
+        \\  map: str-length((string: "ÉX")...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-string-length-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:3;map:3}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call preserves string length ownership" {
     const input =
         \\@use "sass:meta";
@@ -9857,6 +9973,29 @@ test "native Sass meta call rejects invalid string length arguments and limits" 
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "str-length(()...)" },
+        .{ .name = "legacy-direct-extra-list-splat", .invocation = "str-length((a, b)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "str-length((string: a, other: b)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "str-length((1: a)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "str-length(a, (string: b)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     var direct_argument_limits = sass_evaluator.Limits{};
     direct_argument_limits.max_function_arguments = 1;
     try std.testing.expectError(
@@ -9865,6 +10004,16 @@ test "native Sass meta call rejects invalid string length arguments and limits" 
             std.testing.allocator,
             "string-length-direct-splat-argument-limit.scss",
             "@use \"sass:string\"; .a { value: string.length((value, other)...); }",
+            .scss,
+            direct_argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-string-length-direct-splat-argument-limit.scss",
+            ".a { value: str-length((value, other)...); }",
             .scss,
             direct_argument_limits,
         ),
@@ -30676,11 +30825,11 @@ test "native Sass string functions reject unsafe arity types indexes and limits"
     }
 
     try std.testing.expectError(
-        error.UnsupportedFeature,
+        error.InvalidExpression,
         compile(
             std.testing.allocator,
-            "string-splat.scss",
-            ".a { value: str-length($args...); }",
+            "string-overfull-splat.scss",
+            "$args: (value, other); .a { value: str-length($args...); }",
             .scss,
             .{},
         ),
