@@ -18846,6 +18846,142 @@ test "native Sass meta call rejects unavailable color darken forms arguments and
     );
 }
 
+test "native Sass expands direct legacy color saturate splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  filter-list: saturate((20%,)...);
+        \\  filter-map: saturate(("amount": 2px)...);
+        \\  filter-variable: saturate((var(--amount),)...);
+        \\  list: saturate((mark(1, #669966), mark(2, 20%))...);
+        \\  map: saturate(("color": mark(3, hsl(120deg 20% 25%)), "amount": mark(4, 10%))...);
+        \\  direct-map: saturate(mark(5, hwb(240deg 10% 20%)), ("amount": mark(6, 25%))...);
+        \\  override: saturate($color: #669966, $amount: 25%, ("amount": mark(7, 20%))...);
+        \\  unitless: saturate((#669966, 20)...);
+        \\  unitful: saturate((#669966, 20px)...);
+        \\  alpha: saturate((rgba(102, 153, 102, .5), 20%)...);
+        \\  type: meta.type-of(saturate((#669966, 20%)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-saturate-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{filter-list:saturate(20%);filter-map:saturate(2px);filter-variable:saturate(var(--amount));list:hsl(120,40%,50%);map:hsl(120,30%,25%);direct-map:rgb(0,0,229.5);override:hsl(120,40%,50%);unitless:hsl(120,40%,50%);unitful:hsl(120,40%,50%);alpha:hsla(120,40%,50%,.5);type:color;trace:1234567}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 16), diagnostics.len);
+    var global_warnings: usize = 0;
+    var saturate_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "saturate() is deprecated. Use color.adjust($color, $saturation: $amount).",
+        )) {
+            saturate_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 8), global_warnings);
+    try std.testing.expectEqual(@as(usize, 8), saturate_warnings);
+
+    const indented =
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  filter: saturate((20%,)...)
+        \\  list: saturate((mark(1, hsl(120deg 20% 25%)), mark(2, 10%))...)
+        \\  map: saturate((color: mark(3, hwb(240deg 10% 20%)), amount: mark(4, 25%))...)
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-saturate-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{filter:saturate(20%);list:hsl(120,30%,25%);map:rgb(0,0,229.5);trace:1234}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 4), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorSaturateSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorSaturateSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  filter: saturate((20%,)...);
+        \\  list: saturate((#669966, 20%)...);
+        \\  map: saturate(("color": hsl(120deg 20% 25%), "amount": 10%)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-saturate-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{filter:saturate(20%);list:hsl(120,40%,50%);map:hsl(120,30%,25%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 4), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes legacy color saturate function references" {
     const input =
         \\@use "sass:meta";
@@ -19074,6 +19210,37 @@ test "native Sass meta call rejects unavailable color saturate forms arguments a
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "saturate(()...)" },
+        .{ .name = "legacy-direct-short-list-splat", .invocation = "saturate((red,)...)" },
+        .{ .name = "legacy-direct-overfull-list-splat", .invocation = "saturate((#669966, 20%, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "saturate((color: #669966, other: 20%)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "saturate((1: #669966, amount: 20%)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "saturate(#669966, 20%, (amount: 30%)...)" },
+        .{ .name = "legacy-direct-negative-amount", .invocation = "saturate((#669966, -1%)...)" },
+        .{ .name = "legacy-direct-high-amount", .invocation = "saturate((#669966, 101%)...)" },
+        .{ .name = "legacy-direct-deferred-amount", .invocation = "saturate((#669966, var(--amount))...)" },
+        .{ .name = "legacy-direct-rgb-missing", .invocation = "saturate((rgb(none 0 0), 20%)...)" },
+        .{ .name = "legacy-direct-hsl-missing", .invocation = "saturate((hsl(none 20% 25%), 20%)...)" },
+        .{ .name = "legacy-direct-hwb-missing", .invocation = "saturate((hwb(none 20% 25%), 20%)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "saturate((color(display-p3 .1 .2 .3), 20%)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     try std.testing.expectError(
         error.InvalidExpression,
         compile(
@@ -19114,6 +19281,16 @@ test "native Sass meta call rejects unavailable color saturate forms arguments a
             .{},
         ),
     );
+    try std.testing.expectError(
+        error.InvalidExpression,
+        compile(
+            std.testing.allocator,
+            "meta-call-color-saturate-direct-module-splat.scss",
+            "@use \"sass:color\"; .a { value: color.saturate((#669966, 20%)...); }",
+            .scss,
+            .{},
+        ),
+    );
 
     var argument_limits = sass_evaluator.Limits{};
     argument_limits.max_function_arguments = 1;
@@ -19123,6 +19300,16 @@ test "native Sass meta call rejects unavailable color saturate forms arguments a
             std.testing.allocator,
             "meta-call-color-saturate-argument-limit.scss",
             "@use \"sass:meta\"; $saturate: meta.get-function(\"saturate\"); .a { value: meta.call($saturate, red, 10%); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-saturate-direct-splat-argument-limit.scss",
+            ".a { value: saturate((#669966, 20%)...); }",
             .scss,
             argument_limits,
         ),

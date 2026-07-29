@@ -5323,7 +5323,6 @@ const Engine = struct {
             .hue,
             .saturation,
             .lightness,
-            .saturate,
             .desaturate,
             .adjust_hue,
             .complement,
@@ -5444,6 +5443,35 @@ const Engine = struct {
                 } else false;
                 if (legacy_splat) {
                     return try self.callDirectLegacyColorDarkenRaw(
+                        body,
+                        ranges.items,
+                        scope,
+                        span,
+                    );
+                }
+                return try self.callFixedBuiltinRaw(
+                    builtin,
+                    module_builtin != null,
+                    raw,
+                    body,
+                    ranges.items,
+                    scope,
+                    span,
+                );
+            },
+            .saturate => {
+                const legacy_splat = if (module_builtin == null) blk: {
+                    for (ranges.items) |range| {
+                        if (std.mem.endsWith(
+                            u8,
+                            trimWhitespace(body[range.start..range.end]),
+                            "...",
+                        )) break :blk true;
+                    }
+                    break :blk false;
+                } else false;
+                if (legacy_splat) {
+                    return try self.callDirectLegacyColorSaturateRaw(
                         body,
                         ranges.items,
                         scope,
@@ -16592,6 +16620,22 @@ const Engine = struct {
         defer evaluated.deinit();
         return (try self.invokeColorDarkenFunction(
             builtinFunctionCallable(.darken, null),
+            &evaluated,
+            span,
+        )) orelse unreachable;
+    }
+
+    fn callDirectLegacyColorSaturateRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        return (try self.invokeColorSaturateFunction(
+            builtinFunctionCallable(.saturate, null),
             &evaluated,
             span,
         )) orelse unreachable;
