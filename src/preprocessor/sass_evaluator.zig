@@ -16313,6 +16313,16 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!*const native_value.Value {
+        if (builtin == .str_split) {
+            var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+            defer evaluated.deinit();
+            return (try self.invokeStringFunction(
+                builtinFunctionCallable(.str_split, .string),
+                &evaluated,
+                span,
+            )) orelse unreachable;
+        }
+
         const parameters: []const native_arguments.Parameter = switch (builtin) {
             .quote, .unquote, .str_length, .to_upper_case, .to_lower_case => &.{
                 .{ .name = "string" },
@@ -16330,11 +16340,6 @@ const Engine = struct {
                 .{ .name = "string" },
                 .{ .name = "insert" },
                 .{ .name = "index" },
-            },
-            .str_split => &.{
-                .{ .name = "string" },
-                .{ .name = "separator" },
-                .{ .name = "limit", .required = false },
             },
             else => unreachable,
         };

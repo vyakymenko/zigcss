@@ -10253,6 +10253,65 @@ test "native Sass invokes direct and reflected string split functions" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct string split arguments once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:string";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: meta.inspect(string.split((mark(1, "a-b-c"), mark(2, "-"), mark(3, 1))...));
+        \\  map: meta.inspect(string.split((string: mark(4, "a-b-c"), separator: mark(5, "-"), limit: mark(6, 1))...));
+        \\  mixed: meta.inspect(string.split(mark(7, "a-b-c"), (separator: mark(8, "-"), limit: mark(9, 1))...));
+        \\  override: meta.inspect(string.split($string: mark(1, "wrong"), (string: mark(2, "a-b-c"), separator: mark(3, "-"), limit: mark(4, 1))...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "string-split-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:[\"a\", \"b-c\"];map:[\"a\", \"b-c\"];mixed:[\"a\", \"b-c\"];override:[\"a\", \"b-c\"];trace:1234567891234}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:string" as text
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: m.inspect(text.split((mark(1, "a-b-c"), mark(2, "-"), mark(3, 1))...))
+        \\  map: m.inspect(text.split((string: mark(4, "a-b-c"), separator: mark(5, "-"), limit: mark(6, 1))...))
+        \\  mixed: m.inspect(text.split(mark(7, "a-b-c"), (separator: mark(8, "-"), limit: mark(9, 1))...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "string-split-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:[\"a\", \"b-c\"];map:[\"a\", \"b-c\"];mixed:[\"a\", \"b-c\"];trace:123456789}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass string split preserves the closed global boundary" {
     const input =
         \\@use "sass:meta";
@@ -10305,6 +10364,10 @@ test "native Sass string split rejects invalid arguments and limits" {
         .{ .name = "fraction-limit", .invocation = "meta.call($split, a, b, 1.5)" },
         .{ .name = "zero-limit", .invocation = "meta.call($split, a, b, 0)" },
         .{ .name = "negative-limit", .invocation = "meta.call($split, a, b, -1)" },
+        .{ .name = "direct-empty-splat", .invocation = "string.split(()...)" },
+        .{ .name = "direct-extra-list-splat", .invocation = "string.split((a, b, 1, 2)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "string.split((string: a, separator: b, other: 1)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "string.split((1: a, separator: b)...)" },
     };
     for (invalid) |case| {
         const case_source = try std.fmt.allocPrint(
@@ -10366,6 +10429,18 @@ test "native Sass string split rejects invalid arguments and limits" {
             "@use \"sass:meta\"; @use \"sass:string\" as *; $split: meta.get-function(\"split\"); .a { value: meta.call($split, \"a-b-c\", \"-\", 1); }",
             .scss,
             argument_limits,
+        ),
+    );
+    var direct_argument_limits = sass_evaluator.Limits{};
+    direct_argument_limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-split-direct-splat-argument-limit.scss",
+            "@use \"sass:string\"; .a { value: string.split((\"a-b-c\", \"-\", 1)...); }",
+            .scss,
+            direct_argument_limits,
         ),
     );
 }
@@ -29704,6 +29779,7 @@ fn exerciseMetaInspectionAllocationFailures(
         \\  string-upper-case-function-call: meta.call(meta.get-function("to-upper-case", $module: "text"), "a💚éßıiẞb");
         \\  string-lower-case-function-call: meta.call(meta.get-function("to-lower-case", $module: "text"), "A💚ÉẞIİB");
         \\  string-split-function-call: meta.inspect(meta.call(meta.get-function("split", $module: "text"), "a💚b💚c", "💚", 1));
+        \\  string-split-direct-splat-call: meta.inspect(text.split(("a💚b💚c", "💚", 1)...));
         \\  color-adjust-function-call: meta.call(meta.get-function("adjust", $module: "palette"), #123456, $red: 10);
         \\  color-change-function-call: meta.call(meta.get-function("change", $module: "palette"), #123456, $red: 28);
         \\  color-scale-function-call: meta.call(meta.get-function("scale", $module: "palette"), #123456, $red: 50%);
@@ -29738,7 +29814,7 @@ fn exerciseMetaInspectionAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;string-slice-function-call:\"💚\";string-insert-function-call:\"a🌍💚b\";string-upper-case-function-call:\"A💚éßıIẞB\";string-lower-case-function-call:\"a💚Éẞiİb\";string-split-function-call:[\"a\", \"b💚c\"];color-adjust-function-call:#1c3456;color-change-function-call:#1c3456;color-scale-function-call:rgb(136.5,52,86);color-rgb-function-call:#123456;color-rgba-function-call:rgba(18,52,86,.4);color-hsl-function-call:hsla(120,40%,50%,.4);color-hsla-function-call:hsla(120,40%,50%,.4);selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
+        ".allocation{type:calculation;inspect:(a: (1, 2));calc-name:\"calc\";calc-args:1px, var(--y);args:(1,);function:true;mixin:true;variable:true;global:true;module:true;user-function-reference:function;global-function-reference:function;module-function-reference:function;same-function-reference:true;mixin-reference:mixin;builtin-mixin-reference:mixin;user-function-inspect:get-function(\"allocation-function\");global-function-inspect:get-function(\"length\");module-function-inspect:get-function(\"ceil\");mixin-inspect:get-mixin(\"allocation-mixin\");builtin-mixin-inspect:get-mixin(\"load-css\");user-function-call:7;list-function-call:[a, b, c, d];map-query-function-call:8;map-mutation-function-call:(a: 1, b: 9);meta-inspect-function-call:(a: (1, 2));meta-type-function-call:calculation;meta-keywords-function-call:(invoked: true);meta-content-acceptance-function-call:true;meta-calc-name-function-call:\"calc\";meta-calc-args-function-call:1px, var(--y);meta-function-exists-call:true;meta-mixin-exists-call:true;meta-variable-exists-call:true;meta-global-variable-exists-call:true;meta-module-function-exists-call:true;math-abs-function-call:7px;math-percentage-function-call:12.5%;math-compatibility-function-call:true;math-unitless-function-call:true;math-unit-function-call:\"px\";math-acos-function-call:60deg;math-asin-function-call:30deg;math-atan-function-call:45deg;math-atan2-function-call:45deg;math-sin-function-call:.5;math-cos-function-call:.5;math-tan-function-call:1;math-log-function-call:3;math-pow-function-call:8;math-sqrt-function-call:9;math-div-function-call:3px;math-clamp-function-call:2px;math-hypot-function-call:5px;math-min-function-call:1px;math-max-function-call:3px;math-random-function-call:1;string-quote-function-call:\"allocation-string\";string-unquote-function-call:allocation string;string-length-function-call:3;string-index-function-call:2;string-slice-function-call:\"💚\";string-insert-function-call:\"a🌍💚b\";string-upper-case-function-call:\"A💚éßıIẞB\";string-lower-case-function-call:\"a💚Éẞiİb\";string-split-function-call:[\"a\", \"b💚c\"];string-split-direct-splat-call:[\"a\", \"b💚c\"];color-adjust-function-call:#1c3456;color-change-function-call:#1c3456;color-scale-function-call:rgb(136.5,52,86);color-rgb-function-call:#123456;color-rgba-function-call:rgba(18,52,86,.4);color-hsl-function-call:hsla(120,40%,50%,.4);color-hsla-function-call:hsla(120,40%,50%,.4);selector-parse-function-call:.allocation-call;selector-simple-selectors-function-call:.allocation-call,:hover;selector-is-superselector-function-call:true;selector-unify-function-call:.allocation-call.allocation-more;accepts-content:true;load-accepts-content:false;apply-accepts-content:true}.content{exists:true}.payload{ok:yes}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
