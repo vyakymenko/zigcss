@@ -1277,7 +1277,7 @@ const Engine = struct {
         }
         const opening = std.mem.indexOfScalar(u8, include.call, '(');
         const raw_name = trimWhitespace(if (opening) |index| include.call[0..index] else include.call);
-        if (!isSimpleIdentifier(raw_name)) {
+        if (!isSimpleIdentifier(raw_name) and parseQualifiedName(raw_name) == null) {
             try self.report(.syntax, prelude_node.span, "invalid native Sass mixin name");
             return error.InvalidSassSyntax;
         }
@@ -1357,7 +1357,7 @@ const Engine = struct {
 
         const opening = std.mem.indexOfScalar(u8, include.call, '(');
         const raw_name = trimWhitespace(if (opening) |index| include.call[0..index] else include.call);
-        if (!isSimpleIdentifier(raw_name)) {
+        if (!isSimpleIdentifier(raw_name) and parseQualifiedName(raw_name) == null) {
             try self.report(.syntax, prelude_node.span, "invalid native Sass mixin name");
             return error.InvalidSassSyntax;
         }
@@ -1377,10 +1377,6 @@ const Engine = struct {
             if (trimWhitespace(body[final.start..final.end]).len == 0) ranges.items.len -= 1;
         }
 
-        const mixin_id = try self.lookupUserMixin(raw_name, scope.cursor) orelse {
-            try self.report(.syntax, prelude_node.span, "undefined native Sass mixin");
-            return error.InvalidSassSyntax;
-        };
         const content_block = if (children.len == 2) blk: {
             const block = self.document.get(children[1]) catch return error.InvalidSassSyntax;
             if (block.kind != .block) {
@@ -1394,6 +1390,35 @@ const Engine = struct {
             prelude_node.span,
         );
         defer self.deinitCallableParameters(content_parameters);
+
+        if (try self.tryModuleBuiltinMixin(raw_name, prelude_node.span)) |builtin| {
+            switch (builtin) {
+                .meta_apply => try self.callMetaApply(
+                    body,
+                    ranges.items,
+                    scope,
+                    content_block,
+                    content_parameters,
+                    prelude_node.span,
+                    depth,
+                    context,
+                ),
+                .meta_load_css => {
+                    try self.report(
+                        .unsupported_feature,
+                        prelude_node.span,
+                        "native Sass meta.load-css() is not implemented yet",
+                    );
+                    return error.UnsupportedFeature;
+                },
+            }
+            return;
+        }
+
+        const mixin_id = try self.lookupUserMixin(raw_name, scope.cursor) orelse {
+            try self.report(.syntax, prelude_node.span, "undefined native Sass mixin");
+            return error.InvalidSassSyntax;
+        };
         try self.callUserMixin(
             mixin_id,
             body,
@@ -1935,6 +1960,88 @@ const Engine = struct {
         };
     }
 
+    fn callMetaApply(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        var evaluated = try self.evaluateCallArguments(
+            body,
+            ranges,
+            caller_scope.cursor,
+            span,
+        );
+        defer evaluated.deinit();
+
+        var forwarded = EvaluatedCallArguments{ .allocator = self.allocator };
+        defer forwarded.deinit();
+        var target: ?*const native_value.Value = null;
+        if (evaluated.positional.items.len > 0) {
+            target = evaluated.positional.items[0];
+            for (evaluated.positional.items[1..]) |item| {
+                try self.appendEvaluatedPositional(&forwarded, item, span);
+            }
+        }
+        for (evaluated.keywords.items) |keyword| {
+            if (evaluatedKeywordNameEql(keyword, "mixin")) {
+                if (target != null) {
+                    return self.argumentsFailure(error.DuplicateArgument, span);
+                }
+                target = keyword.value;
+                continue;
+            }
+            try self.appendEvaluatedKeyword(&forwarded, keyword, span);
+        }
+
+        const target_value = target orelse
+            return self.argumentsFailure(error.MissingArgument, span);
+        const callable = switch (target_value.*) {
+            .callable => |value| value,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native Sass meta.apply() requires a mixin reference",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        switch (callable.kind) {
+            .mixin => try self.invokeUserMixin(
+                callable.id,
+                &forwarded,
+                caller_scope,
+                content_block,
+                content_parameters,
+                span,
+                depth,
+                context,
+            ),
+            .builtin_mixin => {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass built-in mixin application is not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            },
+            .builtin_function, .user_function => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native Sass meta.apply() requires a mixin reference",
+                );
+                return error.InvalidExpression;
+            },
+        }
+    }
+
     fn callUserMixin(
         self: *Engine,
         mixin_id: u32,
@@ -1962,7 +2069,38 @@ const Engine = struct {
             span,
         );
         defer evaluated.deinit();
-        var bound = try self.bindCallableArguments(mixin.parameters, &evaluated, span);
+        try self.invokeUserMixin(
+            mixin_id,
+            &evaluated,
+            caller_scope,
+            content_block,
+            content_parameters,
+            span,
+            depth,
+            context,
+        );
+    }
+
+    fn invokeUserMixin(
+        self: *Engine,
+        mixin_id: u32,
+        evaluated: *const EvaluatedCallArguments,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        if (mixin_id >= self.user_mixins.items.len or context == .callable) {
+            return error.InvalidSassSyntax;
+        }
+        const mixin = &self.user_mixins.items[mixin_id];
+        if (content_block != null and !mixin.accepts_content) {
+            try self.report(.syntax, span, "native Sass mixin does not accept a content block");
+            return error.InvalidSassSyntax;
+        }
+        var bound = try self.bindCallableArguments(mixin.parameters, evaluated, span);
         defer bound.deinit();
 
         const previous_mixin_body = self.active_mixin_body;
@@ -4682,6 +4820,38 @@ const Engine = struct {
                 return error.InvalidExpression;
             },
         }
+    }
+
+    fn tryModuleBuiltinMixin(
+        self: *Engine,
+        name: []const u8,
+        span: native_source.Span,
+    ) Error!?BuiltinMixin {
+        if (isSimpleIdentifier(name)) {
+            for (self.modules.items) |binding| {
+                if (binding.namespace != null) continue;
+                if (moduleBuiltinMixin(binding.kind, name)) |builtin| return builtin;
+            }
+            return null;
+        }
+
+        const qualified = parseQualifiedName(name) orelse return null;
+        var matched: ?BuiltinModule = null;
+        for (self.modules.items) |binding| {
+            const namespace = binding.namespace orelse continue;
+            if (std.mem.eql(u8, namespace, qualified.namespace)) {
+                matched = binding.kind;
+                break;
+            }
+        }
+        const module = matched orelse {
+            try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
+            return error.InvalidExpression;
+        };
+        return moduleBuiltinMixin(module, qualified.member) orelse {
+            try self.report(.invalid_operation, span, "undefined native Sass module mixin");
+            return error.InvalidExpression;
+        };
     }
 
     fn tryModuleBuiltin(
