@@ -5336,6 +5336,7 @@ const Engine = struct {
             .fade_in,
             .transparentize,
             .fade_out,
+            .space,
             .ie_hex_str,
             => return try self.callFixedBuiltinRaw(
                 builtin,
@@ -5387,7 +5388,6 @@ const Engine = struct {
             // outside these evidence-closed slices.
             .whiteness,
             .blackness,
-            .space,
             .to_space,
             .is_legacy,
             .is_missing,
@@ -6026,6 +6026,58 @@ const Engine = struct {
             return error.InvalidExpression;
         }
         return self.callIeHexStrValue(arguments[0].*, span);
+    }
+
+    fn callColorSpace(
+        self: *Engine,
+        arguments: []const *const native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 1) {
+            try self.report(.type_mismatch, span, "color.space() requires exactly one color");
+            return error.InvalidExpression;
+        }
+        return self.callColorSpaceValue(arguments[0].*, span);
+    }
+
+    fn callColorSpaceValue(
+        self: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const color = switch (value) {
+            .color => |color| color,
+            else => {
+                try self.report(.type_mismatch, span, "color.space() requires exactly one color");
+                return error.InvalidExpression;
+            },
+        };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass color.space() does not yet admit missing color channels",
+            );
+            return error.InvalidExpression;
+        }
+        const name: []const u8 = switch (color.space) {
+            .rgb => "rgb",
+            .hsl => "hsl",
+            .hwb => "hwb",
+            .lab => "lab",
+            .lch => "lch",
+            .oklab => "oklab",
+            .oklch => "oklch",
+            .srgb => "srgb",
+            .srgb_linear => "srgb-linear",
+            .display_p3 => "display-p3",
+            .a98_rgb => "a98-rgb",
+            .prophoto_rgb => "prophoto-rgb",
+            .rec2020 => "rec2020",
+            .xyz_d50 => "xyz-d50",
+            .xyz => "xyz",
+        };
+        return self.values.own(.{ .string = .{ .bytes = name } });
     }
 
     fn callIeHexStrValue(
@@ -9409,6 +9461,13 @@ const Engine = struct {
                     break :blk value;
                 }
                 if (try self.invokeColorLegacyAlphaFunction(
+                    callable,
+                    &forwarded,
+                    span,
+                )) |value| {
+                    break :blk value;
+                }
+                if (try self.invokeColorSpaceFunction(
                     callable,
                     &forwarded,
                     span,
@@ -13879,6 +13938,32 @@ const Engine = struct {
         return self.callIeHexStrValue(bound.values[0].?.*, span);
     }
 
+    fn invokeColorSpaceFunction(
+        self: *Engine,
+        callable: native_value.Callable,
+        arguments: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return null;
+        if (reference.owner == null or reference.owner.? != .color or
+            reference.builtin != .space)
+        {
+            return null;
+        }
+
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "color" },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            arguments,
+            span,
+        );
+        defer bound.deinit();
+        return self.callColorSpaceValue(bound.values[0].?.*, span);
+    }
+
     fn invalidHslChannels(
         self: *Engine,
         span: native_source.Span,
@@ -14186,7 +14271,7 @@ const Engine = struct {
         self.report(
             .type_mismatch,
             span,
-            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, or lab, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
+            "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, or lower-case, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, or space, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
     }
@@ -15558,6 +15643,7 @@ const Engine = struct {
             .lightness,
             .complement,
             .grayscale,
+            .space,
             .ie_hex_str,
             => &.{.{ .name = "color" }},
             .mix => &.{
@@ -15823,6 +15909,7 @@ const Engine = struct {
                 span,
             ),
             .opacity => self.callColorOpacity(raw, arguments, scope, span),
+            .space => self.callColorSpace(arguments, span),
             .ie_hex_str => self.callIeHexStr(arguments, span),
             .mix,
             .lighten,
@@ -17443,6 +17530,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "change")) return .change_color;
     if (sassNameEql(name, "scale")) return .scale_color;
     if (sassNameEql(name, "hwb")) return .hwb;
+    if (sassNameEql(name, "space")) return .space;
     if (sassNameEql(name, "ie-hex-str")) return .ie_hex_str;
     return null;
 }
