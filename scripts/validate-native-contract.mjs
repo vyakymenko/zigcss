@@ -292,6 +292,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-color-transparentize-function-invocation',
       'built-in-color-legacy-transparentize-direct-splat-expansion',
       'built-in-meta-color-fade-out-function-invocation',
+      'built-in-color-legacy-fade-out-direct-splat-expansion',
       'built-in-meta-color-ie-hex-str-function-invocation',
       'built-in-meta-color-space-function-invocation',
       'built-in-meta-color-to-space-function-invocation',

@@ -23354,6 +23354,140 @@ test "native Sass meta call rejects unavailable color transparentize forms argum
     );
 }
 
+test "native Sass expands direct legacy color fade out splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward-positional($args...) {
+        \\  @return fade-out($args...);
+        \\}
+        \\@function forward-keyword($args...) {
+        \\  @return fade-out($args...);
+        \\}
+        \\.values {
+        \\  list: fade-out((mark(1, rgba(18, 52, 86, .6)), .2)...);
+        \\  map: fade-out(("color": mark(2, hsla(120, 20%, 25%, .6)), "amount": .2%)...);
+        \\  bracketed: fade-out([mark(3, hwb(240deg 10% 20% / .6)), .2px]...);
+        \\  override: fade-out($color: mark(4, red), ("color": mark(5, rgba(18, 52, 86, .6)), "amount": .2)...);
+        \\  rest-positional: forward-positional(rgba(18, 52, 86, .6), .2);
+        \\  rest-keyword: forward-keyword($color: hwb(240deg 10% 20% / .6), $amount: .2);
+        \\  transparent: fade-out((transparent, .2)...);
+        \\  opaque: fade-out((#123456, .2)...);
+        \\  alpha: fade-out((rgba(18, 52, 86, .1), .2)...);
+        \\  zero: fade-out((rgba(18, 52, 86, .6), 0)...);
+        \\  full: fade-out((rgba(18, 52, 86, .6), 1)...);
+        \\  type: meta.type-of(fade-out((rgba(18, 52, 86, .6), .2)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-fade-out-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:rgba(18,52,86,.4);map:rgba(51,76.5,51,.4);bracketed:rgba(25.5,25.5,204,.4);override:rgba(18,52,86,.4);rest-positional:rgba(18,52,86,.4);rest-keyword:rgba(25.5,25.5,204,.4);transparent:rgba(0,0,0,0);opaque:rgba(18,52,86,.8);alpha:rgba(18,52,86,0);zero:rgba(18,52,86,.6);full:rgba(18,52,86,0);type:color;trace:12345}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 24), diagnostics.len);
+    var global_warnings: usize = 0;
+    var fade_out_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "fade-out() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+        )) {
+            fade_out_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 12), global_warnings);
+    try std.testing.expectEqual(@as(usize, 12), fade_out_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: fade-out((mark(1, rgba(18, 52, 86, .6)), .2)...)
+        \\  map: fade-out((color: mark(2, hsla(120, 20%, 25%, .6)), amount: .2)...)
+        \\  override: fade-out($color: mark(3, red), (color: mark(4, hwb(240deg 10% 20% / .6)), amount: .2)...)
+        \\  type: m.type-of(fade-out((rgba(18, 52, 86, .6), .2)...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-fade-out-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:rgba(18,52,86,.4);map:rgba(51,76.5,51,.4);override:rgba(25.5,25.5,204,.4);type:color;trace:1234}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 8), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorFadeOutSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorFadeOutSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: fade-out((rgba(18, 52, 86, .6), .2)...);
+        \\  map: fade-out(("color": hsla(120, 20%, 25%, .6), "amount": .2px)...);
+        \\  hwb: fade-out([hwb(240deg 10% 20% / .6), .2%]...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-fade-out-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:rgba(18,52,86,.4);map:rgba(51,76.5,51,.4);hwb:rgba(25.5,25.5,204,.4)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes legacy color fade out function references" {
     const input =
         \\@use "sass:meta";
@@ -23539,6 +23673,41 @@ test "native Sass meta call rejects unavailable color fade out forms arguments a
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "fade-out(()...)" },
+        .{ .name = "legacy-direct-short-splat", .invocation = "fade-out((rgba(1, 2, 3, .6),)...)" },
+        .{ .name = "legacy-direct-overfull-splat", .invocation = "fade-out((rgba(1, 2, 3, .6), .2, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "fade-out((color: rgba(1, 2, 3, .6), other: .2)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "fade-out((1: rgba(1, 2, 3, .6), amount: .2)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate-color", .invocation = "fade-out(rgba(1, 2, 3, .6), (color: red, amount: .2)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate-amount", .invocation = "fade-out(rgba(1, 2, 3, .6), .2, (amount: .3)...)" },
+        .{ .name = "legacy-direct-invalid-color", .invocation = "fade-out((true, .2)...)" },
+        .{ .name = "legacy-direct-invalid-amount", .invocation = "fade-out((red, true)...)" },
+        .{ .name = "legacy-direct-calculation-amount", .invocation = "fade-out((red, calc(.1 + var(--amount)))...)" },
+        .{ .name = "legacy-direct-negative-amount", .invocation = "fade-out((red, -.1)...)" },
+        .{ .name = "legacy-direct-large-amount", .invocation = "fade-out((red, 1.1)...)" },
+        .{ .name = "legacy-direct-rgb-missing", .invocation = "fade-out((rgb(none 0 0 / .6), .2)...)" },
+        .{ .name = "legacy-direct-hsl-missing", .invocation = "fade-out((hsl(none 10% 20% / .6), .2)...)" },
+        .{ .name = "legacy-direct-hwb-missing", .invocation = "fade-out((hwb(none 10% 20% / .6), .2)...)" },
+        .{ .name = "legacy-direct-alpha-missing", .invocation = "fade-out((rgb(1 2 3 / none), .2)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "fade-out((color(display-p3 .1 .2 .3 / .6), .2)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     try std.testing.expectError(
         error.InvalidExpression,
         compile(
@@ -23578,6 +23747,16 @@ test "native Sass meta call rejects unavailable color fade out forms arguments a
             std.testing.allocator,
             "meta-call-color-fade-out-argument-limit.scss",
             "@use \"sass:meta\"; $fade-out: meta.get-function(\"fade-out\"); .a { value: meta.call($fade-out, red, .2); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-fade-out-direct-splat-argument-limit.scss",
+            ".a { value: fade-out((rgba(1, 2, 3, .6), .2, extra)...); }",
             .scss,
             argument_limits,
         ),
