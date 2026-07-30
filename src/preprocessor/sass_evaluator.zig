@@ -829,6 +829,31 @@ fn remapLocalModuleExportCallable(
     };
 }
 
+fn remapLocalModuleArgumentCallable(
+    context: usize,
+    callable: native_value.Callable,
+) ?native_value.Callable {
+    if (context >= hard_modules) return null;
+    return switch (callable.kind) {
+        .builtin_function, .builtin_mixin => callable,
+        .local_module_function => if (decodeLocalModuleCallable(callable)) |target|
+            if (target.module_index == context)
+                .{ .kind = .user_function, .id = target.callable_id }
+            else
+                null
+        else
+            null,
+        .local_module_mixin => if (decodeLocalModuleCallable(callable)) |target|
+            if (target.module_index == context)
+                .{ .kind = .mixin, .id = target.callable_id }
+            else
+                null
+        else
+            null,
+        .user_function, .mixin => null,
+    };
+}
+
 const ParsedUse = struct {
     url: []const u8,
     namespace: ?[]const u8 = null,
@@ -930,6 +955,8 @@ const Engine = struct {
     modules: std.ArrayList(ModuleBinding) = .empty,
     local_modules: std.ArrayList(LocalModule) = .empty,
     module_depth: u16 = 0,
+    parent_engine: ?*Engine = null,
+    parent_module_index: ?usize = null,
     active_content: ?*const ContentInvocation = null,
     active_mixin_body: bool = false,
     expression_depth: u16 = 0,
@@ -1472,6 +1499,8 @@ const Engine = struct {
         );
         errdefer module_engine.deinit();
         module_engine.module_depth = self.module_depth + 1;
+        module_engine.parent_engine = self;
+        module_engine.parent_module_index = self.local_modules.items.len;
         try module_engine.run();
         const variables = try self.clonePublicModuleVariables(module_engine);
         errdefer {
@@ -1792,51 +1821,74 @@ const Engine = struct {
         target: *Engine,
         input: *const EvaluatedCallArguments,
         span: native_source.Span,
+        remapper: ?native_value.CallableRemapper,
     ) Error!EvaluatedCallArguments {
         var result = EvaluatedCallArguments{ .allocator = target.allocator };
         errdefer result.deinit();
         for (input.positional.items) |item| {
-            if (valueContainsCallable(item.*, 0)) {
-                try self.report(
-                    .unsupported_feature,
-                    span,
-                    "native Sass local module callable arguments are not implemented yet",
-                );
-                return error.UnsupportedFeature;
-            }
-            try result.positional.append(target.allocator, try target.values.own(item.*));
+            try result.positional.append(
+                target.allocator,
+                try self.cloneEvaluatedArgumentInto(target, item.*, span, remapper),
+            );
         }
         for (input.keywords.items) |keyword| {
-            if (valueContainsCallable(keyword.value.*, 0)) {
-                try self.report(
-                    .unsupported_feature,
-                    span,
-                    "native Sass local module callable arguments are not implemented yet",
-                );
-                return error.UnsupportedFeature;
-            }
             try result.keywords.append(target.allocator, .{
                 .name = keyword.name,
-                .value = try target.values.own(keyword.value.*),
+                .value = try self.cloneEvaluatedArgumentInto(
+                    target,
+                    keyword.value.*,
+                    span,
+                    remapper,
+                ),
                 .normalize_name = keyword.normalize_name,
             });
         }
         for (input.splat_keywords.items) |keyword| {
-            if (valueContainsCallable(keyword.value.*, 0)) {
-                try self.report(
-                    .unsupported_feature,
-                    span,
-                    "native Sass local module callable arguments are not implemented yet",
-                );
-                return error.UnsupportedFeature;
-            }
             try result.splat_keywords.append(target.allocator, .{
                 .name = keyword.name,
-                .value = try target.values.own(keyword.value.*),
+                .value = try self.cloneEvaluatedArgumentInto(
+                    target,
+                    keyword.value.*,
+                    span,
+                    remapper,
+                ),
                 .normalize_name = keyword.normalize_name,
             });
         }
         return result;
+    }
+
+    fn cloneEvaluatedArgumentInto(
+        self: *Engine,
+        target: *Engine,
+        value: native_value.Value,
+        span: native_source.Span,
+        remapper: ?native_value.CallableRemapper,
+    ) Error!*const native_value.Value {
+        if (remapper) |mapper| {
+            return target.values.ownRemappingCallables(value, mapper) catch |failure|
+                switch (failure) {
+                    error.InvalidValue => {
+                        if (!valueContainsCallable(value, 0)) return failure;
+                        try self.report(
+                            .unsupported_feature,
+                            span,
+                            "native Sass local module callable argument owner is not supported yet",
+                        );
+                        return error.UnsupportedFeature;
+                    },
+                    else => return failure,
+                };
+        }
+        if (valueContainsCallable(value, 0)) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass local module callable arguments are not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        return target.values.own(value);
     }
 
     fn invokeLocalModuleFunction(
@@ -1852,7 +1904,15 @@ const Engine = struct {
         if (target.callable_id >= module_engine.user_functions.items.len) {
             return self.metaCallFunctionFailure(span);
         }
-        var cloned = try self.cloneEvaluatedArgumentsInto(module_engine, input, span);
+        var cloned = try self.cloneEvaluatedArgumentsInto(
+            module_engine,
+            input,
+            span,
+            .{
+                .context = target.module_index,
+                .map = remapLocalModuleArgumentCallable,
+            },
+        );
         defer cloned.deinit();
         const result = try module_engine.invokeUserFunction(
             target.callable_id,
@@ -3060,7 +3120,15 @@ const Engine = struct {
         if (target.callable_id >= module_engine.user_mixins.items.len) {
             return self.metaApplyMixinFailure(span);
         }
-        var cloned = try self.cloneEvaluatedArgumentsInto(module_engine, evaluated, span);
+        var cloned = try self.cloneEvaluatedArgumentsInto(
+            module_engine,
+            evaluated,
+            span,
+            .{
+                .context = target.module_index,
+                .map = remapLocalModuleArgumentCallable,
+            },
+        );
         defer cloned.deinit();
         try module_engine.invokeUserMixin(
             target.callable_id,
@@ -3213,10 +3281,22 @@ const Engine = struct {
                 context,
             );
         }
+        const remapper: ?native_value.CallableRemapper =
+            if (self.parent_engine == invocation.engine)
+                if (self.parent_module_index) |module_index|
+                    .{
+                        .context = module_index,
+                        .map = remapLocalModuleExportCallable,
+                    }
+                else
+                    null
+            else
+                null;
         var cloned = try self.cloneEvaluatedArgumentsInto(
             invocation.engine,
             &evaluated,
             content_node.span,
+            remapper,
         );
         defer cloned.deinit();
         return invocation.engine.invokeContentInvocation(

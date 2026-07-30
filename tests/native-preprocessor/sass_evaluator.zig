@@ -37765,6 +37765,142 @@ test "native Sass owns callable-valued one-hop local module variables" {
     try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
 }
 
+test "native Sass owns target-module and built-in callable arguments across local module calls" {
+    const root_input =
+        \\@use "sass:map";
+        \\@use "sass:math";
+        \\@use "sass:meta";
+        \\@use "tools";
+        \\@use "_tools.scss" as alias;
+        \\$local-function: tools.$local-function;
+        \\$local-mixin: alias.$local-mixin;
+        \\$builtin-function: meta.get-function("abs", $module: "math");
+        \\$invoke: meta.get-function("invoke", $module: "alias");
+        \\$apply: meta.get-mixin("apply", "tools");
+        \\$callbacks: ("own": $local-function, "builtin": $builtin-function);
+        \\$invoke-keywords: (callable: $local-function, value: 3px);
+        \\$apply-keywords: (callable: $local-mixin, value: 8px);
+        \\.values {
+        \\  own-direct: tools.invoke($value: 2px, $callable: $local-function);
+        \\  own-reflected: meta.call($invoke, $invoke-keywords...);
+        \\  builtin-direct: alias.invoke($builtin-function, -4px);
+        \\  nested-own: tools.invoke-nested($callbacks, "own", 5px);
+        \\  nested-builtin: meta.call(meta.get-function("invoke-nested", $module: "tools"), $callbacks, "builtin", -6px);
+        \\}
+        \\@include tools.apply($value: 7px, $callable: $local-mixin);
+        \\@include meta.apply($apply, $apply-keywords...);
+        \\@include alias.round-trip($callbacks) using ($round-tripped) {
+        \\  .round-trip {
+        \\    own: meta.call(map.get($round-tripped, "own"), 9px);
+        \\    builtin: meta.call(map.get($round-tripped, "builtin"), -10px);
+        \\  }
+        \\}
+    ;
+    const files = [_]LocalUseFile{.{
+        .name = "_tools.scss",
+        .contents =
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\@function local-fn($value) { @return $value * 2; }
+        \\@mixin local-mixin($value) { .local { value: $value; } }
+        \\$local-function: meta.get-function("local-fn");
+        \\$local-mixin: meta.get-mixin("local-mixin");
+        \\@function invoke($callable, $value) {
+        \\  @return meta.call($callable, $value);
+        \\}
+        \\@function invoke-nested($callbacks, $key, $value) {
+        \\  @return meta.call(map.get($callbacks, $key), $value);
+        \\}
+        \\@mixin apply($callable, $value) {
+        \\  @include meta.apply($callable, $value);
+        \\}
+        \\@mixin round-trip($value) {
+        \\  @content($value);
+        \\}
+        ,
+    }};
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "local-callable-argument-ownership.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{own-direct:4px;own-reflected:6px;builtin-direct:4px;nested-own:10px;nested-builtin:6px}.local{value:7px}.local{value:8px}.round-trip{own:18px;builtin:10px}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+
+    const indented_root =
+        \\@use "sass:map" as map
+        \\@use "sass:math" as math
+        \\@use "sass:meta" as meta
+        \\@use "legacy"
+        \\@use "legacy" as alias
+        \\$local-function: legacy.$local-function
+        \\$local-mixin: alias.$local-mixin
+        \\$builtin-function: meta.get-function("abs", $module: "math")
+        \\$invoke: meta.get-function("invoke", $module: "alias")
+        \\$apply: meta.get-mixin("apply", "legacy")
+        \\$callbacks: ("own": $local-function, "builtin": $builtin-function)
+        \\$invoke-keywords: (callable: $local-function, value: 3px)
+        \\$apply-keywords: (callable: $local-mixin, value: 8px)
+        \\.values
+        \\  own-direct: legacy.invoke($value: 2px, $callable: $local-function)
+        \\  own-reflected: meta.call($invoke, $invoke-keywords...)
+        \\  builtin-direct: alias.invoke($builtin-function, -4px)
+        \\  nested-own: legacy.invoke-nested($callbacks, "own", 5px)
+        \\  nested-builtin: meta.call(meta.get-function("invoke-nested", $module: "legacy"), $callbacks, "builtin", -6px)
+        \\@include legacy.apply($value: 7px, $callable: $local-mixin)
+        \\@include meta.apply($apply, $apply-keywords...)
+        \\@include alias.round-trip($callbacks) using ($round-tripped)
+        \\  .round-trip
+        \\    own: meta.call(map.get($round-tripped, "own"), 9px)
+        \\    builtin: meta.call(map.get($round-tripped, "builtin"), -10px)
+    ;
+    const indented_files = [_]LocalUseFile{.{
+        .name = "_legacy.sass",
+        .contents =
+        \\@use "sass:map" as map
+        \\@use "sass:meta" as meta
+        \\@function local-fn($value)
+        \\  @return $value * 2
+        \\@mixin local-mixin($value)
+        \\  .local
+        \\    value: $value
+        \\$local-function: meta.get-function("local-fn")
+        \\$local-mixin: meta.get-mixin("local-mixin")
+        \\@function invoke($callable, $value)
+        \\  @return meta.call($callable, $value)
+        \\@function invoke-nested($callbacks, $key, $value)
+        \\  @return meta.call(map.get($callbacks, $key), $value)
+        \\@mixin apply($callable, $value)
+        \\  @include meta.apply($callable, $value)
+        \\@mixin round-trip($value)
+        \\  @content($value)
+        ,
+    }};
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "local-callable-argument-ownership.sass",
+        indented_root,
+        .sass,
+        &indented_files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{own-direct:4px;own-reflected:6px;builtin-direct:4px;nested-own:10px;nested-builtin:6px}.local{value:7px}.local{value:8px}.round-trip{own:18px;builtin:10px}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
+}
+
 test "native Sass enumerates one-hop local module mixins" {
     const root_input =
         \\@use "sass:meta";
@@ -38187,14 +38323,24 @@ test "native Sass local module callable references reject missing ambiguous and 
 }
 
 test "native Sass local module function reference invocation rejects invalid cross-arena calls" {
-    const files = [_]LocalUseFile{.{
-        .name = "_functions.scss",
-        .contents =
-        \\@function required($left, $right: 2) { @return $left + $right; }
-        \\@function accepts($value) { @return $value; }
-        \\@function returns-callable() { @return get-function("required"); }
-        ,
-    }};
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_functions.scss",
+            .contents =
+            \\@function required($left, $right: 2) { @return $left + $right; }
+            \\@function accepts($value) { @return $value; }
+            \\@function returns-callable() { @return get-function("required"); }
+            ,
+        },
+        .{
+            .name = "_other.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\@function other($value) { @return $value * 3; }
+            \\$callback: meta.get-function("other");
+            ,
+        },
+    };
     const invalid = [_]struct {
         name: []const u8,
         input: []const u8,
@@ -38221,8 +38367,13 @@ test "native Sass local module function reference invocation rejects invalid cro
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "callable-local-function-reference-argument.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; @use \"functions\"; $ref: meta.get-function(\"accepts\", $module: \"functions\"); .root { value: meta.call($ref, meta.get-function(\"abs\", $module: \"math\")); }",
+            .name = "caller-owned-local-function-reference-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"functions\"; @function caller($value) { @return $value; } $callback: meta.get-function(\"caller\"); $ref: meta.get-function(\"accepts\", $module: \"functions\"); .root { value: meta.call($ref, $callback); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "other-module-owned-local-function-reference-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"functions\"; @use \"other\"; $ref: meta.get-function(\"accepts\", $module: \"functions\"); .root { value: meta.call($ref, (\"nested\": other.$callback)); }",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -38306,8 +38457,8 @@ test "native Sass local module mixin reference application rejects invalid cross
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "callable-local-mixin-reference-argument.scss",
-            .input = "@use \"sass:meta\"; @use \"sass:math\"; @use \"mixins\"; $ref: meta.get-mixin(\"accepts\", \"mixins\"); @include meta.apply($ref, meta.get-function(\"abs\", $module: \"math\"));",
+            .name = "caller-owned-local-mixin-reference-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"mixins\"; @function caller($value) { @return $value; } $callback: meta.get-function(\"caller\"); $ref: meta.get-mixin(\"accepts\", \"mixins\"); @include meta.apply($ref, $callback);",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -38410,6 +38561,90 @@ test "native Sass local module function reference failures own diagnostics witho
         diagnostics[0].message,
     );
     const call = "meta.call($ref)";
+    const call_start = std.mem.indexOf(u8, input, call).?;
+    try std.testing.expectEqual(source_id, diagnostics[0].span.source);
+    try std.testing.expectEqual(@as(u32, @intCast(call_start)), diagnostics[0].span.start);
+    try std.testing.expectEqual(
+        @as(u32, @intCast(call_start + call.len)),
+        diagnostics[0].span.end,
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
+test "native Sass unsupported callable argument owners own diagnostics without partial CSS" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const input =
+        \\@use "sass:meta";
+        \\@use "functions";
+        \\@function caller($value) { @return $value; }
+        \\$callback: meta.get-function("caller");
+        \\$ref: meta.get-function("accepts", $module: "functions");
+        \\$value: meta.call($ref, ("nested": $callback));
+        \\.unreachable { value: $value; }
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_functions.scss",
+        .data = "@function accepts($value) { @return $value; }",
+    });
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.unsupported_feature,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "native Sass local module callable argument owner is not supported yet",
+        diagnostics[0].message,
+    );
+    const call = "meta.call($ref, (\"nested\": $callback))";
     const call_start = std.mem.indexOf(u8, input, call).?;
     try std.testing.expectEqual(source_id, diagnostics[0].span.source);
     try std.testing.expectEqual(@as(u32, @intCast(call_start)), diagnostics[0].span.start);
@@ -39399,6 +39634,7 @@ fn exerciseLocalUseAllocationFailures(
         \\  reflected-value: meta.call($function, tokens.$public);
         \\  exported-function-value: meta.call($exported-function, tokens.$public);
         \\  exported-function-enumerated: map.get($variables, "exported-function") == $exported-function;
+        \\  callable-argument-value: tokens.invoke($exported-function, 3px);
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
@@ -39406,6 +39642,10 @@ fn exerciseLocalUseAllocationFailures(
         \\}
         \\@include meta.apply($mixin, reflected) { content: reflected-caller; }
         \\@include meta.apply($exported-mixin, exported) { content: exported-caller; }
+        \\@include tokens.apply-callback($exported-mixin, callback) { content: callback-caller; }
+        \\@include tokens.round-trip($exported-function) using ($callback) {
+        \\  .round-trip { value: meta.call($callback, 4px); }
+        \\}
         \\@include tokens.emit(card) { content: caller; }
     ;
     const source_id = try sources.add(context.root_url, input);
@@ -39425,7 +39665,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".module{order:first}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.card{value:4px;content:caller}",
+        ".module{order:first}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -39442,6 +39682,15 @@ test "native Sass local use handles every allocation failure" {
         \\@function double($value) { @return $value * 2; }
         \\@mixin emit($name) {
         \\  .#{$name} { value: double($public); @content; }
+        \\}
+        \\@function invoke($callback, $value) {
+        \\  @return meta.call($callback, $value);
+        \\}
+        \\@mixin apply-callback($callback, $name) {
+        \\  @include meta.apply($callback, $name) { @content; }
+        \\}
+        \\@mixin round-trip($value) {
+        \\  @content($value);
         \\}
         \\$exported-function: meta.get-function("double");
         \\$exported-mixin: meta.get-mixin("emit");
@@ -39470,6 +39719,7 @@ test "native Sass local use handles every allocation failure" {
         \\  reflected-value: meta.call($function, tokens.$public);
         \\  exported-function-value: meta.call($exported-function, tokens.$public);
         \\  exported-function-enumerated: map.get($variables, "exported-function") == $exported-function;
+        \\  callable-argument-value: tokens.invoke($exported-function, 3px);
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
@@ -39477,6 +39727,10 @@ test "native Sass local use handles every allocation failure" {
         \\}
         \\@include meta.apply($mixin, reflected) { content: reflected-caller; }
         \\@include meta.apply($exported-mixin, exported) { content: exported-caller; }
+        \\@include tokens.apply-callback($exported-mixin, callback) { content: callback-caller; }
+        \\@include tokens.round-trip($exported-function) using ($callback) {
+        \\  .round-trip { value: meta.call($callback, 4px); }
+        \\}
         \\@include tokens.emit(card) { content: caller; }
     ;
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = root_input });
