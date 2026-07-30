@@ -829,6 +829,21 @@ fn remapLocalModuleExportCallable(
     };
 }
 
+fn remapLocalModuleConfigurationCallable(
+    context: usize,
+    callable: native_value.Callable,
+) ?native_value.Callable {
+    if (context >= hard_modules) return null;
+    return switch (callable.kind) {
+        .builtin_function, .builtin_mixin => callable,
+        .local_module_function, .local_module_mixin => if (decodeLocalModuleCallable(callable)) |target|
+            if (target.module_index < context) callable else null
+        else
+            null,
+        .user_function, .mixin => null,
+    };
+}
+
 fn remapLocalModuleArgumentCallable(
     context: usize,
     callable: native_value.Callable,
@@ -1477,11 +1492,11 @@ const Engine = struct {
             const raw_value = configuration[argument.value.start..argument.value.end];
             const value_span = self.sourceSpanForBytes(raw_value, span);
             const value = try self.evaluateExpressionBytes(raw_value, scope, value_span);
-            if (valueContainsNonBuiltinCallable(value.*, 0)) {
+            if (!self.valueHasOwnedConfigurationCallables(value.*, 0)) {
                 try self.report(
                     .unsupported_feature,
                     value_span,
-                    "native Sass local module configuration only supports globally owned built-in callables",
+                    "native Sass local module configuration only supports built-ins and callables owned by an already retained sibling module",
                 );
                 return error.UnsupportedFeature;
             }
@@ -1516,6 +1531,61 @@ const Engine = struct {
             error.FunctionArgumentLimitExceeded
         else
             error.InvalidSassSyntax;
+    }
+
+    fn valueHasOwnedConfigurationCallables(
+        self: *const Engine,
+        value: native_value.Value,
+        depth: u16,
+    ) bool {
+        if (depth > 64) return false;
+        return switch (value) {
+            .callable => |callable| switch (callable.kind) {
+                .builtin_function, .builtin_mixin => true,
+                .local_module_function, .local_module_mixin => if (decodeLocalModuleCallable(
+                    callable,
+                )) |target|
+                    self.localModuleCallableExists(target, callable.kind)
+                else
+                    false,
+                .user_function, .mixin => false,
+            },
+            .list => |list| blk: {
+                for (list.items) |item| {
+                    if (!self.valueHasOwnedConfigurationCallables(item, depth + 1)) {
+                        break :blk false;
+                    }
+                }
+                break :blk true;
+            },
+            .map => |map| blk: {
+                for (map.entries) |entry| {
+                    if (!self.valueHasOwnedConfigurationCallables(entry.key, depth + 1) or
+                        !self.valueHasOwnedConfigurationCallables(entry.value, depth + 1))
+                    {
+                        break :blk false;
+                    }
+                }
+                break :blk true;
+            },
+            .argument_list => |arguments| blk: {
+                for (arguments.positional) |item| {
+                    if (!self.valueHasOwnedConfigurationCallables(item, depth + 1)) {
+                        break :blk false;
+                    }
+                }
+                for (arguments.keywords) |keyword| {
+                    if (!self.valueHasOwnedConfigurationCallables(
+                        keyword.value,
+                        depth + 1,
+                    )) {
+                        break :blk false;
+                    }
+                }
+                break :blk true;
+            },
+            else => true,
+        };
     }
 
     fn validateModuleBinding(
@@ -1745,6 +1815,8 @@ const Engine = struct {
         configuration: *const ModuleConfiguration,
     ) Error!void {
         if (configuration.items.items.len == 0) return;
+        const module_index = module_engine.parent_module_index orelse
+            return error.InvalidSassSyntax;
         const children = module_engine.document.children(module_engine.document.root) catch
             return error.InvalidSassSyntax;
 
@@ -1798,14 +1870,30 @@ const Engine = struct {
         }
 
         for (configuration.items.items) |entry| {
-            const item = module_engine.values.own(entry.value.*) catch |failure| {
-                if (failure == error.OutOfMemory) return failure;
-                try self.report(
-                    .resource_limit,
-                    entry.span,
-                    "native Sass module configuration value limit exceeded",
-                );
-                return failure;
+            const item = module_engine.values.ownRemappingCallables(
+                entry.value.*,
+                .{
+                    .context = module_index,
+                    .map = remapLocalModuleConfigurationCallable,
+                },
+            ) catch |failure| switch (failure) {
+                error.OutOfMemory => return failure,
+                error.InvalidValue => {
+                    try self.report(
+                        .unsupported_feature,
+                        entry.span,
+                        "native Sass local module configuration callable owner is not supported",
+                    );
+                    return error.UnsupportedFeature;
+                },
+                else => {
+                    try self.report(
+                        .resource_limit,
+                        entry.span,
+                        "native Sass module configuration value limit exceeded",
+                    );
+                    return failure;
+                },
             };
             module_engine.global_scope = module_engine.environment.set(
                 module_engine.global_scope,
@@ -1888,6 +1976,7 @@ const Engine = struct {
     fn unprefixedLocalModuleVariable(
         self: *Engine,
         name: []const u8,
+        span: native_source.Span,
     ) Error!?*const native_value.Value {
         for (self.modules.items) |binding| {
             if (binding.namespace != null) continue;
@@ -1902,7 +1991,11 @@ const Engine = struct {
                     module.engine.global_scope,
                     variable.name,
                 ) orelse return error.InvalidSassSyntax;
-                return try self.ownLocalModuleExportValue(module_index, value.*);
+                return try self.ownLocalModuleExportValueOrReport(
+                    module_index,
+                    value.*,
+                    span,
+                );
             }
         }
         return null;
@@ -1917,6 +2010,27 @@ const Engine = struct {
             .context = module_index,
             .map = remapLocalModuleExportCallable,
         });
+    }
+
+    fn ownLocalModuleExportValueOrReport(
+        self: *Engine,
+        module_index: usize,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        return self.ownLocalModuleExportValue(module_index, value) catch |failure|
+            switch (failure) {
+                error.InvalidValue => {
+                    if (!valueContainsCallable(value, 0)) return failure;
+                    try self.report(
+                        .unsupported_feature,
+                        span,
+                        "recursive native Sass local module callable re-exports are not implemented yet",
+                    );
+                    return error.UnsupportedFeature;
+                },
+                else => return failure,
+            };
     }
 
     fn ownLocalModuleResultValue(
@@ -1980,6 +2094,41 @@ const Engine = struct {
             return @intCast(index);
         }
         return null;
+    }
+
+    fn localModuleCallableExists(
+        self: *const Engine,
+        target: LocalCallableTarget,
+        kind: native_value.CallableKind,
+    ) bool {
+        if (target.module_index >= self.local_modules.items.len) return false;
+        const module_engine = self.local_modules.items[target.module_index].engine;
+        return switch (kind) {
+            .local_module_function => target.callable_id < module_engine.user_functions.items.len,
+            .local_module_mixin => target.callable_id < module_engine.user_mixins.items.len,
+            .builtin_function,
+            .builtin_mixin,
+            .user_function,
+            .mixin,
+            => false,
+        };
+    }
+
+    fn localModuleCallableOwner(
+        self: *Engine,
+        target: LocalCallableTarget,
+        kind: native_value.CallableKind,
+    ) ?*Engine {
+        if (self.parent_engine) |parent| {
+            const module_index = self.parent_module_index orelse return null;
+            if (target.module_index >= module_index or
+                !parent.localModuleCallableExists(target, kind))
+            {
+                return null;
+            }
+            return parent;
+        }
+        return if (self.localModuleCallableExists(target, kind)) self else null;
     }
 
     fn resolveLocalModuleFunction(
@@ -2181,13 +2330,20 @@ const Engine = struct {
         input: *const EvaluatedCallArguments,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        if (target.module_index >= self.local_modules.items.len) {
-            return self.metaCallFunctionFailure(span);
-        }
+        const owner = self.localModuleCallableOwner(
+            target,
+            .local_module_function,
+        ) orelse return self.metaCallFunctionFailure(span);
+        return owner.invokeOwnedLocalModuleFunction(target, input, span);
+    }
+
+    fn invokeOwnedLocalModuleFunction(
+        self: *Engine,
+        target: LocalCallableTarget,
+        input: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
         const module_engine = self.local_modules.items[target.module_index].engine;
-        if (target.callable_id >= module_engine.user_functions.items.len) {
-            return self.metaCallFunctionFailure(span);
-        }
         var cloned = try self.cloneEvaluatedArgumentsInto(
             module_engine,
             input,
@@ -3389,13 +3545,36 @@ const Engine = struct {
         depth: u16,
         context: LoopBodyContext,
     ) Error!void {
-        if (target.module_index >= self.local_modules.items.len) {
-            return self.metaApplyMixinFailure(span);
-        }
+        const owner = self.localModuleCallableOwner(
+            target,
+            .local_module_mixin,
+        ) orelse return self.metaApplyMixinFailure(span);
+        try owner.invokeOwnedLocalModuleMixin(
+            target,
+            evaluated,
+            self,
+            caller_scope,
+            content_block,
+            content_parameters,
+            span,
+            depth,
+            context,
+        );
+    }
+
+    fn invokeOwnedLocalModuleMixin(
+        self: *Engine,
+        target: LocalCallableTarget,
+        evaluated: *const EvaluatedCallArguments,
+        caller_engine: *Engine,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
         const module_engine = self.local_modules.items[target.module_index].engine;
-        if (target.callable_id >= module_engine.user_mixins.items.len) {
-            return self.metaApplyMixinFailure(span);
-        }
         var cloned = try self.cloneEvaluatedArgumentsInto(
             module_engine,
             evaluated,
@@ -3409,7 +3588,7 @@ const Engine = struct {
         try module_engine.invokeUserMixin(
             target.callable_id,
             &cloned,
-            self,
+            caller_engine,
             caller_scope,
             content_block,
             content_parameters,
@@ -4648,7 +4827,7 @@ const Engine = struct {
         const existing = if (assignment.global)
             try self.environment.lookup(self.global_scope, normalized)
         else
-            try self.lookupVisibleVariable(scope.cursor, normalized);
+            try self.lookupVisibleVariable(scope.cursor, normalized, expression_node.span);
         if (assignment.default) {
             if (existing) |item| {
                 if (item.* != .null_value) return;
@@ -6433,7 +6612,11 @@ const Engine = struct {
                         module.engine.global_scope,
                         variable.name,
                     ) orelse return error.InvalidSassSyntax;
-                    return try self.ownLocalModuleExportValue(module_index, value.*);
+                    return try self.ownLocalModuleExportValueOrReport(
+                        module_index,
+                        value.*,
+                        span,
+                    );
                 }
                 try self.report(.undefined_variable, span, "undefined native Sass module variable");
                 return error.InvalidExpression;
@@ -10962,13 +11145,11 @@ const Engine = struct {
             .local_module_mixin => blk: {
                 const target = decodeLocalModuleCallable(callable) orelse
                     return self.metaAcceptsContentTypeFailure(span);
-                if (target.module_index >= self.local_modules.items.len) {
-                    return self.metaAcceptsContentTypeFailure(span);
-                }
-                const module_engine = self.local_modules.items[target.module_index].engine;
-                if (target.callable_id >= module_engine.user_mixins.items.len) {
-                    return self.metaAcceptsContentTypeFailure(span);
-                }
+                const owner = self.localModuleCallableOwner(
+                    target,
+                    .local_module_mixin,
+                ) orelse return self.metaAcceptsContentTypeFailure(span);
+                const module_engine = owner.local_modules.items[target.module_index].engine;
                 break :blk module_engine.user_mixins.items[target.callable_id].accepts_content;
             },
             .builtin_function,
@@ -11292,9 +11473,11 @@ const Engine = struct {
                 .value = value.*,
             });
         }
-        return self.ownLocalModuleExportValue(module_index, .{
-            .map = .{ .entries = entries.items },
-        });
+        return self.ownLocalModuleExportValueOrReport(
+            module_index,
+            .{ .map = .{ .entries = entries.items } },
+            span,
+        );
     }
 
     fn callMetaModuleFunctions(
@@ -17275,7 +17458,11 @@ const Engine = struct {
                 }
             else
                 try self.metaGlobalMixinExists(normalized, scope, span),
-            .meta_variable_exists => (try self.lookupVisibleVariable(scope, normalized)) != null or
+            .meta_variable_exists => (try self.lookupVisibleVariable(
+                scope,
+                normalized,
+                span,
+            )) != null or
                 self.unprefixedMathConstant(normalized) != null,
             .meta_global_variable_exists => if (module) |kind|
                 switch (kind) {
@@ -19660,7 +19847,7 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         const normalized = try self.normalizeVariable(raw_name);
         defer self.allocator.free(normalized);
-        if (try self.lookupVisibleVariable(scope, normalized)) |item| return item;
+        if (try self.lookupVisibleVariable(scope, normalized, span)) |item| return item;
         if (self.unprefixedMathConstant(normalized)) |constant| {
             return self.values.own(.{ .number = .{
                 .value = constant,
@@ -19688,10 +19875,11 @@ const Engine = struct {
         self: *Engine,
         scope: native_environment.ScopeId,
         normalized: []const u8,
+        span: native_source.Span,
     ) Error!?*const native_value.Value {
         if (try self.environment.lookupNonGlobal(scope, normalized)) |item| return item;
         if (try self.environment.lookup(self.global_scope, normalized)) |item| return item;
-        return try self.unprefixedLocalModuleVariable(normalized);
+        return try self.unprefixedLocalModuleVariable(normalized, span);
     }
 
     fn normalizeVariable(self: *Engine, raw_name: []const u8) Error![]u8 {
@@ -20047,25 +20235,21 @@ const Engine = struct {
             .local_module_function => blk: {
                 const target = decodeLocalModuleCallable(callable) orelse
                     return error.InvalidExpression;
-                if (target.module_index >= self.local_modules.items.len) {
-                    return error.InvalidExpression;
-                }
-                const module_engine = self.local_modules.items[target.module_index].engine;
-                if (target.callable_id >= module_engine.user_functions.items.len) {
-                    return error.InvalidExpression;
-                }
+                const owner = self.localModuleCallableOwner(
+                    target,
+                    .local_module_function,
+                ) orelse return error.InvalidExpression;
+                const module_engine = owner.local_modules.items[target.module_index].engine;
                 break :blk module_engine.user_functions.items[target.callable_id].name;
             },
             .local_module_mixin => blk: {
                 const target = decodeLocalModuleCallable(callable) orelse
                     return error.InvalidExpression;
-                if (target.module_index >= self.local_modules.items.len) {
-                    return error.InvalidExpression;
-                }
-                const module_engine = self.local_modules.items[target.module_index].engine;
-                if (target.callable_id >= module_engine.user_mixins.items.len) {
-                    return error.InvalidExpression;
-                }
+                const owner = self.localModuleCallableOwner(
+                    target,
+                    .local_module_mixin,
+                ) orelse return error.InvalidExpression;
+                const module_engine = owner.local_modules.items[target.module_index].engine;
                 break :blk module_engine.user_mixins.items[target.callable_id].name;
             },
         };
@@ -22788,42 +22972,6 @@ fn valueContainsCallable(value: native_value.Value, depth: u16) bool {
             }
             for (arguments.keywords) |keyword| {
                 if (valueContainsCallable(keyword.value, depth + 1)) break :blk true;
-            }
-            break :blk false;
-        },
-        else => false,
-    };
-}
-
-fn valueContainsNonBuiltinCallable(value: native_value.Value, depth: u16) bool {
-    if (depth > 64) return true;
-    return switch (value) {
-        .callable => |callable| switch (callable.kind) {
-            .builtin_function, .builtin_mixin => false,
-            .user_function, .mixin, .local_module_function, .local_module_mixin => true,
-        },
-        .list => |list| blk: {
-            for (list.items) |item| {
-                if (valueContainsNonBuiltinCallable(item, depth + 1)) break :blk true;
-            }
-            break :blk false;
-        },
-        .map => |map| blk: {
-            for (map.entries) |entry| {
-                if (valueContainsNonBuiltinCallable(entry.key, depth + 1) or
-                    valueContainsNonBuiltinCallable(entry.value, depth + 1))
-                {
-                    break :blk true;
-                }
-            }
-            break :blk false;
-        },
-        .argument_list => |arguments| blk: {
-            for (arguments.positional) |item| {
-                if (valueContainsNonBuiltinCallable(item, depth + 1)) break :blk true;
-            }
-            for (arguments.keywords) |keyword| {
-                if (valueContainsNonBuiltinCallable(keyword.value, depth + 1)) break :blk true;
             }
             break :blk false;
         },

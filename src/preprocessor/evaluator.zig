@@ -678,7 +678,10 @@ fn cloneEdges(
     const cloned = try allocator.alloc(native_resolver.Edge, items.len);
     var initialized: usize = 0;
     errdefer {
-        releaseEdges(allocator, cloned[0..initialized]);
+        for (cloned[0..initialized]) |item| {
+            if (item.parent_url) |value| allocator.free(value);
+            allocator.free(item.child_url);
+        }
         allocator.free(cloned);
     }
     for (items, 0..) |item, index| {
