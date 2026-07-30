@@ -355,6 +355,7 @@ const expectedImplementations = Object.freeze([
       'legacy-if-final-splat-expansion',
       'legacy-if-single-misplaced-rest-expansion',
       'legacy-if-dual-splat-expansion',
+      'diagnostic-deprecation-source-deduplication',
       'flow-control-variable-scope',
       'bounded-control-flow-loops',
       'bounded-user-functions',

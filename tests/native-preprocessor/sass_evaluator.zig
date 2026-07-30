@@ -20954,8 +20954,8 @@ test "native Sass expands direct legacy color grayscale splats once in source or
         result.css(),
     );
     const diagnostics = result.nativeDiagnostics();
-    try std.testing.expectEqual(@as(usize, 10), diagnostics.len);
-    for (diagnostics) |diagnostic| {
+    try std.testing.expectEqual(@as(usize, 9), diagnostics.len);
+    for (diagnostics, 0..) |diagnostic, index| {
         try std.testing.expectEqual(
             preprocessor.diagnostics.Severity.warning,
             diagnostic.severity,
@@ -20968,6 +20968,13 @@ test "native Sass expands direct legacy color grayscale splats once in source or
             "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
             diagnostic.message,
         );
+        for (diagnostics[0..index]) |previous| {
+            try std.testing.expect(
+                previous.span.source.value != diagnostic.span.source.value or
+                    previous.span.start != diagnostic.span.start or
+                    previous.span.end != diagnostic.span.end,
+            );
+        }
     }
 
     const indented =
@@ -24074,7 +24081,7 @@ test "native Sass meta call invokes meta content existence function references" 
         result.css(),
     );
     const diagnostics = result.nativeDiagnostics();
-    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
     for (diagnostics) |diagnostic| {
         try std.testing.expectEqual(
             preprocessor.diagnostics.Severity.warning,
@@ -24087,6 +24094,10 @@ test "native Sass meta call invokes meta content existence function references" 
         try std.testing.expectEqualStrings(
             "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
             diagnostic.message,
+        );
+        try std.testing.expectEqual(
+            @as(u32, @intCast(std.mem.indexOf(u8, input, "meta.call($global)").?)),
+            diagnostic.span.start,
         );
     }
 
@@ -35383,4 +35394,180 @@ test "native Sass selector parsing composition relations extension replacement a
         exerciseSelectorAllocationFailures,
         .{&context},
     );
+}
+
+test "native Sass deduplicates deprecations by source location and exact message" {
+    const input =
+        \\@use "sass:meta";
+        \\$fade: meta.get-function("fade-out");
+        \\$lighten: meta.get-function("lighten");
+        \\$length: meta.get-function("length");
+        \\@function faded($color) { @return fade-out(($color, .1)...); }
+        \\@for $i from 1 through 3 {
+        \\  .loop-#{$i} {
+        \\    direct: fade-out((red, .1)...);
+        \\    function: faded(red);
+        \\    reflected: meta.call($fade, red, .1);
+        \\    global: meta.call($length, (a, b));
+        \\    conditional: if(true, yes, no);
+        \\  }
+        \\}
+        \\@each $function in $fade, $lighten {
+        \\  .dynamic { value: meta.call($function, red, .1); }
+        \\}
+        \\.first { value: fade-out((red, .1)...); }
+        \\.second { value: fade-out((blue, .2)...); }
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "deprecation-source-deduplication.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".loop-1{direct:rgba(255,0,0,.9);function:rgba(255,0,0,.9);reflected:rgba(255,0,0,.9);global:2;conditional:yes}.loop-2{direct:rgba(255,0,0,.9);function:rgba(255,0,0,.9);reflected:rgba(255,0,0,.9);global:2;conditional:yes}.loop-3{direct:rgba(255,0,0,.9);function:rgba(255,0,0,.9);reflected:rgba(255,0,0,.9);global:2;conditional:yes}.dynamic{value:rgba(255,0,0,.9)}.dynamic{value:rgb(255,.51,.51)}.first{value:rgba(255,0,0,.9)}.second{value:rgba(0,0,255,.8)}",
+        result.css(),
+    );
+
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 15), diagnostics.len);
+    var global_warnings: usize = 0;
+    var fade_out_warnings: usize = 0;
+    var lighten_warnings: usize = 0;
+    var legacy_if_warnings: usize = 0;
+    var dynamic_global_span: ?source.Span = null;
+    var dynamic_fade_out_span: ?source.Span = null;
+    var dynamic_lighten_span: ?source.Span = null;
+    const dynamic_start: u32 = @intCast(std.mem.indexOf(
+        u8,
+        input,
+        "meta.call($function, red, .1)",
+    ).?);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expect(!diagnostic.span.isEmpty());
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+            if (diagnostic.span.start == dynamic_start) {
+                dynamic_global_span = diagnostic.span;
+            }
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "fade-out() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+        )) {
+            fade_out_warnings += 1;
+            if (diagnostic.span.start == dynamic_start) {
+                dynamic_fade_out_span = diagnostic.span;
+            }
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "lighten() is deprecated. Use color.adjust($color, $lightness: $amount).",
+        )) {
+            lighten_warnings += 1;
+            if (diagnostic.span.start == dynamic_start) {
+                dynamic_lighten_span = diagnostic.span;
+            }
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "The Sass if() syntax is deprecated in favor of the modern CSS syntax.",
+        )) {
+            legacy_if_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 7), global_warnings);
+    try std.testing.expectEqual(@as(usize, 6), fade_out_warnings);
+    try std.testing.expectEqual(@as(usize, 1), lighten_warnings);
+    try std.testing.expectEqual(@as(usize, 1), legacy_if_warnings);
+    try std.testing.expect(dynamic_global_span != null);
+    try std.testing.expectEqual(dynamic_global_span.?, dynamic_fade_out_span.?);
+    try std.testing.expectEqual(dynamic_global_span.?, dynamic_lighten_span.?);
+
+    var transaction_limits = evaluator.Limits{};
+    transaction_limits.budget.max_diagnostics = 15;
+    transaction_limits.diagnostics.max_diagnostics = 15;
+    var bounded = try compileWithTransactionLimits(
+        std.testing.allocator,
+        "deprecation-source-deduplication-limit.scss",
+        input,
+        .scss,
+        .{},
+        transaction_limits,
+    );
+    defer bounded.deinit();
+    try std.testing.expectEqual(@as(usize, 15), bounded.nativeDiagnostics().len);
+
+    var deprecation_limits = sass_evaluator.Limits{};
+    deprecation_limits.max_deprecations = 1;
+    try std.testing.expectError(
+        error.DiagnosticLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "deprecation-source-limit.scss",
+            ".a { value: fade-out((red, .1)...); }",
+            .scss,
+            deprecation_limits,
+        ),
+    );
+    deprecation_limits.max_deprecations = 0;
+    try std.testing.expectError(
+        error.InvalidLimits,
+        compile(
+            std.testing.allocator,
+            "invalid-deprecation-source-limit.scss",
+            ".a { value: red; }",
+            .scss,
+            deprecation_limits,
+        ),
+    );
+    deprecation_limits.max_deprecations = 65_537;
+    try std.testing.expectError(
+        error.InvalidLimits,
+        compile(
+            std.testing.allocator,
+            "oversized-deprecation-source-limit.scss",
+            ".a { value: red; }",
+            .scss,
+            deprecation_limits,
+        ),
+    );
+
+    const indented =
+        \\@function faded($color)
+        \\  @return fade-out(($color, .1)...)
+        \\@for $i from 1 through 3
+        \\  .loop-#{$i}
+        \\    direct: fade-out((red, .1)...)
+        \\    function: faded(red)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "deprecation-source-deduplication.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".loop-1{direct:rgba(255,0,0,.9);function:rgba(255,0,0,.9)}.loop-2{direct:rgba(255,0,0,.9);function:rgba(255,0,0,.9)}.loop-3{direct:rgba(255,0,0,.9);function:rgba(255,0,0,.9)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 4), sass_result.nativeDiagnostics().len);
 }

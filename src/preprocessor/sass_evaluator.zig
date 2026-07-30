@@ -24,6 +24,7 @@ const hard_function_arguments = 65_536;
 const hard_callables = 65_536;
 const hard_modules = 65_536;
 const hard_loop_variables = 65_536;
+const hard_deprecations = 65_536;
 const hard_evaluation_depth: u16 = 256;
 
 pub const Limits = struct {
@@ -37,6 +38,7 @@ pub const Limits = struct {
     max_callables: usize = 4_096,
     max_modules: usize = 4_096,
     max_loop_variables: usize = 4_096,
+    max_deprecations: usize = 1_000,
     max_evaluation_depth: u16 = 128,
 };
 
@@ -813,6 +815,12 @@ const OperatorMatch = struct {
     end: usize,
 };
 
+const DeprecationKey = struct {
+    code: native_diagnostics.Code,
+    span: native_source.Span,
+    message: []const u8,
+};
+
 const Engine = struct {
     allocator: std.mem.Allocator,
     sources: *const native_source.Table,
@@ -832,6 +840,7 @@ const Engine = struct {
     selector_bytes: usize = 0,
     legacy_if_deprecation_count: usize = 0,
     misplaced_rest_deprecation_count: usize = 0,
+    deprecations: std.ArrayList(DeprecationKey) = .empty,
     random_state: u64,
 
     fn init(
@@ -865,6 +874,7 @@ const Engine = struct {
         for (self.user_mixins.items) |*mixin| mixin.deinit();
         self.user_mixins.deinit(self.allocator);
         self.modules.deinit(self.allocator);
+        self.deprecations.deinit(self.allocator);
         self.environment.deinit();
         self.values.deinit();
         self.* = undefined;
@@ -3453,8 +3463,7 @@ const Engine = struct {
         );
         if (assignment.global) {
             if (existing == null) {
-                try self.transaction.report(
-                    .warning,
+                try self.reportDeprecation(
                     .syntax,
                     expression_node.span,
                     "!global assignment declares a new variable; Sass 2.0 will reject it",
@@ -3925,6 +3934,7 @@ const Engine = struct {
         diagnostic_span: native_source.Span,
     ) Error!*const native_value.Value {
         const trimmed = trimWhitespace(raw);
+        const call_span = self.sourceSpanForBytes(trimmed, diagnostic_span);
         if (self.expression_depth >= self.limits.max_evaluation_depth) {
             try self.report(.resource_limit, diagnostic_span, "native Sass expression depth exceeded");
             return error.EvaluationDepthExceeded;
@@ -3951,11 +3961,11 @@ const Engine = struct {
             defer self.allocator.free(rendered);
             return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = true } });
         }
-        if (try self.tryLegacyIfFunctionCall(trimmed, scope, diagnostic_span)) |item| {
+        if (try self.tryLegacyIfFunctionCall(trimmed, scope, call_span)) |item| {
             return item;
         }
         if (try self.tryUserFunctionCall(trimmed, scope, diagnostic_span)) |item| return item;
-        if (try self.tryBuiltinCall(trimmed, scope, diagnostic_span)) |item| return item;
+        if (try self.tryBuiltinCall(trimmed, scope, call_span)) |item| return item;
         if (sassCalculationValue(trimmed) != null) {
             const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
             defer self.allocator.free(rendered);
@@ -3977,6 +3987,24 @@ const Engine = struct {
         const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
         defer self.allocator.free(rendered);
         return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = false } });
+    }
+
+    fn sourceSpanForBytes(
+        self: *const Engine,
+        bytes: []const u8,
+        fallback: native_source.Span,
+    ) native_source.Span {
+        const file = self.sources.get(fallback.source) catch return fallback;
+        const file_start = @intFromPtr(file.bytes.ptr);
+        const bytes_start = @intFromPtr(bytes.ptr);
+        if (bytes_start < file_start) return fallback;
+        const offset = bytes_start - file_start;
+        if (offset > file.bytes.len or bytes.len > file.bytes.len - offset) return fallback;
+        return .{
+            .source = fallback.source,
+            .start = @intCast(offset),
+            .end = @intCast(offset + bytes.len),
+        };
     }
 
     fn tryLegacyIfFunctionCall(
@@ -4224,16 +4252,18 @@ const Engine = struct {
         named: bool,
         span: native_source.Span,
     ) Error!void {
+        const message = if (named)
+            "Named arguments must come before rest arguments. This will be an error in Dart Sass 2.0.0."
+        else
+            "Positional arguments must come before rest arguments. This will be an error in Dart Sass 2.0.0.";
+        if (!try self.recordDeprecation(.invalid_operation, span, message)) return;
         self.misplaced_rest_deprecation_count +|= 1;
         if (self.misplaced_rest_deprecation_count > 5) return;
         try self.transaction.report(
             .warning,
             .invalid_operation,
             span,
-            if (named)
-                "Named arguments must come before rest arguments. This will be an error in Dart Sass 2.0.0."
-            else
-                "Positional arguments must come before rest arguments. This will be an error in Dart Sass 2.0.0.",
+            message,
             &.{},
         );
     }
@@ -4242,13 +4272,15 @@ const Engine = struct {
         self: *Engine,
         span: native_source.Span,
     ) Error!void {
+        const message = "The Sass if() syntax is deprecated in favor of the modern CSS syntax.";
+        if (!try self.recordDeprecation(.invalid_operation, span, message)) return;
         self.legacy_if_deprecation_count +|= 1;
         if (self.legacy_if_deprecation_count > 5) return;
         try self.transaction.report(
             .warning,
             .invalid_operation,
             span,
-            "The Sass if() syntax is deprecated in favor of the modern CSS syntax.",
+            message,
             &.{},
         );
     }
@@ -9564,8 +9596,7 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         if (!module_owned) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -9637,8 +9668,7 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         if (!module_owned) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -9706,8 +9736,7 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         if (!module_owned) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -9760,8 +9789,7 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         if (!module_owned) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -9808,8 +9836,7 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         if (!module_owned) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -9854,8 +9881,7 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         if (!module_owned) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -9948,8 +9974,7 @@ const Engine = struct {
         defer bound.deinit();
 
         if (!module_owned) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -10771,8 +10796,7 @@ const Engine = struct {
             else => return null,
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -10862,8 +10886,7 @@ const Engine = struct {
             else => return null,
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -10960,8 +10983,7 @@ const Engine = struct {
             else => return null,
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11040,8 +11062,7 @@ const Engine = struct {
             else => return null,
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11076,8 +11097,7 @@ const Engine = struct {
         if (reference.owner != null and reference.owner.? != .meta) return null;
         if (reference.builtin != .meta_keywords) return null;
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11240,8 +11260,7 @@ const Engine = struct {
             else => return null,
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11279,8 +11298,7 @@ const Engine = struct {
             else => return null,
         };
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11547,8 +11565,7 @@ const Engine = struct {
         const is_global = reference.owner == null and reference.builtin == .minimum;
         if (!is_module and !is_global) return null;
         if (is_global) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11574,8 +11591,7 @@ const Engine = struct {
         const is_global = reference.owner == null and reference.builtin == .maximum;
         if (!is_module and !is_global) return null;
         if (is_global) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11601,8 +11617,7 @@ const Engine = struct {
             return null;
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11644,8 +11659,7 @@ const Engine = struct {
             return null;
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -11783,8 +11797,7 @@ const Engine = struct {
         };
         if (reference.owner != null and reference.owner.? != .color) return null;
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -13069,16 +13082,14 @@ const Engine = struct {
         const result = try self.callRedChannelValue(bound.values[0].?.*, span);
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
                 &.{},
             );
         }
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             if (reference.owner == null)
@@ -13144,16 +13155,14 @@ const Engine = struct {
         const result = try self.callGreenChannelValue(bound.values[0].?.*, span);
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
                 &.{},
             );
         }
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             if (reference.owner == null)
@@ -13219,16 +13228,14 @@ const Engine = struct {
         const result = try self.callBlueChannelValue(bound.values[0].?.*, span);
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
                 &.{},
             );
         }
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             if (reference.owner == null)
@@ -13294,8 +13301,7 @@ const Engine = struct {
         const result = try self.callAlphaChannelValue(bound.values[0].?.*, span);
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -13363,8 +13369,7 @@ const Engine = struct {
             } }),
             .number => blk: {
                 if (reference.owner != null) {
-                    try self.transaction.report(
-                        .warning,
+                    try self.reportDeprecation(
                         .invalid_operation,
                         span,
                         "Passing a number to color.opacity() is deprecated.",
@@ -13392,8 +13397,7 @@ const Engine = struct {
         };
 
         if (reference.owner == null and argument.* == .color) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -13453,16 +13457,14 @@ const Engine = struct {
         const result = try self.callHueChannelValue(bound.values[0].?.*, span);
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
                 &.{},
             );
         }
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             if (reference.owner == null)
@@ -13530,16 +13532,14 @@ const Engine = struct {
         const result = try self.callSaturationChannelValue(bound.values[0].?.*, span);
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
                 &.{},
             );
         }
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             if (reference.owner == null)
@@ -13607,16 +13607,14 @@ const Engine = struct {
         const result = try self.callLightnessChannelValue(bound.values[0].?.*, span);
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
                 &.{},
             );
         }
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             if (reference.owner == null)
@@ -13679,8 +13677,7 @@ const Engine = struct {
         defer bound.deinit();
         const result = try self.callWhitenessChannelValue(bound.values[0].?.*, span);
 
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "color.whiteness() is deprecated. Use color.channel($color, \"whiteness\", $space: hwb).",
@@ -13740,8 +13737,7 @@ const Engine = struct {
         defer bound.deinit();
         const result = try self.callBlacknessChannelValue(bound.values[0].?.*, span);
 
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "color.blackness() is deprecated. Use color.channel($color, \"blackness\", $space: hwb).",
@@ -13817,8 +13813,7 @@ const Engine = struct {
         };
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -13927,15 +13922,13 @@ const Engine = struct {
             return self.colorTransformFailure(failure, span);
         };
 
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
             &.{},
         );
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "lighten() is deprecated. Use color.adjust($color, $lightness: $amount).",
@@ -14013,15 +14006,13 @@ const Engine = struct {
             return self.colorTransformFailure(failure, span);
         };
 
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
             &.{},
         );
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "darken() is deprecated. Use color.adjust($color, $lightness: -$amount).",
@@ -14142,15 +14133,13 @@ const Engine = struct {
             return self.colorTransformFailure(failure, span);
         };
 
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
             &.{},
         );
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "saturate() is deprecated. Use color.adjust($color, $saturation: $amount).",
@@ -14228,15 +14217,13 @@ const Engine = struct {
             return self.colorTransformFailure(failure, span);
         };
 
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
             &.{},
         );
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "desaturate() is deprecated. Use color.adjust($color, $saturation: -$amount).",
@@ -14314,15 +14301,13 @@ const Engine = struct {
             return self.colorTransformFailure(failure, span);
         };
 
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
             &.{},
         );
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "adjust-hue() is deprecated. Use color.adjust($color, $hue: $degrees).",
@@ -14428,8 +14413,7 @@ const Engine = struct {
         };
 
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -14506,8 +14490,7 @@ const Engine = struct {
             },
             .number => blk: {
                 if (reference.owner != null) {
-                    try self.transaction.report(
-                        .warning,
+                    try self.reportDeprecation(
                         .invalid_operation,
                         span,
                         "Passing a number to color.grayscale() is deprecated.",
@@ -14540,8 +14523,7 @@ const Engine = struct {
         };
 
         if (reference.owner == null and argument.* == .color) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -14635,8 +14617,7 @@ const Engine = struct {
                     return error.InvalidExpression;
                 }
                 if (reference.owner != null) {
-                    try self.transaction.report(
-                        .warning,
+                    try self.reportDeprecation(
                         .invalid_operation,
                         span,
                         "Passing a number to color.invert() is deprecated.",
@@ -14672,8 +14653,7 @@ const Engine = struct {
         };
 
         if (reference.owner == null and argument.* == .color) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -14794,15 +14774,13 @@ const Engine = struct {
             return self.colorTransformFailure(failure, span);
         };
 
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
             &.{},
         );
-        try self.transaction.report(
-            .warning,
+        try self.reportDeprecation(
             .invalid_operation,
             span,
             switch (reference.builtin) {
@@ -15276,8 +15254,7 @@ const Engine = struct {
             return null;
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -15315,8 +15292,7 @@ const Engine = struct {
             return null;
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -15356,8 +15332,7 @@ const Engine = struct {
             return null;
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -15412,8 +15387,7 @@ const Engine = struct {
             return null;
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -15436,8 +15410,7 @@ const Engine = struct {
             return null;
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -15479,8 +15452,7 @@ const Engine = struct {
             return null;
         }
         if (reference.owner == null) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -15551,8 +15523,7 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         if (!module_owned) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
@@ -15560,8 +15531,7 @@ const Engine = struct {
             );
         }
         if (builtin == .meta_feature_exists) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "The feature-exists() function is deprecated.",
@@ -17058,8 +17028,7 @@ const Engine = struct {
             return error.InvalidExpression;
         }
         if (number.numerator_units.len != 0 or number.denominator_units.len != 0) {
-            try self.transaction.report(
-                .warning,
+            try self.reportDeprecation(
                 .invalid_operation,
                 span,
                 "math.random() currently ignores $limit units",
@@ -18414,6 +18383,52 @@ const Engine = struct {
         try output.appendSlice(self.allocator, bytes);
     }
 
+    fn reportDeprecation(
+        self: *Engine,
+        code: native_diagnostics.Code,
+        span: native_source.Span,
+        message: []const u8,
+        related: []const native_diagnostics.RelatedInput,
+    ) Error!void {
+        std.debug.assert(related.len == 0);
+        if (!try self.recordDeprecation(code, span, message)) return;
+        try self.transaction.report(.warning, code, span, message, related);
+    }
+
+    fn recordDeprecation(
+        self: *Engine,
+        code: native_diagnostics.Code,
+        span: native_source.Span,
+        message: []const u8,
+    ) Error!bool {
+        for (self.deprecations.items) |existing| {
+            if (existing.code == code and
+                existing.span.source.eql(span.source) and
+                existing.span.start == span.start and
+                existing.span.end == span.end and
+                std.mem.eql(u8, existing.message, message))
+            {
+                return false;
+            }
+        }
+        if (self.deprecations.items.len >= self.limits.max_deprecations) {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass deprecation source limit exceeded",
+            );
+            return error.DiagnosticLimitExceeded;
+        }
+        // Every caller passes a static compatibility message. The key borrows
+        // it only for this Engine, whose lifetime is the evaluation transaction.
+        try self.deprecations.append(self.allocator, .{
+            .code = code,
+            .span = span,
+            .message = message,
+        });
+        return true;
+    }
+
     fn report(
         self: *Engine,
         code: native_diagnostics.Code,
@@ -18650,6 +18665,7 @@ fn validateLimits(limits: Limits) Error!void {
         limits.max_callables == 0 or limits.max_callables > hard_callables or
         limits.max_modules == 0 or limits.max_modules > hard_modules or
         limits.max_loop_variables == 0 or limits.max_loop_variables > hard_loop_variables or
+        limits.max_deprecations == 0 or limits.max_deprecations > hard_deprecations or
         limits.max_evaluation_depth == 0 or limits.max_evaluation_depth > hard_evaluation_depth)
     {
         return error.InvalidLimits;
