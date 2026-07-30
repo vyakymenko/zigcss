@@ -10585,7 +10585,18 @@ const Engine = struct {
                 .meta_load_css => false,
                 .meta_apply => true,
             },
-            .local_module_mixin => return self.localModuleMixinCallableUseFailure(span),
+            .local_module_mixin => blk: {
+                const target = decodeLocalModuleCallable(callable) orelse
+                    return self.metaAcceptsContentTypeFailure(span);
+                if (target.module_index >= self.local_modules.items.len) {
+                    return self.metaAcceptsContentTypeFailure(span);
+                }
+                const module_engine = self.local_modules.items[target.module_index].engine;
+                if (target.callable_id >= module_engine.user_mixins.items.len) {
+                    return self.metaAcceptsContentTypeFailure(span);
+                }
+                break :blk module_engine.user_mixins.items[target.callable_id].accepts_content;
+            },
             .builtin_function,
             .user_function,
             .local_module_function,
@@ -16497,18 +16508,6 @@ const Engine = struct {
             "native Sass meta.call() requires an available user, reflected legacy if, list, map, meta inspection, meta keywords, meta content existence, meta content acceptance, meta calculation, meta existence, meta module function, mixin, or variable enumeration, unary math, math unit, math trigonometric, math logarithm, math power, math root, math division, math clamp, math hypotenuse, math minimum, math maximum, math random, string quote, unquote, length, index, slice, insert, upper-case, lower-case, or split, color adjust, change, scale, rgb, rgba, hsl, hsla, hwb, lab, space, to-space, is-legacy, is-missing, is-in-gamut, to-gamut, channel, same, or is-powerless, selector parse, selector simple-selectors, selector is-superselector, selector unify, selector append, selector nest, selector extend, or selector replace function reference",
         ) catch |err| return err;
         return error.InvalidExpression;
-    }
-
-    fn localModuleMixinCallableUseFailure(
-        self: *Engine,
-        span: native_source.Span,
-    ) Error {
-        self.report(
-            .unsupported_feature,
-            span,
-            "native Sass local module callable invocation is not implemented yet",
-        ) catch |err| return err;
-        return error.UnsupportedFeature;
     }
 
     fn metaGlobalFunctionReference(
