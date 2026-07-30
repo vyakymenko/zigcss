@@ -129,6 +129,10 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-meta-string-upper-case-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-string-lower-case-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-string-split-function-invocation'), true)
+  assert.equal(
+    sassCore.capabilities.includes('built-in-string-unique-id-deterministic-rejection'),
+    true,
+  )
   assert.equal(sassCore.capabilities.includes('built-in-string-split-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-quote-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-string-module-unquote-direct-splat-expansion'), true)

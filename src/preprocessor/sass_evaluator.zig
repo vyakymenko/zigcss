@@ -5126,6 +5126,9 @@ const Engine = struct {
                     .string => stringModuleBuiltin(name),
                 };
                 if (builtin) |resolved| return resolved;
+                if (binding.kind == .string and sassNameEql(name, "unique-id")) {
+                    return self.uniqueIdDeterminismFailure(span);
+                }
                 if ((binding.kind == .math and mathModuleOwnsFunction(name)) or
                     (binding.kind == .selector and selectorModuleOwnsFunction(name)))
                 {
@@ -5153,6 +5156,9 @@ const Engine = struct {
             try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
             return error.InvalidExpression;
         };
+        if (module == .string and sassNameEql(qualified.member, "unique-id")) {
+            return self.uniqueIdDeterminismFailure(span);
+        }
         const builtin = switch (module) {
             .color => colorModuleBuiltin(qualified.member),
             .list => listModuleBuiltin(qualified.member),
@@ -5725,10 +5731,17 @@ const Engine = struct {
                     span,
                 );
             },
-            // Dart Sass 1.101.0 unique-id() remains unavailable because its
-            // nondeterministic provider behavior has no admitted native policy.
-            .str_unique_id,
-            => return null,
+            .str_unique_id => {
+                if (module_builtin == null) {
+                    try self.reportDeprecation(
+                        .invalid_operation,
+                        span,
+                        "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                        &.{},
+                    );
+                }
+                return self.uniqueIdDeterminismFailure(span);
+            },
             .rgb, .rgba, .hsl, .hsla, .hwb => return try self.callColorConstructorRaw(
                 builtin,
                 raw,
@@ -10260,6 +10273,7 @@ const Engine = struct {
                 )) |value| {
                     break :blk value;
                 }
+                try self.rejectReflectedUniqueId(callable, span);
                 if (try self.invokeStringFunction(
                     callable,
                     &forwarded,
@@ -10600,6 +10614,37 @@ const Engine = struct {
             },
             .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
         };
+    }
+
+    fn rejectReflectedUniqueId(
+        self: *Engine,
+        callable: native_value.Callable,
+        span: native_source.Span,
+    ) Error!void {
+        const reference = decodeBuiltinFunctionCallable(callable.id) orelse return;
+        if (reference.builtin != .str_unique_id) return;
+        if (reference.owner != null and reference.owner.? != .string) return;
+        if (reference.owner == null) {
+            try self.reportDeprecation(
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+        }
+        return self.uniqueIdDeterminismFailure(span);
+    }
+
+    fn uniqueIdDeterminismFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .invalid_operation,
+            span,
+            "native Sass string.unique-id() is unavailable because Dart Sass 1.101.0 produces nondeterministic output",
+        ) catch |err| return err;
+        return error.InvalidExpression;
     }
 
     fn invokeReflectedLegacyIfFunction(
@@ -19213,6 +19258,7 @@ fn globalBuiltinCallableName(builtin: Builtin) ?[]const u8 {
         .selector_simple_selectors => "simple-selectors",
         .selector_nest => "selector-nest",
         .selector_unify => "selector-unify",
+        .str_unique_id => "unique-id",
         .minimum => "min",
         .maximum => "max",
         .calculation => "calc",
@@ -19513,6 +19559,7 @@ fn globalBuiltin(name: []const u8) ?Builtin {
         .{ .name = "str-insert", .builtin = .str_insert },
         .{ .name = "to-upper-case", .builtin = .to_upper_case },
         .{ .name = "to-lower-case", .builtin = .to_lower_case },
+        .{ .name = "unique-id", .builtin = .str_unique_id },
         .{ .name = "rgb", .builtin = .rgb },
         .{ .name = "rgba", .builtin = .rgba },
         .{ .name = "hsl", .builtin = .hsl },

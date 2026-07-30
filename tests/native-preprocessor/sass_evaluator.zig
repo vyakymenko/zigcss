@@ -34333,6 +34333,261 @@ test "native Sass loads the admitted built-in string module without a provider" 
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+fn expectUniqueIdRejected(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    input: []const u8,
+    mode: sass.Mode,
+    invocation: []const u8,
+    legacy_global: bool,
+    semantic_limits: sass_evaluator.Limits,
+) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(name, input);
+
+    var parser = try sass.Parser.init(
+        allocator,
+        &sources,
+        source_id,
+        mode,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    sass_evaluator.evaluate(
+        allocator,
+        &sources,
+        &document,
+        &transaction,
+        semantic_limits,
+    ) catch |failure| {
+        if (failure == error.OutOfMemory) return error.OutOfMemory;
+        try std.testing.expectEqual(error.InvalidExpression, failure);
+    };
+
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(
+        @as(usize, if (legacy_global) 2 else 1),
+        diagnostics.len,
+    );
+    var diagnostic_index: usize = 0;
+    if (legacy_global) {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostics[0].severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostics[0].code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostics[0].message,
+        );
+        diagnostic_index = 1;
+    }
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[diagnostic_index].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[diagnostic_index].code,
+    );
+    try std.testing.expectEqualStrings(
+        "native Sass string.unique-id() is unavailable because Dart Sass 1.101.0 produces nondeterministic output",
+        diagnostics[diagnostic_index].message,
+    );
+    const invocation_start = std.mem.indexOf(u8, input, invocation) orelse
+        return error.TestUnexpectedResult;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(source_id, diagnostic.span.source);
+        try std.testing.expectEqual(invocation_start, diagnostic.span.start);
+        try std.testing.expectEqual(
+            invocation_start + invocation.len,
+            diagnostic.span.end,
+        );
+    }
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
+const UniqueIdSurface = enum {
+    direct,
+    direct_global,
+    direct_alias,
+    direct_unprefixed,
+    direct_list_splat,
+    direct_map_splat,
+    reflected,
+    reflected_global,
+    reflected_list_splat,
+    reflected_map_splat,
+};
+
+fn uniqueIdCase(
+    allocator: std.mem.Allocator,
+    surface: UniqueIdSurface,
+    mode: sass.Mode,
+    semantic_limits: sass_evaluator.Limits,
+) !void {
+    const invocation = switch (surface) {
+        .direct => "string.unique-id()",
+        .direct_global => "unique-id()",
+        .direct_alias => "text.unique-id()",
+        .direct_unprefixed => "unique-id()",
+        .direct_list_splat => "string.unique-id($empty-list...)",
+        .direct_map_splat => "string.unique-id($empty-map...)",
+        .reflected => "meta.call($function)",
+        .reflected_global => "meta.call($function)",
+        .reflected_list_splat => "meta.call($function, $empty-list...)",
+        .reflected_map_splat => "meta.call($function, $empty-map...)",
+    };
+    const input = switch (mode) {
+        .scss => switch (surface) {
+            .direct => "@use \"sass:string\"; .a { value: string.unique-id(); }",
+            .direct_global => ".a { value: unique-id(); }",
+            .direct_alias => "@use \"sass:string\" as text; .a { value: text.unique-id(); }",
+            .direct_unprefixed => "@use \"sass:string\" as *; .a { value: unique-id(); }",
+            .direct_list_splat => "@use \"sass:string\"; $empty-list: (); .a { value: string.unique-id($empty-list...); }",
+            .direct_map_splat => "@use \"sass:map\"; @use \"sass:string\"; $empty-map: map.remove((sentinel: true), sentinel); .a { value: string.unique-id($empty-map...); }",
+            .reflected => "@use \"sass:meta\"; @use \"sass:string\"; $function: meta.get-function(\"unique-id\", $module: \"string\"); .a { value: meta.call($function); }",
+            .reflected_global => "@use \"sass:meta\"; $function: meta.get-function(\"unique-id\"); .a { value: meta.call($function); }",
+            .reflected_list_splat => "@use \"sass:meta\"; @use \"sass:string\"; $function: meta.get-function(\"unique-id\", $module: \"string\"); $empty-list: (); .a { value: meta.call($function, $empty-list...); }",
+            .reflected_map_splat => "@use \"sass:map\"; @use \"sass:meta\"; @use \"sass:string\"; $function: meta.get-function(\"unique-id\", $module: \"string\"); $empty-map: map.remove((sentinel: true), sentinel); .a { value: meta.call($function, $empty-map...); }",
+        },
+        .sass => switch (surface) {
+            .direct => "@use \"sass:string\"\n.a\n  value: string.unique-id()",
+            .direct_global => ".a\n  value: unique-id()",
+            .direct_alias => "@use \"sass:string\" as text\n.a\n  value: text.unique-id()",
+            .direct_unprefixed => "@use \"sass:string\" as *\n.a\n  value: unique-id()",
+            .direct_list_splat => "@use \"sass:string\"\n$empty-list: ()\n.a\n  value: string.unique-id($empty-list...)",
+            .direct_map_splat => "@use \"sass:map\"\n@use \"sass:string\"\n$empty-map: map.remove((sentinel: true), sentinel)\n.a\n  value: string.unique-id($empty-map...)",
+            .reflected => "@use \"sass:meta\"\n@use \"sass:string\"\n$function: meta.get-function(\"unique-id\", $module: \"string\")\n.a\n  value: meta.call($function)",
+            .reflected_global => "@use \"sass:meta\"\n$function: meta.get-function(\"unique-id\")\n.a\n  value: meta.call($function)",
+            .reflected_list_splat => "@use \"sass:meta\"\n@use \"sass:string\"\n$function: meta.get-function(\"unique-id\", $module: \"string\")\n$empty-list: ()\n.a\n  value: meta.call($function, $empty-list...)",
+            .reflected_map_splat => "@use \"sass:map\"\n@use \"sass:meta\"\n@use \"sass:string\"\n$function: meta.get-function(\"unique-id\", $module: \"string\")\n$empty-map: map.remove((sentinel: true), sentinel)\n.a\n  value: meta.call($function, $empty-map...)",
+        },
+    };
+    const name = try std.fmt.allocPrint(
+        allocator,
+        "string-unique-id-{s}-{s}.{s}",
+        .{
+            @tagName(surface),
+            @tagName(mode),
+            if (mode == .scss) "scss" else "sass",
+        },
+    );
+    defer allocator.free(name);
+    try expectUniqueIdRejected(
+        allocator,
+        name,
+        input,
+        mode,
+        invocation,
+        surface == .direct_global or surface == .reflected_global,
+        semantic_limits,
+    );
+}
+
+test "native Sass deterministically rejects provider-random string unique id" {
+    const surfaces = [_]UniqueIdSurface{
+        .direct,
+        .direct_global,
+        .direct_alias,
+        .direct_unprefixed,
+        .direct_list_splat,
+        .direct_map_splat,
+        .reflected,
+        .reflected_global,
+        .reflected_list_splat,
+        .reflected_map_splat,
+    };
+    const modes = [_]sass.Mode{ .scss, .sass };
+
+    for (0..2) |_| {
+        for (surfaces) |surface| {
+            for (modes) |mode| {
+                if (surface == .direct_unprefixed and mode == .sass) continue;
+                try uniqueIdCase(std.testing.allocator, surface, mode, .{});
+            }
+        }
+    }
+    try std.testing.expectError(
+        error.InvalidSassSyntax,
+        compile(
+            std.testing.allocator,
+            "string-unique-id-direct-unprefixed-sass.sass",
+            "@use \"sass:string\" as *\n.a\n  value: unique-id()",
+            .sass,
+            .{},
+        ),
+    );
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 2;
+    try uniqueIdCase(
+        std.testing.allocator,
+        .reflected_map_splat,
+        .scss,
+        limits,
+    );
+    limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "string-unique-id-reflected-map-splat-limit.scss",
+            "@use \"sass:map\"; @use \"sass:meta\"; @use \"sass:string\"; $function: meta.get-function(\"unique-id\", $module: \"string\"); $empty-map: map.remove((sentinel: true), sentinel); .a { value: meta.call($function, $empty-map...); }",
+            .scss,
+            limits,
+        ),
+    );
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseUniqueIdRejectionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseUniqueIdRejectionAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    try uniqueIdCase(allocator, .reflected_map_splat, .sass, .{});
+}
+
 test "native Sass string module rejects unowned calls" {
     const invalid = [_]struct {
         name: []const u8,

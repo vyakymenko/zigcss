@@ -221,6 +221,7 @@ const expectedImplementations = Object.freeze([
       'built-in-meta-string-upper-case-function-invocation',
       'built-in-meta-string-lower-case-function-invocation',
       'built-in-meta-string-split-function-invocation',
+      'built-in-string-unique-id-deterministic-rejection',
       'built-in-string-split-direct-splat-expansion',
       'built-in-string-module-quote-direct-splat-expansion',
       'built-in-string-module-unquote-direct-splat-expansion',
