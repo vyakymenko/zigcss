@@ -1656,6 +1656,27 @@ const Engine = struct {
         });
     }
 
+    fn ownLocalModuleResultValue(
+        self: *Engine,
+        module_index: usize,
+        value: native_value.Value,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        return self.ownLocalModuleExportValue(module_index, value) catch |failure|
+            switch (failure) {
+                error.InvalidValue => {
+                    if (!valueContainsCallable(value, 0)) return failure;
+                    try self.report(
+                        .unsupported_feature,
+                        span,
+                        "native Sass local module callable result owner is not supported yet",
+                    );
+                    return error.UnsupportedFeature;
+                },
+                else => return failure,
+            };
+    }
+
     fn publicLocalModuleFunction(
         self: *const Engine,
         module_index: usize,
@@ -1919,15 +1940,7 @@ const Engine = struct {
             &cloned,
             span,
         );
-        if (valueContainsCallable(result.*, 0)) {
-            try self.report(
-                .unsupported_feature,
-                span,
-                "native Sass local module callable results are not implemented yet",
-            );
-            return error.UnsupportedFeature;
-        }
-        return try self.values.own(result.*);
+        return self.ownLocalModuleResultValue(target.module_index, result.*, span);
     }
 
     fn emitRootComment(self: *Engine, node: *const native_syntax.Node) Error!void {
