@@ -88,7 +88,7 @@ pub const ArgumentList = struct {
 pub const Callable = struct {
     kind: CallableKind,
     id: u32,
-    reexported: bool = false,
+    reexport_depth: u16 = 0,
 };
 
 pub const CallableRemapper = struct {

@@ -839,11 +839,12 @@ fn remapLocalModuleExportCallable(
         .local_module_function, .local_module_mixin => if (decodeLocalModuleCallable(
             callable,
         )) |target|
-            if (target.module_index < context)
+            if (target.module_index < context and
+                callable.reexport_depth < std.math.maxInt(u16))
                 .{
                     .kind = callable.kind,
                     .id = callable.id,
-                    .reexported = true,
+                    .reexport_depth = callable.reexport_depth + 1,
                 }
             else
                 null
@@ -860,7 +861,7 @@ fn remapLocalModuleConfigurationCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
-        .local_module_function, .local_module_mixin => if (callable.reexported)
+        .local_module_function, .local_module_mixin => if (callable.reexport_depth > 1)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index < context) callable else null
@@ -877,7 +878,7 @@ fn remapLocalModuleArgumentCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
-        .local_module_function => if (callable.reexported)
+        .local_module_function => if (callable.reexport_depth != 0)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index == context)
@@ -886,7 +887,7 @@ fn remapLocalModuleArgumentCallable(
                 null
         else
             null,
-        .local_module_mixin => if (callable.reexported)
+        .local_module_mixin => if (callable.reexport_depth != 0)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index == context)
@@ -1572,7 +1573,7 @@ const Engine = struct {
         return switch (value) {
             .callable => |callable| switch (callable.kind) {
                 .builtin_function, .builtin_mixin => true,
-                .local_module_function, .local_module_mixin => if (callable.reexported)
+                .local_module_function, .local_module_mixin => if (callable.reexport_depth > 1)
                     false
                 else if (decodeLocalModuleCallable(callable)) |target|
                     self.localModuleCallableExists(target, callable.kind)

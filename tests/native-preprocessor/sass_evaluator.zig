@@ -36870,6 +36870,259 @@ test "native Sass re-exports configured callables to the retained parent" {
     ));
 }
 
+test "native Sass configures a later sibling from re-exported callables" {
+    const expected =
+        ".owner{order:owner}.middle{direct:4px}.third{direct:6px;enumerated:8px;nested:10px}.third-internal-mixin{value:12px;content:third}.root{direct:14px;enumerated:16px;returned:18px;nested:20px;alias:22px;function-identity:true;owner-identity:true;mixin-content:true}.third-mixin{value:24px;content:root}.alias-mixin{value:26px;content:alias}.state{calls:12}";
+    const scss_root =
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\@use "owner";
+        \\@use "middle" with (
+        \\  $configured: ("function": owner.$function, "mixin": owner.$mixin),
+        \\);
+        \\@use "_middle.scss" as middle-alias;
+        \\@use "third" with (
+        \\  $configured: (
+        \\    "direct": middle.$direct,
+        \\    "enumerated": map.get(meta.module-variables("middle-alias"), "direct"),
+        \\    "nested": middle-alias.$nested,
+        \\  ),
+        \\);
+        \\@use "_third.scss" as third-alias;
+        \\$enumerated: map.get(meta.module-variables("third"), "direct");
+        \\$returned: third.returned();
+        \\$nested: list.nth(map.get(third.$nested, "outer"), 1);
+        \\.root {
+        \\  direct: meta.call(map.get(map.get(third.$direct, "direct"), "function"), 7px);
+        \\  enumerated: meta.call(map.get(map.get($enumerated, "enumerated"), "function"), 8px);
+        \\  returned: meta.call(map.get(map.get($returned, "direct"), "function"), 9px);
+        \\  nested: meta.call(map.get(list.nth(map.get(map.get($nested, "nested"), "outer"), 1), "function"), 10px);
+        \\  alias: meta.call(map.get(map.get(third-alias.$direct, "direct"), "function"), 11px);
+        \\  function-identity: map.get(map.get(third.$direct, "direct"), "function") == map.get(map.get($returned, "direct"), "function");
+        \\  owner-identity: owner.$function == map.get(map.get(third.$direct, "direct"), "function");
+        \\  mixin-content: meta.accepts-content(map.get(map.get($enumerated, "direct"), "mixin"));
+        \\}
+        \\@include third.apply(third-mixin, 12px) { content: root; }
+        \\@include third-alias.apply(alias-mixin, 13px) { content: alias; }
+        \\.state { calls: owner.calls(); }
+    ;
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_owner.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\$calls: 0;
+            \\@function double($value) {
+            \\  $calls: $calls + 1 !global;
+            \\  @return $value * 2;
+            \\}
+            \\@function calls() { @return $calls; }
+            \\@mixin emit($name, $value) {
+            \\  .#{$name} { value: double($value); @content; }
+            \\}
+            \\$function: meta.get-function("double");
+            \\$mixin: meta.get-mixin("emit");
+            \\.owner { order: owner; }
+            ,
+        },
+        .{
+            .name = "_middle.scss",
+            .contents =
+            \\@use "sass:map";
+            \\@use "sass:meta";
+            \\$configured: null !default;
+            \\$direct: $configured;
+            \\$nested: ("outer": ($configured,));
+            \\@function returned() { @return $configured; }
+            \\@function invoke($value) {
+            \\  @return meta.call(map.get($configured, "function"), $value);
+            \\}
+            \\@mixin apply($name, $value) {
+            \\  @include meta.apply(map.get($configured, "mixin"), $name, $value) {
+            \\    @content;
+            \\  }
+            \\}
+            \\.middle { direct: invoke(2px); }
+            ,
+        },
+        .{
+            .name = "_third.scss",
+            .contents =
+            \\@use "sass:list";
+            \\@use "sass:map";
+            \\@use "sass:meta";
+            \\$configured: null !default;
+            \\$direct: $configured;
+            \\$nested: ("outer": ($configured,));
+            \\@function returned() { @return $configured; }
+            \\@function invoke($key, $value) {
+            \\  @return meta.call(map.get(map.get($configured, $key), "function"), $value);
+            \\}
+            \\@mixin apply($name, $value) {
+            \\  @include meta.apply(map.get(map.get($configured, "direct"), "mixin"), $name, $value) {
+            \\    @content;
+            \\  }
+            \\}
+            \\.third {
+            \\  direct: invoke("direct", 3px);
+            \\  enumerated: invoke("enumerated", 4px);
+            \\  nested: meta.call(map.get(list.nth(map.get(map.get($configured, "nested"), "outer"), 1), "function"), 5px);
+            \\}
+            \\@include apply(third-internal-mixin, 6px) { content: third; }
+            ,
+        },
+        .{
+            .name = "_legacy-owner.sass",
+            .contents =
+            \\@use "sass:meta" as meta
+            \\$calls: 0
+            \\@function double($value)
+            \\  $calls: $calls + 1 !global
+            \\  @return $value * 2
+            \\@function calls()
+            \\  @return $calls
+            \\@mixin emit($name, $value)
+            \\  .#{$name}
+            \\    value: double($value)
+            \\    @content
+            \\$function: meta.get-function("double")
+            \\$mixin: meta.get-mixin("emit")
+            \\.owner
+            \\  order: owner
+            ,
+        },
+        .{
+            .name = "_legacy-middle.sass",
+            .contents =
+            \\@use "sass:map" as map
+            \\@use "sass:meta" as meta
+            \\$configured: null !default
+            \\$direct: $configured
+            \\$nested: ("outer": ($configured,))
+            \\@function returned()
+            \\  @return $configured
+            \\@function invoke($value)
+            \\  @return meta.call(map.get($configured, "function"), $value)
+            \\@mixin apply($name, $value)
+            \\  @include meta.apply(map.get($configured, "mixin"), $name, $value)
+            \\    @content
+            \\.middle
+            \\  direct: invoke(2px)
+            ,
+        },
+        .{
+            .name = "_legacy-third.sass",
+            .contents =
+            \\@use "sass:list" as list
+            \\@use "sass:map" as map
+            \\@use "sass:meta" as meta
+            \\$configured: null !default
+            \\$direct: $configured
+            \\$nested: ("outer": ($configured,))
+            \\@function returned()
+            \\  @return $configured
+            \\@function invoke($key, $value)
+            \\  @return meta.call(map.get(map.get($configured, $key), "function"), $value)
+            \\@mixin apply($name, $value)
+            \\  @include meta.apply(map.get(map.get($configured, "direct"), "mixin"), $name, $value)
+            \\    @content
+            \\.third
+            \\  direct: invoke("direct", 3px)
+            \\  enumerated: invoke("enumerated", 4px)
+            \\  nested: meta.call(map.get(list.nth(map.get(map.get($configured, "nested"), "outer"), 1), "function"), 5px)
+            \\@include apply(third-internal-mixin, 6px)
+            \\  content: third
+            ,
+        },
+    };
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "reexported-callable-configuration.scss",
+        scss_root,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(expected, result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 3), result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[0].url,
+        "/_owner.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[1].url,
+        "/_middle.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[2].url,
+        "/_third.scss",
+    ));
+    try std.testing.expectEqual(@as(usize, 3), result.edges().len);
+    try std.testing.expect(result.map() != null);
+
+    const sass_root =
+        \\@use "sass:list" as list
+        \\@use "sass:map" as map
+        \\@use "sass:meta" as meta
+        \\@use "legacy-owner" as owner
+        \\@use "legacy-middle" with ($configured: ("function": owner.$function, "mixin": owner.$mixin))
+        \\@use "_legacy-middle.sass" as middle-alias
+        \\@use "legacy-third" with ($configured: ("direct": legacy-middle.$direct, "enumerated": map.get(meta.module-variables("middle-alias"), "direct"), "nested": middle-alias.$nested))
+        \\@use "_legacy-third.sass" as third-alias
+        \\$enumerated: map.get(meta.module-variables("legacy-third"), "direct")
+        \\$returned: legacy-third.returned()
+        \\$nested: list.nth(map.get(legacy-third.$nested, "outer"), 1)
+        \\.root
+        \\  direct: meta.call(map.get(map.get(legacy-third.$direct, "direct"), "function"), 7px)
+        \\  enumerated: meta.call(map.get(map.get($enumerated, "enumerated"), "function"), 8px)
+        \\  returned: meta.call(map.get(map.get($returned, "direct"), "function"), 9px)
+        \\  nested: meta.call(map.get(list.nth(map.get(map.get($nested, "nested"), "outer"), 1), "function"), 10px)
+        \\  alias: meta.call(map.get(map.get(third-alias.$direct, "direct"), "function"), 11px)
+        \\  function-identity: map.get(map.get(legacy-third.$direct, "direct"), "function") == map.get(map.get($returned, "direct"), "function")
+        \\  owner-identity: owner.$function == map.get(map.get(legacy-third.$direct, "direct"), "function")
+        \\  mixin-content: meta.accepts-content(map.get(map.get($enumerated, "direct"), "mixin"))
+        \\@include legacy-third.apply(third-mixin, 12px)
+        \\  content: root
+        \\@include third-alias.apply(alias-mixin, 13px)
+        \\  content: alias
+        \\.state
+        \\  calls: owner.calls()
+    ;
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "reexported-callable-configuration.sass",
+        sass_root,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(expected, sass_result.css());
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 3), sass_result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[0].url,
+        "/_legacy-owner.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[1].url,
+        "/_legacy-middle.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[2].url,
+        "/_legacy-third.sass",
+    ));
+}
+
 test "native Sass owns configured callables from an already retained sibling module" {
     const expected =
         ".owner{order:first}.target{direct:6px;reflected:8px;nested:10px;function-inspect:get-function(\"double\");mixin-inspect:get-mixin(\"emit\");mixin-content:true}.internal{value:12px;content:target}.root{qualified:14px;alias-qualified:18px;function-identity:true;mixin-content:true}.configured{value:20px;content:caller}.alias-configured{value:22px;content:alias-caller}.state{calls:8}";
@@ -37319,6 +37572,10 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
         },
         .{
             .name = "_third.scss",
+            .contents = "$theme: null !default; $exported: $theme;",
+        },
+        .{
+            .name = "_fourth.scss",
             .contents = "$theme: null !default;",
         },
     };
@@ -37369,7 +37626,7 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
         },
         .{
             .name = "recursive-local-module-callable-reexport.scss",
-            .input = "@use \"first\"; @use \"tokens\" with ($theme: first.$callback); @use \"third\" with ($theme: tokens.$theme);",
+            .input = "@use \"first\"; @use \"tokens\" with ($theme: first.$callback); @use \"third\" with ($theme: tokens.$theme); @use \"fourth\" with ($theme: third.$exported);",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -37601,13 +37858,13 @@ test "native Sass local use configuration owns diagnostics without partial CSS" 
     );
 }
 
-test "native Sass rejects configured callable re-export chaining without partial CSS" {
+test "native Sass rejects recursive configured callable re-export chaining without partial CSS" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
     const input =
-        "@use \"owner\"; @use \"middle\" with ($configured: owner.$function); @use \"third\" with ($configured: middle.$exported); .unreachable { color: red; }";
+        "@use \"owner\"; @use \"middle\" with ($configured: owner.$function); @use \"third\" with ($configured: middle.$exported); @use \"fourth\" with ($configured: third.$exported); .unreachable { color: red; }";
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_owner.scss",
@@ -37619,6 +37876,10 @@ test "native Sass rejects configured callable re-export chaining without partial
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_third.scss",
+        .data = "$configured: null !default; $exported: $configured;",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_fourth.scss",
         .data = "$configured: null !default;",
     });
     const base = try tmp.dir.realpathAlloc(allocator, ".");
@@ -37668,7 +37929,7 @@ test "native Sass rejects configured callable re-export chaining without partial
         "native Sass local module configuration only supports built-ins and callables owned by an already retained sibling module",
         diagnostics[0].message,
     );
-    const reexport = "middle.$exported";
+    const reexport = "third.$exported";
     const reexport_start = std.mem.indexOf(u8, input, reexport).?;
     try std.testing.expectEqual(source_id, diagnostics[0].span.source);
     try std.testing.expectEqual(
@@ -40805,6 +41066,7 @@ fn exerciseLocalUseAllocationFailures(
         \\  "owner-mixin": owner.$exported-mixin,
         \\  "nested": (1, 2),
         \\));
+        \\@use "third" with ($configured: tokens.$configured-export);
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -40815,6 +41077,7 @@ fn exerciseLocalUseAllocationFailures(
         \\$returned: tokens.return-callables();
         \\$configured-export: tokens.$configured-export;
         \\$configured-enumerated: map.get($variables, "configured-export");
+        \\$third-configured: third.$configured-export;
         \\.root {
         \\  function-exists: meta.function-exists("double", "tokens");
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
@@ -40833,6 +41096,10 @@ fn exerciseLocalUseAllocationFailures(
         \\  configured-identity: map.get($configured-export, "owner-function") == map.get($configured-enumerated, "owner-function");
         \\  configured-inspect: meta.inspect(map.get($configured-export, "owner-function"));
         \\  configured-mixin-content: meta.accepts-content(map.get($configured-export, "owner-mixin"));
+        \\  third-configured-function: meta.call(map.get($third-configured, "owner-function"), 9px);
+        \\  third-configured-identity: map.get($third-configured, "owner-function") == map.get($configured-export, "owner-function");
+        \\  third-configured-inspect: meta.inspect(map.get($third-configured, "owner-function"));
+        \\  third-configured-mixin-content: meta.accepts-content(map.get($third-configured, "owner-mixin"));
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
@@ -40849,6 +41116,9 @@ fn exerciseLocalUseAllocationFailures(
         \\}
         \\@include meta.apply(map.get($configured-export, "owner-mixin"), configured-reexport, 8px) {
         \\  content: reexport;
+        \\}
+        \\@include meta.apply(map.get($third-configured, "owner-mixin"), reexported-configuration, 10px) {
+        \\  content: reconfigured;
         \\}
         \\@include tokens.emit(card) { content: caller; }
     ;
@@ -40869,7 +41139,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".owner{order:owner}.module{order:first}.configured-owner{function:9px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-owner-mixin{value:12px;content:module}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured-function:21px;configured-identity:true;configured-inspect:get-function(\"triple\");configured-mixin-content:true;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.result{value:4px;content:result-caller}.configured-reexport{value:24px;content:reexport}.card{value:4px;content:caller}",
+        ".owner{order:owner}.module{order:first}.configured-owner{function:9px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-owner-mixin{value:12px;content:module}.configured-third{function:15px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-third-mixin{value:18px;content:third}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured-function:21px;configured-identity:true;configured-inspect:get-function(\"triple\");configured-mixin-content:true;third-configured-function:27px;third-configured-identity:true;third-configured-inspect:get-function(\"triple\");third-configured-mixin-content:true;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.result{value:4px;content:result-caller}.configured-reexport{value:24px;content:reexport}.reexported-configuration{value:30px;content:reconfigured}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -40934,6 +41204,23 @@ test "native Sass local use handles every allocation failure" {
         \\$configured: cleared;
         ,
     });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_third.scss",
+        .data =
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\$configured: null !default;
+        \\.configured-third {
+        \\  function: meta.call(map.get($configured, "owner-function"), 5px);
+        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
+        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
+        \\}
+        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-third-mixin, 6px) {
+        \\  content: third;
+        \\}
+        \\$configured-export: $configured;
+        ,
+    });
     const root_input =
         \\@use "sass:meta";
         \\@use "sass:map";
@@ -40946,6 +41233,7 @@ test "native Sass local use handles every allocation failure" {
         \\  "owner-mixin": owner.$exported-mixin,
         \\  "nested": (1, 2),
         \\));
+        \\@use "third" with ($configured: tokens.$configured-export);
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -40956,6 +41244,7 @@ test "native Sass local use handles every allocation failure" {
         \\$returned: tokens.return-callables();
         \\$configured-export: tokens.$configured-export;
         \\$configured-enumerated: map.get($variables, "configured-export");
+        \\$third-configured: third.$configured-export;
         \\.root {
         \\  function-exists: meta.function-exists("double", "tokens");
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
@@ -40974,6 +41263,10 @@ test "native Sass local use handles every allocation failure" {
         \\  configured-identity: map.get($configured-export, "owner-function") == map.get($configured-enumerated, "owner-function");
         \\  configured-inspect: meta.inspect(map.get($configured-export, "owner-function"));
         \\  configured-mixin-content: meta.accepts-content(map.get($configured-export, "owner-mixin"));
+        \\  third-configured-function: meta.call(map.get($third-configured, "owner-function"), 9px);
+        \\  third-configured-identity: map.get($third-configured, "owner-function") == map.get($configured-export, "owner-function");
+        \\  third-configured-inspect: meta.inspect(map.get($third-configured, "owner-function"));
+        \\  third-configured-mixin-content: meta.accepts-content(map.get($third-configured, "owner-mixin"));
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
@@ -40990,6 +41283,9 @@ test "native Sass local use handles every allocation failure" {
         \\}
         \\@include meta.apply(map.get($configured-export, "owner-mixin"), configured-reexport, 8px) {
         \\  content: reexport;
+        \\}
+        \\@include meta.apply(map.get($third-configured, "owner-mixin"), reexported-configuration, 10px) {
+        \\  content: reconfigured;
         \\}
         \\@include tokens.emit(card) { content: caller; }
     ;
