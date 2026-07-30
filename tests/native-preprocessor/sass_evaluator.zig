@@ -20325,6 +20325,130 @@ fn exerciseDirectColorModuleComplementSplatAllocationFailures(
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct legacy color complement splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\.values {
+        \\  list: complement((mark(1, #123456),)...);
+        \\  map: complement(("color": mark(2, hwb(240deg 10% 20%)))...);
+        \\  scalar: complement(mark(3, hsl(120deg 20% 25%))...);
+        \\  bracketed: complement([mark(4, #123456)]...);
+        \\  override: complement($color: mark(5, red), ("color": mark(6, #123456))...);
+        \\  transparent: complement((transparent,)...);
+        \\  alpha: complement((rgba(18, 52, 86, .5),)...);
+        \\  type: meta.type-of(complement((#123456,)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-complement-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:#563412;map:rgb(204,204,25.5);scalar:hsl(300,20%,25%);bracketed:#563412;override:#563412;transparent:rgba(0,0,0,0);alpha:rgba(86,52,18,.5);type:color;trace:123456}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 8), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: complement((mark(1, #123456),)...)
+        \\  map: complement((color: mark(2, hwb(240deg 10% 20%)))...)
+        \\  scalar: complement(mark(3, hsl(120deg 20% 25%))...)
+        \\  override: complement($color: mark(4, red), (color: mark(5, #123456))...)
+        \\  type: m.type-of(complement((#123456,)...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-complement-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:#563412;map:rgb(204,204,25.5);scalar:hsl(300,20%,25%);override:#563412;type:color;trace:12345}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 5), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorComplementSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorComplementSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: complement((#123456,)...);
+        \\  map: complement(("color": hsl(120deg 20% 25%))...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-complement-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:#563412;map:hsl(300,20%,25%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes legacy color complement function references" {
     const input =
         \\@use "sass:meta";
@@ -20555,6 +20679,36 @@ test "native Sass meta call rejects unavailable color complement forms arguments
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "complement(()...)" },
+        .{ .name = "legacy-direct-overfull-list-splat", .invocation = "complement((#123456, hsl, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "complement((color: #123456, other: red)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "complement((1: #123456)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "complement(#123456, (color: red)...)" },
+        .{ .name = "legacy-direct-invalid-type", .invocation = "complement((true,)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "complement((color(display-p3 .1 .2 .3),)...)" },
+        .{ .name = "legacy-direct-rgb-missing", .invocation = "complement((rgb(none 0 0),)...)" },
+        .{ .name = "legacy-direct-hsl-missing", .invocation = "complement((hsl(none 10% 20%),)...)" },
+        .{ .name = "legacy-direct-hwb-missing", .invocation = "complement((hwb(none 10% 20%),)...)" },
+        .{ .name = "legacy-direct-positional-space", .invocation = "complement((#123456, hsl)...)" },
+        .{ .name = "legacy-direct-keyword-space", .invocation = "complement((color: #123456, space: hsl)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     const direct_unsupported = [_][]const u8{
         "color.complement((#123456, hsl)...)",
         "color.complement((color: #123456, space: hsl)...)",
@@ -20571,17 +20725,6 @@ test "native Sass meta call rejects unavailable color complement forms arguments
             compile(std.testing.allocator, "color-complement-direct-unsupported.scss", input, .scss, .{}),
         );
     }
-
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
-            std.testing.allocator,
-            "legacy-color-complement-direct-splat.scss",
-            ".a { value: complement((#123456,)...); }",
-            .scss,
-            .{},
-        ),
-    );
 
     try std.testing.expectError(
         error.InvalidExpression,
@@ -20621,6 +20764,16 @@ test "native Sass meta call rejects unavailable color complement forms arguments
             std.testing.allocator,
             "color-complement-direct-splat-argument-limit.scss",
             "@use \"sass:color\"; .a { value: color.complement((#123456, hsl)...); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-complement-direct-splat-argument-limit.scss",
+            ".a { value: complement((#123456, hsl)...); }",
             .scss,
             argument_limits,
         ),
@@ -30103,7 +30256,7 @@ test "native Sass fixed built-in keyword arguments reject ambiguous calls" {
         );
     }
     try std.testing.expectError(
-        error.UnsupportedFeature,
+        error.UndefinedVariable,
         compile(
             std.testing.allocator,
             "fixed-splat.scss",
