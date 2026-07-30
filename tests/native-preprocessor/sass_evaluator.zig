@@ -36654,6 +36654,289 @@ fn compileWithLocalUseFiles(
     return transaction.finish(.{ .format = .minified, .source_map = true });
 }
 
+test "native Sass configures one-hop local use modules once from caller values" {
+    const root_input =
+        \\$base: 3;
+        \\@use "sass:meta";
+        \\@use "tokens" with (
+        \\  $theme: blue,
+        \\  $size: $base * 2,
+        \\  $nested: (a: (1, 2), b: "x,y"),
+        \\  $nullable: null,
+        \\);
+        \\@use "_tokens.scss" as alias;
+        \\$base: 9;
+        \\.root {
+        \\  default: tokens.$theme;
+        \\  alias: alias.$size;
+        \\  snapshot: tokens.snapshot();
+        \\  nested: meta.inspect(tokens.$nested);
+        \\  nullable: tokens.$nullable;
+        \\  caller: $base;
+        \\}
+    ;
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_tokens.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\$theme: red !default;
+            \\$size: 1 !default;
+            \\$nested: (default: true) !default;
+            \\$nullable: fallback !default;
+            \\$fixed: original;
+            \\.module {
+            \\  theme: $theme;
+            \\  size: $size;
+            \\  nested: meta.inspect($nested);
+            \\  nullable: $nullable;
+            \\  fixed: $fixed;
+            \\}
+            \\@function snapshot() { @return ($theme, $size, $fixed); }
+            ,
+        },
+        .{
+            .name = "_legacy.sass",
+            .contents =
+            \\$tone: red !default
+            \\$size: 1 !default
+            \\.legacy
+            \\  tone: $tone
+            \\  size: $size
+            ,
+        },
+    };
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "configured.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".module{theme:blue;size:6;nested:(a: (1, 2), b: \"x,y\");nullable:fallback;fixed:original}.root{default:blue;alias:6;snapshot:blue,6,original;nested:(a: (1, 2), b: \"x,y\");nullable:fallback;caller:9}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[0].url,
+        "/_tokens.scss",
+    ));
+    try std.testing.expectEqual(@as(usize, 1), result.edges().len);
+    try std.testing.expect(result.map() != null);
+
+    const indented_root =
+        \\$base: 2
+        \\@use "legacy" as palette with ($tone: purple, $size: $base * 3)
+        \\.root
+        \\  tone: palette.$tone
+        \\  size: palette.$size
+    ;
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "configured.sass",
+        indented_root,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".legacy{tone:purple;size:6}.root{tone:purple;size:6}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
+}
+
+test "native Sass local use configuration rejects unsafe and repeated forms" {
+    const files = [_]LocalUseFile{.{
+        .name = "_tokens.scss",
+        .contents =
+        \\$theme: red !default;
+        \\$tone_value: 1 !default;
+        \\$fixed: original;
+        \\$-private: hidden !default;
+        ,
+    }};
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "non-default.scss",
+            .input = "@use \"tokens\" with ($fixed: changed);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown.scss",
+            .input = "@use \"tokens\" with ($missing: changed);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "private.scss",
+            .input = "@use \"tokens\" with ($-private: changed);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "duplicate.scss",
+            .input = "@use \"tokens\" with ($theme: blue, $theme: green);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "normalized-duplicate.scss",
+            .input = "@use \"tokens\" with ($tone_value: 2, $tone-value: 3);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "configured-twice.scss",
+            .input = "@use \"tokens\" with ($theme: blue); @use \"_tokens.scss\" as alias with ($theme: blue);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "configured-after-load.scss",
+            .input = "@use \"tokens\"; @use \"_tokens.scss\" as alias with ($theme: blue);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "callable.scss",
+            .input = "@use \"sass:meta\"; $function: meta.get-function(\"inspect\", $module: \"meta\"); @use \"tokens\" with ($theme: $function);",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "built-in.scss",
+            .input = "@use \"sass:math\" with ($pi: 4);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "configuration-does-not-create-caller-variables.scss",
+            .input = "@use \"tokens\" with ($theme: blue, $tone-value: $theme);",
+            .expected = error.UndefinedVariable,
+        },
+        .{
+            .name = "positional.scss",
+            .input = "@use \"tokens\" with (blue);",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "empty.scss",
+            .input = "@use \"tokens\" with ();",
+            .expected = error.InvalidSassSyntax,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compileWithLocalUseFiles(
+                std.testing.allocator,
+                case.name,
+                case.input,
+                .scss,
+                &files,
+                .{},
+            ),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "configuration-limit.scss",
+            "@use \"tokens\" with ($theme: blue, $tone-value: 2);",
+            .scss,
+            &files,
+            limits,
+        ),
+    );
+}
+
+test "native Sass local use configuration owns diagnostics without partial CSS" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const input = "@use \"tokens\" with ($fixed: changed); .unreachable { color: red; }";
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_tokens.scss",
+        .data = "$fixed: original; .module { value: $fixed; }",
+    });
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "native Sass configuration variable was not declared with !default in the module",
+        diagnostics[0].message,
+    );
+    const configuration = "$fixed: changed";
+    const configuration_start = std.mem.indexOf(u8, input, configuration).?;
+    try std.testing.expectEqual(source_id, diagnostics[0].span.source);
+    try std.testing.expectEqual(
+        @as(u32, @intCast(configuration_start)),
+        diagnostics[0].span.start,
+    );
+    try std.testing.expectEqual(
+        @as(u32, @intCast(configuration_start + configuration.len)),
+        diagnostics[0].span.end,
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
 test "native Sass loads one-hop local use modules once with visible public variables" {
     const root_input =
         \\@use "tokens";
@@ -39761,7 +40044,7 @@ fn exerciseLocalUseAllocationFailures(
     const input =
         \\@use "sass:meta";
         \\@use "sass:map";
-        \\@use "tokens";
+        \\@use "tokens" with ($configured: (nested: (1, 2), text: "x,y"));
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -39784,6 +40067,7 @@ fn exerciseLocalUseAllocationFailures(
         \\  callable-argument-value: tokens.invoke($exported-function, 3px);
         \\  callable-result-value: meta.call(map.get($returned, "function"), 5px);
         \\  callable-result-builtin: meta.call(map.get($returned, "builtin"), -6px);
+        \\  configured: meta.inspect(tokens.$configured);
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
@@ -39817,7 +40101,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".module{order:first}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.result{value:4px;content:result-caller}.card{value:4px;content:caller}",
+        ".module{order:first}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured:(nested: (1, 2), text: \"x,y\");mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.result{value:4px;content:result-caller}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -39832,6 +40116,7 @@ test "native Sass local use handles every allocation failure" {
         \\@use "sass:meta";
         \\@use "sass:math";
         \\$public: 2px;
+        \\$configured: (default: true) !default;
         \\@function double($value) { @return $value * 2; }
         \\@mixin emit($name) {
         \\  .#{$name} { value: double($public); @content; }
@@ -39860,7 +40145,7 @@ test "native Sass local use handles every allocation failure" {
     const root_input =
         \\@use "sass:meta";
         \\@use "sass:map";
-        \\@use "tokens";
+        \\@use "tokens" with ($configured: (nested: (1, 2), text: "x,y"));
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -39883,6 +40168,7 @@ test "native Sass local use handles every allocation failure" {
         \\  callable-argument-value: tokens.invoke($exported-function, 3px);
         \\  callable-result-value: meta.call(map.get($returned, "function"), 5px);
         \\  callable-result-builtin: meta.call(map.get($returned, "builtin"), -6px);
+        \\  configured: meta.inspect(tokens.$configured);
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);

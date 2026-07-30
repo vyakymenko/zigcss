@@ -858,6 +858,23 @@ const ParsedUse = struct {
     url: []const u8,
     namespace: ?[]const u8 = null,
     unprefixed: bool = false,
+    configuration: ?[]const u8 = null,
+};
+
+const ModuleConfigurationEntry = struct {
+    name: []u8,
+    value: *const native_value.Value,
+    span: native_source.Span,
+};
+
+const ModuleConfiguration = struct {
+    items: std.ArrayList(ModuleConfigurationEntry) = .empty,
+
+    fn deinit(self: *ModuleConfiguration, allocator: std.mem.Allocator) void {
+        for (self.items.items) |entry| allocator.free(entry.name);
+        self.items.deinit(allocator);
+        self.* = undefined;
+    }
 };
 
 const QualifiedName = struct {
@@ -1233,7 +1250,7 @@ const Engine = struct {
                 .mixin => try self.executeMixinDirective(child_id, scope, depth, .root),
                 .content => try self.executeContentDirective(child_id, scope, depth, .root),
                 .function => try self.defineUserFunction(child_id, scope),
-                .module => try self.executeModuleDirective(child_id),
+                .module => try self.executeModuleDirective(child_id, scope),
                 .return_statement => {
                     try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
                     return error.InvalidSassSyntax;
@@ -1254,6 +1271,7 @@ const Engine = struct {
     fn executeModuleDirective(
         self: *Engine,
         node_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
     ) Error!void {
         const node = self.document.get(node_id) catch return error.InvalidSassSyntax;
         const keyword_span = node.text orelse return error.InvalidSassSyntax;
@@ -1285,6 +1303,12 @@ const Engine = struct {
             try self.report(.syntax, node.span, "malformed native Sass @use directive");
             return error.InvalidSassSyntax;
         };
+        var configuration = try self.evaluateModuleConfiguration(
+            parsed.configuration,
+            scope.cursor,
+            prelude_node.span,
+        );
+        defer configuration.deinit(self.allocator);
         const builtin_kind: ?BuiltinModule = if (std.mem.eql(u8, parsed.url, "sass:color"))
             .color
         else if (std.mem.eql(u8, parsed.url, "sass:list"))
@@ -1317,6 +1341,14 @@ const Engine = struct {
             );
             return error.UnsupportedFeature;
         }
+        if (builtin_kind != null and configuration.items.items.len != 0) {
+            try self.report(
+                .invalid_operation,
+                node.span,
+                "native Sass built-in modules cannot be configured",
+            );
+            return error.InvalidExpression;
+        }
         if (self.modules.items.len >= self.limits.max_modules) {
             try self.report(.resource_limit, node.span, "native Sass module limit exceeded");
             return error.ModuleLimitExceeded;
@@ -1343,12 +1375,147 @@ const Engine = struct {
         const target: ModuleTarget = if (builtin_kind) |module_kind|
             .{ .builtin = module_kind }
         else
-            .{ .local = try self.loadLocalModule(node.span.source, parsed.url, node.span) };
+            .{ .local = try self.loadLocalModule(
+                node.span.source,
+                parsed.url,
+                &configuration,
+                node.span,
+            ) };
         try self.validateModuleBinding(target, namespace, node.span);
         try self.modules.append(self.allocator, .{
             .target = target,
             .namespace = namespace,
         });
+    }
+
+    fn evaluateModuleConfiguration(
+        self: *Engine,
+        body: ?[]const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!ModuleConfiguration {
+        var result = ModuleConfiguration{};
+        errdefer result.deinit(self.allocator);
+        const configuration = body orelse return result;
+
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(
+            self.allocator,
+            configuration,
+            .comma,
+            &ranges,
+        );
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(configuration[final.start..final.end]).len == 0) {
+                ranges.items.len -= 1;
+            }
+        }
+        if (ranges.items.len == 0) {
+            try self.report(
+                .syntax,
+                span,
+                "native Sass @use configuration requires at least one variable",
+            );
+            return error.InvalidSassSyntax;
+        }
+
+        var parsed = native_arguments.parseAlloc(
+            self.allocator,
+            configuration,
+            ranges.items,
+            self.limits.max_function_arguments,
+        ) catch |failure| return self.moduleConfigurationFailure(failure, span);
+        defer parsed.deinit();
+
+        for (parsed.items, 0..) |argument, index| {
+            const entry = trimWhitespace(
+                configuration[ranges.items[index].start..ranges.items[index].end],
+            );
+            const entry_span = self.sourceSpanForBytes(entry, span);
+            const name = argument.name orelse {
+                try self.report(
+                    .syntax,
+                    entry_span,
+                    "native Sass @use configuration requires variable names",
+                );
+                return error.InvalidSassSyntax;
+            };
+            if (argument.splat) {
+                try self.report(
+                    .syntax,
+                    entry_span,
+                    "native Sass @use configuration does not accept argument expansion",
+                );
+                return error.InvalidSassSyntax;
+            }
+            for (parsed.items[0..index]) |previous| {
+                const previous_name = previous.name orelse continue;
+                if (!native_arguments.nameEql(name, previous_name)) continue;
+                try self.report(
+                    .invalid_operation,
+                    entry_span,
+                    "native Sass configuration variable may only be specified once",
+                );
+                return error.InvalidExpression;
+            }
+        }
+
+        for (parsed.items, 0..) |argument, index| {
+            const name = argument.name.?;
+            const normalized = self.normalizeVariable(name) catch |failure| {
+                if (failure == error.OutOfMemory) return failure;
+                try self.report(
+                    .resource_limit,
+                    span,
+                    "native Sass configuration variable name limit exceeded",
+                );
+                return failure;
+            };
+            errdefer self.allocator.free(normalized);
+            const raw_value = configuration[argument.value.start..argument.value.end];
+            const value_span = self.sourceSpanForBytes(raw_value, span);
+            const value = try self.evaluateExpressionBytes(raw_value, scope, value_span);
+            if (valueContainsCallable(value.*, 0)) {
+                try self.report(
+                    .unsupported_feature,
+                    value_span,
+                    "native Sass local module callable configuration is not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            const entry = trimWhitespace(
+                configuration[ranges.items[index].start..ranges.items[index].end],
+            );
+            try result.items.append(self.allocator, .{
+                .name = normalized,
+                .value = value,
+                .span = self.sourceSpanForBytes(entry, span),
+            });
+        }
+        return result;
+    }
+
+    fn moduleConfigurationFailure(
+        self: *Engine,
+        failure: native_arguments.Error,
+        span: native_source.Span,
+    ) Error {
+        if (failure == error.OutOfMemory) return error.OutOfMemory;
+        const code: native_diagnostics.Code = if (failure == error.ArgumentLimitExceeded)
+            .resource_limit
+        else
+            .syntax;
+        const message: []const u8 = if (failure == error.ArgumentLimitExceeded)
+            "native Sass module configuration limit exceeded"
+        else
+            "malformed native Sass @use configuration";
+        self.report(code, span, message) catch |err| return err;
+        return if (failure == error.ArgumentLimitExceeded)
+            error.FunctionArgumentLimitExceeded
+        else
+            error.InvalidSassSyntax;
     }
 
     fn validateModuleBinding(
@@ -1406,6 +1573,7 @@ const Engine = struct {
         self: *Engine,
         parent_source_id: native_source.SourceId,
         module_url: []const u8,
+        configuration: *const ModuleConfiguration,
         span: native_source.Span,
     ) Error!usize {
         const parent = try self.sources.get(parent_source_id);
@@ -1450,7 +1618,16 @@ const Engine = struct {
         defer loaded.deinit();
 
         for (self.local_modules.items, 0..) |module, index| {
-            if (std.mem.eql(u8, module.url, loaded.url)) return index;
+            if (!std.mem.eql(u8, module.url, loaded.url)) continue;
+            if (configuration.items.items.len != 0) {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass local module was already loaded and cannot be configured again",
+                );
+                return error.InvalidExpression;
+            }
+            return index;
         }
 
         const source_id = self.sources.add(loaded.url, loaded.contents) catch |failure| {
@@ -1501,6 +1678,7 @@ const Engine = struct {
         module_engine.module_depth = self.module_depth + 1;
         module_engine.parent_engine = self;
         module_engine.parent_module_index = self.local_modules.items.len;
+        try self.applyLocalModuleConfiguration(module_engine, configuration);
         try module_engine.run();
         const variables = try self.clonePublicModuleVariables(module_engine);
         errdefer {
@@ -1559,6 +1737,91 @@ const Engine = struct {
                 related.items,
             );
         }
+    }
+
+    fn applyLocalModuleConfiguration(
+        self: *Engine,
+        module_engine: *Engine,
+        configuration: *const ModuleConfiguration,
+    ) Error!void {
+        if (configuration.items.items.len == 0) return;
+        const children = module_engine.document.children(module_engine.document.root) catch
+            return error.InvalidSassSyntax;
+
+        for (configuration.items.items) |entry| {
+            if (isPrivateModuleMember(entry.name)) {
+                try self.report(
+                    .invalid_operation,
+                    entry.span,
+                    "private native Sass module variables cannot be configured",
+                );
+                return error.InvalidExpression;
+            }
+
+            var configurable = false;
+            for (children) |child_id| {
+                const child = module_engine.document.get(child_id) catch
+                    return error.InvalidSassSyntax;
+                if (child.kind != .declaration or
+                    !try module_engine.isVariableDeclaration(child_id))
+                {
+                    continue;
+                }
+                const declaration_children = module_engine.document.children(child_id) catch
+                    return error.InvalidSassSyntax;
+                if (declaration_children.len != 2) continue;
+                const name_node = module_engine.document.get(declaration_children[0]) catch
+                    return error.InvalidSassSyntax;
+                const expression_node = module_engine.document.get(declaration_children[1]) catch
+                    return error.InvalidSassSyntax;
+                if (name_node.text == null or expression_node.text == null) continue;
+                const raw_name = try module_engine.sources.slice(name_node.text.?);
+                const normalized = try module_engine.normalizeVariable(raw_name);
+                defer module_engine.allocator.free(normalized);
+                if (!sassNameEql(entry.name, normalized)) continue;
+                const expression = try module_engine.sources.slice(expression_node.text.?);
+                const assignment = try module_engine.parseVariableAssignment(
+                    expression,
+                    expression_node.span,
+                );
+                configurable = assignment.default;
+                break;
+            }
+            if (!configurable) {
+                try self.report(
+                    .invalid_operation,
+                    entry.span,
+                    "native Sass configuration variable was not declared with !default in the module",
+                );
+                return error.InvalidExpression;
+            }
+        }
+
+        for (configuration.items.items) |entry| {
+            const item = module_engine.values.own(entry.value.*) catch |failure| {
+                if (failure == error.OutOfMemory) return failure;
+                try self.report(
+                    .resource_limit,
+                    entry.span,
+                    "native Sass module configuration value limit exceeded",
+                );
+                return failure;
+            };
+            module_engine.global_scope = module_engine.environment.set(
+                module_engine.global_scope,
+                entry.name,
+                item,
+            ) catch |failure| {
+                if (failure == error.OutOfMemory) return failure;
+                try self.report(
+                    .resource_limit,
+                    entry.span,
+                    "native Sass module configuration environment limit exceeded",
+                );
+                return failure;
+            };
+        }
+        module_engine.root_scope.cursor = module_engine.global_scope;
     }
 
     fn clonePublicModuleVariables(
@@ -22308,19 +22571,39 @@ fn parseUseDirective(input: []const u8) ?ParsedUse {
     const url = raw[1..end];
     if (url.len == 0 or std.mem.indexOf(u8, url, "#{") != null) return null;
 
-    const tail = trimWhitespace(raw[end + 1 ..]);
-    if (tail.len == 0) return .{ .url = url };
-    if (tail.len < 3 or !std.mem.startsWith(u8, tail, "as") or
-        std.mem.indexOfScalar(u8, " \t\r\n\x0c", tail[2]) == null)
+    var result = ParsedUse{ .url = url };
+    var tail = trimWhitespace(raw[end + 1 ..]);
+    if (tail.len == 0) return result;
+
+    if (tail.len > 2 and std.mem.startsWith(u8, tail, "as") and
+        isExpressionWhitespace(tail[2]))
+    {
+        tail = trimWhitespace(tail[2..]);
+        var alias_end: usize = 0;
+        while (alias_end < tail.len and !isExpressionWhitespace(tail[alias_end])) {
+            alias_end += 1;
+        }
+        const alias = tail[0..alias_end];
+        if (std.mem.eql(u8, alias, "*")) {
+            result.unprefixed = true;
+        } else {
+            if (!isSimpleIdentifier(alias)) return null;
+            result.namespace = alias;
+        }
+        tail = trimWhitespace(tail[alias_end..]);
+        if (tail.len == 0) return result;
+    }
+
+    if (tail.len <= "with".len or
+        !std.mem.startsWith(u8, tail, "with") or
+        !isExpressionWhitespace(tail["with".len]))
     {
         return null;
     }
-    const alias = trimWhitespace(tail[2..]);
-    if (std.mem.eql(u8, alias, "*")) {
-        return .{ .url = url, .unprefixed = true };
-    }
-    if (!isSimpleIdentifier(alias)) return null;
-    return .{ .url = url, .namespace = alias };
+    const wrapper = trimWhitespace(tail["with".len..]);
+    if (!fullyWrapped(wrapper, '(', ')')) return null;
+    result.configuration = wrapper[1 .. wrapper.len - 1];
+    return result;
 }
 
 fn defaultModuleNamespace(module_url: []const u8) ?[]const u8 {
