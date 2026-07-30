@@ -10845,27 +10845,88 @@ const Engine = struct {
             );
             return error.InvalidExpression;
         }
-        const module = (try self.metaExistenceModule(arguments[0].*, span)).?;
+        const target = (try self.metaExistenceModuleTarget(arguments[0].*, span)).?;
+        return switch (target) {
+            .builtin => |module| blk: {
+                var entries: [math_constants.len]native_value.Entry = undefined;
+                var count: usize = 0;
+                if (module == .math) {
+                    for (math_constants) |constant| {
+                        try self.transaction.consumeOperations(1);
+                        entries[count] = .{
+                            .key = .{ .string = .{
+                                .bytes = constant.name,
+                                .quoted = true,
+                            } },
+                            .value = .{ .number = .{
+                                .value = constant.value,
+                                .preserve_precision = true,
+                            } },
+                        };
+                        count += 1;
+                    }
+                }
+                break :blk self.values.own(.{ .map = .{
+                    .entries = entries[0..count],
+                } });
+            },
+            .local => |module_index| self.callMetaLocalModuleVariables(module_index, span),
+        };
+    }
 
-        var entries: [math_constants.len]native_value.Entry = undefined;
-        var count: usize = 0;
-        if (module == .math) {
-            for (math_constants) |constant| {
-                try self.transaction.consumeOperations(1);
-                entries[count] = .{
-                    .key = .{ .string = .{
-                        .bytes = constant.name,
-                        .quoted = true,
-                    } },
-                    .value = .{ .number = .{
-                        .value = constant.value,
-                        .preserve_precision = true,
-                    } },
-                };
-                count += 1;
-            }
+    fn callMetaLocalModuleVariables(
+        self: *Engine,
+        module_index: usize,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const module = &self.local_modules.items[module_index];
+        const temporary_bytes = std.math.mul(
+            usize,
+            module.variables.len,
+            @sizeOf(native_value.Entry),
+        ) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module variable enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        };
+        if (temporary_bytes > self.limits.max_temporary_bytes) {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module variable enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
         }
-        return self.values.own(.{ .map = .{ .entries = entries[0..count] } });
+
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        try entries.ensureTotalCapacity(self.allocator, module.variables.len);
+        for (module.variables) |variable| {
+            try self.transaction.consumeOperations(1);
+            const value = try module.engine.environment.lookup(
+                module.engine.global_scope,
+                variable.name,
+            ) orelse return error.InvalidSassSyntax;
+            if (valueContainsCallable(value.*, 0)) {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass local callable exports are not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            entries.appendAssumeCapacity(.{
+                .key = .{ .string = .{
+                    .bytes = variable.name,
+                    .quoted = true,
+                } },
+                .value = value.*,
+            });
+        }
+        return self.values.own(.{ .map = .{ .entries = entries.items } });
     }
 
     fn callMetaModuleFunctions(

@@ -37488,6 +37488,124 @@ test "native Sass enumerates one-hop local module functions" {
     try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
 }
 
+test "native Sass enumerates one-hop local module variables" {
+    const root_input =
+        \\@use "sass:meta";
+        \\@use "sass:map";
+        \\@use "tools";
+        \\@use "_tools.scss" as alias;
+        \\$direct: meta.module-variables("tools");
+        \\$enumerate: meta.get-function("module-variables", $module: "meta");
+        \\$reflected: meta.call($enumerate, $module: "alias");
+        \\$same: $direct == meta.module-variables("alias") and $direct == $reflected;
+        \\$before: meta.module-variables("tools");
+        \\$bumped: tools.bump();
+        \\$after: meta.module-variables("alias");
+        \\.values {
+        \\  inspect: meta.inspect($direct);
+        \\  same: $same;
+        \\  private: map.has-key($direct, "-private") or map.has-key($direct, "-also-private");
+        \\  first: map.get($direct, "first");
+        \\  normalized: map.get($direct, "under-score");
+        \\  before: map.get($before, "counter");
+        \\  bumped: $bumped;
+        \\  after: map.get($after, "counter");
+        \\  nested: meta.inspect(map.get($direct, "middle"));
+        \\  last: meta.inspect(map.get($direct, "last"));
+        \\}
+    ;
+    const files = [_]LocalUseFile{.{
+        .name = "_tools.scss",
+        .contents =
+        \\$first: 1;
+        \\$_private: hidden;
+        \\$under_score: old;
+        \\$middle: ("nested": (2px, "owned"));
+        \\$counter: 1;
+        \\$first: 10;
+        \\$under-score: new;
+        \\$-also-private: hidden;
+        \\$last: (alpha: (1, 2), beta: "quoted");
+        \\@function bump() {
+        \\  $counter: $counter + 1 !global;
+        \\  @return $counter;
+        \\}
+        ,
+    }};
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "local-variable-enumeration.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{inspect:(\"first\": 10, \"under-score\": new, \"middle\": (\"nested\": (2px, \"owned\")), \"counter\": 1, \"last\": (alpha: (1, 2), beta: \"quoted\"));same:true;private:false;first:10;normalized:new;before:1;bumped:2;after:2;nested:(\"nested\": (2px, \"owned\"));last:(alpha: (1, 2), beta: \"quoted\")}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+
+    const indented_root =
+        \\@use "sass:meta" as m
+        \\@use "sass:map" as map
+        \\@use "legacy"
+        \\@use "legacy" as custom
+        \\$direct: m.module-variables("legacy")
+        \\$enumerate: m.get-function("module-variables", $module: "m")
+        \\$reflected: m.call($enumerate, $module: "custom")
+        \\$same: $direct == m.module-variables("custom") and $direct == $reflected
+        \\$before: m.module-variables("legacy")
+        \\$bumped: legacy.bump()
+        \\$after: m.module-variables("custom")
+        \\.sass
+        \\  inspect: m.inspect($direct)
+        \\  same: $same
+        \\  private: map.has-key($direct, "-private") or map.has-key($direct, "-also-private")
+        \\  first: map.get($direct, "first")
+        \\  normalized: map.get($direct, "under-score")
+        \\  before: map.get($before, "counter")
+        \\  bumped: $bumped
+        \\  after: map.get($after, "counter")
+        \\  nested: m.inspect(map.get($direct, "middle"))
+        \\  last: m.inspect(map.get($direct, "last"))
+    ;
+    const indented_files = [_]LocalUseFile{.{
+        .name = "_legacy.sass",
+        .contents =
+        \\$first: 1
+        \\$_private: hidden
+        \\$under_score: old
+        \\$middle: ("nested": (2px, "owned"))
+        \\$counter: 1
+        \\$first: 10
+        \\$under-score: new
+        \\$-also-private: hidden
+        \\$last: (alpha: (1, 2), beta: "quoted")
+        \\@function bump()
+        \\  $counter: $counter + 1 !global
+        \\  @return $counter
+        ,
+    }};
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "local-variable-enumeration.sass",
+        indented_root,
+        .sass,
+        &indented_files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{inspect:(\"first\": 10, \"under-score\": new, \"middle\": (\"nested\": (2px, \"owned\")), \"counter\": 1, \"last\": (alpha: (1, 2), beta: \"quoted\"));same:true;private:false;first:10;normalized:new;before:1;bumped:2;after:2;nested:(\"nested\": (2px, \"owned\"));last:(alpha: (1, 2), beta: \"quoted\")}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
+}
+
 test "native Sass enumerates one-hop local module mixins" {
     const root_input =
         \\@use "sass:meta";
@@ -37614,6 +37732,8 @@ test "native Sass local module existence rejects ambiguity and unknown namespace
         .{
             .name = "_first.scss",
             .contents =
+            \\$primary: first;
+            \\$secondary: another;
             \\@function shared() { @return first; }
             \\@function another() { @return another; }
             \\@mixin shared-mixin {}
@@ -37651,6 +37771,16 @@ test "native Sass local module existence rejects ambiguity and unknown namespace
         .{
             .name = "unknown-mixin-namespace.scss",
             .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.mixin-exists(\"shared-mixin\", \"missing\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-local-variable-enumeration.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-variables(\"missing\")); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-reflected-local-variable-enumeration.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; $enumerate: meta.get-function(\"module-variables\", $module: \"meta\"); .root { value: meta.inspect(meta.call($enumerate, $module: \"missing\")); }",
             .expected = error.InvalidExpression,
         },
         .{
@@ -37705,6 +37835,17 @@ test "native Sass local module existence rejects ambiguity and unknown namespace
         error.FunctionArgumentLimitExceeded,
         compileWithLocalUseFiles(
             std.testing.allocator,
+            "local-variable-enumeration-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-variables(\"first\", extra)); }",
+            .scss,
+            &files,
+            limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
             "local-mixin-enumeration-argument-limit.scss",
             "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-mixins(\"first\", extra)); }",
             .scss,
@@ -37726,6 +37867,17 @@ test "native Sass local module existence rejects ambiguity and unknown namespace
 
     var collection_limits = sass_evaluator.Limits{};
     collection_limits.values.max_collection_items = 1;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "local-variable-enumeration-collection-limit.scss",
+            "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-variables(\"first\")); }",
+            .scss,
+            &files,
+            collection_limits,
+        ),
+    );
     try std.testing.expectError(
         error.ValueLimitExceeded,
         compileWithLocalUseFiles(
@@ -38370,6 +38522,87 @@ test "native Sass local module mixin content ambiguity owns diagnostics without 
     );
 }
 
+test "native Sass local module variable enumeration owns unknown namespace diagnostics" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const input =
+        \\@use "sass:meta";
+        \\@use "first";
+        \\$variables: meta.module-variables("missing");
+        \\.unreachable { value: meta.inspect($variables); }
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_first.scss",
+        .data = "$public: first;",
+    });
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Sass module namespace is not loaded",
+        diagnostics[0].message,
+    );
+    const call = "meta.module-variables(\"missing\")";
+    const call_start = std.mem.indexOf(u8, input, call).?;
+    try std.testing.expectEqual(source_id, diagnostics[0].span.source);
+    try std.testing.expectEqual(@as(u32, @intCast(call_start)), diagnostics[0].span.start);
+    try std.testing.expectEqual(
+        @as(u32, @intCast(call_start + call.len)),
+        diagnostics[0].span.end,
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
 test "native Sass local module function enumeration owns unknown namespace diagnostics" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -38991,11 +39224,13 @@ fn exerciseLocalUseAllocationFailures(
         \\@use "tokens";
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
+        \\$variables: meta.module-variables("tokens");
         \\$functions: meta.module-functions("tokens");
         \\$mixins: meta.module-mixins("tokens");
         \\.root {
         \\  function-exists: meta.function-exists("double", "tokens");
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
+        \\  variable-enumerated: map.get($variables, "public") == tokens.$public;
         \\  function-enumerated: map.get($functions, "double") == $function;
         \\  mixin-enumerated: map.get($mixins, "emit") == $mixin;
         \\  function-type: meta.type-of($function);
@@ -39026,7 +39261,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".module{order:first}.root{function-exists:true;mixin-exists:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.card{value:4px;content:caller}",
+        ".module{order:first}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -39052,11 +39287,13 @@ test "native Sass local use handles every allocation failure" {
         \\@use "tokens";
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
+        \\$variables: meta.module-variables("tokens");
         \\$functions: meta.module-functions("tokens");
         \\$mixins: meta.module-mixins("tokens");
         \\.root {
         \\  function-exists: meta.function-exists("double", "tokens");
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
+        \\  variable-enumerated: map.get($variables, "public") == tokens.$public;
         \\  function-enumerated: map.get($functions, "double") == $function;
         \\  mixin-enumerated: map.get($mixins, "emit") == $mixin;
         \\  function-type: meta.type-of($function);
