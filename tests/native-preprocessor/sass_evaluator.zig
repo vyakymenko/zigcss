@@ -21532,6 +21532,142 @@ fn exerciseDirectColorModuleInvertSplatAllocationFailures(
     try std.testing.expectEqual(@as(usize, 1), result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct legacy color invert splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward-positional($args...) {
+        \\  @return invert($args...);
+        \\}
+        \\@function forward-keyword($args...) {
+        \\  @return invert($args...);
+        \\}
+        \\.values {
+        \\  list: invert((mark(1, #123456), 25%)...);
+        \\  map: invert(("color": mark(2, hwb(240deg 10% 20%)), "weight": 25%)...);
+        \\  scalar: invert(mark(3, #123456)...);
+        \\  bracketed: invert([mark(4, #123456)]...);
+        \\  override: invert($color: mark(5, red), ("color": mark(6, #123456), "weight": 25%)...);
+        \\  rest-positional: forward-positional(#123456, 25%);
+        \\  rest-keyword: forward-keyword($color: hwb(240deg 10% 20%), $weight: 25%);
+        \\  transparent: invert((transparent,)...);
+        \\  alpha: invert((rgba(18, 52, 86, .5),)...);
+        \\  hsl: invert((hsl(120deg 20% 25%),)...);
+        \\  hwb: invert((hwb(240deg 10% 20%),)...);
+        \\  filter-list: invert((mark(7, 20%),)...);
+        \\  filter-map: invert(("color": mark(8, 30%))...);
+        \\  filter-unit: invert((2px,)...);
+        \\  filter-deferred: invert((var(--amount),)...);
+        \\  filter-calculation: invert((calc(10% + var(--amount)),)...);
+        \\  type-color: meta.type-of(invert((#123456,)...));
+        \\  type-filter: meta.type-of(invert((20%,)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-invert-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:rgb(72.75,89.75,106.75);map:rgb(76.5,76.5,165.75);scalar:#edcba9;bracketed:#edcba9;override:rgb(72.75,89.75,106.75);rest-positional:rgb(72.75,89.75,106.75);rest-keyword:rgb(76.5,76.5,165.75);transparent:hsla(0,0%,100%,0);alpha:rgba(237,203,169,.5);hsl:hsl(300,20%,75%);hwb:rgb(229.5,229.5,51);filter-list:invert(20%);filter-map:invert(30%);filter-unit:invert(2px);filter-deferred:invert(var(--amount));filter-calculation:invert(calc(10% + var(--amount)));type-color:color;type-filter:string;trace:12345678}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 12), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: invert((mark(1, #123456), 25%)...)
+        \\  map: invert((color: mark(2, hwb(240deg 10% 20%)), weight: 25%)...)
+        \\  scalar: invert(mark(3, hsl(120deg 20% 25%))...)
+        \\  override: invert($color: mark(4, red), (color: mark(5, #123456), weight: 25%)...)
+        \\  filter: invert((mark(6, 20%),)...)
+        \\  deferred: invert((var(--amount),)...)
+        \\  type: m.type-of(invert((#123456,)...))
+        \\  filter-type: m.type-of(invert((20%,)...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-invert-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:rgb(72.75,89.75,106.75);map:rgb(76.5,76.5,165.75);scalar:hsl(300,20%,75%);override:rgb(72.75,89.75,106.75);filter:invert(20%);deferred:invert(var(--amount));type:color;filter-type:string;trace:123456}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 5), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorInvertSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorInvertSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: invert((#123456, 25%)...);
+        \\  map: invert(("color": hsl(120deg 20% 25%), "weight": 25%)...);
+        \\  filter: invert((var(--amount),)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-invert-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:rgb(72.75,89.75,106.75);map:rgb(89.25,102,89.25);filter:invert(var(--amount))}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes color invert function references" {
     const input =
         \\@use "sass:meta";
@@ -21814,6 +21950,41 @@ test "native Sass meta call rejects unavailable color invert forms arguments and
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "invert(()...)" },
+        .{ .name = "legacy-direct-overfull-list-splat", .invocation = "invert((#123456, 25%, rgb, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "invert((color: #123456, other: red)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "invert((1: #123456)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate-color", .invocation = "invert(#123456, (color: red)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate-weight", .invocation = "invert(#123456, 25%, (weight: 50%)...)" },
+        .{ .name = "legacy-direct-invalid-type", .invocation = "invert((true,)...)" },
+        .{ .name = "legacy-direct-unitless-weight", .invocation = "invert((#123456, 25)...)" },
+        .{ .name = "legacy-direct-unit-weight", .invocation = "invert((#123456, 25px)...)" },
+        .{ .name = "legacy-direct-negative-weight", .invocation = "invert((#123456, -1%)...)" },
+        .{ .name = "legacy-direct-large-weight", .invocation = "invert((#123456, 101%)...)" },
+        .{ .name = "legacy-direct-string-weight", .invocation = "invert((#123456, \"25%\")...)" },
+        .{ .name = "legacy-direct-calculation-weight", .invocation = "invert((#123456, calc(25% + var(--weight)))...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "invert((color(display-p3 .1 .2 .3),)...)" },
+        .{ .name = "legacy-direct-rgb-missing", .invocation = "invert((rgb(none 0 0),)...)" },
+        .{ .name = "legacy-direct-hsl-missing", .invocation = "invert((hsl(none 10% 20%),)...)" },
+        .{ .name = "legacy-direct-hwb-missing", .invocation = "invert((hwb(none 10% 20%),)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     try std.testing.expectError(
         error.UnsupportedFeature,
         compile(
@@ -21828,8 +21999,8 @@ test "native Sass meta call rejects unavailable color invert forms arguments and
         error.UnsupportedFeature,
         compile(
             std.testing.allocator,
-            "legacy-color-invert-direct-splat.scss",
-            ".a { value: invert((#123456, 25%)...); }",
+            "legacy-color-invert-direct-space.scss",
+            ".a { value: invert((color: #123456, space: rgb)...); }",
             .scss,
             .{},
         ),
@@ -21903,6 +22074,16 @@ test "native Sass meta call rejects unavailable color invert forms arguments and
             std.testing.allocator,
             "color-invert-direct-splat-argument-limit.scss",
             "@use \"sass:color\"; .a { value: color.invert((#123456, 25%, rgb)...); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-invert-direct-splat-argument-limit.scss",
+            ".a { value: invert((#123456, 25%, rgb)...); }",
             .scss,
             argument_limits,
         ),
