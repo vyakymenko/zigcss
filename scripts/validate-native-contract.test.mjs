@@ -292,6 +292,10 @@ test('accepts the closed native Sass implementation contract', () => {
     sassCore.capabilities.includes('built-in-color-legacy-alpha-missing-channel-semantics'),
     true,
   )
+  assert.equal(
+    sassCore.capabilities.includes('built-in-color-legacy-alpha-compound-unit-semantics'),
+    true,
+  )
   assert.equal(sassCore.capabilities.includes('flow-control-variable-scope'), true)
   assert.equal(sassCore.capabilities.includes('bounded-control-flow-loops'), true)
   assert.equal(sassCore.capabilities.includes('bounded-user-functions'), true)

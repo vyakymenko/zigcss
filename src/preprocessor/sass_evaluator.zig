@@ -7175,7 +7175,11 @@ const Engine = struct {
                     try self.report(.invalid_operation, span, "alpha adjustment requires a color and amount");
                     return error.InvalidExpression;
                 }
-                var amount = try self.alphaAdjustmentAmount(arguments[1].*, span);
+                var amount = try self.legacyAlphaAmount(
+                    builtin,
+                    arguments[1].*,
+                    span,
+                );
                 if (builtin == .transparentize or builtin == .fade_out) amount = -amount;
                 break :blk try native_color.adjustLegacyAlpha(
                     try self.legacyAlphaColorArgument(
@@ -7188,12 +7192,10 @@ const Engine = struct {
             },
             else => unreachable,
         };
-        if ((builtin == .opacify or
+        if (builtin == .opacify or
             builtin == .fade_in or
             builtin == .transparentize or
-            builtin == .fade_out) and
-            arguments[0].* == .color and
-            arguments[0].color.missing_mask != 0)
+            builtin == .fade_out)
         {
             try self.reportDeprecation(
                 .invalid_operation,
@@ -7753,19 +7755,6 @@ const Engine = struct {
         const number = try self.colorNumber(item, span);
         if (number.value < minimum or number.value > maximum) {
             try self.report(.invalid_operation, span, "legacy Sass color amount is outside its range");
-            return error.InvalidExpression;
-        }
-        return number.value;
-    }
-
-    fn alphaAdjustmentAmount(
-        self: *Engine,
-        item: native_value.Value,
-        span: native_source.Span,
-    ) Error!f64 {
-        const number = try self.colorNumber(item, span);
-        if (number.numerator_units.len != 0 or number.value < 0 or number.value > 1) {
-            try self.report(.invalid_operation, span, "legacy Sass alpha amount must be unitless from zero to one");
             return error.InvalidExpression;
         }
         return number.value;
@@ -14919,8 +14908,21 @@ const Engine = struct {
         value: native_value.Value,
         span: native_source.Span,
     ) Error!f64 {
-        const number = try self.colorNumber(value, span);
-        if (!std.math.isFinite(number.value) or number.value < 0 or number.value > 1) {
+        const number = switch (value) {
+            .number => |number| number,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native Sass color channel requires a number",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        if (!std.math.isFinite(number.value) or
+            (number.value < 0 and !fuzzyNumberEqual(number.value, 0)) or
+            (number.value > 1 and !fuzzyNumberEqual(number.value, 1)))
+        {
             try self.report(
                 .invalid_operation,
                 span,
@@ -14934,7 +14936,7 @@ const Engine = struct {
             );
             return error.InvalidExpression;
         }
-        return number.value;
+        return @min(@as(f64, 1), @max(@as(f64, 0), number.value));
     }
 
     fn invokeColorIeHexStrFunction(

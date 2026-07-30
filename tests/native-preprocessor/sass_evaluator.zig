@@ -22408,7 +22408,6 @@ test "native Sass meta call rejects unavailable color opacify forms arguments an
         .{ .name = "list-amount", .invocation = "meta.call($opacify, red, (.1, .2))" },
         .{ .name = "map-amount", .invocation = "meta.call($opacify, red, (amount: .2))" },
         .{ .name = "callable-amount", .invocation = "meta.call($opacify, red, meta.get-function(\"inspect\", $module: \"meta\"))" },
-        .{ .name = "compound-amount", .invocation = "meta.call($opacify, red, math.div(.2px, 1s))" },
         .{ .name = "calculation-amount", .invocation = "meta.call($opacify, red, calc(.1 + var(--amount)))" },
         .{ .name = "negative-amount", .invocation = "meta.call($opacify, red, -.1)" },
         .{ .name = "high-amount", .invocation = "meta.call($opacify, red, 1.1)" },
@@ -22833,7 +22832,6 @@ test "native Sass meta call rejects unavailable color fade in forms arguments an
         .{ .name = "empty-splat", .invocation = "meta.call($fade-in, ()...)" },
         .{ .name = "non-color", .invocation = "meta.call($fade-in, 1, .2)" },
         .{ .name = "non-number", .invocation = "meta.call($fade-in, red, true)" },
-        .{ .name = "compound-amount", .invocation = "meta.call($fade-in, red, math.div(.2px, 1s))" },
         .{ .name = "calculation-amount", .invocation = "meta.call($fade-in, red, calc(.1 + var(--amount)))" },
         .{ .name = "negative-amount", .invocation = "meta.call($fade-in, red, -.1)" },
         .{ .name = "high-amount", .invocation = "meta.call($fade-in, red, 1.1)" },
@@ -23237,7 +23235,6 @@ test "native Sass meta call rejects unavailable color transparentize forms argum
         .{ .name = "empty-splat", .invocation = "meta.call($transparentize, ()...)" },
         .{ .name = "non-color", .invocation = "meta.call($transparentize, 1, .2)" },
         .{ .name = "non-number", .invocation = "meta.call($transparentize, red, true)" },
-        .{ .name = "compound-amount", .invocation = "meta.call($transparentize, red, math.div(.2px, 1s))" },
         .{ .name = "calculation-amount", .invocation = "meta.call($transparentize, red, calc(.1 + var(--amount)))" },
         .{ .name = "negative-amount", .invocation = "meta.call($transparentize, red, -.1)" },
         .{ .name = "high-amount", .invocation = "meta.call($transparentize, red, 1.1)" },
@@ -23641,7 +23638,6 @@ test "native Sass meta call rejects unavailable color fade out forms arguments a
         .{ .name = "empty-splat", .invocation = "meta.call($fade-out, ()...)" },
         .{ .name = "non-color", .invocation = "meta.call($fade-out, 1, .2)" },
         .{ .name = "non-number", .invocation = "meta.call($fade-out, red, true)" },
-        .{ .name = "compound-amount", .invocation = "meta.call($fade-out, red, math.div(.2px, 1s))" },
         .{ .name = "calculation-amount", .invocation = "meta.call($fade-out, red, calc(.1 + var(--amount)))" },
         .{ .name = "negative-amount", .invocation = "meta.call($fade-out, red, -.1)" },
         .{ .name = "high-amount", .invocation = "meta.call($fade-out, red, 1.1)" },
@@ -24045,6 +24041,191 @@ fn exerciseLegacyAlphaMissingChannelAllocationFailures(
     defer result.deinit();
     try std.testing.expectEqualStrings(
         ".allocation{direct:rgba(0,20,30,.6);splat:hsla(120,0%,30%,.2);reflected:rgba(0,178.5,0,.6)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
+test "native Sass legacy alpha functions preserve compound unit amount semantics" {
+    const input =
+        \\@use "sass:math";
+        \\@use "sass:meta";
+        \\$opacify: meta.get-function("opacify");
+        \\$fade-in: meta.get-function("fade-in");
+        \\$transparentize: meta.get-function("transparentize");
+        \\$fade-out: meta.get-function("fade-out");
+        \\.values {
+        \\  direct-opacify: opacify(rgba(18, 52, 86, .4), math.div(.2px, 1s));
+        \\  splat-opacify: opacify((rgba(18, 52, 86, .4), math.div(.2px * 1s, 1foo))...);
+        \\  clamp-opacify: opacify(rgba(18, 52, 86, .9), math.div(.2px, 1s));
+        \\  direct-fade-in: fade-in(rgba(18, 52, 86, .4), math.div(.2, 1s));
+        \\  reflected-fade-in: meta.call($fade-in, rgba(18, 52, 86, .4), math.div(.2px * 1s, 1px * 1s));
+        \\  fuzzy-high-fade-in: meta.call($fade-in, rgba(18, 52, 86, .4), 1.000000000001px);
+        \\  direct-transparentize: transparentize(rgba(18, 52, 86, .4), .2% * 1px);
+        \\  reflected-transparentize: meta.call($transparentize, rgba(18, 52, 86, .4), math.div(.2px * 1s, 1foo));
+        \\  full-transparentize: meta.call($transparentize, rgba(18, 52, 86, .4), math.div(1px, 1s));
+        \\  direct-fade-out: fade-out(rgba(18, 52, 86, .4), math.div(.2in, 96px));
+        \\  splat-fade-out: fade-out((rgba(18, 52, 86, .4), math.div(.2px, 1s))...);
+        \\  fuzzy-low-fade-out: meta.call($fade-out, rgba(18, 52, 86, .4), -0.000000000001px);
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-alpha-compound-units.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{direct-opacify:rgba(18,52,86,.6);splat-opacify:rgba(18,52,86,.6);clamp-opacify:#123456;direct-fade-in:rgba(18,52,86,.6);reflected-fade-in:rgba(18,52,86,.6);fuzzy-high-fade-in:#123456;direct-transparentize:rgba(18,52,86,.2);reflected-transparentize:rgba(18,52,86,.2);full-transparentize:rgba(18,52,86,0);direct-fade-out:rgba(18,52,86,.2);splat-fade-out:rgba(18,52,86,.2);fuzzy-low-fade-out:rgba(18,52,86,.4)}",
+        result.css(),
+    );
+
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 24), diagnostics.len);
+    var global_warnings: usize = 0;
+    var opacify_warnings: usize = 0;
+    var fade_in_warnings: usize = 0;
+    var transparentize_warnings: usize = 0;
+    var fade_out_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "opacify() is deprecated. Use color.adjust($color, $alpha: $amount).",
+        )) {
+            opacify_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "fade-in() is deprecated. Use color.adjust($color, $alpha: $amount).",
+        )) {
+            fade_in_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "transparentize() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+        )) {
+            transparentize_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "fade-out() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+        )) {
+            fade_out_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 12), global_warnings);
+    try std.testing.expectEqual(@as(usize, 3), opacify_warnings);
+    try std.testing.expectEqual(@as(usize, 3), fade_in_warnings);
+    try std.testing.expectEqual(@as(usize, 3), transparentize_warnings);
+    try std.testing.expectEqual(@as(usize, 3), fade_out_warnings);
+
+    const indented =
+        \\@use "sass:math"
+        \\@use "sass:meta" as m
+        \\$transparentize: m.get-function("transparentize")
+        \\$fade-out: m.get-function("fade-out")
+        \\.sass
+        \\  direct-opacify: opacify(rgba(18, 52, 86, .4), math.div(.2px, 1s))
+        \\  splat-fade-in: fade-in((rgba(18, 52, 86, .4), .2px * 1s)...)
+        \\  reflected-transparentize: m.call($transparentize, rgba(18, 52, 86, .4), math.div(.2, 1s))
+        \\  reflected-fade-out: m.call($fade-out, rgba(18, 52, 86, .4), math.div(.2in, 96px))
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-alpha-compound-units.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{direct-opacify:rgba(18,52,86,.6);splat-fade-in:rgba(18,52,86,.6);reflected-transparentize:rgba(18,52,86,.2);reflected-fade-out:rgba(18,52,86,.2)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 8), sass_result.nativeDiagnostics().len);
+
+    const rejected = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "legacy-alpha-compound-direct-high.scss",
+            .input = "@use \"sass:math\"; .a { value: opacify(red, math.div(2px, 1s)); }",
+        },
+        .{
+            .name = "legacy-alpha-compound-splat-low.scss",
+            .input = "@use \"sass:math\"; .a { value: fade-in((red, math.div(-.2px, 1s))...); }",
+        },
+        .{
+            .name = "legacy-alpha-compound-reflected-high.scss",
+            .input = "@use \"sass:math\"; @use \"sass:meta\"; $fn: meta.get-function(\"transparentize\"); .a { value: meta.call($fn, red, math.div(2px, 1s)); }",
+        },
+        .{
+            .name = "legacy-alpha-fuzzy-outside-low.scss",
+            .input = ".a { value: fade-out(red, -0.00000000001px); }",
+        },
+        .{
+            .name = "legacy-alpha-fuzzy-outside-high.scss",
+            .input = "@use \"sass:meta\"; $fn: meta.get-function(\"opacify\"); .a { value: meta.call($fn, red, 1.00000000001px); }",
+        },
+    };
+    for (rejected) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLegacyAlphaCompoundUnitAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseLegacyAlphaCompoundUnitAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:math";
+        \\@use "sass:meta";
+        \\$fade-out: meta.get-function("fade-out");
+        \\.allocation {
+        \\  direct: opacify(rgba(18, 52, 86, .4), math.div(.2px, 1s));
+        \\  splat: fade-in((rgba(18, 52, 86, .4), .2px * 1s)...);
+        \\  reflected: meta.call($fade-out, rgba(18, 52, 86, .4), math.div(.2in, 96px));
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-alpha-compound-unit-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:rgba(18,52,86,.6);splat:rgba(18,52,86,.6);reflected:rgba(18,52,86,.2)}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
@@ -31948,7 +32129,7 @@ test "native Sass fixed built-ins accept bounded keyword arguments" {
         ".a{nth:b;length:3;red:18;green:52;blue:86;alpha:.4;opacity:.4;hue:210deg;saturation:65.3846153846%;lightness:20.3921568627%;mix:hsl(300,100%,25%);mix-weighted:rgb(63.75,0,191.25);lighten:rgb(26.8269230769,77.5,128.1730769231);darken:rgb(9.1730769231,26.5,43.8269230769);saturate:hsl(120,40%,50%);desaturate:hsl(0,0%,50%);adjust-hue:#121256;complement:#563412;grayscale:#343434;invert:rgb(72.75,89.75,106.75);opacify:rgba(1,2,3,.6);fade-in:rgba(1,2,3,.6);transparentize:rgba(1,2,3,.2);fade-out:rgba(1,2,3,.2);ie-hex:#66010203}",
         result.css(),
     );
-    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 8), result.nativeDiagnostics().len);
 }
 
 test "native Sass fixed built-in keyword arguments reject ambiguous calls" {
