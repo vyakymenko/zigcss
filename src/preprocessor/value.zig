@@ -90,6 +90,11 @@ pub const Callable = struct {
     id: u32,
 };
 
+pub const CallableRemapper = struct {
+    context: usize,
+    map: *const fn (context: usize, callable: Callable) ?Callable,
+};
+
 pub const Value = union(enum) {
     null_value: void,
     boolean: bool,
@@ -133,7 +138,18 @@ pub const Store = struct {
     }
 
     pub fn own(self: *Store, input: Value) Error!*const Value {
-        const cloned = try self.cloneValue(input, 1, false);
+        const cloned = try self.cloneValue(input, 1, false, null);
+        const result = try self.arena.allocator().create(Value);
+        result.* = cloned;
+        return result;
+    }
+
+    pub fn ownRemappingCallables(
+        self: *Store,
+        input: Value,
+        remapper: CallableRemapper,
+    ) Error!*const Value {
+        const cloned = try self.cloneValue(input, 1, false, remapper);
         const result = try self.arena.allocator().create(Value);
         result.* = cloned;
         return result;
@@ -147,7 +163,7 @@ pub const Store = struct {
             .list, .map => {},
             else => return error.InvalidValue,
         }
-        const cloned = try self.cloneValue(input, 1, true);
+        const cloned = try self.cloneValue(input, 1, true, null);
         const result = try self.arena.allocator().create(Value);
         result.* = cloned;
         return result;
@@ -158,6 +174,7 @@ pub const Store = struct {
         input: Value,
         depth: u16,
         share_argument_list_state: bool,
+        remapper: ?CallableRemapper,
     ) Error!Value {
         if (depth > self.limits.max_depth) return error.ValueDepthExceeded;
         if (self.value_count >= self.limits.max_values) return error.ValueLimitExceeded;
@@ -170,18 +187,32 @@ pub const Store = struct {
             .color => |item| .{ .color = try cloneColor(item) },
             .string => |item| .{ .string = try self.cloneString(item) },
             .selector => |item| .{ .selector = try self.cloneString(item) },
-            .callable => |item| .{ .callable = item },
+            .callable => |item| .{ .callable = if (remapper) |mapper|
+                mapper.map(mapper.context, item) orelse return error.InvalidValue
+            else
+                item },
             .list => |item| .{
-                .list = try self.cloneList(item, depth, share_argument_list_state),
+                .list = try self.cloneList(
+                    item,
+                    depth,
+                    share_argument_list_state,
+                    remapper,
+                ),
             },
             .map => |item| .{
-                .map = try self.cloneMap(item, depth, share_argument_list_state),
+                .map = try self.cloneMap(
+                    item,
+                    depth,
+                    share_argument_list_state,
+                    remapper,
+                ),
             },
             .argument_list => |item| .{
                 .argument_list = try self.cloneArgumentList(
                     item,
                     depth,
                     share_argument_list_state,
+                    remapper,
                 ),
             },
         };
@@ -216,6 +247,7 @@ pub const Store = struct {
         input: List,
         depth: u16,
         share_argument_list_state: bool,
+        remapper: ?CallableRemapper,
     ) Error!List {
         try self.reserveCollection(input.items.len);
         if (input.items.len == 0) return .{
@@ -229,6 +261,7 @@ pub const Store = struct {
                 item,
                 depth + 1,
                 share_argument_list_state,
+                remapper,
             );
         }
         return .{
@@ -243,6 +276,7 @@ pub const Store = struct {
         input: Map,
         depth: u16,
         share_argument_list_state: bool,
+        remapper: ?CallableRemapper,
     ) Error!Map {
         try self.reserveCollection(input.entries.len);
         if (input.entries.len == 0) return .{ .entries = &.{} };
@@ -253,11 +287,13 @@ pub const Store = struct {
                     entry.key,
                     depth + 1,
                     share_argument_list_state,
+                    remapper,
                 ),
                 .value = try self.cloneValue(
                     entry.value,
                     depth + 1,
                     share_argument_list_state,
+                    remapper,
                 ),
             };
         }
@@ -269,6 +305,7 @@ pub const Store = struct {
         input: ArgumentList,
         depth: u16,
         share_argument_list_state: bool,
+        remapper: ?CallableRemapper,
     ) Error!ArgumentList {
         const collection_count = std.math.add(
             usize,
@@ -283,6 +320,7 @@ pub const Store = struct {
                 item,
                 depth + 1,
                 share_argument_list_state,
+                remapper,
             );
         }
 
@@ -297,6 +335,7 @@ pub const Store = struct {
                     keyword.value,
                     depth + 1,
                     share_argument_list_state,
+                    remapper,
                 ),
                 .normalize_name = keyword.normalize_name,
             };

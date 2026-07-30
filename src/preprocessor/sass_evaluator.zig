@@ -804,6 +804,31 @@ fn decodeLocalModuleCallable(callable: native_value.Callable) ?LocalCallableTarg
     };
 }
 
+fn remapLocalModuleExportCallable(
+    context: usize,
+    callable: native_value.Callable,
+) ?native_value.Callable {
+    if (context >= hard_modules) return null;
+    return switch (callable.kind) {
+        .builtin_function, .builtin_mixin => callable,
+        .user_function => if (callable.id < hard_callables)
+            localModuleCallable(.local_module_function, .{
+                .module_index = context,
+                .callable_id = callable.id,
+            })
+        else
+            null,
+        .mixin => if (callable.id < hard_callables)
+            localModuleCallable(.local_module_mixin, .{
+                .module_index = context,
+                .callable_id = callable.id,
+            })
+        else
+            null,
+        .local_module_function, .local_module_mixin => null,
+    };
+}
+
 const ParsedUse = struct {
     url: []const u8,
     namespace: ?[]const u8 = null,
@@ -1218,15 +1243,6 @@ const Engine = struct {
             try self.report(.syntax, node.span, "unknown native Sass module directive");
             return error.InvalidSassSyntax;
         }
-        if (self.module_depth != 0) {
-            try self.report(
-                .unsupported_feature,
-                node.span,
-                "transitive native Sass modules are not implemented yet",
-            );
-            return error.UnsupportedFeature;
-        }
-
         const children = self.document.children(node_id) catch return error.InvalidSassSyntax;
         if (children.len != 1) {
             try self.report(.syntax, node.span, "native Sass @use requires one module URL and no block");
@@ -1258,6 +1274,14 @@ const Engine = struct {
             .string
         else
             null;
+        if (self.module_depth != 0 and builtin_kind == null) {
+            try self.report(
+                .unsupported_feature,
+                node.span,
+                "transitive native Sass modules are not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
         if (builtin_kind == null and std.mem.startsWith(u8, parsed.url, "sass:")) {
             try self.report(
                 .unsupported_feature,
@@ -1541,18 +1565,10 @@ const Engine = struct {
             const normalized = try module_engine.normalizeVariable(raw_name);
             defer module_engine.allocator.free(normalized);
             if (moduleVariableNamed(variables.items, normalized)) continue;
-            const value = try module_engine.environment.lookup(
+            _ = try module_engine.environment.lookup(
                 module_engine.global_scope,
                 normalized,
             ) orelse continue;
-            if (valueContainsCallable(value.*, 0)) {
-                try self.report(
-                    .unsupported_feature,
-                    name_node.span,
-                    "native Sass local callable exports are not implemented yet",
-                );
-                return error.UnsupportedFeature;
-            }
             const name = try self.allocator.dupe(u8, normalized);
             errdefer self.allocator.free(name);
             try variables.append(self.allocator, .{ .name = name });
@@ -1594,11 +1610,21 @@ const Engine = struct {
                     module.engine.global_scope,
                     variable.name,
                 ) orelse return error.InvalidSassSyntax;
-                if (valueContainsCallable(value.*, 0)) return error.UnsupportedFeature;
-                return try self.values.own(value.*);
+                return try self.ownLocalModuleExportValue(module_index, value.*);
             }
         }
         return null;
+    }
+
+    fn ownLocalModuleExportValue(
+        self: *Engine,
+        module_index: usize,
+        value: native_value.Value,
+    ) Error!*const native_value.Value {
+        return self.values.ownRemappingCallables(value, .{
+            .context = module_index,
+            .map = remapLocalModuleExportCallable,
+        });
     }
 
     fn publicLocalModuleFunction(
@@ -6051,15 +6077,7 @@ const Engine = struct {
                         module.engine.global_scope,
                         variable.name,
                     ) orelse return error.InvalidSassSyntax;
-                    if (valueContainsCallable(value.*, 0)) {
-                        try self.report(
-                            .unsupported_feature,
-                            span,
-                            "native Sass local callable exports are not implemented yet",
-                        );
-                        return error.UnsupportedFeature;
-                    }
-                    return try self.values.own(value.*);
+                    return try self.ownLocalModuleExportValue(module_index, value.*);
                 }
                 try self.report(.undefined_variable, span, "undefined native Sass module variable");
                 return error.InvalidExpression;
@@ -10910,14 +10928,6 @@ const Engine = struct {
                 module.engine.global_scope,
                 variable.name,
             ) orelse return error.InvalidSassSyntax;
-            if (valueContainsCallable(value.*, 0)) {
-                try self.report(
-                    .unsupported_feature,
-                    span,
-                    "native Sass local callable exports are not implemented yet",
-                );
-                return error.UnsupportedFeature;
-            }
             entries.appendAssumeCapacity(.{
                 .key = .{ .string = .{
                     .bytes = variable.name,
@@ -10926,7 +10936,9 @@ const Engine = struct {
                 .value = value.*,
             });
         }
-        return self.values.own(.{ .map = .{ .entries = entries.items } });
+        return self.ownLocalModuleExportValue(module_index, .{
+            .map = .{ .entries = entries.items },
+        });
     }
 
     fn callMetaModuleFunctions(
