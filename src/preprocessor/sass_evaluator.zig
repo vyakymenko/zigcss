@@ -1477,11 +1477,11 @@ const Engine = struct {
             const raw_value = configuration[argument.value.start..argument.value.end];
             const value_span = self.sourceSpanForBytes(raw_value, span);
             const value = try self.evaluateExpressionBytes(raw_value, scope, value_span);
-            if (valueContainsCallable(value.*, 0)) {
+            if (valueContainsNonBuiltinCallable(value.*, 0)) {
                 try self.report(
                     .unsupported_feature,
                     value_span,
-                    "native Sass local module callable configuration is not implemented yet",
+                    "native Sass local module configuration only supports globally owned built-in callables",
                 );
                 return error.UnsupportedFeature;
             }
@@ -22788,6 +22788,42 @@ fn valueContainsCallable(value: native_value.Value, depth: u16) bool {
             }
             for (arguments.keywords) |keyword| {
                 if (valueContainsCallable(keyword.value, depth + 1)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn valueContainsNonBuiltinCallable(value: native_value.Value, depth: u16) bool {
+    if (depth > 64) return true;
+    return switch (value) {
+        .callable => |callable| switch (callable.kind) {
+            .builtin_function, .builtin_mixin => false,
+            .user_function, .mixin, .local_module_function, .local_module_mixin => true,
+        },
+        .list => |list| blk: {
+            for (list.items) |item| {
+                if (valueContainsNonBuiltinCallable(item, depth + 1)) break :blk true;
+            }
+            break :blk false;
+        },
+        .map => |map| blk: {
+            for (map.entries) |entry| {
+                if (valueContainsNonBuiltinCallable(entry.key, depth + 1) or
+                    valueContainsNonBuiltinCallable(entry.value, depth + 1))
+                {
+                    break :blk true;
+                }
+            }
+            break :blk false;
+        },
+        .argument_list => |arguments| blk: {
+            for (arguments.positional) |item| {
+                if (valueContainsNonBuiltinCallable(item, depth + 1)) break :blk true;
+            }
+            for (arguments.keywords) |keyword| {
+                if (valueContainsNonBuiltinCallable(keyword.value, depth + 1)) break :blk true;
             }
             break :blk false;
         },

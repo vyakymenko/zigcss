@@ -36601,6 +36601,26 @@ fn compileWithLocalUseFiles(
     files: []const LocalUseFile,
     semantic_limits: sass_evaluator.Limits,
 ) !evaluator.ValidatedCss {
+    return compileWithLocalUseFilesAndTransactionLimits(
+        allocator,
+        root_name,
+        root_input,
+        mode,
+        files,
+        semantic_limits,
+        .{},
+    );
+}
+
+fn compileWithLocalUseFilesAndTransactionLimits(
+    allocator: std.mem.Allocator,
+    root_name: []const u8,
+    root_input: []const u8,
+    mode: sass.Mode,
+    files: []const LocalUseFile,
+    semantic_limits: sass_evaluator.Limits,
+    transaction_limits: evaluator.Limits,
+) !evaluator.ValidatedCss {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
@@ -36640,7 +36660,7 @@ fn compileWithLocalUseFiles(
         allocator,
         &sources,
         &session,
-        .{},
+        transaction_limits,
         .{},
     );
     defer transaction.deinit();
@@ -36652,6 +36672,150 @@ fn compileWithLocalUseFiles(
         semantic_limits,
     );
     return transaction.finish(.{ .format = .minified, .source_map = true });
+}
+
+test "native Sass owns globally stable built-in callable local use configuration" {
+    const scss_root =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\$global: meta.get-function("length");
+        \\$module: meta.get-function("abs", $module: "math");
+        \\$apply: meta.get-mixin("apply", $module: "meta");
+        \\$load: meta.get-mixin("load-css", $module: "meta");
+        \\$nested: ("global": $global, "module": ($module,), "apply": $apply, "load": $load);
+        \\@use "tokens" with (
+        \\  $global: $global,
+        \\  $module: $module,
+        \\  $apply: $apply,
+        \\  $nested: $nested,
+        \\);
+        \\@use "_tokens.scss" as alias;
+        \\.root {
+        \\  alias: alias.$configured;
+        \\  function-identity: tokens.$global == alias.$global;
+        \\}
+    ;
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_tokens.scss",
+            .contents =
+            \\@use "sass:list";
+            \\@use "sass:map";
+            \\@use "sass:meta";
+            \\$global: null !default;
+            \\$module: null !default;
+            \\$apply: null !default;
+            \\$nested: null !default;
+            \\$configured: yes;
+            \\@mixin emit($value) { .emitted { value: $value; } }
+            \\.module {
+            \\  global-type: meta.type-of($global);
+            \\  global-inspect: meta.inspect($global);
+            \\  global-call: meta.call($global, (a, b, c));
+            \\  module-type: meta.type-of($module);
+            \\  module-call: meta.call($module, -4px);
+            \\  nested-global: meta.call(map.get($nested, "global"), (x, y));
+            \\  nested-module: meta.call(list.nth(map.get($nested, "module"), 1), -5px);
+            \\  mixin-type: meta.type-of($apply);
+            \\  mixin-inspect: meta.inspect($apply);
+            \\  mixin-content: meta.accepts-content($apply);
+            \\  load-type: meta.type-of(map.get($nested, "load"));
+            \\  load-content: meta.accepts-content(map.get($nested, "load"));
+            \\}
+            \\@include meta.apply($apply, meta.get-mixin("emit"), 6px);
+            ,
+        },
+        .{
+            .name = "_legacy.sass",
+            .contents =
+            \\@use "sass:list" as list
+            \\@use "sass:map" as map
+            \\@use "sass:meta" as meta
+            \\$global: null !default
+            \\$module: null !default
+            \\$apply: null !default
+            \\$nested: null !default
+            \\$configured: yes
+            \\@mixin emit($value)
+            \\  .emitted
+            \\    value: $value
+            \\.module
+            \\  global-type: meta.type-of($global)
+            \\  global-inspect: meta.inspect($global)
+            \\  global-call: meta.call($global, (a, b, c))
+            \\  module-type: meta.type-of($module)
+            \\  module-call: meta.call($module, -4px)
+            \\  nested-global: meta.call(map.get($nested, "global"), (x, y))
+            \\  nested-module: meta.call(list.nth(map.get($nested, "module"), 1), -5px)
+            \\  mixin-type: meta.type-of($apply)
+            \\  mixin-inspect: meta.inspect($apply)
+            \\  mixin-content: meta.accepts-content($apply)
+            \\  load-type: meta.type-of(map.get($nested, "load"))
+            \\  load-content: meta.accepts-content(map.get($nested, "load"))
+            \\@include meta.apply($apply, meta.get-mixin("emit"), 6px)
+            ,
+        },
+    };
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "built-in-callable-configuration.scss",
+        scss_root,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".module{global-type:function;global-inspect:get-function(\"length\");global-call:3;module-type:function;module-call:4px;nested-global:2;nested-module:5px;mixin-type:mixin;mixin-inspect:get-mixin(\"apply\");mixin-content:true;load-type:mixin;load-content:false}.emitted{value:6px}.root{alias:yes;function-identity:true}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+
+    const sass_root =
+        \\@use "sass:meta" as meta
+        \\@use "sass:math" as math
+        \\$global: meta.get-function("length")
+        \\$module: meta.get-function("abs", $module: "math")
+        \\$apply: meta.get-mixin("apply", $module: "meta")
+        \\$load: meta.get-mixin("load-css", $module: "meta")
+        \\$nested: ("global": $global, "module": ($module,), "apply": $apply, "load": $load)
+        \\@use "legacy" as toolkit with ($global: $global, $module: $module, $apply: $apply, $nested: $nested)
+        \\@use "_legacy.sass" as alias
+        \\.root
+        \\  alias: alias.$configured
+        \\  function-identity: toolkit.$global == alias.$global
+    ;
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "built-in-callable-configuration.sass",
+        sass_root,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".module{global-type:function;global-inspect:get-function(\"length\");global-call:3;module-type:function;module-call:4px;nested-global:2;nested-module:5px;mixin-type:mixin;mixin-inspect:get-mixin(\"apply\");mixin-content:true;load-type:mixin;load-content:false}.emitted{value:6px}.root{alias:yes;function-identity:true}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
 }
 
 test "native Sass configures one-hop local use modules once from caller values" {
@@ -36754,15 +36918,25 @@ test "native Sass configures one-hop local use modules once from caller values" 
 }
 
 test "native Sass local use configuration rejects unsafe and repeated forms" {
-    const files = [_]LocalUseFile{.{
-        .name = "_tokens.scss",
-        .contents =
-        \\$theme: red !default;
-        \\$tone_value: 1 !default;
-        \\$fixed: original;
-        \\$-private: hidden !default;
-        ,
-    }};
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_tokens.scss",
+            .contents =
+            \\$theme: red !default;
+            \\$tone_value: 1 !default;
+            \\$fixed: original;
+            \\$-private: hidden !default;
+            ,
+        },
+        .{
+            .name = "_first.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\@function callback($value) { @return $value; }
+            \\$callback: meta.get-function("callback");
+            ,
+        },
+    };
     const invalid = [_]struct {
         name: []const u8,
         input: []const u8,
@@ -36804,8 +36978,13 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "callable.scss",
-            .input = "@use \"sass:meta\"; $function: meta.get-function(\"inspect\", $module: \"meta\"); @use \"tokens\" with ($theme: $function);",
+            .name = "caller-user-callable-placement.scss",
+            .input = "@use \"sass:meta\"; @function callback($value) { @return $value; } $function: meta.get-function(\"callback\"); @use \"tokens\" with ($theme: $function);",
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .name = "other-local-module-callable.scss",
+            .input = "@use \"first\"; @use \"tokens\" with ($theme: first.$callback);",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -36854,6 +37033,102 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
             .scss,
             &files,
             limits,
+        ),
+    );
+
+    const callable_configuration =
+        \\@use "sass:meta";
+        \\@use "sass:math";
+        \\$function: meta.get-function("abs", $module: "math");
+        \\@use "tokens" with ($theme: ("first": $function, "second": ($function,)));
+    ;
+    var value_count_limits = sass_evaluator.Limits{};
+    value_count_limits.values.max_values = 2;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "callable-configuration-value-count-limit.scss",
+            callable_configuration,
+            .scss,
+            &files,
+            value_count_limits,
+        ),
+    );
+
+    var value_depth_limits = sass_evaluator.Limits{};
+    value_depth_limits.values.max_depth = 2;
+    try std.testing.expectError(
+        error.ValueDepthExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "callable-configuration-value-depth-limit.scss",
+            callable_configuration,
+            .scss,
+            &files,
+            value_depth_limits,
+        ),
+    );
+
+    var collection_limits = sass_evaluator.Limits{};
+    collection_limits.values.max_collection_items = 1;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "callable-configuration-collection-limit.scss",
+            callable_configuration,
+            .scss,
+            &files,
+            collection_limits,
+        ),
+    );
+
+    var owned_byte_limits = sass_evaluator.Limits{};
+    owned_byte_limits.values.max_owned_bytes = 1;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "callable-configuration-owned-byte-limit.scss",
+            callable_configuration,
+            .scss,
+            &files,
+            owned_byte_limits,
+        ),
+    );
+
+    var callable_limits = sass_evaluator.Limits{};
+    callable_limits.max_callables = 1;
+    try std.testing.expectError(
+        error.CallableLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "callable-configuration-callable-limit.scss",
+            "@use \"sass:meta\"; @use \"sass:math\"; $function: meta.get-function(\"abs\", $module: \"math\"); @use \"callables\" with ($theme: $function);",
+            .scss,
+            &.{
+                .{
+                    .name = "_callables.scss",
+                    .contents = "$theme: null !default; @function first() { @return 1; } @mixin second() {}",
+                },
+            },
+            callable_limits,
+        ),
+    );
+
+    var transaction_limits = evaluator.Limits{};
+    transaction_limits.budget.max_operations = 1;
+    try std.testing.expectError(
+        error.OperationLimitExceeded,
+        compileWithLocalUseFilesAndTransactionLimits(
+            std.testing.allocator,
+            "callable-configuration-operation-limit.scss",
+            callable_configuration,
+            .scss,
+            &files,
+            .{},
+            transaction_limits,
         ),
     );
 }
@@ -40044,7 +40319,12 @@ fn exerciseLocalUseAllocationFailures(
     const input =
         \\@use "sass:meta";
         \\@use "sass:map";
-        \\@use "tokens" with ($configured: (nested: (1, 2), text: "x,y"));
+        \\@use "sass:math";
+        \\@use "tokens" with ($configured: (
+        \\  "function": meta.get-function("abs", $module: "math"),
+        \\  "mixin": meta.get-mixin("apply", $module: "meta"),
+        \\  "nested": (1, 2),
+        \\));
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -40068,6 +40348,8 @@ fn exerciseLocalUseAllocationFailures(
         \\  callable-result-value: meta.call(map.get($returned, "function"), 5px);
         \\  callable-result-builtin: meta.call(map.get($returned, "builtin"), -6px);
         \\  configured: meta.inspect(tokens.$configured);
+        \\  configured-function: meta.call(map.get(tokens.$configured, "function"), -7px);
+        \\  configured-mixin-type: meta.type-of(map.get(tokens.$configured, "mixin"));
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
@@ -40101,7 +40383,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".module{order:first}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured:(nested: (1, 2), text: \"x,y\");mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.result{value:4px;content:result-caller}.card{value:4px;content:caller}",
+        ".module{order:first}.root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured:(\"function\": get-function(\"abs\"), \"mixin\": get-mixin(\"apply\"), \"nested\": (1, 2));configured-function:7px;configured-mixin-type:mixin;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.result{value:4px;content:result-caller}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -40145,7 +40427,12 @@ test "native Sass local use handles every allocation failure" {
     const root_input =
         \\@use "sass:meta";
         \\@use "sass:map";
-        \\@use "tokens" with ($configured: (nested: (1, 2), text: "x,y"));
+        \\@use "sass:math";
+        \\@use "tokens" with ($configured: (
+        \\  "function": meta.get-function("abs", $module: "math"),
+        \\  "mixin": meta.get-mixin("apply", $module: "meta"),
+        \\  "nested": (1, 2),
+        \\));
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -40169,6 +40456,8 @@ test "native Sass local use handles every allocation failure" {
         \\  callable-result-value: meta.call(map.get($returned, "function"), 5px);
         \\  callable-result-builtin: meta.call(map.get($returned, "builtin"), -6px);
         \\  configured: meta.inspect(tokens.$configured);
+        \\  configured-function: meta.call(map.get(tokens.$configured, "function"), -7px);
+        \\  configured-mixin-type: meta.type-of(map.get(tokens.$configured, "mixin"));
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
