@@ -31,6 +31,8 @@ pub const CallableKind = enum {
     builtin_mixin,
     user_function,
     mixin,
+    local_module_function,
+    local_module_mixin,
 };
 
 pub const String = struct {

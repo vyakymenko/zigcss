@@ -771,6 +771,34 @@ const LocalCallableTarget = struct {
     callable_id: u32,
 };
 
+const local_callable_component_bits = 16;
+const local_callable_component_mask: u32 = (1 << local_callable_component_bits) - 1;
+
+fn localModuleCallable(
+    kind: native_value.CallableKind,
+    target: LocalCallableTarget,
+) native_value.Callable {
+    std.debug.assert(kind == .local_module_function or kind == .local_module_mixin);
+    std.debug.assert(target.module_index < hard_modules);
+    std.debug.assert(target.callable_id < hard_callables);
+    const module_index: u32 = @intCast(target.module_index);
+    return .{
+        .kind = kind,
+        .id = (module_index << local_callable_component_bits) | target.callable_id,
+    };
+}
+
+fn decodeLocalModuleCallable(callable: native_value.Callable) ?LocalCallableTarget {
+    switch (callable.kind) {
+        .local_module_function, .local_module_mixin => {},
+        else => return null,
+    }
+    return .{
+        .module_index = @intCast(callable.id >> local_callable_component_bits),
+        .callable_id = callable.id & local_callable_component_mask,
+    };
+}
+
 const ParsedUse = struct {
     url: []const u8,
     namespace: ?[]const u8 = null,
@@ -2850,7 +2878,11 @@ const Engine = struct {
                         },
                     }
                 },
-                .builtin_function, .user_function => {
+                .local_module_mixin => return self.localModuleCallableUseFailure(span),
+                .builtin_function,
+                .user_function,
+                .local_module_function,
+                => {
                     try self.report(
                         .type_mismatch,
                         span,
@@ -10473,7 +10505,11 @@ const Engine = struct {
                 .meta_load_css => false,
                 .meta_apply => true,
             },
-            .builtin_function, .user_function => return self.metaAcceptsContentTypeFailure(span),
+            .local_module_mixin => return self.localModuleCallableUseFailure(span),
+            .builtin_function,
+            .user_function,
+            .local_module_function,
+            => return self.metaAcceptsContentTypeFailure(span),
         };
         return self.values.own(.{ .boolean = accepts_content });
     }
@@ -10521,19 +10557,41 @@ const Engine = struct {
         };
         defer self.allocator.free(normalized);
 
-        const callable: native_value.Callable = if (arguments.len == 2) blk: {
-            const module = try self.metaExistenceModule(arguments[1].*, span) orelse {
-                const mixin_id = try self.lookupUserMixin(normalized, scope) orelse {
+        const module = if (arguments.len == 2)
+            try self.metaExistenceModuleTarget(arguments[1].*, span)
+        else
+            null;
+        const callable: native_value.Callable = if (module) |target|
+            switch (target) {
+                .builtin => |kind| if (moduleBuiltinMixin(kind, normalized)) |builtin|
+                    .{ .kind = .builtin_mixin, .id = @intFromEnum(builtin) }
+                else {
                     try self.report(
                         .invalid_operation,
                         span,
                         "native Sass mixin reference was not found",
                     );
                     return error.InvalidExpression;
-                };
-                break :blk .{ .kind = .mixin, .id = mixin_id };
-            };
-            const builtin = moduleBuiltinMixin(module, normalized) orelse {
+                },
+                .local => |module_index| if (self.publicLocalModuleMixin(
+                    module_index,
+                    normalized,
+                )) |mixin_id|
+                    localModuleCallable(.local_module_mixin, .{
+                        .module_index = module_index,
+                        .callable_id = mixin_id,
+                    })
+                else {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "native Sass mixin reference was not found",
+                    );
+                    return error.InvalidExpression;
+                },
+            }
+        else
+            (try self.metaGlobalMixinReference(normalized, scope, span)) orelse {
                 try self.report(
                     .invalid_operation,
                     span,
@@ -10541,21 +10599,6 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             };
-            break :blk .{
-                .kind = .builtin_mixin,
-                .id = @intFromEnum(builtin),
-            };
-        } else blk: {
-            const mixin_id = try self.lookupUserMixin(normalized, scope) orelse {
-                try self.report(
-                    .invalid_operation,
-                    span,
-                    "native Sass mixin reference was not found",
-                );
-                return error.InvalidExpression;
-            };
-            break :blk .{ .kind = .mixin, .id = mixin_id };
-        };
         return self.values.own(.{ .callable = callable });
     }
 
@@ -10743,11 +10786,40 @@ const Engine = struct {
             return error.InvalidExpression;
         }
         const module = if (arguments.len == 3)
-            try self.metaExistenceModule(arguments[2].*, span)
+            try self.metaExistenceModuleTarget(arguments[2].*, span)
         else
             null;
-        const callable = if (module) |kind| blk: {
-            const builtin = moduleCallableBuiltin(kind, normalized) orelse {
+        const callable: native_value.Callable = if (module) |target|
+            switch (target) {
+                .builtin => |kind| if (moduleCallableBuiltin(kind, normalized)) |builtin|
+                    builtinFunctionCallable(builtin, kind)
+                else {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "native Sass function reference was not found",
+                    );
+                    return error.InvalidExpression;
+                },
+                .local => |module_index| if (self.publicLocalModuleFunction(
+                    module_index,
+                    normalized,
+                )) |function_id|
+                    localModuleCallable(.local_module_function, .{
+                        .module_index = module_index,
+                        .callable_id = function_id,
+                    })
+                else {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "native Sass function reference was not found",
+                    );
+                    return error.InvalidExpression;
+                },
+            }
+        else
+            (try self.metaGlobalFunctionReference(normalized, scope, span)) orelse {
                 try self.report(
                     .invalid_operation,
                     span,
@@ -10755,15 +10827,6 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             };
-            break :blk builtinFunctionCallable(builtin, kind);
-        } else (try self.metaGlobalFunctionReference(normalized, scope)) orelse {
-            try self.report(
-                .invalid_operation,
-                span,
-                "native Sass function reference was not found",
-            );
-            return error.InvalidExpression;
-        };
         return self.values.own(.{ .callable = callable });
     }
 
@@ -11364,7 +11427,8 @@ const Engine = struct {
                 }
                 break :blk self.metaCallFunctionFailure(span);
             },
-            .builtin_mixin, .mixin => self.metaCallFunctionFailure(span),
+            .local_module_function => self.localModuleCallableUseFailure(span),
+            .builtin_mixin, .mixin, .local_module_mixin => self.metaCallFunctionFailure(span),
         };
     }
 
@@ -16347,29 +16411,126 @@ const Engine = struct {
         return error.InvalidExpression;
     }
 
+    fn localModuleCallableUseFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .unsupported_feature,
+            span,
+            "native Sass local module callable invocation is not implemented yet",
+        ) catch |err| return err;
+        return error.UnsupportedFeature;
+    }
+
     fn metaGlobalFunctionReference(
         self: *Engine,
         name: []const u8,
         scope: native_environment.ScopeId,
+        span: native_source.Span,
     ) Error!?native_value.Callable {
         if (try self.lookupUserFunction(name, scope)) |function_id| {
             return .{ .kind = .user_function, .id = function_id };
         }
         if (std.mem.eql(u8, name, "if")) return builtinIfFunctionCallable();
 
+        var matched_module: ?struct {
+            target: ModuleTarget,
+            callable: native_value.Callable,
+        } = null;
         for (self.modules.items) |binding| {
             try self.transaction.consumeOperations(1);
             if (binding.namespace != null) continue;
-            const module_kind = switch (binding.target) {
-                .builtin => |kind| kind,
-                .local => continue,
+            const callable: native_value.Callable = switch (binding.target) {
+                .builtin => |module_kind| if (moduleCallableBuiltin(
+                    module_kind,
+                    name,
+                )) |builtin|
+                    builtinFunctionCallable(builtin, module_kind)
+                else
+                    continue,
+                .local => |module_index| if (self.publicLocalModuleFunction(
+                    module_index,
+                    name,
+                )) |callable_id|
+                    localModuleCallable(.local_module_function, .{
+                        .module_index = module_index,
+                        .callable_id = callable_id,
+                    })
+                else
+                    continue,
             };
-            if (moduleCallableBuiltin(module_kind, name)) |builtin| {
-                return builtinFunctionCallable(builtin, module_kind);
+            if (matched_module) |matched| {
+                if (std.meta.eql(matched.target, binding.target)) continue;
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass function is available from multiple unprefixed modules",
+                );
+                return error.InvalidExpression;
             }
+            matched_module = .{
+                .target = binding.target,
+                .callable = callable,
+            };
         }
+        if (matched_module) |matched| return matched.callable;
         const builtin = globalCallableBuiltin(name) orelse return null;
         return builtinFunctionCallable(builtin, null);
+    }
+
+    fn metaGlobalMixinReference(
+        self: *Engine,
+        name: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?native_value.Callable {
+        if (try self.lookupUserMixin(name, scope)) |mixin_id| {
+            return .{ .kind = .mixin, .id = mixin_id };
+        }
+
+        var matched_module: ?struct {
+            target: ModuleTarget,
+            callable: native_value.Callable,
+        } = null;
+        for (self.modules.items) |binding| {
+            try self.transaction.consumeOperations(1);
+            if (binding.namespace != null) continue;
+            const callable: native_value.Callable = switch (binding.target) {
+                .builtin => |module_kind| if (moduleBuiltinMixin(
+                    module_kind,
+                    name,
+                )) |builtin|
+                    .{ .kind = .builtin_mixin, .id = @intFromEnum(builtin) }
+                else
+                    continue,
+                .local => |module_index| if (self.publicLocalModuleMixin(
+                    module_index,
+                    name,
+                )) |callable_id|
+                    localModuleCallable(.local_module_mixin, .{
+                        .module_index = module_index,
+                        .callable_id = callable_id,
+                    })
+                else
+                    continue,
+            };
+            if (matched_module) |matched| {
+                if (std.meta.eql(matched.target, binding.target)) continue;
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass mixin is available from multiple unprefixed modules",
+                );
+                return error.InvalidExpression;
+            }
+            matched_module = .{
+                .target = binding.target,
+                .callable = callable,
+            };
+        }
+        if (matched_module) |matched| return matched.callable;
+        return null;
     }
 
     fn callMetaExistence(
@@ -16655,8 +16816,8 @@ const Engine = struct {
             .map => "map",
             .argument_list => "arglist",
             .callable => |callable| switch (callable.kind) {
-                .builtin_mixin, .mixin => "mixin",
-                .builtin_function, .user_function => "function",
+                .builtin_mixin, .mixin, .local_module_mixin => "mixin",
+                .builtin_function, .user_function, .local_module_function => "function",
             },
         };
         return self.values.own(.{ .string = .{ .bytes = name } });
@@ -19173,8 +19334,8 @@ const Engine = struct {
         callable: native_value.Callable,
     ) Error!void {
         const kind: []const u8 = switch (callable.kind) {
-            .builtin_function, .user_function => "function",
-            .builtin_mixin, .mixin => "mixin",
+            .builtin_function, .user_function, .local_module_function => "function",
+            .builtin_mixin, .mixin, .local_module_mixin => "mixin",
         };
         const name: []const u8 = switch (callable.kind) {
             .user_function => if (callable.id < self.user_functions.items.len)
@@ -19191,6 +19352,30 @@ const Engine = struct {
                 return error.InvalidExpression) {
                 .meta_load_css => "load-css",
                 .meta_apply => "apply",
+            },
+            .local_module_function => blk: {
+                const target = decodeLocalModuleCallable(callable) orelse
+                    return error.InvalidExpression;
+                if (target.module_index >= self.local_modules.items.len) {
+                    return error.InvalidExpression;
+                }
+                const module_engine = self.local_modules.items[target.module_index].engine;
+                if (target.callable_id >= module_engine.user_functions.items.len) {
+                    return error.InvalidExpression;
+                }
+                break :blk module_engine.user_functions.items[target.callable_id].name;
+            },
+            .local_module_mixin => blk: {
+                const target = decodeLocalModuleCallable(callable) orelse
+                    return error.InvalidExpression;
+                if (target.module_index >= self.local_modules.items.len) {
+                    return error.InvalidExpression;
+                }
+                const module_engine = self.local_modules.items[target.module_index].engine;
+                if (target.callable_id >= module_engine.user_mixins.items.len) {
+                    return error.InvalidExpression;
+                }
+                break :blk module_engine.user_mixins.items[target.callable_id].name;
             },
         };
 
