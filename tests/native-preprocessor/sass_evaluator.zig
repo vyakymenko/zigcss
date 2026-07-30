@@ -36872,6 +36872,285 @@ test "native Sass local module mixin content evaluates in caller lexical scope" 
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Sass queries one-hop local module function and mixin existence" {
+    const root_input =
+        \\@use "sass:meta";
+        \\@use "tools";
+        \\@use "_tools.scss" as alias;
+        \\@use "tools" as *;
+        \\@use "legacy";
+        \\$function-exists: meta.get-function("function-exists", $module: "meta");
+        \\$mixin-exists: meta.get-function("mixin-exists", $module: "meta");
+        \\.values {
+        \\  default-function: meta.function-exists("public-function", "tools");
+        \\  alias-function: meta.function-exists("public_function", "alias");
+        \\  default-mixin: meta.mixin-exists("public-mixin", "tools");
+        \\  alias-mixin: meta.mixin-exists("public_mixin", "alias");
+        \\  star-function: meta.function-exists("public_function");
+        \\  star-mixin: meta.mixin-exists("public-mixin");
+        \\  redefined-function: meta.function-exists("redefined", "tools");
+        \\  redefined-mixin: meta.mixin-exists("redefined", "tools");
+        \\  private-function: meta.function-exists("-hidden", "tools");
+        \\  private-mixin: meta.mixin-exists("_hidden-mixin", "tools");
+        \\  missing-function: meta.function-exists("missing", "tools");
+        \\  missing-mixin: meta.mixin-exists("missing", "tools");
+        \\  case-function: meta.function-exists("PUBLIC-FUNCTION", "tools");
+        \\  sass-function: meta.function-exists("legacy-function", "legacy");
+        \\  sass-mixin: meta.mixin-exists("legacy-mix", "legacy");
+        \\  null-function: meta.function-exists("public-function", null);
+        \\  null-mixin: meta.mixin-exists("public-mixin", null);
+        \\  reflected-function: meta.call($function-exists, "public-function", "tools");
+        \\  reflected-mixin: meta.call($mixin-exists, "public-mixin", "tools");
+        \\}
+    ;
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_tools.scss",
+            .contents =
+            \\@function public-function() { @return first; }
+            \\@function public-function() { @return second; }
+            \\@function -hidden() { @return private; }
+            \\@mixin public-mixin {}
+            \\@mixin public-mixin {}
+            \\@mixin _hidden-mixin {}
+            \\@function redefined() { @return first; }
+            \\@function redefined() { @return second; }
+            \\@mixin redefined {}
+            \\@mixin redefined {}
+            ,
+        },
+        .{
+            .name = "_legacy.sass",
+            .contents =
+            \\@function legacy_function()
+            \\  @return yes
+            \\@mixin legacy_mix()
+            \\  $inside: true
+            ,
+        },
+    };
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "existence.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{default-function:true;alias-function:true;default-mixin:true;alias-mixin:true;star-function:true;star-mixin:true;redefined-function:true;redefined-mixin:true;private-function:false;private-mixin:false;missing-function:false;missing-mixin:false;case-function:false;sass-function:true;sass-mixin:true;null-function:true;null-mixin:true;reflected-function:true;reflected-mixin:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 2), result.dependencies().len);
+
+    const indented_root =
+        \\@use "sass:meta" as m
+        \\@use "legacy"
+        \\@use "legacy" as custom
+        \\.sass
+        \\  default-function: m.function-exists("legacy-function", "legacy")
+        \\  custom-function: m.function-exists("legacy_function", "custom")
+        \\  default-mixin: m.mixin-exists("legacy-mix", "legacy")
+        \\  custom-mixin: m.mixin-exists("legacy_mix", "custom")
+        \\  missing-function: m.function-exists("missing", "legacy")
+        \\  missing-mixin: m.mixin-exists("missing", "legacy")
+    ;
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "existence.sass",
+        indented_root,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{default-function:true;custom-function:true;default-mixin:true;custom-mixin:true;missing-function:false;missing-mixin:false}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
+test "native Sass local module existence rejects ambiguity and unknown namespaces" {
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_first.scss",
+            .contents =
+            \\@function shared() { @return first; }
+            \\@mixin shared-mixin {}
+            ,
+        },
+        .{
+            .name = "_second.scss",
+            .contents =
+            \\@function shared() { @return second; }
+            \\@mixin shared-mixin {}
+            ,
+        },
+    };
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "ambiguous-function-existence.scss",
+            .input = "@use \"sass:meta\"; @use \"first\" as *; @use \"second\" as *; .root { value: meta.function-exists(\"shared\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "ambiguous-mixin-existence.scss",
+            .input = "@use \"sass:meta\"; @use \"first\" as *; @use \"second\" as *; .root { value: meta.mixin-exists(\"shared-mixin\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-function-namespace.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.function-exists(\"shared\", \"missing\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-mixin-namespace.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.mixin-exists(\"shared-mixin\", \"missing\"); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "local-function-reference.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; $function: meta.get-function(\"shared\", $module: \"first\");",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "local-mixin-reference.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; $mixin: meta.get-mixin(\"shared-mixin\", $module: \"first\");",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "local-function-enumeration.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-functions(\"first\")); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "local-mixin-enumeration.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-mixins(\"first\")); }",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compileWithLocalUseFiles(
+                std.testing.allocator,
+                case.name,
+                case.input,
+                .scss,
+                &files,
+                .{},
+            ),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 1;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "existence-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"first\"; .root { value: meta.function-exists(\"shared\", \"first\"); }",
+            .scss,
+            &files,
+            limits,
+        ),
+    );
+}
+
+test "native Sass local module existence ambiguity owns diagnostics without partial CSS" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const input =
+        \\@use "sass:meta";
+        \\@use "first" as *;
+        \\@use "second" as *;
+        \\$exists: meta.function-exists("shared");
+        \\.unreachable { value: $exists; }
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_first.scss",
+        .data = "@function shared() { @return first; }",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_second.scss",
+        .data = "@function shared() { @return second; }",
+    });
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "native Sass function is available from multiple unprefixed modules",
+        diagnostics[0].message,
+    );
+    const call = "meta.function-exists(\"shared\")";
+    const call_start = std.mem.indexOf(u8, input, call).?;
+    try std.testing.expectEqual(source_id, diagnostics[0].span.source);
+    try std.testing.expectEqual(@as(u32, @intCast(call_start)), diagnostics[0].span.start);
+    try std.testing.expectEqual(
+        @as(u32, @intCast(call_start + call.len)),
+        diagnostics[0].span.end,
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
 test "native Sass local module callables reject private ambiguous and invalid access" {
     const files = [_]LocalUseFile{
         .{
@@ -37240,8 +37519,13 @@ fn exerciseLocalUseAllocationFailures(
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
     const input =
+        \\@use "sass:meta";
         \\@use "tokens";
-        \\.root { value: tokens.double(tokens.$public); }
+        \\.root {
+        \\  function-exists: meta.function-exists("double", "tokens");
+        \\  mixin-exists: meta.mixin-exists("emit", "tokens");
+        \\  value: tokens.double(tokens.$public);
+        \\}
         \\@include tokens.emit(card) { content: caller; }
     ;
     const source_id = try sources.add(context.root_url, input);
@@ -37261,7 +37545,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".module{order:first}.root{value:4px}.card{value:4px;content:caller}",
+        ".module{order:first}.root{function-exists:true;mixin-exists:true;value:4px}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -37282,8 +37566,13 @@ test "native Sass local use handles every allocation failure" {
         ,
     });
     const root_input =
+        \\@use "sass:meta";
         \\@use "tokens";
-        \\.root { value: tokens.double(tokens.$public); }
+        \\.root {
+        \\  function-exists: meta.function-exists("double", "tokens");
+        \\  mixin-exists: meta.mixin-exists("emit", "tokens");
+        \\  value: tokens.double(tokens.$public);
+        \\}
         \\@include tokens.emit(card) { content: caller; }
     ;
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = root_input });

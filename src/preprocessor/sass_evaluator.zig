@@ -16410,8 +16410,17 @@ const Engine = struct {
             return self.values.own(.{ .boolean = metaFeatureExists(raw_name) });
         }
 
-        const module = if (arguments.len == 2)
-            try self.metaExistenceModule(arguments[1].*, span)
+        const module: ?ModuleTarget = if (arguments.len == 2)
+            switch (builtin) {
+                .meta_function_exists, .meta_mixin_exists => try self.metaExistenceModuleTarget(
+                    arguments[1].*,
+                    span,
+                ),
+                else => if (try self.metaExistenceModule(arguments[1].*, span)) |kind|
+                    .{ .builtin = kind }
+                else
+                    null,
+            }
         else
             null;
         const normalized = (try self.normalizeMetaExistenceName(raw_name, span)) orelse
@@ -16419,18 +16428,34 @@ const Engine = struct {
         defer self.allocator.free(normalized);
 
         const exists = switch (builtin) {
-            .meta_function_exists => if (module) |kind|
-                moduleFunctionExists(kind, normalized)
+            .meta_function_exists => if (module) |target|
+                switch (target) {
+                    .builtin => |kind| moduleFunctionExists(kind, normalized),
+                    .local => |module_index| self.publicLocalModuleFunction(
+                        module_index,
+                        normalized,
+                    ) != null,
+                }
             else
-                try self.metaGlobalFunctionExists(normalized, scope),
-            .meta_mixin_exists => if (module) |kind|
-                moduleBuiltinMixin(kind, normalized) != null
+                try self.metaGlobalFunctionExists(normalized, scope, span),
+            .meta_mixin_exists => if (module) |target|
+                switch (target) {
+                    .builtin => |kind| moduleBuiltinMixin(kind, normalized) != null,
+                    .local => |module_index| self.publicLocalModuleMixin(
+                        module_index,
+                        normalized,
+                    ) != null,
+                }
             else
-                (try self.lookupUserMixin(normalized, scope)) != null,
+                try self.metaGlobalMixinExists(normalized, scope, span),
             .meta_variable_exists => (try self.lookupVisibleVariable(scope, normalized)) != null or
                 self.unprefixedMathConstant(normalized) != null,
             .meta_global_variable_exists => if (module) |kind|
-                kind == .math and mathModuleConstant(normalized) != null
+                switch (kind) {
+                    .builtin => |module_kind| module_kind == .math and
+                        mathModuleConstant(normalized) != null,
+                    .local => unreachable,
+                }
             else
                 (try self.environment.lookup(self.global_scope, normalized)) != null or
                     self.unprefixedMathConstant(normalized) != null,
@@ -16463,6 +16488,25 @@ const Engine = struct {
         item: native_value.Value,
         span: native_source.Span,
     ) Error!?BuiltinModule {
+        const target = try self.metaExistenceModuleTarget(item, span) orelse return null;
+        return switch (target) {
+            .builtin => |kind| kind,
+            .local => {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass user-module reflection is not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            },
+        };
+    }
+
+    fn metaExistenceModuleTarget(
+        self: *Engine,
+        item: native_value.Value,
+        span: native_source.Span,
+    ) Error!?ModuleTarget {
         if (item == .null_value) return null;
         const module_string = try self.metaExistenceString(item, "module", span);
         const namespace = native_string.decodeAlloc(
@@ -16476,17 +16520,7 @@ const Engine = struct {
             try self.transaction.consumeOperations(1);
             const loaded = binding.namespace orelse continue;
             if (!std.mem.eql(u8, loaded, namespace)) continue;
-            return switch (binding.target) {
-                .builtin => |kind| kind,
-                .local => {
-                    try self.report(
-                        .unsupported_feature,
-                        span,
-                        "native Sass user-module reflection is not implemented yet",
-                    );
-                    return error.UnsupportedFeature;
-                },
-            };
+            return binding.target;
         }
         try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
         return error.InvalidExpression;
@@ -16513,6 +16547,7 @@ const Engine = struct {
         self: *Engine,
         name: []const u8,
         scope: native_environment.ScopeId,
+        span: native_source.Span,
     ) Error!bool {
         if (std.mem.eql(u8, name, "if") or
             (try self.lookupUserFunction(name, scope)) != null or
@@ -16520,16 +16555,61 @@ const Engine = struct {
         {
             return true;
         }
+        var matched_local_module: ?usize = null;
         for (self.modules.items) |binding| {
             try self.transaction.consumeOperations(1);
             if (binding.namespace != null) continue;
-            const module_kind = switch (binding.target) {
-                .builtin => |kind| kind,
-                .local => continue,
-            };
-            if (moduleBuiltin(module_kind, name) != null) return true;
+            switch (binding.target) {
+                .builtin => |module_kind| {
+                    if (moduleBuiltin(module_kind, name) != null) return true;
+                },
+                .local => |module_index| {
+                    if (self.publicLocalModuleFunction(module_index, name) == null) continue;
+                    if (matched_local_module) |matched| {
+                        if (matched == module_index) continue;
+                        try self.report(
+                            .invalid_operation,
+                            span,
+                            "native Sass function is available from multiple unprefixed modules",
+                        );
+                        return error.InvalidExpression;
+                    }
+                    matched_local_module = module_index;
+                },
+            }
         }
-        return false;
+        return matched_local_module != null;
+    }
+
+    fn metaGlobalMixinExists(
+        self: *Engine,
+        name: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!bool {
+        if ((try self.lookupUserMixin(name, scope)) != null) return true;
+
+        var matched_local_module: ?usize = null;
+        for (self.modules.items) |binding| {
+            try self.transaction.consumeOperations(1);
+            if (binding.namespace != null) continue;
+            const module_index = switch (binding.target) {
+                .local => |index| index,
+                .builtin => continue,
+            };
+            if (self.publicLocalModuleMixin(module_index, name) == null) continue;
+            if (matched_local_module) |matched| {
+                if (matched == module_index) continue;
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass mixin is available from multiple unprefixed modules",
+                );
+                return error.InvalidExpression;
+            }
+            matched_local_module = module_index;
+        }
+        return matched_local_module != null;
     }
 
     fn callMetaInspect(
