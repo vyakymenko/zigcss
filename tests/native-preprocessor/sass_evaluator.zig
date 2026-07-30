@@ -36732,6 +36732,339 @@ test "native Sass loads one-hop local use modules once with visible public varia
     try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
 }
 
+test "native Sass invokes one-hop local module functions and mixins with lexical ownership" {
+    const root_input =
+        \\@use "tools";
+        \\@use "_tools.scss" as alias;
+        \\@use "tools" as *;
+        \\@use "legacy";
+        \\.root {
+        \\  default: tools.add(1);
+        \\  custom: alias.add($scale: 2, $value: 1);
+        \\  unprefixed: add(2);
+        \\  cross: legacy.multiply(3);
+        \\  first-state: tools.tick();
+        \\  visible-state: tools.$counter;
+        \\  second-state: alias.tick();
+        \\  final-state: $counter;
+        \\  arithmetic: tools.add(1) + tools.$counter;
+        \\  nested: tools.add(tools.add(1), 2);
+        \\  redefined: tools.redefined();
+        \\}
+        \\@include tools.card(default-card, green) { content: caller; }
+        \\@include alias.card(alias-card);
+        \\@include tools.redefined;
+        \\@include legacy.painted(purple);
+    ;
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_tools.scss",
+            .contents =
+            \\$seed: 2;
+            \\$counter: 0;
+            \\$-private-seed: 99;
+            \\@function add($value, $scale: 3) {
+            \\  $local: $seed * $scale;
+            \\  @return $value + $local;
+            \\}
+            \\@function -hidden($value) { @return $value; }
+            \\@function tick() {
+            \\  $counter: $counter + 1 !global;
+            \\  @return $counter;
+            \\}
+            \\@function redefined() { @return 1; }
+            \\@function redefined() { @return 2; }
+            \\@mixin card($name, $tone: red) {
+            \\  .#{$name} {
+            \\    value: add(1, 2);
+            \\    color: $tone;
+            \\    @content;
+            \\  }
+            \\}
+            \\@mixin -hidden-mixin { .private { value: no; } }
+            \\@mixin redefined { .redefined { value: old; } }
+            \\@mixin redefined { .redefined { value: new; } }
+            \\.tools-loaded { order: first; }
+            ,
+        },
+        .{
+            .name = "_legacy.sass",
+            .contents =
+            \\$factor: 4
+            \\@function multiply($value, $by: $factor)
+            \\  @return $value * $by
+            \\@mixin painted($tone: blue)
+            \\  .painted
+            \\    color: $tone
+            \\.legacy-loaded
+            \\  order: second
+            ,
+        },
+    };
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "input.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".tools-loaded{order:first}.legacy-loaded{order:second}.root{default:7;custom:5;unprefixed:8;cross:12;first-state:1;visible-state:1;second-state:2;final-state:2;arithmetic:9;nested:11;redefined:2}.default-card{value:5;color:green;content:caller}.alias-card{value:5;color:red}.redefined{value:new}.painted{color:purple}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 2), result.dependencies().len);
+
+    const indented_root =
+        \\@use "tools" as toolkit
+        \\.root
+        \\  value: toolkit.add(1, 2)
+        \\@include toolkit.card(sass-card, purple)
+    ;
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "input.sass",
+        indented_root,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".tools-loaded{order:first}.root{value:5}.sass-card{value:5;color:purple}",
+        sass_result.css(),
+    );
+}
+
+test "native Sass local module mixin content evaluates in caller lexical scope" {
+    const root_input =
+        \\$suffix: "-caller";
+        \\@use "tools" as module;
+        \\@include module.relay(prefix) using ($message) {
+        \\  content: $message;
+        \\  contextual: $suffix;
+        \\}
+    ;
+    const files = [_]LocalUseFile{.{
+        .name = "_tools.scss",
+        .contents =
+        \\@mixin relay($prefix) {
+        \\  .relay { @content($prefix); }
+        \\}
+        \\.tools-loaded { order: first; }
+        ,
+    }};
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "content.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".tools-loaded{order:first}.relay{content:prefix;contextual:\"-caller\"}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Sass local module callables reject private ambiguous and invalid access" {
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_first.scss",
+            .contents =
+            \\@function public($value) { @return $value; }
+            \\@function -private($value) { @return $value; }
+            \\@mixin public-mixin($value) { .first { value: $value; } }
+            \\@mixin -private-mixin { .private { value: no; } }
+            ,
+        },
+        .{
+            .name = "_second.scss",
+            .contents =
+            \\@function public($value) { @return $value + 1; }
+            \\@mixin public-mixin($value) { .second { value: $value; } }
+            ,
+        },
+    };
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "private-function.scss",
+            .input = "@use \"first\"; .root { value: first.-private(1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "private-mixin.scss",
+            .input = "@use \"first\"; @include first.-private-mixin;",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "undefined-function.scss",
+            .input = "@use \"first\"; .root { value: first.absent(1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "undefined-mixin.scss",
+            .input = "@use \"first\"; @include first.absent;",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "ambiguous-function.scss",
+            .input = "@use \"first\" as *; @use \"second\" as *; .root { value: public(1); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "ambiguous-mixin.scss",
+            .input = "@use \"first\" as *; @use \"second\" as *; @include public-mixin(1);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "duplicate-function-argument.scss",
+            .input = "@use \"first\"; .root { value: first.public($value: 1, $value: 2); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-mixin-argument.scss",
+            .input = "@use \"first\"; @include first.public-mixin($other: 1);",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unexpected-content.scss",
+            .input = "@use \"first\"; @include first.public-mixin(1) { value: no; }",
+            .expected = error.InvalidSassSyntax,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compileWithLocalUseFiles(
+                std.testing.allocator,
+                case.name,
+                case.input,
+                .scss,
+                &files,
+                .{},
+            ),
+        );
+    }
+
+    const shadowed =
+        \\@use "first" as *;
+        \\@function public($value) { @return $value + 10; }
+        \\@mixin public-mixin($value) { .local { value: $value; } }
+        \\.root { value: public(1); }
+        \\@include public-mixin(2);
+    ;
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "shadowed.scss",
+        shadowed,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".root{value:11}.local{value:2}", result.css());
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_callables = 1;
+    try std.testing.expectError(
+        error.CallableLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "callable-limit.scss",
+            "@use \"first\";",
+            .scss,
+            &files,
+            limits,
+        ),
+    );
+}
+
+test "native Sass local module callable failures own diagnostics without partial CSS" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const input = "@use \"first\"; .root { value: first.-private(1); }";
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_first.scss",
+        .data = "@function -private($value) { @return $value; }",
+    });
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "private native Sass module function cannot be accessed",
+        diagnostics[0].message,
+    );
+    const call = "first.-private(1)";
+    const call_start = std.mem.indexOf(u8, input, call).?;
+    try std.testing.expectEqual(source_id, diagnostics[0].span.source);
+    try std.testing.expectEqual(@as(u32, @intCast(call_start)), diagnostics[0].span.start);
+    try std.testing.expectEqual(
+        @as(u32, @intCast(call_start + call.len)),
+        diagnostics[0].span.end,
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
 test "native Sass local use fails closed for private ambiguous missing cyclic and transitive modules" {
     const invalid = [_]struct {
         root_name: []const u8,
@@ -36906,7 +37239,11 @@ fn exerciseLocalUseAllocationFailures(
     defer session.deinit();
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
-    const input = "@use \"tokens\"; .root { value: tokens.$public; }";
+    const input =
+        \\@use "tokens";
+        \\.root { value: tokens.double(tokens.$public); }
+        \\@include tokens.emit(card) { content: caller; }
+    ;
     const source_id = try sources.add(context.root_url, input);
     var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
     defer parser.deinit();
@@ -36924,7 +37261,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".module{order:first}.root{value:2px}",
+        ".module{order:first}.root{value:4px}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -36935,9 +37272,20 @@ test "native Sass local use handles every allocation failure" {
     try tmp.dir.makeDir("root");
     try tmp.dir.writeFile(.{
         .sub_path = "root/_tokens.scss",
-        .data = "$public: 2px; .module { order: first; }",
+        .data =
+        \\$public: 2px;
+        \\@function double($value) { @return $value * 2; }
+        \\@mixin emit($name) {
+        \\  .#{$name} { value: double($public); @content; }
+        \\}
+        \\.module { order: first; }
+        ,
     });
-    const root_input = "@use \"tokens\"; .root { value: tokens.$public; }";
+    const root_input =
+        \\@use "tokens";
+        \\.root { value: tokens.double(tokens.$public); }
+        \\@include tokens.emit(card) { content: caller; }
+    ;
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = root_input });
     const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(base);

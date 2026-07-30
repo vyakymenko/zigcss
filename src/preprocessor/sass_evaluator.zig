@@ -459,6 +459,7 @@ const UserMixin = struct {
 };
 
 const ContentInvocation = struct {
+    engine: *Engine,
     block: native_syntax.NodeId,
     owner: *ScopeFrame,
     captured_content: ?*const ContentInvocation,
@@ -746,18 +747,28 @@ const ModuleBinding = struct {
 
 const ModuleVariable = struct {
     name: []u8,
-    value: *const native_value.Value,
 };
 
 const LocalModule = struct {
     url: []const u8,
     variables: []ModuleVariable,
+    document: *native_syntax.Document,
+    engine: *Engine,
 
     fn deinit(self: *LocalModule, allocator: std.mem.Allocator) void {
         for (self.variables) |variable| allocator.free(variable.name);
         if (self.variables.len > 0) allocator.free(self.variables);
+        self.engine.deinit();
+        allocator.destroy(self.engine);
+        self.document.deinit();
+        allocator.destroy(self.document);
         self.* = undefined;
     }
+};
+
+const LocalCallableTarget = struct {
+    module_index: usize,
+    callable_id: u32,
 };
 
 const ParsedUse = struct {
@@ -855,6 +866,7 @@ const Engine = struct {
     values: native_value.Store,
     environment: native_environment.Environment,
     global_scope: native_environment.ScopeId,
+    root_scope: ScopeFrame,
     user_functions: std.ArrayList(UserFunction) = .empty,
     user_mixins: std.ArrayList(UserMixin) = .empty,
     modules: std.ArrayList(ModuleBinding) = .empty,
@@ -882,6 +894,7 @@ const Engine = struct {
         errdefer environment.deinit();
         const root = document.get(document.root) catch return error.InvalidSassSyntax;
         const root_source = try sources.get(root.span.source);
+        const global_scope = environment.root();
         return .{
             .allocator = allocator,
             .sources = sources,
@@ -890,7 +903,12 @@ const Engine = struct {
             .limits = limits,
             .values = native_value.Store.init(allocator, limits.values),
             .environment = environment,
-            .global_scope = environment.root(),
+            .global_scope = global_scope,
+            .root_scope = .{
+                .cursor = global_scope,
+                .kind = .global,
+                .parent = null,
+            },
             .random_state = deterministicRandomSeed(root_source.bytes),
         };
     }
@@ -919,14 +937,10 @@ const Engine = struct {
             return error.InvalidSassSyntax;
         try self.validateModulePlacement(children);
         try self.validateCallableStructure(self.document.root, .{});
-        var scope = ScopeFrame{
-            .cursor = self.global_scope,
-            .kind = .global,
-            .parent = null,
-        };
-        try self.executeRootChildren(children, &scope, 1);
+        self.root_scope.cursor = self.global_scope;
+        try self.executeRootChildren(children, &self.root_scope, 1);
         try self.reportLegacyIfDeprecationSummary(root.span);
-        self.global_scope = scope.cursor;
+        self.global_scope = self.root_scope.cursor;
     }
 
     fn validateModulePlacement(
@@ -1274,7 +1288,7 @@ const Engine = struct {
                 if (module_kind != .math) return;
                 for (math_constants) |constant| {
                     if (try self.environment.lookup(self.global_scope, constant.name) != null or
-                        self.unprefixedLocalModuleVariable(constant.name) != null)
+                        self.hasUnprefixedLocalModuleVariable(constant.name))
                     {
                         try self.report(
                             .duplicate_binding,
@@ -1290,7 +1304,7 @@ const Engine = struct {
                 for (module.variables) |variable| {
                     if (try self.environment.lookup(self.global_scope, variable.name) != null or
                         self.unprefixedMathConstant(variable.name) != null or
-                        self.unprefixedLocalModuleVariable(variable.name) != null)
+                        self.hasUnprefixedLocalModuleVariable(variable.name))
                     {
                         try self.report(
                             .duplicate_binding,
@@ -1381,19 +1395,28 @@ const Engine = struct {
             try self.copyParserDiagnostics(parser.diagnostics());
             return failure;
         };
-        defer document.deinit();
-
-        var module_engine = try Engine.init(
+        const module_document = self.allocator.create(native_syntax.Document) catch |failure| {
+            document.deinit();
+            return failure;
+        };
+        module_document.* = document;
+        errdefer {
+            module_document.deinit();
+            self.allocator.destroy(module_document);
+        }
+        const module_engine = try self.allocator.create(Engine);
+        errdefer self.allocator.destroy(module_engine);
+        module_engine.* = try Engine.init(
             self.allocator,
             self.sources,
-            &document,
+            module_document,
             self.transaction,
             self.limits,
         );
-        defer module_engine.deinit();
+        errdefer module_engine.deinit();
         module_engine.module_depth = self.module_depth + 1;
         try module_engine.run();
-        const variables = try self.clonePublicModuleVariables(&module_engine);
+        const variables = try self.clonePublicModuleVariables(module_engine);
         errdefer {
             for (variables) |variable| self.allocator.free(variable.name);
             if (variables.len > 0) self.allocator.free(variables);
@@ -1403,6 +1426,8 @@ const Engine = struct {
         try self.local_modules.append(self.allocator, .{
             .url = file.name,
             .variables = variables,
+            .document = module_document,
+            .engine = module_engine,
         });
         return self.local_modules.items.len - 1;
     }
@@ -1497,16 +1522,32 @@ const Engine = struct {
             }
             const name = try self.allocator.dupe(u8, normalized);
             errdefer self.allocator.free(name);
-            const cloned = try self.values.own(value.*);
-            try variables.append(self.allocator, .{ .name = name, .value = cloned });
+            try variables.append(self.allocator, .{ .name = name });
         }
         return variables.toOwnedSlice(self.allocator);
     }
 
-    fn unprefixedLocalModuleVariable(
+    fn hasUnprefixedLocalModuleVariable(
         self: *const Engine,
         name: []const u8,
-    ) ?*const native_value.Value {
+    ) bool {
+        for (self.modules.items) |binding| {
+            if (binding.namespace != null) continue;
+            const module_index = switch (binding.target) {
+                .local => |index| index,
+                .builtin => continue,
+            };
+            for (self.local_modules.items[module_index].variables) |variable| {
+                if (sassNameEql(variable.name, name)) return true;
+            }
+        }
+        return false;
+    }
+
+    fn unprefixedLocalModuleVariable(
+        self: *Engine,
+        name: []const u8,
+    ) Error!?*const native_value.Value {
         for (self.modules.items) |binding| {
             if (binding.namespace != null) continue;
             const module_index = switch (binding.target) {
@@ -1515,10 +1556,228 @@ const Engine = struct {
             };
             const module = &self.local_modules.items[module_index];
             for (module.variables) |variable| {
-                if (sassNameEql(variable.name, name)) return variable.value;
+                if (!sassNameEql(variable.name, name)) continue;
+                const value = try module.engine.environment.lookup(
+                    module.engine.global_scope,
+                    variable.name,
+                ) orelse return error.InvalidSassSyntax;
+                if (valueContainsCallable(value.*, 0)) return error.UnsupportedFeature;
+                return try self.values.own(value.*);
             }
         }
         return null;
+    }
+
+    fn publicLocalModuleFunction(
+        self: *const Engine,
+        module_index: usize,
+        name: []const u8,
+    ) ?u32 {
+        const module_engine = self.local_modules.items[module_index].engine;
+        var index = module_engine.user_functions.items.len;
+        while (index > 0) {
+            index -= 1;
+            const function = module_engine.user_functions.items[index];
+            if (function.owner != &module_engine.root_scope or
+                isPrivateModuleMember(function.name) or
+                !sassNameEql(function.name, name))
+            {
+                continue;
+            }
+            return @intCast(index);
+        }
+        return null;
+    }
+
+    fn publicLocalModuleMixin(
+        self: *const Engine,
+        module_index: usize,
+        name: []const u8,
+    ) ?u32 {
+        const module_engine = self.local_modules.items[module_index].engine;
+        var index = module_engine.user_mixins.items.len;
+        while (index > 0) {
+            index -= 1;
+            const mixin = module_engine.user_mixins.items[index];
+            if (mixin.owner != &module_engine.root_scope or
+                isPrivateModuleMember(mixin.name) or
+                !sassNameEql(mixin.name, name))
+            {
+                continue;
+            }
+            return @intCast(index);
+        }
+        return null;
+    }
+
+    fn resolveLocalModuleFunction(
+        self: *Engine,
+        raw_name: []const u8,
+        span: native_source.Span,
+    ) Error!?LocalCallableTarget {
+        if (parseQualifiedName(raw_name)) |qualified| {
+            const target = self.moduleTargetForNamespace(qualified.namespace) orelse return null;
+            const module_index = switch (target) {
+                .local => |index| index,
+                .builtin => return null,
+            };
+            if (isPrivateModuleMember(qualified.member)) {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "private native Sass module function cannot be accessed",
+                );
+                return error.InvalidExpression;
+            }
+            const callable_id = self.publicLocalModuleFunction(
+                module_index,
+                qualified.member,
+            ) orelse {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "undefined native Sass module function",
+                );
+                return error.InvalidExpression;
+            };
+            return .{ .module_index = module_index, .callable_id = callable_id };
+        }
+        if (!isSimpleIdentifier(raw_name)) return null;
+
+        var matched: ?LocalCallableTarget = null;
+        for (self.modules.items) |binding| {
+            if (binding.namespace != null) continue;
+            const module_index = switch (binding.target) {
+                .local => |index| index,
+                .builtin => continue,
+            };
+            const callable_id = self.publicLocalModuleFunction(
+                module_index,
+                raw_name,
+            ) orelse continue;
+            if (matched) |existing| {
+                if (existing.module_index == module_index) continue;
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass function is available from multiple unprefixed modules",
+                );
+                return error.InvalidExpression;
+            }
+            matched = .{ .module_index = module_index, .callable_id = callable_id };
+        }
+        return matched;
+    }
+
+    fn resolveLocalModuleMixin(
+        self: *Engine,
+        raw_name: []const u8,
+        span: native_source.Span,
+    ) Error!?LocalCallableTarget {
+        if (parseQualifiedName(raw_name)) |qualified| {
+            const target = self.moduleTargetForNamespace(qualified.namespace) orelse return null;
+            const module_index = switch (target) {
+                .local => |index| index,
+                .builtin => return null,
+            };
+            if (isPrivateModuleMember(qualified.member)) {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "private native Sass module mixin cannot be accessed",
+                );
+                return error.InvalidExpression;
+            }
+            const callable_id = self.publicLocalModuleMixin(
+                module_index,
+                qualified.member,
+            ) orelse {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "undefined native Sass module mixin",
+                );
+                return error.InvalidExpression;
+            };
+            return .{ .module_index = module_index, .callable_id = callable_id };
+        }
+        if (!isSimpleIdentifier(raw_name)) return null;
+
+        var matched: ?LocalCallableTarget = null;
+        for (self.modules.items) |binding| {
+            if (binding.namespace != null) continue;
+            const module_index = switch (binding.target) {
+                .local => |index| index,
+                .builtin => continue,
+            };
+            const callable_id = self.publicLocalModuleMixin(
+                module_index,
+                raw_name,
+            ) orelse continue;
+            if (matched) |existing| {
+                if (existing.module_index == module_index) continue;
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass mixin is available from multiple unprefixed modules",
+                );
+                return error.InvalidExpression;
+            }
+            matched = .{ .module_index = module_index, .callable_id = callable_id };
+        }
+        return matched;
+    }
+
+    fn cloneEvaluatedArgumentsInto(
+        self: *Engine,
+        target: *Engine,
+        input: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!EvaluatedCallArguments {
+        var result = EvaluatedCallArguments{ .allocator = target.allocator };
+        errdefer result.deinit();
+        for (input.positional.items) |item| {
+            if (valueContainsCallable(item.*, 0)) {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass local module callable arguments are not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            try result.positional.append(target.allocator, try target.values.own(item.*));
+        }
+        for (input.keywords.items) |keyword| {
+            if (valueContainsCallable(keyword.value.*, 0)) {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass local module callable arguments are not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            try result.keywords.append(target.allocator, .{
+                .name = keyword.name,
+                .value = try target.values.own(keyword.value.*),
+                .normalize_name = keyword.normalize_name,
+            });
+        }
+        for (input.splat_keywords.items) |keyword| {
+            if (valueContainsCallable(keyword.value.*, 0)) {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass local module callable arguments are not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            try result.splat_keywords.append(target.allocator, .{
+                .name = keyword.name,
+                .value = try target.values.own(keyword.value.*),
+                .normalize_name = keyword.normalize_name,
+            });
+        }
+        return result;
     }
 
     fn emitRootComment(self: *Engine, node: *const native_syntax.Node) Error!void {
@@ -1866,6 +2125,22 @@ const Engine = struct {
         );
         defer self.deinitCallableParameters(content_parameters);
 
+        if (parseQualifiedName(raw_name) != null) {
+            if (try self.resolveLocalModuleMixin(raw_name, prelude_node.span)) |target| {
+                try self.callLocalModuleMixin(
+                    target,
+                    body,
+                    ranges.items,
+                    scope,
+                    content_block,
+                    content_parameters,
+                    prelude_node.span,
+                    depth,
+                    context,
+                );
+                return;
+            }
+        }
         if (try self.tryModuleBuiltinMixin(raw_name, prelude_node.span)) |builtin| {
             switch (builtin) {
                 .meta_apply => try self.callMetaApply(
@@ -1890,21 +2165,36 @@ const Engine = struct {
             return;
         }
 
-        const mixin_id = try self.lookupUserMixin(raw_name, scope.cursor) orelse {
-            try self.report(.syntax, prelude_node.span, "undefined native Sass mixin");
-            return error.InvalidSassSyntax;
-        };
-        try self.callUserMixin(
-            mixin_id,
-            body,
-            ranges.items,
-            scope,
-            content_block,
-            content_parameters,
-            prelude_node.span,
-            depth,
-            context,
-        );
+        if (try self.lookupUserMixin(raw_name, scope.cursor)) |mixin_id| {
+            try self.callUserMixin(
+                mixin_id,
+                body,
+                ranges.items,
+                scope,
+                content_block,
+                content_parameters,
+                prelude_node.span,
+                depth,
+                context,
+            );
+            return;
+        }
+        if (try self.resolveLocalModuleMixin(raw_name, prelude_node.span)) |target| {
+            try self.callLocalModuleMixin(
+                target,
+                body,
+                ranges.items,
+                scope,
+                content_block,
+                content_parameters,
+                prelude_node.span,
+                depth,
+                context,
+            );
+            return;
+        }
+        try self.report(.syntax, prelude_node.span, "undefined native Sass mixin");
+        return error.InvalidSassSyntax;
     }
 
     fn defineUserMixin(
@@ -2526,6 +2816,7 @@ const Engine = struct {
                     try self.invokeUserMixin(
                         callable.id,
                         &forwarded,
+                        self,
                         caller_scope,
                         content_block,
                         content_parameters,
@@ -2601,6 +2892,42 @@ const Engine = struct {
         try self.invokeUserMixin(
             mixin_id,
             &evaluated,
+            self,
+            caller_scope,
+            content_block,
+            content_parameters,
+            span,
+            depth,
+            context,
+        );
+    }
+
+    fn callLocalModuleMixin(
+        self: *Engine,
+        target: LocalCallableTarget,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        var evaluated = try self.evaluateCallArguments(
+            body,
+            ranges,
+            caller_scope.cursor,
+            span,
+        );
+        defer evaluated.deinit();
+        const module_engine = self.local_modules.items[target.module_index].engine;
+        var cloned = try self.cloneEvaluatedArgumentsInto(module_engine, &evaluated, span);
+        defer cloned.deinit();
+        try module_engine.invokeUserMixin(
+            target.callable_id,
+            &cloned,
+            self,
             caller_scope,
             content_block,
             content_parameters,
@@ -2614,6 +2941,7 @@ const Engine = struct {
         self: *Engine,
         mixin_id: u32,
         evaluated: *const EvaluatedCallArguments,
+        caller_engine: *Engine,
         caller_scope: *ScopeFrame,
         content_block: ?native_syntax.NodeId,
         content_parameters: []const CallableParameter,
@@ -2657,9 +2985,13 @@ const Engine = struct {
         var invocation: ContentInvocation = undefined;
         self.active_content = if (content_block) |block| blk: {
             invocation = .{
+                .engine = caller_engine,
                 .block = block,
                 .owner = caller_scope,
-                .captured_content = previous_content,
+                .captured_content = if (caller_engine == self)
+                    previous_content
+                else
+                    caller_engine.active_content,
                 .parameters = content_parameters,
             };
             break :blk &invocation;
@@ -2729,10 +3061,42 @@ const Engine = struct {
             content_node.span,
         );
         defer evaluated.deinit();
-        var bound = try self.bindCallableArguments(
-            invocation.parameters,
+        if (invocation.engine == self) {
+            return self.invokeContentInvocation(
+                invocation,
+                &evaluated,
+                content_node.span,
+                depth,
+                context,
+            );
+        }
+        var cloned = try self.cloneEvaluatedArgumentsInto(
+            invocation.engine,
             &evaluated,
             content_node.span,
+        );
+        defer cloned.deinit();
+        return invocation.engine.invokeContentInvocation(
+            invocation,
+            &cloned,
+            content_node.span,
+            depth,
+            context,
+        );
+    }
+
+    fn invokeContentInvocation(
+        self: *Engine,
+        invocation: *const ContentInvocation,
+        evaluated: *const EvaluatedCallArguments,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        var bound = try self.bindCallableArguments(
+            invocation.parameters,
+            evaluated,
+            span,
         );
         defer bound.deinit();
 
@@ -2756,14 +3120,14 @@ const Engine = struct {
             const item = bound.values[index] orelse try self.evaluateExpressionBytes(
                 parameter.default_value orelse return error.InvalidSassSyntax,
                 content_scope.cursor,
-                content_node.span,
+                span,
             );
             try self.defineOwnedVariable(&content_scope, parameter.name, item);
         }
         const content_children = self.document.children(invocation.block) catch
             return error.InvalidSassSyntax;
         try self.executeLoopBody(content_children, &content_scope, depth + 1, context);
-        try self.ensureRestKeywordsConsumed(bound.rest_value, content_node.span);
+        try self.ensureRestKeywordsConsumed(bound.rest_value, span);
         active_call = false;
         try self.transaction.leaveCall();
     }
@@ -2886,6 +3250,54 @@ const Engine = struct {
             caller_scope,
             span,
         );
+    }
+
+    fn tryLocalModuleFunctionCall(
+        self: *Engine,
+        raw: []const u8,
+        caller_scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!?*const native_value.Value {
+        const opening = std.mem.indexOfScalar(u8, raw, '(') orelse return null;
+        if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
+        const target = try self.resolveLocalModuleFunction(raw[0..opening], span) orelse
+            return null;
+        const body = raw[opening + 1 .. raw.len - 1];
+        var ranges: std.ArrayList(ExpressionRange) = .empty;
+        defer ranges.deinit(self.allocator);
+        _ = try splitTopLevelRanges(self.allocator, body, .comma, &ranges);
+        if (trimWhitespace(body).len == 0) ranges.clearRetainingCapacity();
+        if (ranges.items.len > 0) {
+            const final = ranges.items[ranges.items.len - 1];
+            if (trimWhitespace(body[final.start..final.end]).len == 0) {
+                ranges.items.len -= 1;
+            }
+        }
+
+        var evaluated = try self.evaluateCallArguments(
+            body,
+            ranges.items,
+            caller_scope,
+            span,
+        );
+        defer evaluated.deinit();
+        const module_engine = self.local_modules.items[target.module_index].engine;
+        var cloned = try self.cloneEvaluatedArgumentsInto(module_engine, &evaluated, span);
+        defer cloned.deinit();
+        const result = try module_engine.invokeUserFunction(
+            target.callable_id,
+            &cloned,
+            span,
+        );
+        if (valueContainsCallable(result.*, 0)) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass local module callable results are not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        return try self.values.own(result.*);
     }
 
     fn lookupUserFunction(
@@ -4262,6 +4674,7 @@ const Engine = struct {
             return item;
         }
         if (try self.tryUserFunctionCall(trimmed, scope, diagnostic_span)) |item| return item;
+        if (try self.tryLocalModuleFunctionCall(trimmed, scope, call_span)) |item| return item;
         if (try self.tryBuiltinCall(trimmed, scope, call_span)) |item| return item;
         if (sassCalculationValue(trimmed) != null) {
             const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
@@ -5521,42 +5934,24 @@ const Engine = struct {
             .local => |module_index| {
                 const module = &self.local_modules.items[module_index];
                 for (module.variables) |variable| {
-                    if (sassNameEql(variable.name, qualified.member)) return variable.value;
+                    if (!sassNameEql(variable.name, qualified.member)) continue;
+                    const value = try module.engine.environment.lookup(
+                        module.engine.global_scope,
+                        variable.name,
+                    ) orelse return error.InvalidSassSyntax;
+                    if (valueContainsCallable(value.*, 0)) {
+                        try self.report(
+                            .unsupported_feature,
+                            span,
+                            "native Sass local callable exports are not implemented yet",
+                        );
+                        return error.UnsupportedFeature;
+                    }
+                    return try self.values.own(value.*);
                 }
                 try self.report(.undefined_variable, span, "undefined native Sass module variable");
                 return error.InvalidExpression;
             },
-        };
-    }
-
-    fn tryModuleConstant(
-        self: *Engine,
-        raw: []const u8,
-        span: native_source.Span,
-    ) Error!?f64 {
-        const qualified = parseQualifiedVariable(raw) orelse return null;
-        const target = self.moduleTargetForNamespace(qualified.namespace) orelse {
-            try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
-            return error.InvalidExpression;
-        };
-        const module = switch (target) {
-            .builtin => |kind| kind,
-            .local => {
-                try self.report(
-                    .unsupported_feature,
-                    span,
-                    "native Sass arithmetic over local module variables is not implemented yet",
-                );
-                return error.UnsupportedFeature;
-            },
-        };
-        const value = if (module == .math)
-            mathModuleConstant(qualified.member)
-        else
-            null;
-        return value orelse {
-            try self.report(.undefined_variable, span, "undefined native Sass module variable");
-            return error.InvalidExpression;
         };
     }
 
@@ -18364,7 +18759,7 @@ const Engine = struct {
     ) Error!?*const native_value.Value {
         if (try self.environment.lookupNonGlobal(scope, normalized)) |item| return item;
         if (try self.environment.lookup(self.global_scope, normalized)) |item| return item;
-        return self.unprefixedLocalModuleVariable(normalized);
+        return try self.unprefixedLocalModuleVariable(normalized);
     }
 
     fn normalizeVariable(self: *Engine, raw_name: []const u8) Error![]u8 {
@@ -19041,13 +19436,33 @@ const ArithmeticParser = struct {
                         std.mem.eql(u8, separator.raw(self.raw), "."))
                     {
                         const qualified = self.raw[token.span.start..variable.span.end];
-                        const constant = (try self.engine.tryModuleConstant(qualified, self.span)) orelse
+                        const item = (try self.engine.tryModuleVariable(qualified, self.span)) orelse
                             return error.InvalidExpression;
                         self.cursor += 3;
-                        return native_numeric.Numeric.fromBuiltinConstant(constant);
+                        return switch (item.*) {
+                            .number => |number| native_numeric.Numeric.fromNumber(number),
+                            else => error.InvalidExpression,
+                        };
                     }
                 }
                 var opening_index = self.cursor + 1;
+                var call_name_end = token.span.end;
+                if (self.cursor + 3 < self.tokens.len) {
+                    const separator = self.tokens[self.cursor + 1];
+                    const member = self.tokens[self.cursor + 2];
+                    const opening = self.tokens[self.cursor + 3];
+                    if (separator.kind == .delimiter and
+                        member.kind == .identifier and
+                        opening.kind == .open_paren and
+                        token.span.end == separator.span.start and
+                        separator.span.end == member.span.start and
+                        member.span.end == opening.span.start and
+                        std.mem.eql(u8, separator.raw(self.raw), "."))
+                    {
+                        opening_index = self.cursor + 3;
+                        call_name_end = member.span.end;
+                    }
+                }
                 while (opening_index < self.tokens.len and
                     isExpressionTrivia(self.tokens[opening_index].kind))
                 {
@@ -19055,7 +19470,7 @@ const ArithmeticParser = struct {
                 }
                 if (opening_index >= self.tokens.len or
                     self.tokens[opening_index].kind != .open_paren or
-                    self.tokens[opening_index].span.start != token.span.end)
+                    self.tokens[opening_index].span.start != call_name_end)
                 {
                     return error.InvalidExpression;
                 }
@@ -19089,11 +19504,12 @@ const ArithmeticParser = struct {
                     if (legacyIfIdentifierEql(token.raw(self.raw))) {
                         return error.InvalidExpression;
                     }
-                    _ = try self.engine.lookupUserFunction(
-                        token.raw(self.raw),
+                    if (try self.engine.tryUserFunctionCall(
+                        call,
                         self.scope,
-                    ) orelse return error.InvalidExpression;
-                    break :blk (try self.engine.tryUserFunctionCall(
+                        self.span,
+                    )) |result| break :blk result;
+                    break :blk (try self.engine.tryLocalModuleFunctionCall(
                         call,
                         self.scope,
                         self.span,
@@ -21401,6 +21817,10 @@ fn valueContainsCallable(value: native_value.Value, depth: u16) bool {
         },
         else => false,
     };
+}
+
+fn isPrivateModuleMember(name: []const u8) bool {
+    return name.len > 0 and (name[0] == '-' or name[0] == '_');
 }
 
 fn parseQualifiedName(input: []const u8) ?QualifiedName {

@@ -137,6 +137,7 @@ const expectedImplementations = Object.freeze([
       'variables',
       'variable-modifiers',
       'local-use-single-module-loading-foundation',
+      'local-use-callable-member-foundation',
       'numeric-arithmetic',
       'canonical-number-serialization',
       'unit-conversion',
