@@ -10817,24 +10817,99 @@ const Engine = struct {
             );
             return error.InvalidExpression;
         }
-        const module = (try self.metaExistenceModule(arguments[0].*, span)).?;
-        const definitions = moduleFunctionDefinitions(module);
+        const target = (try self.metaExistenceModuleTarget(arguments[0].*, span)).?;
+        return switch (target) {
+            .builtin => |module| blk: {
+                const definitions = moduleFunctionDefinitions(module);
+                var entries: [color_module_functions.len]native_value.Entry = undefined;
+                for (definitions, 0..) |definition, index| {
+                    try self.transaction.consumeOperations(1);
+                    entries[index] = .{
+                        .key = .{ .string = .{
+                            .bytes = definition.name,
+                            .quoted = true,
+                        } },
+                        .value = .{ .callable = builtinFunctionCallable(
+                            definition.builtin,
+                            module,
+                        ) },
+                    };
+                }
+                break :blk self.values.own(.{ .map = .{
+                    .entries = entries[0..definitions.len],
+                } });
+            },
+            .local => |module_index| self.callMetaLocalModuleFunctions(module_index, span),
+        };
+    }
 
-        var entries: [color_module_functions.len]native_value.Entry = undefined;
-        for (definitions, 0..) |definition, index| {
+    fn callMetaLocalModuleFunctions(
+        self: *Engine,
+        module_index: usize,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const module_engine = self.local_modules.items[module_index].engine;
+        const temporary_bytes = std.math.mul(
+            usize,
+            module_engine.user_functions.items.len,
+            @sizeOf(native_value.Entry),
+        ) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module function enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        };
+        if (temporary_bytes > self.limits.max_temporary_bytes) {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module function enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        }
+
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        try entries.ensureTotalCapacity(
+            self.allocator,
+            module_engine.user_functions.items.len,
+        );
+        for (module_engine.user_functions.items) |function| {
             try self.transaction.consumeOperations(1);
-            entries[index] = .{
+            if (function.owner != &module_engine.root_scope or
+                isPrivateModuleMember(function.name))
+            {
+                continue;
+            }
+            var already_enumerated = false;
+            for (entries.items) |entry| {
+                if (sassNameEql(entry.key.string.bytes, function.name)) {
+                    already_enumerated = true;
+                    break;
+                }
+            }
+            if (already_enumerated) continue;
+            const callable_id = self.publicLocalModuleFunction(
+                module_index,
+                function.name,
+            ) orelse continue;
+            entries.appendAssumeCapacity(.{
                 .key = .{ .string = .{
-                    .bytes = definition.name,
+                    .bytes = function.name,
                     .quoted = true,
                 } },
-                .value = .{ .callable = builtinFunctionCallable(
-                    definition.builtin,
-                    module,
+                .value = .{ .callable = localModuleCallable(
+                    .local_module_function,
+                    .{
+                        .module_index = module_index,
+                        .callable_id = callable_id,
+                    },
                 ) },
-            };
+            });
         }
-        return self.values.own(.{ .map = .{ .entries = entries[0..definitions.len] } });
+        return self.values.own(.{ .map = .{ .entries = entries.items } });
     }
 
     fn callMetaGetFunction(

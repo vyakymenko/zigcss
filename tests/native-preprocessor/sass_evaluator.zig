@@ -37387,12 +37387,114 @@ test "native Sass inspects one-hop local module mixin content acceptance" {
     try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
 }
 
+test "native Sass enumerates one-hop local module functions" {
+    const root_input =
+        \\@use "sass:meta";
+        \\@use "sass:map";
+        \\@use "tools";
+        \\@use "_tools.scss" as alias;
+        \\$direct: meta.module-functions("tools");
+        \\$enumerate: meta.get-function("module-functions", $module: "meta");
+        \\$reflected: meta.call($enumerate, $module: "alias");
+        \\.values {
+        \\  inspect: meta.inspect($direct);
+        \\  same: $direct == meta.module-functions("alias") and $direct == $reflected;
+        \\  private: map.has-key($direct, "-private") or map.has-key($direct, "-also-private");
+        \\  first: meta.call(map.get($direct, "first"), 2);
+        \\  normalized: meta.call(map.get($direct, "under-score"), 4);
+        \\  last: meta.call(map.get($direct, "last"));
+        \\}
+    ;
+    const files = [_]LocalUseFile{.{
+        .name = "_tools.scss",
+        .contents =
+        \\@function first($value) { @return $value + 1; }
+        \\@function _private() { @return hidden; }
+        \\@function under_score($value) { @return old-#{$value}; }
+        \\@function middle() { @return middle; }
+        \\@function first($value) { @return $value + 10; }
+        \\@function under-score($value) { @return new-#{$value}; }
+        \\@function -also-private() { @return hidden; }
+        \\@function last() { @return last; }
+        ,
+    }};
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "local-function-enumeration.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{inspect:(\"first\": get-function(\"first\"), \"under-score\": get-function(\"under-score\"), \"middle\": get-function(\"middle\"), \"last\": get-function(\"last\"));same:true;private:false;first:12;normalized:new-4;last:last}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+
+    const indented_root =
+        \\@use "sass:meta" as m
+        \\@use "sass:map" as map
+        \\@use "legacy"
+        \\@use "legacy" as custom
+        \\$direct: m.module-functions("legacy")
+        \\$enumerate: m.get-function("module-functions", $module: "m")
+        \\$reflected: m.call($enumerate, $module: "custom")
+        \\.sass
+        \\  inspect: m.inspect($direct)
+        \\  same: $direct == m.module-functions("custom") and $direct == $reflected
+        \\  private: map.has-key($direct, "-private") or map.has-key($direct, "-also-private")
+        \\  first: m.call(map.get($direct, "first"), 2)
+        \\  normalized: m.call(map.get($direct, "under-score"), 4)
+        \\  last: m.call(map.get($direct, "last"))
+    ;
+    const indented_files = [_]LocalUseFile{.{
+        .name = "_legacy.sass",
+        .contents =
+        \\@function first($value)
+        \\  @return $value + 1
+        \\@function _private()
+        \\  @return hidden
+        \\@function under_score($value)
+        \\  @return old-#{$value}
+        \\@function middle()
+        \\  @return middle
+        \\@function first($value)
+        \\  @return $value + 10
+        \\@function under-score($value)
+        \\  @return new-#{$value}
+        \\@function -also-private()
+        \\  @return hidden
+        \\@function last()
+        \\  @return last
+        ,
+    }};
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "local-function-enumeration.sass",
+        indented_root,
+        .sass,
+        &indented_files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{inspect:(\"first\": get-function(\"first\"), \"under-score\": get-function(\"under-score\"), \"middle\": get-function(\"middle\"), \"last\": get-function(\"last\"));same:true;private:false;first:12;normalized:new-4;last:last}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
+}
+
 test "native Sass local module existence rejects ambiguity and unknown namespaces" {
     const files = [_]LocalUseFile{
         .{
             .name = "_first.scss",
             .contents =
             \\@function shared() { @return first; }
+            \\@function another() { @return another; }
             \\@mixin shared-mixin {}
             ,
         },
@@ -37430,9 +37532,14 @@ test "native Sass local module existence rejects ambiguity and unknown namespace
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "local-function-enumeration.scss",
-            .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-functions(\"first\")); }",
-            .expected = error.UnsupportedFeature,
+            .name = "unknown-local-function-enumeration.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-functions(\"missing\")); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-reflected-local-function-enumeration.scss",
+            .input = "@use \"sass:meta\"; @use \"first\"; $enumerate: meta.get-function(\"module-functions\", $module: \"meta\"); .root { value: meta.inspect(meta.call($enumerate, $module: \"missing\")); }",
+            .expected = error.InvalidExpression,
         },
         .{
             .name = "local-mixin-enumeration.scss",
@@ -37465,6 +37572,31 @@ test "native Sass local module existence rejects ambiguity and unknown namespace
             .scss,
             &files,
             limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "local-function-enumeration-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-functions(\"first\", extra)); }",
+            .scss,
+            &files,
+            limits,
+        ),
+    );
+
+    var collection_limits = sass_evaluator.Limits{};
+    collection_limits.values.max_collection_items = 1;
+    try std.testing.expectError(
+        error.ValueLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "local-function-enumeration-collection-limit.scss",
+            "@use \"sass:meta\"; @use \"first\"; .root { value: meta.inspect(meta.module-functions(\"first\")); }",
+            .scss,
+            &files,
+            collection_limits,
         ),
     );
 }
@@ -38089,6 +38221,87 @@ test "native Sass local module mixin content ambiguity owns diagnostics without 
     );
 }
 
+test "native Sass local module function enumeration owns unknown namespace diagnostics" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const input =
+        \\@use "sass:meta";
+        \\@use "first";
+        \\$functions: meta.module-functions("missing");
+        \\.unreachable { value: meta.inspect($functions); }
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_first.scss",
+        .data = "@function public() { @return first; }",
+    });
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "Sass module namespace is not loaded",
+        diagnostics[0].message,
+    );
+    const call = "meta.module-functions(\"missing\")";
+    const call_start = std.mem.indexOf(u8, input, call).?;
+    try std.testing.expectEqual(source_id, diagnostics[0].span.source);
+    try std.testing.expectEqual(@as(u32, @intCast(call_start)), diagnostics[0].span.start);
+    try std.testing.expectEqual(
+        @as(u32, @intCast(call_start + call.len)),
+        diagnostics[0].span.end,
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
 test "native Sass local module existence ambiguity owns diagnostics without partial CSS" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -38544,12 +38757,15 @@ fn exerciseLocalUseAllocationFailures(
     defer sources.deinit();
     const input =
         \\@use "sass:meta";
+        \\@use "sass:map";
         \\@use "tokens";
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
+        \\$functions: meta.module-functions("tokens");
         \\.root {
         \\  function-exists: meta.function-exists("double", "tokens");
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
+        \\  function-enumerated: map.get($functions, "double") == $function;
         \\  function-type: meta.type-of($function);
         \\  function-inspect: meta.inspect($function);
         \\  reflected-value: meta.call($function, tokens.$public);
@@ -38578,7 +38794,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".module{order:first}.root{function-exists:true;mixin-exists:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.card{value:4px;content:caller}",
+        ".module{order:first}.root{function-exists:true;mixin-exists:true;function-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}.reflected{value:4px;content:reflected-caller}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -38600,12 +38816,15 @@ test "native Sass local use handles every allocation failure" {
     });
     const root_input =
         \\@use "sass:meta";
+        \\@use "sass:map";
         \\@use "tokens";
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
+        \\$functions: meta.module-functions("tokens");
         \\.root {
         \\  function-exists: meta.function-exists("double", "tokens");
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
+        \\  function-enumerated: map.get($functions, "double") == $function;
         \\  function-type: meta.type-of($function);
         \\  function-inspect: meta.inspect($function);
         \\  reflected-value: meta.call($function, tokens.$public);

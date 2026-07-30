@@ -143,6 +143,7 @@ const expectedImplementations = Object.freeze([
       'local-use-function-reference-invocation-foundation',
       'local-use-mixin-reference-application-foundation',
       'local-use-mixin-content-inspection-foundation',
+      'local-use-function-enumeration-foundation',
       'numeric-arithmetic',
       'canonical-number-serialization',
       'unit-conversion',
