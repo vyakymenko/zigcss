@@ -37075,6 +37075,107 @@ test "native Sass constructs one-hop local module callable references with canon
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
 }
 
+test "native Sass invokes one-hop local module function references through meta.call" {
+    const root_input =
+        \\@use "sass:meta";
+        \\@use "tools";
+        \\@use "_tools.scss" as alias;
+        \\@use "tools" as *;
+        \\$default: meta.get-function("calculate", $module: "tools");
+        \\$custom: meta.get-function("calculate", $module: "alias");
+        \\$star: meta.get-function("calculate");
+        \\$set: meta.get-function("set-factor", $module: "tools");
+        \\$map: meta.get-function("return-map", $module: "tools");
+        \\$list: (3, 5, 7, 9);
+        \\$keywords: (left: 6, right: 7, bonus: 8);
+        \\.values {
+        \\  default: meta.inspect(meta.call($default, 1));
+        \\  custom: meta.inspect(meta.call($custom, $right: 3, $left: 2));
+        \\  list: meta.inspect(meta.call($star, $list...));
+        \\  map-splat: meta.inspect(meta.call($default, $keywords...));
+        \\  override: meta.inspect(meta.call($default, $left: 1, $right: 2, (right: 9)...));
+        \\  set: meta.call($set, 10);
+        \\  lexical-default: meta.inspect(meta.call($default, 1));
+        \\  returned-map: meta.inspect(meta.call($map, 11));
+        \\  final-state: tools.$state;
+        \\}
+    ;
+    const files = [_]LocalUseFile{.{
+        .name = "_tools.scss",
+        .contents =
+        \\$factor: 4;
+        \\$state: 0;
+        \\@function calculate($left, $right: $factor, $bonus: 0, $tail...) { @return old; }
+        \\@function calculate($left, $right: $factor, $bonus: 0, $tail...) {
+        \\  $state: $state + 1 !global;
+        \\  @return ($left + $right, $state, $bonus, $tail);
+        \\}
+        \\@function set-factor($value) {
+        \\  $factor: $value !global;
+        \\  @return $factor;
+        \\}
+        \\@function return-map($value) {
+        \\  @return (value: $value, nested: ($value, "owned"));
+        \\}
+        ,
+    }};
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "function-reference-call.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{default:5, 1, 0, ();custom:5, 2, 0, ();list:8, 3, 7, (9,);map-splat:13, 4, 8, ();override:10, 5, 0, ();set:10;lexical-default:11, 6, 0, ();returned-map:(value: 11, nested: (11, \"owned\"));final-state:6}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+
+    const indented_root =
+        \\@use "sass:meta" as m
+        \\@use "legacy"
+        \\@use "legacy" as custom
+        \\$default: m.get-function("compute", $module: "legacy")
+        \\$alias: m.get-function("compute", $module: "custom")
+        \\$args: (4, 5, 6)
+        \\.sass
+        \\  default: m.inspect(m.call($default, 1))
+        \\  named: m.inspect(m.call($alias, $right: 3, $left: 2))
+        \\  splat: m.inspect(m.call($default, $args...))
+        \\  final-state: legacy.$state
+    ;
+    const indented_files = [_]LocalUseFile{.{
+        .name = "_legacy.sass",
+        .contents =
+        \\$factor: 3
+        \\$state: 0
+        \\@function compute($left, $right: $factor, $tail...)
+        \\  @return old
+        \\@function compute($left, $right: $factor, $tail...)
+        \\  $state: $state + 1 !global
+        \\  @return ($left + $right, $state, $tail)
+        ,
+    }};
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "function-reference-call.sass",
+        indented_root,
+        .sass,
+        &indented_files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{default:4, 1, ();named:5, 2, ();splat:9, 3, (6,);final-state:3}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+}
+
 test "native Sass local module existence rejects ambiguity and unknown namespaces" {
     const files = [_]LocalUseFile{
         .{
@@ -37157,7 +37258,7 @@ test "native Sass local module existence rejects ambiguity and unknown namespace
     );
 }
 
-test "native Sass local module callable references reject missing ambiguous and invocation access" {
+test "native Sass local module callable references reject missing ambiguous and mixin application access" {
     const files = [_]LocalUseFile{
         .{
             .name = "_first.scss",
@@ -37234,11 +37335,6 @@ test "native Sass local module callable references reject missing ambiguous and 
             .expected = error.InvalidExpression,
         },
         .{
-            .name = "invoke-local-function-reference.scss",
-            .input = "@use \"sass:meta\"; @use \"first\"; .root { value: meta.call(meta.get-function(\"shared\", $module: \"first\"), 1); }",
-            .expected = error.UnsupportedFeature,
-        },
-        .{
             .name = "apply-local-mixin-reference.scss",
             .input = "@use \"sass:meta\"; @use \"first\"; @include meta.apply(meta.get-mixin(\"shared-mixin\", \"first\"));",
             .expected = error.UnsupportedFeature,
@@ -37270,6 +37366,162 @@ test "native Sass local module callable references reject missing ambiguous and 
             &files,
             limits,
         ),
+    );
+}
+
+test "native Sass local module function reference invocation rejects invalid cross-arena calls" {
+    const files = [_]LocalUseFile{.{
+        .name = "_functions.scss",
+        .contents =
+        \\@function required($left, $right: 2) { @return $left + $right; }
+        \\@function accepts($value) { @return $value; }
+        \\@function returns-callable() { @return get-function("required"); }
+        ,
+    }};
+    const invalid = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        expected: anyerror,
+    }{
+        .{
+            .name = "missing-local-function-reference-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"functions\"; $ref: meta.get-function(\"required\", $module: \"functions\"); .root { value: meta.call($ref); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "extra-local-function-reference-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"functions\"; $ref: meta.get-function(\"required\", $module: \"functions\"); .root { value: meta.call($ref, 1, 2, 3); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "unknown-local-function-reference-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"functions\"; $ref: meta.get-function(\"required\", $module: \"functions\"); .root { value: meta.call($ref, $other: 1, $left: 2); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "duplicate-local-function-reference-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"functions\"; $ref: meta.get-function(\"required\", $module: \"functions\"); .root { value: meta.call($ref, 1, $left: 2); }",
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .name = "callable-local-function-reference-argument.scss",
+            .input = "@use \"sass:meta\"; @use \"sass:math\"; @use \"functions\"; $ref: meta.get-function(\"accepts\", $module: \"functions\"); .root { value: meta.call($ref, meta.get-function(\"abs\", $module: \"math\")); }",
+            .expected = error.UnsupportedFeature,
+        },
+        .{
+            .name = "callable-local-function-reference-result.scss",
+            .input = "@use \"sass:meta\"; @use \"functions\"; $ref: meta.get-function(\"returns-callable\", $module: \"functions\"); .root { value: meta.call($ref); }",
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compileWithLocalUseFiles(
+                std.testing.allocator,
+                case.name,
+                case.input,
+                .scss,
+                &files,
+                .{},
+            ),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_function_arguments = 2;
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "local-function-reference-argument-limit.scss",
+            "@use \"sass:meta\"; @use \"functions\"; $ref: meta.get-function(\"required\", $module: \"functions\"); .root { value: meta.call($ref, 1, 2); }",
+            .scss,
+            &files,
+            limits,
+        ),
+    );
+}
+
+test "native Sass local module function reference failures own diagnostics without partial CSS" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const input =
+        \\@use "sass:meta";
+        \\@use "functions";
+        \\$ref: meta.get-function("required", $module: "functions");
+        \\$value: meta.call($ref);
+        \\.unreachable { value: $value; }
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_functions.scss",
+        .data = "@function required($left, $right: 2) { @return $left + $right; }",
+    });
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        error.InvalidExpression,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_operation,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "required native Sass function argument is missing",
+        diagnostics[0].message,
+    );
+    const call = "meta.call($ref)";
+    const call_start = std.mem.indexOf(u8, input, call).?;
+    try std.testing.expectEqual(source_id, diagnostics[0].span.source);
+    try std.testing.expectEqual(@as(u32, @intCast(call_start)), diagnostics[0].span.start);
+    try std.testing.expectEqual(
+        @as(u32, @intCast(call_start + call.len)),
+        diagnostics[0].span.end,
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
     );
 }
 
@@ -37822,6 +38074,7 @@ fn exerciseLocalUseAllocationFailures(
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
         \\  function-type: meta.type-of($function);
         \\  function-inspect: meta.inspect($function);
+        \\  reflected-value: meta.call($function, tokens.$public);
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  value: tokens.double(tokens.$public);
@@ -37845,7 +38098,7 @@ fn exerciseLocalUseAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".module{order:first}.root{function-exists:true;mixin-exists:true;function-type:function;function-inspect:get-function(\"double\");mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");value:4px}.card{value:4px;content:caller}",
+        ".module{order:first}.root{function-exists:true;mixin-exists:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");value:4px}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -37875,6 +38128,7 @@ test "native Sass local use handles every allocation failure" {
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
         \\  function-type: meta.type-of($function);
         \\  function-inspect: meta.inspect($function);
+        \\  reflected-value: meta.call($function, tokens.$public);
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  value: tokens.double(tokens.$public);

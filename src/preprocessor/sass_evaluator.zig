@@ -1808,6 +1808,37 @@ const Engine = struct {
         return result;
     }
 
+    fn invokeLocalModuleFunction(
+        self: *Engine,
+        target: LocalCallableTarget,
+        input: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        if (target.module_index >= self.local_modules.items.len) {
+            return self.metaCallFunctionFailure(span);
+        }
+        const module_engine = self.local_modules.items[target.module_index].engine;
+        if (target.callable_id >= module_engine.user_functions.items.len) {
+            return self.metaCallFunctionFailure(span);
+        }
+        var cloned = try self.cloneEvaluatedArgumentsInto(module_engine, input, span);
+        defer cloned.deinit();
+        const result = try module_engine.invokeUserFunction(
+            target.callable_id,
+            &cloned,
+            span,
+        );
+        if (valueContainsCallable(result.*, 0)) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass local module callable results are not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        return try self.values.own(result.*);
+    }
+
     fn emitRootComment(self: *Engine, node: *const native_syntax.Node) Error!void {
         const text_span = node.text orelse return;
         const raw = try self.sources.slice(text_span);
@@ -2878,7 +2909,7 @@ const Engine = struct {
                         },
                     }
                 },
-                .local_module_mixin => return self.localModuleCallableUseFailure(span),
+                .local_module_mixin => return self.localModuleMixinCallableUseFailure(span),
                 .builtin_function,
                 .user_function,
                 .local_module_function,
@@ -3313,23 +3344,7 @@ const Engine = struct {
             span,
         );
         defer evaluated.deinit();
-        const module_engine = self.local_modules.items[target.module_index].engine;
-        var cloned = try self.cloneEvaluatedArgumentsInto(module_engine, &evaluated, span);
-        defer cloned.deinit();
-        const result = try module_engine.invokeUserFunction(
-            target.callable_id,
-            &cloned,
-            span,
-        );
-        if (valueContainsCallable(result.*, 0)) {
-            try self.report(
-                .unsupported_feature,
-                span,
-                "native Sass local module callable results are not implemented yet",
-            );
-            return error.UnsupportedFeature;
-        }
-        return try self.values.own(result.*);
+        return try self.invokeLocalModuleFunction(target, &evaluated, span);
     }
 
     fn lookupUserFunction(
@@ -10505,7 +10520,7 @@ const Engine = struct {
                 .meta_load_css => false,
                 .meta_apply => true,
             },
-            .local_module_mixin => return self.localModuleCallableUseFailure(span),
+            .local_module_mixin => return self.localModuleMixinCallableUseFailure(span),
             .builtin_function,
             .user_function,
             .local_module_function,
@@ -11427,7 +11442,10 @@ const Engine = struct {
                 }
                 break :blk self.metaCallFunctionFailure(span);
             },
-            .local_module_function => self.localModuleCallableUseFailure(span),
+            .local_module_function => if (decodeLocalModuleCallable(callable)) |target|
+                self.invokeLocalModuleFunction(target, &forwarded, span)
+            else
+                self.metaCallFunctionFailure(span),
             .builtin_mixin, .mixin, .local_module_mixin => self.metaCallFunctionFailure(span),
         };
     }
@@ -16411,7 +16429,7 @@ const Engine = struct {
         return error.InvalidExpression;
     }
 
-    fn localModuleCallableUseFailure(
+    fn localModuleMixinCallableUseFailure(
         self: *Engine,
         span: native_source.Span,
     ) Error {
