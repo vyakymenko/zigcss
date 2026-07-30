@@ -38363,6 +38363,356 @@ test "native Sass configures an eighth sibling from re-exported callables" {
     ));
 }
 
+test "native Sass configures a ninth sibling from re-exported callables" {
+    const expected =
+        ".ninth{direct:4px;nested:6px}.ninth-internal{value:8px;content:ninth}.root{direct:10px;enumerated:12px;returned:14px;nested:16px;alias:18px;function-identity:true;owner-identity:true;mixin-content:true}.ninth-mixin{value:20px;content:root}.alias-mixin{value:22px;content:alias}.state{calls:10}";
+    const scss_root =
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\@use "owner";
+        \\@use "middle" with ($configured: ("function": owner.$function, "mixin": owner.$mixin));
+        \\@use "_middle.scss" as middle-alias;
+        \\@use "third" with ($configured: middle-alias.$exported);
+        \\@use "fourth" with ($configured: third.$exported);
+        \\@use "fifth" with ($configured: fourth.$exported);
+        \\@use "sixth" with ($configured: fifth.$exported);
+        \\@use "seventh" with ($configured: sixth.$exported);
+        \\@use "eighth" with ($configured: seventh.$exported);
+        \\@use "ninth" with ($configured: eighth.$exported);
+        \\@use "_ninth.scss" as ninth-alias;
+        \\$enumerated: map.get(meta.module-variables("ninth-alias"), "direct");
+        \\$returned: ninth.returned();
+        \\$nested: list.nth(map.get(ninth.$nested, "outer"), 1);
+        \\.root {
+        \\  direct: meta.call(map.get(ninth.$direct, "function"), 5px);
+        \\  enumerated: meta.call(map.get($enumerated, "function"), 6px);
+        \\  returned: meta.call(map.get($returned, "function"), 7px);
+        \\  nested: meta.call(map.get($nested, "function"), 8px);
+        \\  alias: meta.call(map.get(ninth-alias.$direct, "function"), 9px);
+        \\  function-identity: map.get(ninth.$direct, "function") == map.get($returned, "function");
+        \\  owner-identity: owner.$function == map.get(ninth.$direct, "function");
+        \\  mixin-content: meta.accepts-content(map.get($enumerated, "mixin"));
+        \\}
+        \\@include ninth.apply(ninth-mixin, 10px) { content: root; }
+        \\@include ninth-alias.apply(alias-mixin, 11px) { content: alias; }
+        \\.state { calls: owner.calls(); }
+    ;
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_owner.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\$calls: 0;
+            \\@function double($value) {
+            \\  $calls: $calls + 1 !global;
+            \\  @return $value * 2;
+            \\}
+            \\@function calls() { @return $calls; }
+            \\@mixin emit($name, $value) {
+            \\  .#{$name} { value: double($value); @content; }
+            \\}
+            \\$function: meta.get-function("double");
+            \\$mixin: meta.get-mixin("emit");
+            ,
+        },
+        .{
+            .name = "_middle.scss",
+            .contents = "$configured: null !default; $exported: $configured;",
+        },
+        .{
+            .name = "_third.scss",
+            .contents = "$configured: null !default; $exported: $configured;",
+        },
+        .{
+            .name = "_fourth.scss",
+            .contents = "$configured: null !default; $exported: $configured;",
+        },
+        .{
+            .name = "_fifth.scss",
+            .contents = "$configured: null !default; $exported: $configured;",
+        },
+        .{
+            .name = "_sixth.scss",
+            .contents = "$configured: null !default; $exported: $configured;",
+        },
+        .{
+            .name = "_seventh.scss",
+            .contents = "$configured: null !default; $exported: $configured;",
+        },
+        .{
+            .name = "_eighth.scss",
+            .contents = "$configured: null !default; $exported: $configured;",
+        },
+        .{
+            .name = "_ninth.scss",
+            .contents =
+            \\@use "sass:list";
+            \\@use "sass:map";
+            \\@use "sass:meta";
+            \\$configured: null !default;
+            \\$direct: $configured;
+            \\$nested: ("outer": ($configured,));
+            \\@function returned() { @return $configured; }
+            \\@function invoke($value) {
+            \\  @return meta.call(map.get($configured, "function"), $value);
+            \\}
+            \\@mixin apply($name, $value) {
+            \\  @include meta.apply(map.get($configured, "mixin"), $name, $value) {
+            \\    @content;
+            \\  }
+            \\}
+            \\.ninth {
+            \\  direct: invoke(2px);
+            \\  nested: meta.call(map.get(list.nth(map.get($nested, "outer"), 1), "function"), 3px);
+            \\}
+            \\@include apply(ninth-internal, 4px) { content: ninth; }
+            ,
+        },
+        .{
+            .name = "_legacy-owner.sass",
+            .contents =
+            \\@use "sass:meta" as meta
+            \\$calls: 0
+            \\@function double($value)
+            \\  $calls: $calls + 1 !global
+            \\  @return $value * 2
+            \\@function calls()
+            \\  @return $calls
+            \\@mixin emit($name, $value)
+            \\  .#{$name}
+            \\    value: double($value)
+            \\    @content
+            \\$function: meta.get-function("double")
+            \\$mixin: meta.get-mixin("emit")
+            ,
+        },
+        .{
+            .name = "_legacy-middle.sass",
+            .contents =
+            \\$configured: null !default
+            \\$exported: $configured
+            ,
+        },
+        .{
+            .name = "_legacy-third.sass",
+            .contents =
+            \\$configured: null !default
+            \\$exported: $configured
+            ,
+        },
+        .{
+            .name = "_legacy-fourth.sass",
+            .contents =
+            \\$configured: null !default
+            \\$exported: $configured
+            ,
+        },
+        .{
+            .name = "_legacy-fifth.sass",
+            .contents =
+            \\$configured: null !default
+            \\$exported: $configured
+            ,
+        },
+        .{
+            .name = "_legacy-sixth.sass",
+            .contents =
+            \\$configured: null !default
+            \\$exported: $configured
+            ,
+        },
+        .{
+            .name = "_legacy-seventh.sass",
+            .contents =
+            \\$configured: null !default
+            \\$exported: $configured
+            ,
+        },
+        .{
+            .name = "_legacy-eighth.sass",
+            .contents =
+            \\$configured: null !default
+            \\$exported: $configured
+            ,
+        },
+        .{
+            .name = "_legacy-ninth.sass",
+            .contents =
+            \\@use "sass:list" as list
+            \\@use "sass:map" as map
+            \\@use "sass:meta" as meta
+            \\$configured: null !default
+            \\$direct: $configured
+            \\$nested: ("outer": ($configured,))
+            \\@function returned()
+            \\  @return $configured
+            \\@function invoke($value)
+            \\  @return meta.call(map.get($configured, "function"), $value)
+            \\@mixin apply($name, $value)
+            \\  @include meta.apply(map.get($configured, "mixin"), $name, $value)
+            \\    @content
+            \\.ninth
+            \\  direct: invoke(2px)
+            \\  nested: meta.call(map.get(list.nth(map.get($nested, "outer"), 1), "function"), 3px)
+            \\@include apply(ninth-internal, 4px)
+            \\  content: ninth
+            ,
+        },
+    };
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "ninth-callable-configuration.scss",
+        scss_root,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(expected, result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 9), result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[0].url,
+        "/_owner.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[1].url,
+        "/_middle.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[2].url,
+        "/_third.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[3].url,
+        "/_fourth.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[4].url,
+        "/_fifth.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[5].url,
+        "/_sixth.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[6].url,
+        "/_seventh.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[7].url,
+        "/_eighth.scss",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[8].url,
+        "/_ninth.scss",
+    ));
+    try std.testing.expectEqual(@as(usize, 9), result.edges().len);
+    try std.testing.expect(result.map() != null);
+
+    const sass_root =
+        \\@use "sass:list" as list
+        \\@use "sass:map" as map
+        \\@use "sass:meta" as meta
+        \\@use "legacy-owner" as owner
+        \\@use "legacy-middle" with ($configured: ("function": owner.$function, "mixin": owner.$mixin))
+        \\@use "_legacy-middle.sass" as middle-alias
+        \\@use "legacy-third" with ($configured: middle-alias.$exported)
+        \\@use "legacy-fourth" with ($configured: legacy-third.$exported)
+        \\@use "legacy-fifth" with ($configured: legacy-fourth.$exported)
+        \\@use "legacy-sixth" with ($configured: legacy-fifth.$exported)
+        \\@use "legacy-seventh" with ($configured: legacy-sixth.$exported)
+        \\@use "legacy-eighth" with ($configured: legacy-seventh.$exported)
+        \\@use "legacy-ninth" with ($configured: legacy-eighth.$exported)
+        \\@use "_legacy-ninth.sass" as ninth-alias
+        \\$enumerated: map.get(meta.module-variables("ninth-alias"), "direct")
+        \\$returned: legacy-ninth.returned()
+        \\$nested: list.nth(map.get(legacy-ninth.$nested, "outer"), 1)
+        \\.root
+        \\  direct: meta.call(map.get(legacy-ninth.$direct, "function"), 5px)
+        \\  enumerated: meta.call(map.get($enumerated, "function"), 6px)
+        \\  returned: meta.call(map.get($returned, "function"), 7px)
+        \\  nested: meta.call(map.get($nested, "function"), 8px)
+        \\  alias: meta.call(map.get(ninth-alias.$direct, "function"), 9px)
+        \\  function-identity: map.get(legacy-ninth.$direct, "function") == map.get($returned, "function")
+        \\  owner-identity: owner.$function == map.get(legacy-ninth.$direct, "function")
+        \\  mixin-content: meta.accepts-content(map.get($enumerated, "mixin"))
+        \\@include legacy-ninth.apply(ninth-mixin, 10px)
+        \\  content: root
+        \\@include ninth-alias.apply(alias-mixin, 11px)
+        \\  content: alias
+        \\.state
+        \\  calls: owner.calls()
+    ;
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "ninth-callable-configuration.sass",
+        sass_root,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(expected, sass_result.css());
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 9), sass_result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[0].url,
+        "/_legacy-owner.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[1].url,
+        "/_legacy-middle.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[2].url,
+        "/_legacy-third.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[3].url,
+        "/_legacy-fourth.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[4].url,
+        "/_legacy-fifth.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[5].url,
+        "/_legacy-sixth.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[6].url,
+        "/_legacy-seventh.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[7].url,
+        "/_legacy-eighth.sass",
+    ));
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[8].url,
+        "/_legacy-ninth.sass",
+    ));
+}
+
 test "native Sass owns configured callables from an already retained sibling module" {
     const expected =
         ".owner{order:first}.target{direct:6px;reflected:8px;nested:10px;function-inspect:get-function(\"double\");mixin-inspect:get-mixin(\"emit\");mixin-content:true}.internal{value:12px;content:target}.root{qualified:14px;alias-qualified:18px;function-identity:true;mixin-content:true}.configured{value:20px;content:caller}.alias-configured{value:22px;content:alias-caller}.state{calls:8}";
@@ -38836,6 +39186,10 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
         },
         .{
             .name = "_ninth.scss",
+            .contents = "$theme: null !default; $exported: $theme;",
+        },
+        .{
+            .name = "_tenth.scss",
             .contents = "$theme: null !default;",
         },
     };
@@ -38886,7 +39240,7 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
         },
         .{
             .name = "recursive-local-module-callable-reexport.scss",
-            .input = "@use \"first\"; @use \"tokens\" with ($theme: first.$callback); @use \"third\" with ($theme: tokens.$theme); @use \"fourth\" with ($theme: third.$exported); @use \"fifth\" with ($theme: fourth.$exported); @use \"sixth\" with ($theme: fifth.$exported); @use \"seventh\" with ($theme: sixth.$exported); @use \"eighth\" with ($theme: seventh.$exported); @use \"ninth\" with ($theme: eighth.$exported);",
+            .input = "@use \"first\"; @use \"tokens\" with ($theme: first.$callback); @use \"third\" with ($theme: tokens.$theme); @use \"fourth\" with ($theme: third.$exported); @use \"fifth\" with ($theme: fourth.$exported); @use \"sixth\" with ($theme: fifth.$exported); @use \"seventh\" with ($theme: sixth.$exported); @use \"eighth\" with ($theme: seventh.$exported); @use \"ninth\" with ($theme: eighth.$exported); @use \"tenth\" with ($theme: ninth.$exported);",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -39118,13 +39472,13 @@ test "native Sass local use configuration owns diagnostics without partial CSS" 
     );
 }
 
-test "native Sass rejects ninth configured callable re-export hop without partial CSS" {
+test "native Sass rejects tenth configured callable re-export hop without partial CSS" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
     const input =
-        "@use \"owner\"; @use \"middle\" with ($configured: owner.$function); @use \"third\" with ($configured: middle.$exported); @use \"fourth\" with ($configured: third.$exported); @use \"fifth\" with ($configured: fourth.$exported); @use \"sixth\" with ($configured: fifth.$exported); @use \"seventh\" with ($configured: sixth.$exported); @use \"eighth\" with ($configured: seventh.$exported); @use \"ninth\" with ($configured: eighth.$exported); .unreachable { color: red; }";
+        "@use \"owner\"; @use \"middle\" with ($configured: owner.$function); @use \"third\" with ($configured: middle.$exported); @use \"fourth\" with ($configured: third.$exported); @use \"fifth\" with ($configured: fourth.$exported); @use \"sixth\" with ($configured: fifth.$exported); @use \"seventh\" with ($configured: sixth.$exported); @use \"eighth\" with ($configured: seventh.$exported); @use \"ninth\" with ($configured: eighth.$exported); @use \"tenth\" with ($configured: ninth.$exported); .unreachable { color: red; }";
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_owner.scss",
@@ -39160,6 +39514,10 @@ test "native Sass rejects ninth configured callable re-export hop without partia
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_ninth.scss",
+        .data = "$configured: null !default; $exported: $configured;",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_tenth.scss",
         .data = "$configured: null !default;",
     });
     const base = try tmp.dir.realpathAlloc(allocator, ".");
@@ -39209,7 +39567,7 @@ test "native Sass rejects ninth configured callable re-export hop without partia
         "native Sass local module configuration only supports built-ins and callables owned by an already retained sibling module",
         diagnostics[0].message,
     );
-    const reexport = "eighth.$exported";
+    const reexport = "ninth.$exported";
     const reexport_start = std.mem.indexOf(u8, input, reexport).?;
     try std.testing.expectEqual(source_id, diagnostics[0].span.source);
     try std.testing.expectEqual(
@@ -42352,6 +42710,7 @@ fn exerciseLocalUseAllocationFailures(
         \\@use "sixth" with ($configured: fifth.$configured-export);
         \\@use "seventh" with ($configured: sixth.$configured-export);
         \\@use "eighth" with ($configured: seventh.$configured-export);
+        \\@use "ninth" with ($configured: eighth.$configured-export);
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -42368,6 +42727,7 @@ fn exerciseLocalUseAllocationFailures(
         \\$sixth-configured: sixth.$configured-export;
         \\$seventh-configured: seventh.$configured-export;
         \\$eighth-configured: eighth.$configured-export;
+        \\$ninth-configured: ninth.$configured-export;
         \\.root {
         \\  function-exists: meta.function-exists("double", "tokens");
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
@@ -42410,6 +42770,10 @@ fn exerciseLocalUseAllocationFailures(
         \\  eighth-configured-identity: map.get($eighth-configured, "owner-function") == map.get($seventh-configured, "owner-function");
         \\  eighth-configured-inspect: meta.inspect(map.get($eighth-configured, "owner-function"));
         \\  eighth-configured-mixin-content: meta.accepts-content(map.get($eighth-configured, "owner-mixin"));
+        \\  ninth-configured-function: meta.call(map.get($ninth-configured, "owner-function"), 21px);
+        \\  ninth-configured-identity: map.get($ninth-configured, "owner-function") == map.get($eighth-configured, "owner-function");
+        \\  ninth-configured-inspect: meta.inspect(map.get($ninth-configured, "owner-function"));
+        \\  ninth-configured-mixin-content: meta.accepts-content(map.get($ninth-configured, "owner-mixin"));
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
@@ -42445,6 +42809,9 @@ fn exerciseLocalUseAllocationFailures(
         \\@include meta.apply(map.get($eighth-configured, "owner-mixin"), eighth-module-reexported-configuration, 20px) {
         \\  content: eighth-reconfigured;
         \\}
+        \\@include meta.apply(map.get($ninth-configured, "owner-mixin"), ninth-module-reexported-configuration, 22px) {
+        \\  content: ninth-reconfigured;
+        \\}
         \\@include tokens.emit(card) { content: caller; }
     ;
     const source_id = try sources.add(context.root_url, input);
@@ -42465,9 +42832,9 @@ fn exerciseLocalUseAllocationFailures(
     defer result.deinit();
     try std.testing.expectEqualStrings(
         ".owner{order:owner}.module{order:first}.configured-owner{function:9px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-owner-mixin{value:12px;content:module}.configured-third{function:15px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-third-mixin{value:18px;content:third}.configured-fourth{function:21px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-fourth-mixin{value:24px;content:fourth}.configured-fifth{function:27px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-fifth-mixin{value:30px;content:fifth}.configured-sixth{function:33px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-sixth-mixin{value:36px;content:sixth}.configured-seventh{function:39px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-seventh-mixin{value:42px;content:seventh}" ++
-            ".configured-eighth{function:45px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-eighth-mixin{value:48px;content:eighth}" ++
-            ".root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured-function:21px;configured-identity:true;configured-inspect:get-function(\"triple\");configured-mixin-content:true;third-configured-function:27px;third-configured-identity:true;third-configured-inspect:get-function(\"triple\");third-configured-mixin-content:true;fourth-configured-function:33px;fourth-configured-identity:true;fourth-configured-inspect:get-function(\"triple\");fourth-configured-mixin-content:true;fifth-configured-function:39px;fifth-configured-identity:true;fifth-configured-inspect:get-function(\"triple\");fifth-configured-mixin-content:true;sixth-configured-function:45px;sixth-configured-identity:true;sixth-configured-inspect:get-function(\"triple\");sixth-configured-mixin-content:true;seventh-configured-function:51px;seventh-configured-identity:true;seventh-configured-inspect:get-function(\"triple\");seventh-configured-mixin-content:true;eighth-configured-function:57px;eighth-configured-identity:true;eighth-configured-inspect:get-function(\"triple\");eighth-configured-mixin-content:true;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}" ++
-            ".reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.result{value:4px;content:result-caller}.configured-reexport{value:24px;content:reexport}.reexported-configuration{value:30px;content:reconfigured}.recursive-reexported-configuration{value:36px;content:recursive-reconfigured}.fifth-module-reexported-configuration{value:42px;content:fifth-reconfigured}.sixth-module-reexported-configuration{value:48px;content:sixth-reconfigured}.seventh-module-reexported-configuration{value:54px;content:seventh-reconfigured}.eighth-module-reexported-configuration{value:60px;content:eighth-reconfigured}.card{value:4px;content:caller}",
+            ".configured-eighth{function:45px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-eighth-mixin{value:48px;content:eighth}.configured-ninth{function:51px;function-inspect:get-function(\"triple\");mixin-content:true}.configured-ninth-mixin{value:54px;content:ninth}" ++
+            ".root{function-exists:true;mixin-exists:true;variable-enumerated:true;function-enumerated:true;mixin-enumerated:true;function-type:function;function-inspect:get-function(\"double\");reflected-value:4px;exported-function-value:4px;exported-function-enumerated:true;callable-argument-value:6px;callable-result-value:10px;callable-result-builtin:6px;configured-function:21px;configured-identity:true;configured-inspect:get-function(\"triple\");configured-mixin-content:true;third-configured-function:27px;third-configured-identity:true;third-configured-inspect:get-function(\"triple\");third-configured-mixin-content:true;fourth-configured-function:33px;fourth-configured-identity:true;fourth-configured-inspect:get-function(\"triple\");fourth-configured-mixin-content:true;fifth-configured-function:39px;fifth-configured-identity:true;fifth-configured-inspect:get-function(\"triple\");fifth-configured-mixin-content:true;sixth-configured-function:45px;sixth-configured-identity:true;sixth-configured-inspect:get-function(\"triple\");sixth-configured-mixin-content:true;seventh-configured-function:51px;seventh-configured-identity:true;seventh-configured-inspect:get-function(\"triple\");seventh-configured-mixin-content:true;eighth-configured-function:57px;eighth-configured-identity:true;eighth-configured-inspect:get-function(\"triple\");eighth-configured-mixin-content:true;ninth-configured-function:63px;ninth-configured-identity:true;ninth-configured-inspect:get-function(\"triple\");ninth-configured-mixin-content:true;mixin-type:mixin;mixin-inspect:get-mixin(\"emit\");mixin-content:true;value:4px}" ++
+            ".reflected{value:4px;content:reflected-caller}.exported{value:4px;content:exported-caller}.callback{value:4px;content:callback-caller}.round-trip{value:8px}.result{value:4px;content:result-caller}.configured-reexport{value:24px;content:reexport}.reexported-configuration{value:30px;content:reconfigured}.recursive-reexported-configuration{value:36px;content:recursive-reconfigured}.fifth-module-reexported-configuration{value:42px;content:fifth-reconfigured}.sixth-module-reexported-configuration{value:48px;content:sixth-reconfigured}.seventh-module-reexported-configuration{value:54px;content:seventh-reconfigured}.eighth-module-reexported-configuration{value:60px;content:eighth-reconfigured}.ninth-module-reexported-configuration{value:66px;content:ninth-reconfigured}.card{value:4px;content:caller}",
         result.css(),
     );
 }
@@ -42618,6 +42985,23 @@ test "native Sass local use handles every allocation failure" {
         ,
     });
     try tmp.dir.writeFile(.{
+        .sub_path = "root/_ninth.scss",
+        .data =
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\$configured: null !default;
+        \\.configured-ninth {
+        \\  function: meta.call(map.get($configured, "owner-function"), 17px);
+        \\  function-inspect: meta.inspect(map.get($configured, "owner-function"));
+        \\  mixin-content: meta.accepts-content(map.get($configured, "owner-mixin"));
+        \\}
+        \\@include meta.apply(map.get($configured, "owner-mixin"), configured-ninth-mixin, 18px) {
+        \\  content: ninth;
+        \\}
+        \\$configured-export: $configured;
+        ,
+    });
+    try tmp.dir.writeFile(.{
         .sub_path = "root/_fourth.scss",
         .data =
         \\@use "sass:map";
@@ -42652,6 +43036,7 @@ test "native Sass local use handles every allocation failure" {
         \\@use "sixth" with ($configured: fifth.$configured-export);
         \\@use "seventh" with ($configured: sixth.$configured-export);
         \\@use "eighth" with ($configured: seventh.$configured-export);
+        \\@use "ninth" with ($configured: eighth.$configured-export);
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -42668,6 +43053,7 @@ test "native Sass local use handles every allocation failure" {
         \\$sixth-configured: sixth.$configured-export;
         \\$seventh-configured: seventh.$configured-export;
         \\$eighth-configured: eighth.$configured-export;
+        \\$ninth-configured: ninth.$configured-export;
         \\.root {
         \\  function-exists: meta.function-exists("double", "tokens");
         \\  mixin-exists: meta.mixin-exists("emit", "tokens");
@@ -42710,6 +43096,10 @@ test "native Sass local use handles every allocation failure" {
         \\  eighth-configured-identity: map.get($eighth-configured, "owner-function") == map.get($seventh-configured, "owner-function");
         \\  eighth-configured-inspect: meta.inspect(map.get($eighth-configured, "owner-function"));
         \\  eighth-configured-mixin-content: meta.accepts-content(map.get($eighth-configured, "owner-mixin"));
+        \\  ninth-configured-function: meta.call(map.get($ninth-configured, "owner-function"), 21px);
+        \\  ninth-configured-identity: map.get($ninth-configured, "owner-function") == map.get($eighth-configured, "owner-function");
+        \\  ninth-configured-inspect: meta.inspect(map.get($ninth-configured, "owner-function"));
+        \\  ninth-configured-mixin-content: meta.accepts-content(map.get($ninth-configured, "owner-mixin"));
         \\  mixin-type: meta.type-of($mixin);
         \\  mixin-inspect: meta.inspect($mixin);
         \\  mixin-content: meta.accepts-content($mixin);
@@ -42744,6 +43134,9 @@ test "native Sass local use handles every allocation failure" {
         \\}
         \\@include meta.apply(map.get($eighth-configured, "owner-mixin"), eighth-module-reexported-configuration, 20px) {
         \\  content: eighth-reconfigured;
+        \\}
+        \\@include meta.apply(map.get($ninth-configured, "owner-mixin"), ninth-module-reexported-configuration, 22px) {
+        \\  content: ninth-reconfigured;
         \\}
         \\@include tokens.emit(card) { content: caller; }
     ;
