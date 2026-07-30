@@ -498,6 +498,60 @@ test "native Sass legacy color manipulation matches closed conversion rules" {
     );
 }
 
+test "native Sass legacy alpha adjustment substitutes missing legacy channels" {
+    var rgb_missing = try color.rgb(10, 20, 30, 0.4);
+    rgb_missing.missing_mask = 0b0001;
+    var hsl_missing = try color.hsl(120, 20, 30, 0.4);
+    hsl_missing.missing_mask = 0b0010;
+    var hwb_missing = try color.hwb(120, 20, 30, 0.4);
+    hwb_missing.missing_mask = 0b0100;
+    var alpha_missing = try color.rgb(10, 20, 30, 0.4);
+    alpha_missing.missing_mask = 0b1000;
+
+    const cases = [_]struct {
+        value: preprocessor.value.Color,
+        expected: []const u8,
+    }{
+        .{
+            .value = try color.adjustLegacyAlpha(rgb_missing, 0.2),
+            .expected = "rgba(0,20,30,.6)",
+        },
+        .{
+            .value = try color.adjustLegacyAlpha(hsl_missing, 0.2),
+            .expected = "hsla(120,0%,30%,.6)",
+        },
+        .{
+            .value = try color.adjustLegacyAlpha(hwb_missing, 0.2),
+            .expected = "rgba(51,255,51,.6)",
+        },
+        .{
+            .value = try color.adjustLegacyAlpha(alpha_missing, 0.2),
+            .expected = "rgba(10,20,30,.2)",
+        },
+    };
+    for (cases) |case| {
+        try std.testing.expectEqual(@as(u4, 0), case.value.missing_mask);
+        var buffer: [color.max_serialized_bytes]u8 = undefined;
+        try std.testing.expectEqualStrings(
+            case.expected,
+            try color.serialize(case.value, &buffer, true),
+        );
+    }
+
+    const nonmissing_hsl = try color.adjustLegacyAlpha(
+        try color.hsl(120, 20, 30, 0.4),
+        0.2,
+    );
+    try std.testing.expectEqual(preprocessor.value.ColorSpace.rgb, nonmissing_hsl.space);
+    try std.testing.expectError(
+        error.InvalidColor,
+        color.adjustLegacyAlpha(
+            try color.modern(.lab, .{ 50, 10, 20, 0.4 }, 0),
+            0.2,
+        ),
+    );
+}
+
 test "native Sass keyword color transforms own bounded RGB and HSL semantics" {
     const base = color.parseLiteral("#123456").?;
     const alpha_base = try color.rgb(18, 52, 86, 0.4);

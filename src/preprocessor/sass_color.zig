@@ -702,6 +702,23 @@ pub fn adjustAlpha(input: native_value.Color, amount: f64) Error!native_value.Co
     return result;
 }
 
+pub fn adjustLegacyAlpha(input: native_value.Color, amount: f64) Error!native_value.Color {
+    if (!std.math.isFinite(amount)) return error.InvalidColor;
+    var result = if (input.missing_mask != 0)
+        replaceMissingWithZero(input)
+    else switch (input.space) {
+        .rgb => input,
+        .hsl, .hwb => try rgbFromChannels(try toRgb(input)),
+        else => return error.InvalidColor,
+    };
+    switch (result.space) {
+        .rgb, .hsl, .hwb => {},
+        else => return error.InvalidColor,
+    }
+    result.channels[3] = clamp(result.channels[3] + amount, 0, 1);
+    return result;
+}
+
 pub fn transformRgb(
     input: native_value.Color,
     kind: TransformKind,

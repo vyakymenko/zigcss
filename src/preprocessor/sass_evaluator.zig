@@ -6252,31 +6252,47 @@ const Engine = struct {
             );
             return error.InvalidExpression;
         }
-        const alpha = if (arguments.items.len == 4)
-            try self.colorAlpha(arguments.items[3].*, span)
-        else
-            1;
-        const result = switch (builtin) {
+        var channels: [4]f64 = .{ 0, 0, 0, 1 };
+        var missing_mask: u4 = 0;
+        const missing_bits = [4]u4{ 0b0001, 0b0010, 0b0100, 0b1000 };
+        for (arguments.items, 0..) |argument, index| {
+            if (!comma_separated and isMissingColorChannelValue(argument.*)) {
+                missing_mask |= missing_bits[index];
+                continue;
+            }
+            channels[index] = if (index == 3)
+                try self.colorAlpha(argument.*, span)
+            else switch (builtin) {
+                .rgb, .rgba => try self.rgbChannel(argument.*, span),
+                .hsl, .hsla, .hwb => if (index == 0)
+                    try self.colorHue(argument.*, span)
+                else
+                    try self.colorPercentage(argument.*, span),
+                else => unreachable,
+            };
+        }
+        var result = switch (builtin) {
             .rgb, .rgba => try native_color.rgb(
-                try self.rgbChannel(arguments.items[0].*, span),
-                try self.rgbChannel(arguments.items[1].*, span),
-                try self.rgbChannel(arguments.items[2].*, span),
-                alpha,
+                channels[0],
+                channels[1],
+                channels[2],
+                channels[3],
             ),
             .hsl, .hsla => try native_color.hsl(
-                try self.colorHue(arguments.items[0].*, span),
-                try self.colorPercentage(arguments.items[1].*, span),
-                try self.colorPercentage(arguments.items[2].*, span),
-                alpha,
+                channels[0],
+                channels[1],
+                channels[2],
+                channels[3],
             ),
             .hwb => try native_color.hwb(
-                try self.colorHue(arguments.items[0].*, span),
-                try self.colorPercentage(arguments.items[1].*, span),
-                try self.colorPercentage(arguments.items[2].*, span),
-                alpha,
+                channels[0],
+                channels[1],
+                channels[2],
+                channels[3],
             ),
             else => unreachable,
         };
+        result.missing_mask = missing_mask;
         return self.values.own(.{ .color = result });
     }
 
@@ -6882,6 +6898,16 @@ const Engine = struct {
                 return error.InvalidExpression;
             },
         };
+        if (color.missing_mask != 0 and
+            (color.space == .rgb or color.space == .hsl or color.space == .hwb))
+        {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass color.is-powerless() does not yet admit missing color channels",
+            );
+            return error.InvalidExpression;
+        }
         const channel = switch (channel_value) {
             .string => |value| value,
             else => {
@@ -7037,6 +7063,14 @@ const Engine = struct {
                 return error.InvalidExpression;
             },
         };
+        if (color.missing_mask != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass ie-hex-str() does not support missing color channels",
+            );
+            return error.InvalidExpression;
+        }
         var buffer: [9]u8 = undefined;
         const bytes = native_color.serializeIeHex(color, &buffer) catch |failure| {
             return self.colorTransformFailure(failure, span);
@@ -7143,13 +7177,43 @@ const Engine = struct {
                 }
                 var amount = try self.alphaAdjustmentAmount(arguments[1].*, span);
                 if (builtin == .transparentize or builtin == .fade_out) amount = -amount;
-                break :blk try native_color.adjustAlpha(
-                    try self.colorArgument(arguments[0].*, span),
+                break :blk try native_color.adjustLegacyAlpha(
+                    try self.legacyAlphaColorArgument(
+                        builtin,
+                        arguments[0].*,
+                        span,
+                    ),
                     amount,
                 );
             },
             else => unreachable,
         };
+        if ((builtin == .opacify or
+            builtin == .fade_in or
+            builtin == .transparentize or
+            builtin == .fade_out) and
+            arguments[0].* == .color and
+            arguments[0].color.missing_mask != 0)
+        {
+            try self.reportDeprecation(
+                .invalid_operation,
+                span,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                &.{},
+            );
+            try self.reportDeprecation(
+                .invalid_operation,
+                span,
+                switch (builtin) {
+                    .opacify => "opacify() is deprecated. Use color.adjust($color, $alpha: $amount).",
+                    .fade_in => "fade-in() is deprecated. Use color.adjust($color, $alpha: $amount).",
+                    .transparentize => "transparentize() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+                    .fade_out => "fade-out() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+                    else => unreachable,
+                },
+                &.{},
+            );
+        }
         return self.values.own(.{ .color = result });
     }
 
@@ -7661,7 +7725,17 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!native_value.Color {
         return switch (item) {
-            .color => |color| color,
+            .color => |color| {
+                if (color.missing_mask != 0) {
+                    try self.report(
+                        .unsupported_feature,
+                        span,
+                        "native legacy color transformations do not support missing color channels",
+                    );
+                    return error.InvalidExpression;
+                }
+                return color;
+            },
             else => {
                 try self.report(.type_mismatch, span, "legacy Sass color function requires a color");
                 return error.InvalidExpression;
@@ -7765,17 +7839,19 @@ const Engine = struct {
         return error.InvalidExpression;
     }
 
+    fn isMissingColorChannelValue(item: native_value.Value) bool {
+        return item == .string and
+            !item.string.quoted and
+            std.mem.eql(u8, item.string.bytes, "none");
+    }
+
     fn modernColorChannel(
         self: *Engine,
         item: native_value.Value,
         kind: ModernColorChannelKind,
         span: native_source.Span,
     ) Error!ModernColorChannel {
-        if (item == .string and !item.string.quoted and
-            std.mem.eql(u8, item.string.bytes, "none"))
-        {
-            return .{ .missing = true };
-        }
+        if (isMissingColorChannelValue(item)) return .{ .missing = true };
         if (kind == .hue) return .{ .value = try self.colorHue(item, span) };
         if (kind == .alpha) return .{ .value = try self.colorAlpha(item, span) };
 
@@ -13955,7 +14031,7 @@ const Engine = struct {
                 span,
                 "native legacy lighten() does not support missing color channels",
             );
-            return error.UnsupportedFeature;
+            return error.InvalidExpression;
         }
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
@@ -14039,7 +14115,7 @@ const Engine = struct {
                 span,
                 "native legacy darken() does not support missing color channels",
             );
-            return error.UnsupportedFeature;
+            return error.InvalidExpression;
         }
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
@@ -14166,7 +14242,7 @@ const Engine = struct {
                 span,
                 "native legacy saturate() does not support missing color channels",
             );
-            return error.UnsupportedFeature;
+            return error.InvalidExpression;
         }
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
@@ -14250,7 +14326,7 @@ const Engine = struct {
                 span,
                 "native legacy desaturate() does not support missing color channels",
             );
-            return error.UnsupportedFeature;
+            return error.InvalidExpression;
         }
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
@@ -14334,7 +14410,7 @@ const Engine = struct {
                 span,
                 "native legacy adjust-hue() does not support missing color channels",
             );
-            return error.UnsupportedFeature;
+            return error.InvalidExpression;
         }
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
@@ -14441,7 +14517,7 @@ const Engine = struct {
                 span,
                 "native legacy complement() does not support missing color channels",
             );
-            return error.UnsupportedFeature;
+            return error.InvalidExpression;
         }
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
@@ -14544,7 +14620,7 @@ const Engine = struct {
                 span,
                 "native legacy grayscale() does not support missing color channels",
             );
-            return error.UnsupportedFeature;
+            return error.InvalidExpression;
         }
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
@@ -14674,7 +14750,7 @@ const Engine = struct {
                 span,
                 "native legacy invert() does not support missing color channels",
             );
-            return error.UnsupportedFeature;
+            return error.InvalidExpression;
         }
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
@@ -14770,7 +14846,7 @@ const Engine = struct {
         );
         const delta = if (reference.builtin == .transparentize or
             reference.builtin == .fade_out) -amount else amount;
-        const result = native_color.adjustAlpha(color, delta) catch |failure| {
+        const result = native_color.adjustLegacyAlpha(color, delta) catch |failure| {
             return self.colorTransformFailure(failure, span);
         };
 
@@ -14818,35 +14894,8 @@ const Engine = struct {
                 return error.InvalidExpression;
             },
         };
-        if (color.missing_mask != 0) {
-            try self.report(
-                .unsupported_feature,
-                span,
-                switch (builtin) {
-                    .opacify => "native legacy opacify() does not support missing color channels",
-                    .fade_in => "native legacy fade-in() does not support missing color channels",
-                    .transparentize => "native legacy transparentize() does not support missing color channels",
-                    .fade_out => "native legacy fade-out() does not support missing color channels",
-                    else => unreachable,
-                },
-            );
-            return error.UnsupportedFeature;
-        }
         switch (color.space) {
-            .rgb => return color,
-            .hsl, .hwb => {
-                const channels = native_color.toRgb(color) catch |failure| {
-                    return self.colorTransformFailure(failure, span);
-                };
-                return native_color.rgb(
-                    channels[0],
-                    channels[1],
-                    channels[2],
-                    channels[3],
-                ) catch |failure| {
-                    return self.colorTransformFailure(failure, span);
-                };
-            },
+            .rgb, .hsl, .hwb => return color,
             else => {
                 try self.report(
                     .type_mismatch,

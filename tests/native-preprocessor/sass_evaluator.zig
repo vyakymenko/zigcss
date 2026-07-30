@@ -22412,10 +22412,6 @@ test "native Sass meta call rejects unavailable color opacify forms arguments an
         .{ .name = "calculation-amount", .invocation = "meta.call($opacify, red, calc(.1 + var(--amount)))" },
         .{ .name = "negative-amount", .invocation = "meta.call($opacify, red, -.1)" },
         .{ .name = "high-amount", .invocation = "meta.call($opacify, red, 1.1)" },
-        .{ .name = "rgb-missing", .invocation = "meta.call($opacify, rgb(none 0 0 / .4), .2)" },
-        .{ .name = "hsl-missing", .invocation = "meta.call($opacify, hsl(none 10% 20% / .4), .2)" },
-        .{ .name = "hwb-missing", .invocation = "meta.call($opacify, hwb(none 10% 20% / .4), .2)" },
-        .{ .name = "alpha-missing", .invocation = "meta.call($opacify, rgb(1 2 3 / none), .2)" },
         .{ .name = "lab", .invocation = "meta.call($opacify, lab(50% 10 20 / .4), .2)" },
         .{ .name = "lch", .invocation = "meta.call($opacify, lch(50% 20 30deg / .4), .2)" },
         .{ .name = "oklab", .invocation = "meta.call($opacify, oklab(50% .1 .2 / .4), .2)" },
@@ -22459,10 +22455,6 @@ test "native Sass meta call rejects unavailable color opacify forms arguments an
         .{ .name = "legacy-direct-calculation-amount", .invocation = "opacify((red, calc(.1 + var(--amount)))...)" },
         .{ .name = "legacy-direct-negative-amount", .invocation = "opacify((red, -.1)...)" },
         .{ .name = "legacy-direct-large-amount", .invocation = "opacify((red, 1.1)...)" },
-        .{ .name = "legacy-direct-rgb-missing", .invocation = "opacify((rgb(none 0 0 / .4), .2)...)" },
-        .{ .name = "legacy-direct-hsl-missing", .invocation = "opacify((hsl(none 10% 20% / .4), .2)...)" },
-        .{ .name = "legacy-direct-hwb-missing", .invocation = "opacify((hwb(none 10% 20% / .4), .2)...)" },
-        .{ .name = "legacy-direct-alpha-missing", .invocation = "opacify((rgb(1 2 3 / none), .2)...)" },
         .{ .name = "legacy-direct-modern-color", .invocation = "opacify((color(display-p3 .1 .2 .3 / .4), .2)...)" },
     };
     for (legacy_direct_invalid) |case| {
@@ -22845,7 +22837,6 @@ test "native Sass meta call rejects unavailable color fade in forms arguments an
         .{ .name = "calculation-amount", .invocation = "meta.call($fade-in, red, calc(.1 + var(--amount)))" },
         .{ .name = "negative-amount", .invocation = "meta.call($fade-in, red, -.1)" },
         .{ .name = "high-amount", .invocation = "meta.call($fade-in, red, 1.1)" },
-        .{ .name = "missing-channel", .invocation = "meta.call($fade-in, rgb(none 0 0 / .4), .2)" },
         .{ .name = "modern-space", .invocation = "meta.call($fade-in, lab(50% 10 20 / .4), .2)" },
         .{ .name = "deferred-color", .invocation = "meta.call($fade-in, var(--color), .2)" },
     };
@@ -22878,10 +22869,6 @@ test "native Sass meta call rejects unavailable color fade in forms arguments an
         .{ .name = "legacy-direct-calculation-amount", .invocation = "fade-in((red, calc(.1 + var(--amount)))...)" },
         .{ .name = "legacy-direct-negative-amount", .invocation = "fade-in((red, -.1)...)" },
         .{ .name = "legacy-direct-large-amount", .invocation = "fade-in((red, 1.1)...)" },
-        .{ .name = "legacy-direct-rgb-missing", .invocation = "fade-in((rgb(none 0 0 / .4), .2)...)" },
-        .{ .name = "legacy-direct-hsl-missing", .invocation = "fade-in((hsl(none 10% 20% / .4), .2)...)" },
-        .{ .name = "legacy-direct-hwb-missing", .invocation = "fade-in((hwb(none 10% 20% / .4), .2)...)" },
-        .{ .name = "legacy-direct-alpha-missing", .invocation = "fade-in((rgb(1 2 3 / none), .2)...)" },
         .{ .name = "legacy-direct-modern-color", .invocation = "fade-in((color(display-p3 .1 .2 .3 / .4), .2)...)" },
     };
     for (legacy_direct_invalid) |case| {
@@ -23254,7 +23241,6 @@ test "native Sass meta call rejects unavailable color transparentize forms argum
         .{ .name = "calculation-amount", .invocation = "meta.call($transparentize, red, calc(.1 + var(--amount)))" },
         .{ .name = "negative-amount", .invocation = "meta.call($transparentize, red, -.1)" },
         .{ .name = "high-amount", .invocation = "meta.call($transparentize, red, 1.1)" },
-        .{ .name = "missing-channel", .invocation = "meta.call($transparentize, rgb(none 0 0 / .6), .2)" },
         .{ .name = "modern-space", .invocation = "meta.call($transparentize, lab(50% 10 20 / .6), .2)" },
         .{ .name = "deferred-color", .invocation = "meta.call($transparentize, var(--color), .2)" },
     };
@@ -23287,10 +23273,6 @@ test "native Sass meta call rejects unavailable color transparentize forms argum
         .{ .name = "legacy-direct-calculation-amount", .invocation = "transparentize((red, calc(.1 + var(--amount)))...)" },
         .{ .name = "legacy-direct-negative-amount", .invocation = "transparentize((red, -.1)...)" },
         .{ .name = "legacy-direct-large-amount", .invocation = "transparentize((red, 1.1)...)" },
-        .{ .name = "legacy-direct-rgb-missing", .invocation = "transparentize((rgb(none 0 0 / .6), .2)...)" },
-        .{ .name = "legacy-direct-hsl-missing", .invocation = "transparentize((hsl(none 10% 20% / .6), .2)...)" },
-        .{ .name = "legacy-direct-hwb-missing", .invocation = "transparentize((hwb(none 10% 20% / .6), .2)...)" },
-        .{ .name = "legacy-direct-alpha-missing", .invocation = "transparentize((rgb(1 2 3 / none), .2)...)" },
         .{ .name = "legacy-direct-modern-color", .invocation = "transparentize((color(display-p3 .1 .2 .3 / .6), .2)...)" },
     };
     for (legacy_direct_invalid) |case| {
@@ -23663,7 +23645,6 @@ test "native Sass meta call rejects unavailable color fade out forms arguments a
         .{ .name = "calculation-amount", .invocation = "meta.call($fade-out, red, calc(.1 + var(--amount)))" },
         .{ .name = "negative-amount", .invocation = "meta.call($fade-out, red, -.1)" },
         .{ .name = "high-amount", .invocation = "meta.call($fade-out, red, 1.1)" },
-        .{ .name = "missing-channel", .invocation = "meta.call($fade-out, rgb(none 0 0 / .6), .2)" },
         .{ .name = "modern-space", .invocation = "meta.call($fade-out, lab(50% 10 20 / .6), .2)" },
         .{ .name = "deferred-color", .invocation = "meta.call($fade-out, var(--color), .2)" },
     };
@@ -23696,10 +23677,6 @@ test "native Sass meta call rejects unavailable color fade out forms arguments a
         .{ .name = "legacy-direct-calculation-amount", .invocation = "fade-out((red, calc(.1 + var(--amount)))...)" },
         .{ .name = "legacy-direct-negative-amount", .invocation = "fade-out((red, -.1)...)" },
         .{ .name = "legacy-direct-large-amount", .invocation = "fade-out((red, 1.1)...)" },
-        .{ .name = "legacy-direct-rgb-missing", .invocation = "fade-out((rgb(none 0 0 / .6), .2)...)" },
-        .{ .name = "legacy-direct-hsl-missing", .invocation = "fade-out((hsl(none 10% 20% / .6), .2)...)" },
-        .{ .name = "legacy-direct-hwb-missing", .invocation = "fade-out((hwb(none 10% 20% / .6), .2)...)" },
-        .{ .name = "legacy-direct-alpha-missing", .invocation = "fade-out((rgb(1 2 3 / none), .2)...)" },
         .{ .name = "legacy-direct-modern-color", .invocation = "fade-out((color(display-p3 .1 .2 .3 / .6), .2)...)" },
     };
     for (legacy_direct_invalid) |case| {
@@ -23768,6 +23745,309 @@ test "native Sass meta call rejects unavailable color fade out forms arguments a
             argument_limits,
         ),
     );
+}
+
+test "native Sass legacy alpha functions substitute missing legacy channels across direct and reflected calls" {
+    const cases = [_]struct {
+        name: []const u8,
+        color: []const u8,
+        raised: []const u8,
+        lowered: []const u8,
+    }{
+        .{
+            .name = "rgb-red",
+            .color = "rgb(none 20 30 / .4)",
+            .raised = "rgba(0,20,30,.6)",
+            .lowered = "rgba(0,20,30,.2)",
+        },
+        .{
+            .name = "rgb-green",
+            .color = "rgb(10 none 30 / .4)",
+            .raised = "rgba(10,0,30,.6)",
+            .lowered = "rgba(10,0,30,.2)",
+        },
+        .{
+            .name = "rgb-blue",
+            .color = "rgb(10 20 none / .4)",
+            .raised = "rgba(10,20,0,.6)",
+            .lowered = "rgba(10,20,0,.2)",
+        },
+        .{
+            .name = "rgb-all",
+            .color = "rgb(none none none / .4)",
+            .raised = "rgba(0,0,0,.6)",
+            .lowered = "rgba(0,0,0,.2)",
+        },
+        .{
+            .name = "hsl-hue",
+            .color = "hsl(none 20% 30% / .4)",
+            .raised = "hsla(0,20%,30%,.6)",
+            .lowered = "hsla(0,20%,30%,.2)",
+        },
+        .{
+            .name = "hsl-saturation",
+            .color = "hsl(120 none 30% / .4)",
+            .raised = "hsla(120,0%,30%,.6)",
+            .lowered = "hsla(120,0%,30%,.2)",
+        },
+        .{
+            .name = "hsl-lightness",
+            .color = "hsl(120 20% none / .4)",
+            .raised = "rgba(0,0,0,.6)",
+            .lowered = "rgba(0,0,0,.2)",
+        },
+        .{
+            .name = "hsl-all",
+            .color = "hsl(none none none / .4)",
+            .raised = "rgba(0,0,0,.6)",
+            .lowered = "rgba(0,0,0,.2)",
+        },
+        .{
+            .name = "hwb-hue",
+            .color = "hwb(none 20% 30% / .4)",
+            .raised = "rgba(178.5,51,51,.6)",
+            .lowered = "rgba(178.5,51,51,.2)",
+        },
+        .{
+            .name = "hwb-whiteness",
+            .color = "hwb(120 none 30% / .4)",
+            .raised = "rgba(0,178.5,0,.6)",
+            .lowered = "rgba(0,178.5,0,.2)",
+        },
+        .{
+            .name = "hwb-blackness",
+            .color = "hwb(120 20% none / .4)",
+            .raised = "rgba(51,255,51,.6)",
+            .lowered = "rgba(51,255,51,.2)",
+        },
+        .{
+            .name = "hwb-all",
+            .color = "hwb(none none none / .4)",
+            .raised = "rgba(255,0,0,.6)",
+            .lowered = "rgba(255,0,0,.2)",
+        },
+        .{
+            .name = "alpha",
+            .color = "rgb(10 20 30 / none)",
+            .raised = "rgba(10,20,30,.2)",
+            .lowered = "rgba(10,20,30,0)",
+        },
+    };
+
+    for (cases) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            \\@use "sass:meta";
+            \\$opacify: meta.get-function("opacify");
+            \\$fade-in: meta.get-function("fade-in");
+            \\$transparentize: meta.get-function("transparentize");
+            \\$fade-out: meta.get-function("fade-out");
+            \\$value: {s};
+            \\.a {{
+            \\  direct-opacify: opacify($value, .2);
+            \\  splat-opacify: opacify(($value, .2)...);
+            \\  reflected-opacify: meta.call($opacify, $value, .2);
+            \\  direct-fade-in: fade-in($value, .2);
+            \\  splat-fade-in: fade-in(($value, .2)...);
+            \\  reflected-fade-in: meta.call($fade-in, $value, .2);
+            \\  direct-transparentize: transparentize($value, .2);
+            \\  splat-transparentize: transparentize(($value, .2)...);
+            \\  reflected-transparentize: meta.call($transparentize, $value, .2);
+            \\  direct-fade-out: fade-out($value, .2);
+            \\  splat-fade-out: fade-out(($value, .2)...);
+            \\  reflected-fade-out: meta.call($fade-out, $value, .2);
+            \\}}
+        ,
+            .{case.color},
+        );
+        defer std.testing.allocator.free(input);
+        const name = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "legacy-alpha-missing-{s}.scss",
+            .{case.name},
+        );
+        defer std.testing.allocator.free(name);
+        var result = try compile(
+            std.testing.allocator,
+            name,
+            input,
+            .scss,
+            .{},
+        );
+        defer result.deinit();
+        const expected = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a{{direct-opacify:{s};splat-opacify:{s};reflected-opacify:{s};direct-fade-in:{s};splat-fade-in:{s};reflected-fade-in:{s};direct-transparentize:{s};splat-transparentize:{s};reflected-transparentize:{s};direct-fade-out:{s};splat-fade-out:{s};reflected-fade-out:{s}}}",
+            .{
+                case.raised,
+                case.raised,
+                case.raised,
+                case.raised,
+                case.raised,
+                case.raised,
+                case.lowered,
+                case.lowered,
+                case.lowered,
+                case.lowered,
+                case.lowered,
+                case.lowered,
+            },
+        );
+        defer std.testing.allocator.free(expected);
+        try std.testing.expectEqualStrings(expected, result.css());
+
+        const diagnostics = result.nativeDiagnostics();
+        try std.testing.expectEqual(@as(usize, 24), diagnostics.len);
+        var global_warnings: usize = 0;
+        var opacify_warnings: usize = 0;
+        var fade_in_warnings: usize = 0;
+        var transparentize_warnings: usize = 0;
+        var fade_out_warnings: usize = 0;
+        for (diagnostics) |diagnostic| {
+            try std.testing.expectEqual(
+                preprocessor.diagnostics.Severity.warning,
+                diagnostic.severity,
+            );
+            try std.testing.expectEqual(
+                preprocessor.diagnostics.Code.invalid_operation,
+                diagnostic.code,
+            );
+            if (std.mem.eql(
+                u8,
+                diagnostic.message,
+                "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            )) {
+                global_warnings += 1;
+            } else if (std.mem.eql(
+                u8,
+                diagnostic.message,
+                "opacify() is deprecated. Use color.adjust($color, $alpha: $amount).",
+            )) {
+                opacify_warnings += 1;
+            } else if (std.mem.eql(
+                u8,
+                diagnostic.message,
+                "fade-in() is deprecated. Use color.adjust($color, $alpha: $amount).",
+            )) {
+                fade_in_warnings += 1;
+            } else if (std.mem.eql(
+                u8,
+                diagnostic.message,
+                "transparentize() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+            )) {
+                transparentize_warnings += 1;
+            } else if (std.mem.eql(
+                u8,
+                diagnostic.message,
+                "fade-out() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+            )) {
+                fade_out_warnings += 1;
+            } else {
+                return error.TestUnexpectedResult;
+            }
+        }
+        try std.testing.expectEqual(@as(usize, 12), global_warnings);
+        try std.testing.expectEqual(@as(usize, 3), opacify_warnings);
+        try std.testing.expectEqual(@as(usize, 3), fade_in_warnings);
+        try std.testing.expectEqual(@as(usize, 3), transparentize_warnings);
+        try std.testing.expectEqual(@as(usize, 3), fade_out_warnings);
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$opacify: m.get-function("opacify")
+        \\$fade-in: m.get-function("fade-in")
+        \\$transparentize: m.get-function("transparentize")
+        \\$fade-out: m.get-function("fade-out")
+        \\.sass
+        \\  direct-opacify: opacify(rgb(none 20 30 / .4), .2)
+        \\  reflected-opacify: m.call($opacify, hsl(120 none 30% / .4), .2)
+        \\  direct-fade-in: fade-in(hwb(120 20% none / .4), .2)
+        \\  reflected-fade-in: m.call($fade-in, rgb(10 20 30 / none), .2)
+        \\  direct-transparentize: transparentize(rgb(10 none 30 / .4), .2)
+        \\  reflected-transparentize: m.call($transparentize, hsl(none 20% 30% / .4), .2)
+        \\  direct-fade-out: fade-out(hwb(120 none 30% / .4), .2)
+        \\  reflected-fade-out: m.call($fade-out, rgb(10 20 30 / none), .2)
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-alpha-missing.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{direct-opacify:rgba(0,20,30,.6);reflected-opacify:hsla(120,0%,30%,.6);direct-fade-in:rgba(51,255,51,.6);reflected-fade-in:rgba(10,20,30,.2);direct-transparentize:rgba(10,0,30,.2);reflected-transparentize:hsla(0,20%,30%,.2);direct-fade-out:rgba(0,178.5,0,.2);reflected-fade-out:rgba(10,20,30,0)}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 16), sass_result.nativeDiagnostics().len);
+
+    const unsupported_siblings = [_]struct {
+        name: []const u8,
+        input: []const u8,
+    }{
+        .{
+            .name = "legacy-alpha-missing-lighten-sibling.scss",
+            .input = ".a { value: lighten(rgb(none 20 30 / .4), 10%); }",
+        },
+        .{
+            .name = "legacy-alpha-missing-color-adjust-sibling.scss",
+            .input = "@use \"sass:color\"; .a { value: color.adjust(rgb(10 none 30 / .4), $red: 1); }",
+        },
+        .{
+            .name = "legacy-alpha-missing-rgba-comma.scss",
+            .input = ".a { value: opacify(rgba(none, 20, 30, .4), .2); }",
+        },
+        .{
+            .name = "legacy-alpha-missing-hsla-comma.scss",
+            .input = ".a { value: fade-out(hsla(none, 20%, 30%, .4), .2); }",
+        },
+        .{
+            .name = "legacy-alpha-missing-alpha-comma.scss",
+            .input = ".a { value: transparentize(rgba(10, 20, 30, none), .2); }",
+        },
+    };
+    for (unsupported_siblings) |case| {
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, case.input, .scss, .{}),
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLegacyAlphaMissingChannelAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseLegacyAlphaMissingChannelAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:meta";
+        \\$opacify: meta.get-function("opacify");
+        \\.allocation {
+        \\  direct: fade-in(rgb(none 20 30 / .4), .2);
+        \\  splat: transparentize((hsl(120 none 30% / .4), .2)...);
+        \\  reflected: meta.call($opacify, hwb(120 none 30% / .4), .2);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-alpha-missing-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{direct:rgba(0,20,30,.6);splat:hsla(120,0%,30%,.2);reflected:rgba(0,178.5,0,.6)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
 }
 
 test "native Sass meta call invokes color ie hex str function references" {
