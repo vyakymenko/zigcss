@@ -10717,33 +10717,108 @@ const Engine = struct {
             );
             return error.InvalidExpression;
         }
-        const module = (try self.metaExistenceModule(arguments[0].*, span)).?;
-
-        const definitions = [_]struct {
-            name: []const u8,
-            builtin: BuiltinMixin,
-        }{
-            .{ .name = "load-css", .builtin = .meta_load_css },
-            .{ .name = "apply", .builtin = .meta_apply },
+        const target = (try self.metaExistenceModuleTarget(arguments[0].*, span)).?;
+        return switch (target) {
+            .builtin => |module| blk: {
+                const definitions = [_]struct {
+                    name: []const u8,
+                    builtin: BuiltinMixin,
+                }{
+                    .{ .name = "load-css", .builtin = .meta_load_css },
+                    .{ .name = "apply", .builtin = .meta_apply },
+                };
+                var entries: [definitions.len]native_value.Entry = undefined;
+                var count: usize = 0;
+                for (definitions) |definition| {
+                    if (moduleBuiltinMixin(module, definition.name) == null) continue;
+                    try self.transaction.consumeOperations(1);
+                    entries[count] = .{
+                        .key = .{ .string = .{
+                            .bytes = definition.name,
+                            .quoted = true,
+                        } },
+                        .value = .{ .callable = .{
+                            .kind = .builtin_mixin,
+                            .id = @intFromEnum(definition.builtin),
+                        } },
+                    };
+                    count += 1;
+                }
+                break :blk self.values.own(.{ .map = .{
+                    .entries = entries[0..count],
+                } });
+            },
+            .local => |module_index| self.callMetaLocalModuleMixins(module_index, span),
         };
-        var entries: [definitions.len]native_value.Entry = undefined;
-        var count: usize = 0;
-        for (definitions) |definition| {
-            if (moduleBuiltinMixin(module, definition.name) == null) continue;
+    }
+
+    fn callMetaLocalModuleMixins(
+        self: *Engine,
+        module_index: usize,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const module_engine = self.local_modules.items[module_index].engine;
+        const temporary_bytes = std.math.mul(
+            usize,
+            module_engine.user_mixins.items.len,
+            @sizeOf(native_value.Entry),
+        ) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module mixin enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        };
+        if (temporary_bytes > self.limits.max_temporary_bytes) {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module mixin enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        }
+
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        try entries.ensureTotalCapacity(
+            self.allocator,
+            module_engine.user_mixins.items.len,
+        );
+        for (module_engine.user_mixins.items) |mixin| {
             try self.transaction.consumeOperations(1);
-            entries[count] = .{
+            if (mixin.owner != &module_engine.root_scope or
+                isPrivateModuleMember(mixin.name))
+            {
+                continue;
+            }
+            var already_enumerated = false;
+            for (entries.items) |entry| {
+                if (sassNameEql(entry.key.string.bytes, mixin.name)) {
+                    already_enumerated = true;
+                    break;
+                }
+            }
+            if (already_enumerated) continue;
+            const callable_id = self.publicLocalModuleMixin(
+                module_index,
+                mixin.name,
+            ) orelse continue;
+            entries.appendAssumeCapacity(.{
                 .key = .{ .string = .{
-                    .bytes = definition.name,
+                    .bytes = mixin.name,
                     .quoted = true,
                 } },
-                .value = .{ .callable = .{
-                    .kind = .builtin_mixin,
-                    .id = @intFromEnum(definition.builtin),
-                } },
-            };
-            count += 1;
+                .value = .{ .callable = localModuleCallable(
+                    .local_module_mixin,
+                    .{
+                        .module_index = module_index,
+                        .callable_id = callable_id,
+                    },
+                ) },
+            });
         }
-        return self.values.own(.{ .map = .{ .entries = entries[0..count] } });
+        return self.values.own(.{ .map = .{ .entries = entries.items } });
     }
 
     fn callMetaModuleVariables(
