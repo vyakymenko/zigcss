@@ -283,6 +283,7 @@ const expectedImplementations = Object.freeze([
       'built-in-color-module-grayscale-direct-splat-expansion',
       'built-in-color-legacy-grayscale-direct-splat-expansion',
       'built-in-meta-color-invert-function-invocation',
+      'built-in-color-module-invert-direct-splat-expansion',
       'built-in-meta-color-opacify-function-invocation',
       'built-in-meta-color-fade-in-function-invocation',
       'built-in-meta-color-transparentize-function-invocation',

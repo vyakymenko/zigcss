@@ -21395,6 +21395,143 @@ test "native Sass meta call rejects unavailable color grayscale forms arguments 
     );
 }
 
+test "native Sass expands direct color module invert splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward($args...) {
+        \\  @return color.invert($args...);
+        \\}
+        \\.values {
+        \\  direct: color.invert(#123456);
+        \\  named: palette.invert($weight: 25%, $color: #123456);
+        \\  star: invert(hsl(120deg 20% 25%));
+        \\  list: color.invert((mark(1, #123456), 25%)...);
+        \\  map: palette.invert(("color": mark(2, hwb(240deg 10% 20%)), "weight": 25%)...);
+        \\  scalar: color.invert(mark(3, #123456)...);
+        \\  bracketed: color.invert([mark(4, #123456)]...);
+        \\  override: color.invert($color: mark(5, red), ("color": mark(6, #123456), "weight": 25%)...);
+        \\  rest-positional: forward(#123456, 25%);
+        \\  rest-keyword: forward($color: hwb(240deg 10% 20%), $weight: 25%);
+        \\  transparent: color.invert((transparent,)...);
+        \\  alpha: color.invert((rgba(18, 52, 86, .5),)...);
+        \\  hsl: color.invert((hsl(120deg 20% 25%),)...);
+        \\  hwb: color.invert((hwb(240deg 10% 20%),)...);
+        \\  filter-list: color.invert((mark(7, 20%),)...);
+        \\  filter-map: color.invert(("color": mark(8, 30%))...);
+        \\  type-color: meta.type-of(color.invert((#123456,)...));
+        \\  type-filter: meta.type-of(color.invert((20%,)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "color-module-invert-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{direct:#edcba9;named:rgb(72.75,89.75,106.75);star:hsl(300,20%,75%);list:rgb(72.75,89.75,106.75);map:rgb(76.5,76.5,165.75);scalar:#edcba9;bracketed:#edcba9;override:rgb(72.75,89.75,106.75);rest-positional:rgb(72.75,89.75,106.75);rest-keyword:rgb(76.5,76.5,165.75);transparent:hsla(0,0%,100%,0);alpha:rgba(237,203,169,.5);hsl:hsl(300,20%,75%);hwb:rgb(229.5,229.5,51);filter-list:invert(20%);filter-map:invert(30%);type-color:color;type-filter:string;trace:12345678}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 3), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Passing a number to color.invert() is deprecated.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: palette.invert((mark(1, #123456), 25%)...)
+        \\  map: palette.invert((color: mark(2, hwb(240deg 10% 20%)), weight: 25%)...)
+        \\  scalar: palette.invert(mark(3, hsl(120deg 20% 25%))...)
+        \\  override: palette.invert($color: mark(4, red), (color: mark(5, #123456), weight: 25%)...)
+        \\  filter: palette.invert((mark(6, 20%),)...)
+        \\  type: m.type-of(palette.invert((#123456,)...))
+        \\  filter-type: m.type-of(palette.invert((20%,)...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "color-module-invert-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:rgb(72.75,89.75,106.75);map:rgb(76.5,76.5,165.75);scalar:hsl(300,20%,75%);override:rgb(72.75,89.75,106.75);filter:invert(20%);type:color;filter-type:string;trace:123456}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqualStrings(
+            "Passing a number to color.invert() is deprecated.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectColorModuleInvertSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectColorModuleInvertSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:color" as palette;
+        \\.allocation {
+        \\  list: palette.invert((#123456, 25%)...);
+        \\  map: palette.invert(("color": hsl(120deg 20% 25%), "weight": 25%)...);
+        \\  filter: palette.invert((20%,)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "color-module-invert-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:rgb(72.75,89.75,106.75);map:rgb(89.25,102,89.25);filter:invert(20%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes color invert function references" {
     const input =
         \\@use "sass:meta";
@@ -21640,6 +21777,64 @@ test "native Sass meta call rejects unavailable color invert forms arguments and
         );
     }
 
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "color.invert(()...)" },
+        .{ .name = "direct-overfull-list-splat", .invocation = "color.invert((#123456, 25%, rgb, extra)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "color.invert((color: #123456, other: red)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "color.invert((1: #123456)...)" },
+        .{ .name = "direct-positional-map-duplicate-color", .invocation = "color.invert(#123456, (color: red)...)" },
+        .{ .name = "direct-positional-map-duplicate-weight", .invocation = "color.invert(#123456, 25%, (weight: 50%)...)" },
+        .{ .name = "direct-invalid-type", .invocation = "color.invert((true,)...)" },
+        .{ .name = "direct-deferred", .invocation = "color.invert((var(--amount),)...)" },
+        .{ .name = "direct-deferred-calculation", .invocation = "color.invert((calc(10% + var(--amount)),)...)" },
+        .{ .name = "direct-unitless-weight", .invocation = "color.invert((#123456, 25)...)" },
+        .{ .name = "direct-unit-weight", .invocation = "color.invert((#123456, 25px)...)" },
+        .{ .name = "direct-negative-weight", .invocation = "color.invert((#123456, -1%)...)" },
+        .{ .name = "direct-large-weight", .invocation = "color.invert((#123456, 101%)...)" },
+        .{ .name = "direct-string-weight", .invocation = "color.invert((#123456, \"25%\")...)" },
+        .{ .name = "direct-calculation-weight", .invocation = "color.invert((#123456, calc(25% + var(--weight)))...)" },
+        .{ .name = "direct-modern-color", .invocation = "color.invert((color(display-p3 .1 .2 .3),)...)" },
+        .{ .name = "direct-rgb-missing", .invocation = "color.invert((rgb(none 0 0),)...)" },
+        .{ .name = "direct-hsl-missing", .invocation = "color.invert((hsl(none 10% 20%),)...)" },
+        .{ .name = "direct-hwb-missing", .invocation = "color.invert((hwb(none 10% 20%),)...)" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "color-invert-direct-space.scss",
+            "@use \"sass:color\"; .a { value: color.invert((color: #123456, space: rgb)...); }",
+            .scss,
+            .{},
+        ),
+    );
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-color-invert-direct-splat.scss",
+            ".a { value: invert((#123456, 25%)...); }",
+            .scss,
+            .{},
+        ),
+    );
+
     const space_cases = [_]struct {
         reference: []const u8,
         invocation: []const u8,
@@ -21690,17 +21885,6 @@ test "native Sass meta call rejects unavailable color invert forms arguments and
             .{},
         ),
     );
-    try std.testing.expectError(
-        error.InvalidExpression,
-        compile(
-            std.testing.allocator,
-            "meta-call-color-invert-direct-module.scss",
-            "@use \"sass:color\"; .a { value: color.invert(red); }",
-            .scss,
-            .{},
-        ),
-    );
-
     var argument_limits = sass_evaluator.Limits{};
     argument_limits.max_function_arguments = 2;
     try std.testing.expectError(
@@ -21709,6 +21893,16 @@ test "native Sass meta call rejects unavailable color invert forms arguments and
             std.testing.allocator,
             "meta-call-color-invert-argument-limit.scss",
             "@use \"sass:meta\"; $invert: meta.get-function(\"invert\"); .a { value: meta.call($invert, red, 25%, rgb); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "color-invert-direct-splat-argument-limit.scss",
+            "@use \"sass:color\"; .a { value: color.invert((#123456, 25%, rgb)...); }",
             .scss,
             argument_limits,
         ),
