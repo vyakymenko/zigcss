@@ -22945,6 +22945,140 @@ test "native Sass meta call rejects unavailable color fade in forms arguments an
     );
 }
 
+test "native Sass expands direct legacy color transparentize splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward-positional($args...) {
+        \\  @return transparentize($args...);
+        \\}
+        \\@function forward-keyword($args...) {
+        \\  @return transparentize($args...);
+        \\}
+        \\.values {
+        \\  list: transparentize((mark(1, rgba(18, 52, 86, .6)), .2)...);
+        \\  map: transparentize(("color": mark(2, hsla(120, 20%, 25%, .6)), "amount": .2%)...);
+        \\  bracketed: transparentize([mark(3, hwb(240deg 10% 20% / .6)), .2px]...);
+        \\  override: transparentize($color: mark(4, red), ("color": mark(5, rgba(18, 52, 86, .6)), "amount": .2)...);
+        \\  rest-positional: forward-positional(rgba(18, 52, 86, .6), .2);
+        \\  rest-keyword: forward-keyword($color: hwb(240deg 10% 20% / .6), $amount: .2);
+        \\  transparent: transparentize((transparent, .2)...);
+        \\  opaque: transparentize((#123456, .2)...);
+        \\  alpha: transparentize((rgba(18, 52, 86, .1), .2)...);
+        \\  zero: transparentize((rgba(18, 52, 86, .6), 0)...);
+        \\  full: transparentize((rgba(18, 52, 86, .6), 1)...);
+        \\  type: meta.type-of(transparentize((rgba(18, 52, 86, .6), .2)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-transparentize-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:rgba(18,52,86,.4);map:rgba(51,76.5,51,.4);bracketed:rgba(25.5,25.5,204,.4);override:rgba(18,52,86,.4);rest-positional:rgba(18,52,86,.4);rest-keyword:rgba(25.5,25.5,204,.4);transparent:rgba(0,0,0,0);opaque:rgba(18,52,86,.8);alpha:rgba(18,52,86,0);zero:rgba(18,52,86,.6);full:rgba(18,52,86,0);type:color;trace:12345}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 24), diagnostics.len);
+    var global_warnings: usize = 0;
+    var transparentize_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "transparentize() is deprecated. Use color.adjust($color, $alpha: -$amount).",
+        )) {
+            transparentize_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 12), global_warnings);
+    try std.testing.expectEqual(@as(usize, 12), transparentize_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: transparentize((mark(1, rgba(18, 52, 86, .6)), .2)...)
+        \\  map: transparentize((color: mark(2, hsla(120, 20%, 25%, .6)), amount: .2)...)
+        \\  override: transparentize($color: mark(3, red), (color: mark(4, hwb(240deg 10% 20% / .6)), amount: .2)...)
+        \\  type: m.type-of(transparentize((rgba(18, 52, 86, .6), .2)...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-transparentize-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:rgba(18,52,86,.4);map:rgba(51,76.5,51,.4);override:rgba(25.5,25.5,204,.4);type:color;trace:1234}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 8), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorTransparentizeSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorTransparentizeSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: transparentize((rgba(18, 52, 86, .6), .2)...);
+        \\  map: transparentize(("color": hsla(120, 20%, 25%, .6), "amount": .2px)...);
+        \\  hwb: transparentize([hwb(240deg 10% 20% / .6), .2%]...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-transparentize-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:rgba(18,52,86,.4);map:rgba(51,76.5,51,.4);hwb:rgba(25.5,25.5,204,.4)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes legacy color transparentize function references" {
     const input =
         \\@use "sass:meta";
@@ -23130,6 +23264,41 @@ test "native Sass meta call rejects unavailable color transparentize forms argum
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "transparentize(()...)" },
+        .{ .name = "legacy-direct-short-splat", .invocation = "transparentize((rgba(1, 2, 3, .6),)...)" },
+        .{ .name = "legacy-direct-overfull-splat", .invocation = "transparentize((rgba(1, 2, 3, .6), .2, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "transparentize((color: rgba(1, 2, 3, .6), other: .2)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "transparentize((1: rgba(1, 2, 3, .6), amount: .2)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate-color", .invocation = "transparentize(rgba(1, 2, 3, .6), (color: red, amount: .2)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate-amount", .invocation = "transparentize(rgba(1, 2, 3, .6), .2, (amount: .3)...)" },
+        .{ .name = "legacy-direct-invalid-color", .invocation = "transparentize((true, .2)...)" },
+        .{ .name = "legacy-direct-invalid-amount", .invocation = "transparentize((red, true)...)" },
+        .{ .name = "legacy-direct-calculation-amount", .invocation = "transparentize((red, calc(.1 + var(--amount)))...)" },
+        .{ .name = "legacy-direct-negative-amount", .invocation = "transparentize((red, -.1)...)" },
+        .{ .name = "legacy-direct-large-amount", .invocation = "transparentize((red, 1.1)...)" },
+        .{ .name = "legacy-direct-rgb-missing", .invocation = "transparentize((rgb(none 0 0 / .6), .2)...)" },
+        .{ .name = "legacy-direct-hsl-missing", .invocation = "transparentize((hsl(none 10% 20% / .6), .2)...)" },
+        .{ .name = "legacy-direct-hwb-missing", .invocation = "transparentize((hwb(none 10% 20% / .6), .2)...)" },
+        .{ .name = "legacy-direct-alpha-missing", .invocation = "transparentize((rgb(1 2 3 / none), .2)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "transparentize((color(display-p3 .1 .2 .3 / .6), .2)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     try std.testing.expectError(
         error.InvalidExpression,
         compile(
@@ -23169,6 +23338,16 @@ test "native Sass meta call rejects unavailable color transparentize forms argum
             std.testing.allocator,
             "meta-call-color-transparentize-argument-limit.scss",
             "@use \"sass:meta\"; $transparentize: meta.get-function(\"transparentize\"); .a { value: meta.call($transparentize, red, .2); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-transparentize-direct-splat-argument-limit.scss",
+            ".a { value: transparentize((rgba(1, 2, 3, .6), .2, extra)...); }",
             .scss,
             argument_limits,
         ),

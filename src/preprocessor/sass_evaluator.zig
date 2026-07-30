@@ -5262,7 +5262,7 @@ const Engine = struct {
                 scope,
                 span,
             ),
-            .opacify, .fade_in => {
+            .opacify, .fade_in, .transparentize => {
                 const legacy_splat = if (module_builtin == null) blk: {
                     for (ranges.items) |range| {
                         if (std.mem.endsWith(
@@ -5353,7 +5353,6 @@ const Engine = struct {
             .hue,
             .saturation,
             .lightness,
-            .transparentize,
             .fade_out,
             .space,
             .to_space,
