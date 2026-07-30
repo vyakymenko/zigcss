@@ -5262,7 +5262,7 @@ const Engine = struct {
                 scope,
                 span,
             ),
-            .opacify => {
+            .opacify, .fade_in => {
                 const legacy_splat = if (module_builtin == null) blk: {
                     for (ranges.items) |range| {
                         if (std.mem.endsWith(
@@ -5274,7 +5274,8 @@ const Engine = struct {
                     break :blk false;
                 } else false;
                 if (legacy_splat) {
-                    return try self.callDirectLegacyColorOpacifyRaw(
+                    return try self.callDirectLegacyColorAlphaRaw(
+                        builtin,
                         body,
                         ranges.items,
                         scope,
@@ -5352,7 +5353,6 @@ const Engine = struct {
             .hue,
             .saturation,
             .lightness,
-            .fade_in,
             .transparentize,
             .fade_out,
             .space,
@@ -16849,8 +16849,9 @@ const Engine = struct {
         )) orelse unreachable;
     }
 
-    fn callDirectLegacyColorOpacifyRaw(
+    fn callDirectLegacyColorAlphaRaw(
         self: *Engine,
+        builtin: Builtin,
         body: []const u8,
         ranges: []const ExpressionRange,
         scope: native_environment.ScopeId,
@@ -16859,7 +16860,7 @@ const Engine = struct {
         var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
         defer evaluated.deinit();
         return (try self.invokeColorLegacyAlphaFunction(
-            builtinFunctionCallable(.opacify, null),
+            builtinFunctionCallable(builtin, null),
             &evaluated,
             span,
         )) orelse unreachable;

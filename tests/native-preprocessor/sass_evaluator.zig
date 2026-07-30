@@ -22536,6 +22536,140 @@ test "native Sass meta call rejects unavailable color opacify forms arguments an
     );
 }
 
+test "native Sass expands direct legacy color fade in splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward-positional($args...) {
+        \\  @return fade-in($args...);
+        \\}
+        \\@function forward-keyword($args...) {
+        \\  @return fade-in($args...);
+        \\}
+        \\.values {
+        \\  list: fade-in((mark(1, rgba(18, 52, 86, .4)), .2)...);
+        \\  map: fade-in(("color": mark(2, hsla(120, 20%, 25%, .4)), "amount": .2%)...);
+        \\  bracketed: fade-in([mark(3, hwb(240deg 10% 20% / .4)), .2px]...);
+        \\  override: fade-in($color: mark(4, red), ("color": mark(5, rgba(18, 52, 86, .4)), "amount": .2)...);
+        \\  rest-positional: forward-positional(rgba(18, 52, 86, .4), .2);
+        \\  rest-keyword: forward-keyword($color: hwb(240deg 10% 20% / .4), $amount: .2);
+        \\  transparent: fade-in((transparent, .2)...);
+        \\  opaque: fade-in((#123456, .2)...);
+        \\  alpha: fade-in((rgba(18, 52, 86, .9), .2)...);
+        \\  zero: fade-in((rgba(18, 52, 86, .4), 0)...);
+        \\  full: fade-in((rgba(18, 52, 86, .4), 1)...);
+        \\  type: meta.type-of(fade-in((rgba(18, 52, 86, .4), .2)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-fade-in-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:rgba(18,52,86,.6);map:rgba(51,76.5,51,.6);bracketed:rgba(25.5,25.5,204,.6);override:rgba(18,52,86,.6);rest-positional:rgba(18,52,86,.6);rest-keyword:rgba(25.5,25.5,204,.6);transparent:rgba(0,0,0,.2);opaque:#123456;alpha:#123456;zero:rgba(18,52,86,.4);full:#123456;type:color;trace:12345}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 24), diagnostics.len);
+    var global_warnings: usize = 0;
+    var fade_in_warnings: usize = 0;
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        )) {
+            global_warnings += 1;
+        } else if (std.mem.eql(
+            u8,
+            diagnostic.message,
+            "fade-in() is deprecated. Use color.adjust($color, $alpha: $amount).",
+        )) {
+            fade_in_warnings += 1;
+        } else {
+            return error.TestUnexpectedResult;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 12), global_warnings);
+    try std.testing.expectEqual(@as(usize, 12), fade_in_warnings);
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: fade-in((mark(1, rgba(18, 52, 86, .4)), .2)...)
+        \\  map: fade-in((color: mark(2, hsla(120, 20%, 25%, .4)), amount: .2)...)
+        \\  override: fade-in($color: mark(3, red), (color: mark(4, hwb(240deg 10% 20% / .4)), amount: .2)...)
+        \\  type: m.type-of(fade-in((rgba(18, 52, 86, .4), .2)...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-fade-in-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:rgba(18,52,86,.6);map:rgba(51,76.5,51,.6);override:rgba(25.5,25.5,204,.6);type:color;trace:1234}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 8), sass_result.nativeDiagnostics().len);
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorFadeInSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorFadeInSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: fade-in((rgba(18, 52, 86, .4), .2)...);
+        \\  map: fade-in(("color": hsla(120, 20%, 25%, .4), "amount": .2px)...);
+        \\  hwb: fade-in([hwb(240deg 10% 20% / .4), .2%]...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-fade-in-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:rgba(18,52,86,.6);map:rgba(51,76.5,51,.6);hwb:rgba(25.5,25.5,204,.6)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes legacy color fade in function references" {
     const input =
         \\@use "sass:meta";
@@ -22721,6 +22855,41 @@ test "native Sass meta call rejects unavailable color fade in forms arguments an
         );
     }
 
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "fade-in(()...)" },
+        .{ .name = "legacy-direct-short-splat", .invocation = "fade-in((rgba(1, 2, 3, .4),)...)" },
+        .{ .name = "legacy-direct-overfull-splat", .invocation = "fade-in((rgba(1, 2, 3, .4), .2, extra)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "fade-in((color: rgba(1, 2, 3, .4), other: .2)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "fade-in((1: rgba(1, 2, 3, .4), amount: .2)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate-color", .invocation = "fade-in(rgba(1, 2, 3, .4), (color: red, amount: .2)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate-amount", .invocation = "fade-in(rgba(1, 2, 3, .4), .2, (amount: .3)...)" },
+        .{ .name = "legacy-direct-invalid-color", .invocation = "fade-in((true, .2)...)" },
+        .{ .name = "legacy-direct-invalid-amount", .invocation = "fade-in((red, true)...)" },
+        .{ .name = "legacy-direct-calculation-amount", .invocation = "fade-in((red, calc(.1 + var(--amount)))...)" },
+        .{ .name = "legacy-direct-negative-amount", .invocation = "fade-in((red, -.1)...)" },
+        .{ .name = "legacy-direct-large-amount", .invocation = "fade-in((red, 1.1)...)" },
+        .{ .name = "legacy-direct-rgb-missing", .invocation = "fade-in((rgb(none 0 0 / .4), .2)...)" },
+        .{ .name = "legacy-direct-hsl-missing", .invocation = "fade-in((hsl(none 10% 20% / .4), .2)...)" },
+        .{ .name = "legacy-direct-hwb-missing", .invocation = "fade-in((hwb(none 10% 20% / .4), .2)...)" },
+        .{ .name = "legacy-direct-alpha-missing", .invocation = "fade-in((rgb(1 2 3 / none), .2)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "fade-in((color(display-p3 .1 .2 .3 / .4), .2)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
     try std.testing.expectError(
         error.InvalidExpression,
         compile(
@@ -22760,6 +22929,16 @@ test "native Sass meta call rejects unavailable color fade in forms arguments an
             std.testing.allocator,
             "meta-call-color-fade-in-argument-limit.scss",
             "@use \"sass:meta\"; $fade-in: meta.get-function(\"fade-in\"); .a { value: meta.call($fade-in, red, .2); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-fade-in-direct-splat-argument-limit.scss",
+            ".a { value: fade-in((rgba(1, 2, 3, .4), .2, extra)...); }",
             .scss,
             argument_limits,
         ),
