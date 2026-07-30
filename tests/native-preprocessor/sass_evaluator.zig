@@ -20780,6 +20780,136 @@ test "native Sass meta call rejects unavailable color complement forms arguments
     );
 }
 
+test "native Sass expands direct color module grayscale splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\@use "sass:color";
+        \\@use "sass:color" as palette;
+        \\@use "sass:color" as *;
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward($args...) {
+        \\  @return color.grayscale($args...);
+        \\}
+        \\.values {
+        \\  direct: color.grayscale(#123456);
+        \\  named: palette.grayscale($color: hsl(120deg 20% 25%));
+        \\  star: grayscale(hwb(240deg 10% 20%));
+        \\  list: color.grayscale((mark(1, #123456),)...);
+        \\  map: palette.grayscale(("color": mark(2, hwb(240deg 10% 20%)))...);
+        \\  scalar: color.grayscale(mark(3, hsl(120deg 20% 25%))...);
+        \\  bracketed: color.grayscale([mark(4, #123456)]...);
+        \\  override: color.grayscale($color: mark(5, red), ("color": mark(6, #123456))...);
+        \\  rest-positional: forward(#123456);
+        \\  rest-keyword: forward($color: hwb(240deg 10% 20%));
+        \\  transparent: color.grayscale((transparent,)...);
+        \\  alpha: color.grayscale((rgba(18, 52, 86, .5),)...);
+        \\  filter-list: color.grayscale((mark(7, 20%),)...);
+        \\  filter-map: color.grayscale(("color": mark(8, 30%))...);
+        \\  type: meta.type-of(color.grayscale((#123456,)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "color-module-grayscale-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{direct:#343434;named:hsl(120,0%,25%);star:hsl(0,0%,45%);list:#343434;map:hsl(0,0%,45%);scalar:hsl(120,0%,25%);bracketed:#343434;override:#343434;rest-positional:#343434;rest-keyword:hsl(0,0%,45%);transparent:rgba(0,0,0,0);alpha:rgba(52,52,52,.5);filter-list:grayscale(20%);filter-map:grayscale(30%);type:color;trace:12345678}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 2), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Passing a number to color.grayscale() is deprecated.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\@use "sass:color" as palette
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: palette.grayscale((mark(1, #123456),)...)
+        \\  map: palette.grayscale((color: mark(2, hwb(240deg 10% 20%)))...)
+        \\  scalar: palette.grayscale(mark(3, hsl(120deg 20% 25%))...)
+        \\  override: palette.grayscale($color: mark(4, red), (color: mark(5, #123456))...)
+        \\  filter: palette.grayscale((mark(6, 20%),)...)
+        \\  type: m.type-of(palette.grayscale((#123456,)...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "color-module-grayscale-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:#343434;map:hsl(0,0%,45%);scalar:hsl(120,0%,25%);override:#343434;filter:grayscale(20%);type:color;trace:123456}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 1), sass_diagnostics.len);
+    try std.testing.expectEqualStrings(
+        "Passing a number to color.grayscale() is deprecated.",
+        sass_diagnostics[0].message,
+    );
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectColorModuleGrayscaleSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectColorModuleGrayscaleSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@use "sass:color" as palette;
+        \\.allocation {
+        \\  list: palette.grayscale((#123456,)...);
+        \\  map: palette.grayscale(("color": hsl(120deg 20% 25%))...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "color-module-grayscale-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:#343434;map:hsl(120,0%,25%)}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes color grayscale function references" {
     const input =
         \\@use "sass:meta";
@@ -21013,6 +21143,47 @@ test "native Sass meta call rejects unavailable color grayscale forms arguments 
         );
     }
 
+    const direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "direct-empty-splat", .invocation = "color.grayscale(()...)" },
+        .{ .name = "direct-overfull-list-splat", .invocation = "color.grayscale((#123456, hsl, extra)...)" },
+        .{ .name = "direct-unknown-map-splat", .invocation = "color.grayscale((color: #123456, other: red)...)" },
+        .{ .name = "direct-invalid-map-key-splat", .invocation = "color.grayscale((1: #123456)...)" },
+        .{ .name = "direct-positional-map-duplicate", .invocation = "color.grayscale(#123456, (color: red)...)" },
+        .{ .name = "direct-invalid-type", .invocation = "color.grayscale((true,)...)" },
+        .{ .name = "direct-deferred", .invocation = "color.grayscale((var(--amount),)...)" },
+        .{ .name = "direct-deferred-calculation", .invocation = "color.grayscale((calc(10% + var(--amount)),)...)" },
+        .{ .name = "direct-modern-color", .invocation = "color.grayscale((color(display-p3 .1 .2 .3),)...)" },
+        .{ .name = "direct-rgb-missing", .invocation = "color.grayscale((rgb(none 0 0),)...)" },
+        .{ .name = "direct-hsl-missing", .invocation = "color.grayscale((hsl(none 10% 20%),)...)" },
+        .{ .name = "direct-hwb-missing", .invocation = "color.grayscale((hwb(none 10% 20%),)...)" },
+    };
+    for (direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "@use \"sass:color\"; .a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
+
+    try std.testing.expectError(
+        error.UnsupportedFeature,
+        compile(
+            std.testing.allocator,
+            "legacy-color-grayscale-direct-splat.scss",
+            ".a { value: grayscale((#123456,)...); }",
+            .scss,
+            .{},
+        ),
+    );
+
     try std.testing.expectError(
         error.InvalidExpression,
         compile(
@@ -21033,16 +21204,6 @@ test "native Sass meta call rejects unavailable color grayscale forms arguments 
             .{},
         ),
     );
-    try std.testing.expectError(
-        error.InvalidExpression,
-        compile(
-            std.testing.allocator,
-            "meta-call-color-grayscale-direct-module.scss",
-            "@use \"sass:color\"; .a { value: color.grayscale(red); }",
-            .scss,
-            .{},
-        ),
-    );
 
     var argument_limits = sass_evaluator.Limits{};
     argument_limits.max_function_arguments = 1;
@@ -21052,6 +21213,16 @@ test "native Sass meta call rejects unavailable color grayscale forms arguments 
             std.testing.allocator,
             "meta-call-color-grayscale-argument-limit.scss",
             "@use \"sass:meta\"; $grayscale: meta.get-function(\"grayscale\"); .a { value: meta.call($grayscale, red, blue); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "color-grayscale-direct-splat-argument-limit.scss",
+            "@use \"sass:color\"; .a { value: color.grayscale((#123456, hsl)...); }",
             .scss,
             argument_limits,
         ),

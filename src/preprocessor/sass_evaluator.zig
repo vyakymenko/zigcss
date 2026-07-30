@@ -5323,7 +5323,6 @@ const Engine = struct {
             .hue,
             .saturation,
             .lightness,
-            .grayscale,
             .invert,
             .opacify,
             .fade_in,
@@ -5414,6 +5413,25 @@ const Engine = struct {
                         "...",
                     )) continue;
                     return try self.callDirectLegacyColorComplementRaw(
+                        body,
+                        ranges.items,
+                        scope,
+                        span,
+                    );
+                }
+                return try self.callFixedBuiltinRaw(
+                    builtin,
+                    false,
+                    raw,
+                    body,
+                    ranges.items,
+                    scope,
+                    span,
+                );
+            },
+            .grayscale => {
+                if (module_builtin != null) {
+                    return try self.callDirectColorGrayscaleRaw(
                         body,
                         ranges.items,
                         scope,
@@ -16695,6 +16713,22 @@ const Engine = struct {
         )) orelse unreachable;
     }
 
+    fn callDirectColorGrayscaleRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        return (try self.invokeColorGrayscaleFunction(
+            builtinFunctionCallable(.grayscale, .color),
+            &evaluated,
+            span,
+        )) orelse unreachable;
+    }
+
     fn callDirectColorMixRaw(
         self: *Engine,
         module_owned: bool,
@@ -19120,6 +19154,7 @@ fn colorModuleBuiltin(name: []const u8) ?Builtin {
     if (sassNameEql(name, "blackness")) return .blackness;
     if (sassNameEql(name, "mix")) return .mix;
     if (sassNameEql(name, "complement")) return .complement;
+    if (sassNameEql(name, "grayscale")) return .grayscale;
     if (sassNameEql(name, "space")) return .space;
     if (sassNameEql(name, "to-space")) return .to_space;
     if (sassNameEql(name, "is-legacy")) return .is_legacy;
