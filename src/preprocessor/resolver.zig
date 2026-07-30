@@ -408,7 +408,7 @@ pub const Session = struct {
     fn validateAncestry(self: *Session, ancestry: []const []const u8) Error!void {
         if (ancestry.len > hard_max_depth) return error.DepthLimitExceeded;
         for (ancestry, 0..) |ancestor, index| {
-            const path = parseFileUrl(self.allocator, ancestor) catch |err| switch (err) {
+            const path = fileUrlToPath(self.allocator, ancestor) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => return error.InvalidAncestry,
             };
@@ -430,7 +430,7 @@ pub const Session = struct {
     }
 
     fn resolveCandidate(self: *Session, candidate_url: []const u8) Error!Resolved {
-        const absolute = try parseFileUrl(self.allocator, candidate_url);
+        const absolute = try fileUrlToPath(self.allocator, candidate_url);
         errdefer self.allocator.free(absolute);
         const match = lexicalRoot(self.resolver, absolute) orelse return error.PathEscape;
         try verifyRootPath(match.root);
@@ -694,7 +694,9 @@ pub fn pathToFileUrl(allocator: std.mem.Allocator, path: []const u8) Error![]u8 
     return try output.toOwnedSlice(allocator);
 }
 
-fn parseFileUrl(allocator: std.mem.Allocator, value: []const u8) Error![]u8 {
+/// Decodes one canonical local file URL for language-owned candidate search.
+/// Opening and confinement remain exclusively owned by `Session.load`.
+pub fn fileUrlToPath(allocator: std.mem.Allocator, value: []const u8) Error![]u8 {
     if (value.len == 0 or value.len > max_url_bytes or
         std.mem.indexOfAny(u8, value, "\x00\r\n\\") != null)
     {

@@ -10,6 +10,8 @@ const native_lexer = @import("lexer.zig");
 const native_arguments = @import("sass_arguments.zig");
 const native_color = @import("sass_color.zig");
 const native_numeric = @import("sass_numeric.zig");
+const native_resolver = @import("resolver.zig");
+const native_sass = @import("sass.zig");
 const native_selector = @import("sass_selector.zig");
 const native_string = @import("sass_string.zig");
 const native_source = @import("source.zig");
@@ -48,6 +50,8 @@ pub const Error = native_evaluator.Error ||
     native_arguments.Error ||
     native_color.Error ||
     native_numeric.Error ||
+    native_resolver.Error ||
+    native_sass.Error ||
     native_selector.Error ||
     native_string.Error ||
     native_source.Error ||
@@ -68,7 +72,7 @@ pub const Error = native_evaluator.Error ||
 
 pub fn evaluate(
     allocator: std.mem.Allocator,
-    sources: *const native_source.Table,
+    sources: *native_source.Table,
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
     limits: Limits,
@@ -730,9 +734,30 @@ fn moduleFunctionDefinitions(kind: BuiltinModule) []const ModuleFunctionDefiniti
     };
 }
 
+const ModuleTarget = union(enum) {
+    builtin: BuiltinModule,
+    local: usize,
+};
+
 const ModuleBinding = struct {
-    kind: BuiltinModule,
+    target: ModuleTarget,
     namespace: ?[]const u8,
+};
+
+const ModuleVariable = struct {
+    name: []u8,
+    value: *const native_value.Value,
+};
+
+const LocalModule = struct {
+    url: []const u8,
+    variables: []ModuleVariable,
+
+    fn deinit(self: *LocalModule, allocator: std.mem.Allocator) void {
+        for (self.variables) |variable| allocator.free(variable.name);
+        if (self.variables.len > 0) allocator.free(self.variables);
+        self.* = undefined;
+    }
 };
 
 const ParsedUse = struct {
@@ -823,7 +848,7 @@ const DeprecationKey = struct {
 
 const Engine = struct {
     allocator: std.mem.Allocator,
-    sources: *const native_source.Table,
+    sources: *native_source.Table,
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
     limits: Limits,
@@ -833,6 +858,8 @@ const Engine = struct {
     user_functions: std.ArrayList(UserFunction) = .empty,
     user_mixins: std.ArrayList(UserMixin) = .empty,
     modules: std.ArrayList(ModuleBinding) = .empty,
+    local_modules: std.ArrayList(LocalModule) = .empty,
+    module_depth: u16 = 0,
     active_content: ?*const ContentInvocation = null,
     active_mixin_body: bool = false,
     expression_depth: u16 = 0,
@@ -845,7 +872,7 @@ const Engine = struct {
 
     fn init(
         allocator: std.mem.Allocator,
-        sources: *const native_source.Table,
+        sources: *native_source.Table,
         document: *const native_syntax.Document,
         transaction: *native_evaluator.Transaction,
         limits: Limits,
@@ -873,6 +900,8 @@ const Engine = struct {
         self.user_functions.deinit(self.allocator);
         for (self.user_mixins.items) |*mixin| mixin.deinit();
         self.user_mixins.deinit(self.allocator);
+        for (self.local_modules.items) |*module| module.deinit(self.allocator);
+        self.local_modules.deinit(self.allocator);
         self.modules.deinit(self.allocator);
         self.deprecations.deinit(self.allocator);
         self.environment.deinit();
@@ -1142,6 +1171,14 @@ const Engine = struct {
             try self.report(.syntax, node.span, "unknown native Sass module directive");
             return error.InvalidSassSyntax;
         }
+        if (self.module_depth != 0) {
+            try self.report(
+                .unsupported_feature,
+                node.span,
+                "transitive native Sass modules are not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
 
         const children = self.document.children(node_id) catch return error.InvalidSassSyntax;
         if (children.len != 1) {
@@ -1158,7 +1195,7 @@ const Engine = struct {
             try self.report(.syntax, node.span, "malformed native Sass @use directive");
             return error.InvalidSassSyntax;
         };
-        const module_kind: BuiltinModule = if (std.mem.eql(u8, parsed.url, "sass:color"))
+        const builtin_kind: ?BuiltinModule = if (std.mem.eql(u8, parsed.url, "sass:color"))
             .color
         else if (std.mem.eql(u8, parsed.url, "sass:list"))
             .list
@@ -1172,14 +1209,16 @@ const Engine = struct {
             .selector
         else if (std.mem.eql(u8, parsed.url, "sass:string"))
             .string
-        else {
+        else
+            null;
+        if (builtin_kind == null and std.mem.startsWith(u8, parsed.url, "sass:")) {
             try self.report(
                 .unsupported_feature,
                 node.span,
-                "native Sass module is not implemented yet",
+                "native Sass built-in module is not implemented yet",
             );
             return error.UnsupportedFeature;
-        };
+        }
         if (self.modules.items.len >= self.limits.max_modules) {
             try self.report(.resource_limit, node.span, "native Sass module limit exceeded");
             return error.ModuleLimitExceeded;
@@ -1188,40 +1227,298 @@ const Engine = struct {
         const namespace: ?[]const u8 = if (parsed.unprefixed)
             null
         else
-            parsed.namespace orelse switch (module_kind) {
-                .color => "color",
-                .list => "list",
-                .map => "map",
-                .math => "math",
-                .meta => "meta",
-                .selector => "selector",
-                .string => "string",
-            };
-        if (namespace == null and module_kind == .math) {
-            for (math_constants) |constant| {
-                if (try self.environment.lookup(self.global_scope, constant.name) == null) continue;
-                try self.report(
-                    .duplicate_binding,
-                    node.span,
-                    "unprefixed Sass module variable conflicts with an existing variable",
-                );
-                return error.InvalidExpression;
-            }
-        }
-        if (namespace) |candidate| {
-            for (self.modules.items) |binding| {
-                if (binding.namespace) |existing| {
-                    if (std.mem.eql(u8, candidate, existing)) {
-                        try self.report(.syntax, node.span, "Sass module namespace is already in use");
-                        return error.InvalidSassSyntax;
-                    }
+            parsed.namespace orelse if (builtin_kind) |module_kind|
+                switch (module_kind) {
+                    .color => "color",
+                    .list => "list",
+                    .map => "map",
+                    .math => "math",
+                    .meta => "meta",
+                    .selector => "selector",
+                    .string => "string",
                 }
-            }
-        }
+            else
+                defaultModuleNamespace(parsed.url) orelse {
+                    try self.report(.syntax, node.span, "native Sass module URL has no valid namespace");
+                    return error.InvalidSassSyntax;
+                };
+        const target: ModuleTarget = if (builtin_kind) |module_kind|
+            .{ .builtin = module_kind }
+        else
+            .{ .local = try self.loadLocalModule(node.span.source, parsed.url, node.span) };
+        try self.validateModuleBinding(target, namespace, node.span);
         try self.modules.append(self.allocator, .{
-            .kind = module_kind,
+            .target = target,
             .namespace = namespace,
         });
+    }
+
+    fn validateModuleBinding(
+        self: *Engine,
+        target: ModuleTarget,
+        namespace: ?[]const u8,
+        span: native_source.Span,
+    ) Error!void {
+        if (namespace) |candidate| {
+            for (self.modules.items) |binding| {
+                const existing = binding.namespace orelse continue;
+                if (!std.mem.eql(u8, candidate, existing)) continue;
+                try self.report(.syntax, span, "Sass module namespace is already in use");
+                return error.InvalidSassSyntax;
+            }
+            return;
+        }
+
+        switch (target) {
+            .builtin => |module_kind| {
+                if (module_kind != .math) return;
+                for (math_constants) |constant| {
+                    if (try self.environment.lookup(self.global_scope, constant.name) != null or
+                        self.unprefixedLocalModuleVariable(constant.name) != null)
+                    {
+                        try self.report(
+                            .duplicate_binding,
+                            span,
+                            "unprefixed Sass module variable conflicts with an existing variable",
+                        );
+                        return error.InvalidExpression;
+                    }
+                }
+            },
+            .local => |module_index| {
+                const module = &self.local_modules.items[module_index];
+                for (module.variables) |variable| {
+                    if (try self.environment.lookup(self.global_scope, variable.name) != null or
+                        self.unprefixedMathConstant(variable.name) != null or
+                        self.unprefixedLocalModuleVariable(variable.name) != null)
+                    {
+                        try self.report(
+                            .duplicate_binding,
+                            span,
+                            "unprefixed Sass module variable conflicts with an existing variable",
+                        );
+                        return error.InvalidExpression;
+                    }
+                }
+            },
+        }
+    }
+
+    fn loadLocalModule(
+        self: *Engine,
+        parent_source_id: native_source.SourceId,
+        module_url: []const u8,
+        span: native_source.Span,
+    ) Error!usize {
+        const parent = try self.sources.get(parent_source_id);
+        const candidate_urls = localModuleCandidateUrls(
+            self.allocator,
+            parent.name,
+            module_url,
+            self.limits.max_temporary_bytes,
+        ) catch |failure| return self.failLocalModuleLoad(failure, span);
+        defer freeOwnedStrings(self.allocator, candidate_urls);
+
+        const session = try self.transaction.resolverSession();
+        var selected: ?native_resolver.Loaded = null;
+        errdefer if (selected) |*loaded| loaded.deinit();
+        for (candidate_urls) |candidate_url| {
+            var loaded = session.load(candidate_url, .{
+                .kind = .use,
+                .ancestry = &.{parent.name},
+            }) catch |failure| switch (failure) {
+                error.Missing => continue,
+                else => return self.failLocalModuleLoad(failure, span),
+            };
+            if (selected != null) {
+                loaded.deinit();
+                selected.?.deinit();
+                selected = null;
+                try self.report(
+                    .invalid_import,
+                    span,
+                    "native Sass local module URL is ambiguous",
+                );
+                return error.InvalidSassSyntax;
+            }
+            selected = loaded;
+        }
+
+        var loaded = selected orelse {
+            try self.report(.invalid_import, span, "native Sass local module was not found");
+            return error.InvalidSassSyntax;
+        };
+        selected = null;
+        defer loaded.deinit();
+
+        for (self.local_modules.items, 0..) |module, index| {
+            if (std.mem.eql(u8, module.url, loaded.url)) return index;
+        }
+
+        const source_id = self.sources.add(loaded.url, loaded.contents) catch |failure| {
+            if (failure == error.OutOfMemory) return error.OutOfMemory;
+            try self.report(.resource_limit, span, "native Sass source limit exceeded");
+            return failure;
+        };
+        const mode: native_sass.Mode = if (std.mem.endsWith(u8, loaded.url, ".sass"))
+            .sass
+        else
+            .scss;
+        var parser = native_sass.Parser.init(
+            self.allocator,
+            self.sources,
+            source_id,
+            mode,
+            .{},
+            .{},
+        ) catch |failure| {
+            if (failure == error.OutOfMemory) return error.OutOfMemory;
+            try self.report(.syntax, span, "native Sass local module could not be parsed");
+            return failure;
+        };
+        defer parser.deinit();
+        var document = parser.parse() catch |failure| {
+            try self.copyParserDiagnostics(parser.diagnostics());
+            return failure;
+        };
+        defer document.deinit();
+
+        var module_engine = try Engine.init(
+            self.allocator,
+            self.sources,
+            &document,
+            self.transaction,
+            self.limits,
+        );
+        defer module_engine.deinit();
+        module_engine.module_depth = self.module_depth + 1;
+        try module_engine.run();
+        const variables = try self.clonePublicModuleVariables(&module_engine);
+        errdefer {
+            for (variables) |variable| self.allocator.free(variable.name);
+            if (variables.len > 0) self.allocator.free(variables);
+        }
+
+        const file = try self.sources.get(source_id);
+        try self.local_modules.append(self.allocator, .{
+            .url = file.name,
+            .variables = variables,
+        });
+        return self.local_modules.items.len - 1;
+    }
+
+    fn failLocalModuleLoad(
+        self: *Engine,
+        failure: native_resolver.Error,
+        span: native_source.Span,
+    ) Error!usize {
+        switch (failure) {
+            error.OutOfMemory, error.Cancelled => return failure,
+            error.AttemptLimitExceeded,
+            error.DepthLimitExceeded,
+            error.FileCountExceeded,
+            error.FileLimitExceeded,
+            error.TotalLimitExceeded,
+            => try self.report(.resource_limit, span, "native Sass local module limit exceeded"),
+            error.Cycle => try self.report(.invalid_import, span, "native Sass module cycle detected"),
+            else => try self.report(.invalid_import, span, "native Sass local module load was rejected"),
+        }
+        return switch (failure) {
+            error.Cycle => error.InvalidSassSyntax,
+            else => failure,
+        };
+    }
+
+    fn copyParserDiagnostics(
+        self: *Engine,
+        diagnostics: []const native_diagnostics.Diagnostic,
+    ) Error!void {
+        for (diagnostics) |diagnostic| {
+            var related: std.ArrayList(native_diagnostics.RelatedInput) = .empty;
+            defer related.deinit(self.allocator);
+            try related.ensureTotalCapacity(self.allocator, diagnostic.related.len);
+            for (diagnostic.related) |item| {
+                related.appendAssumeCapacity(.{ .span = item.span, .label = item.label });
+            }
+            try self.transaction.report(
+                diagnostic.severity,
+                diagnostic.code,
+                diagnostic.span,
+                diagnostic.message,
+                related.items,
+            );
+        }
+    }
+
+    fn clonePublicModuleVariables(
+        self: *Engine,
+        module_engine: *Engine,
+    ) Error![]ModuleVariable {
+        const children = module_engine.document.children(module_engine.document.root) catch
+            return error.InvalidSassSyntax;
+        var variables: std.ArrayList(ModuleVariable) = .empty;
+        errdefer {
+            for (variables.items) |variable| self.allocator.free(variable.name);
+            variables.deinit(self.allocator);
+        }
+        for (children) |child_id| {
+            const child = module_engine.document.get(child_id) catch
+                return error.InvalidSassSyntax;
+            if (child.kind != .declaration or
+                !try module_engine.isVariableDeclaration(child_id))
+            {
+                continue;
+            }
+            const declaration_children = module_engine.document.children(child_id) catch
+                return error.InvalidSassSyntax;
+            const name_node = module_engine.document.get(declaration_children[0]) catch
+                return error.InvalidSassSyntax;
+            const raw_name = try module_engine.sources.slice(name_node.text orelse
+                return error.InvalidSassSyntax);
+            if (raw_name.len < 2 or raw_name[0] != '$' or
+                raw_name[1] == '_' or raw_name[1] == '-')
+            {
+                continue;
+            }
+            const normalized = try module_engine.normalizeVariable(raw_name);
+            defer module_engine.allocator.free(normalized);
+            if (moduleVariableNamed(variables.items, normalized)) continue;
+            const value = try module_engine.environment.lookup(
+                module_engine.global_scope,
+                normalized,
+            ) orelse continue;
+            if (valueContainsCallable(value.*, 0)) {
+                try self.report(
+                    .unsupported_feature,
+                    name_node.span,
+                    "native Sass local callable exports are not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            }
+            const name = try self.allocator.dupe(u8, normalized);
+            errdefer self.allocator.free(name);
+            const cloned = try self.values.own(value.*);
+            try variables.append(self.allocator, .{ .name = name, .value = cloned });
+        }
+        return variables.toOwnedSlice(self.allocator);
+    }
+
+    fn unprefixedLocalModuleVariable(
+        self: *const Engine,
+        name: []const u8,
+    ) ?*const native_value.Value {
+        for (self.modules.items) |binding| {
+            if (binding.namespace != null) continue;
+            const module_index = switch (binding.target) {
+                .local => |index| index,
+                .builtin => continue,
+            };
+            const module = &self.local_modules.items[module_index];
+            for (module.variables) |variable| {
+                if (sassNameEql(variable.name, name)) return variable.value;
+            }
+        }
+        return null;
     }
 
     fn emitRootComment(self: *Engine, node: *const native_syntax.Node) Error!void {
@@ -5084,23 +5381,34 @@ const Engine = struct {
         if (isSimpleIdentifier(name)) {
             for (self.modules.items) |binding| {
                 if (binding.namespace != null) continue;
-                if (moduleBuiltinMixin(binding.kind, name)) |builtin| return builtin;
+                const module_kind = switch (binding.target) {
+                    .builtin => |kind| kind,
+                    .local => continue,
+                };
+                if (moduleBuiltinMixin(module_kind, name)) |builtin| return builtin;
             }
             return null;
         }
 
         const qualified = parseQualifiedName(name) orelse return null;
-        var matched: ?BuiltinModule = null;
+        var matched: ?ModuleTarget = null;
         for (self.modules.items) |binding| {
             const namespace = binding.namespace orelse continue;
             if (std.mem.eql(u8, namespace, qualified.namespace)) {
-                matched = binding.kind;
+                matched = binding.target;
                 break;
             }
         }
-        const module = matched orelse {
+        const target = matched orelse {
             try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
             return error.InvalidExpression;
+        };
+        const module = switch (target) {
+            .builtin => |kind| kind,
+            .local => {
+                try self.report(.invalid_operation, span, "undefined native Sass module mixin");
+                return error.InvalidExpression;
+            },
         };
         return moduleBuiltinMixin(module, qualified.member) orelse {
             try self.report(.invalid_operation, span, "undefined native Sass module mixin");
@@ -5116,7 +5424,11 @@ const Engine = struct {
         if (isSimpleIdentifier(name)) {
             for (self.modules.items) |binding| {
                 if (binding.namespace != null) continue;
-                const builtin = switch (binding.kind) {
+                const module_kind = switch (binding.target) {
+                    .builtin => |kind| kind,
+                    .local => continue,
+                };
+                const builtin = switch (module_kind) {
                     .color => colorModuleBuiltin(name),
                     .list => listModuleBuiltin(name),
                     .map => mapModuleBuiltin(name),
@@ -5126,11 +5438,11 @@ const Engine = struct {
                     .string => stringModuleBuiltin(name),
                 };
                 if (builtin) |resolved| return resolved;
-                if (binding.kind == .string and sassNameEql(name, "unique-id")) {
+                if (module_kind == .string and sassNameEql(name, "unique-id")) {
                     return self.uniqueIdDeterminismFailure(span);
                 }
-                if ((binding.kind == .math and mathModuleOwnsFunction(name)) or
-                    (binding.kind == .selector and selectorModuleOwnsFunction(name)))
+                if ((module_kind == .math and mathModuleOwnsFunction(name)) or
+                    (module_kind == .selector and selectorModuleOwnsFunction(name)))
                 {
                     try self.report(
                         .invalid_operation,
@@ -5144,17 +5456,24 @@ const Engine = struct {
         }
 
         const qualified = parseQualifiedName(name) orelse return null;
-        var matched: ?BuiltinModule = null;
+        var matched: ?ModuleTarget = null;
         for (self.modules.items) |binding| {
             const namespace = binding.namespace orelse continue;
             if (std.mem.eql(u8, namespace, qualified.namespace)) {
-                matched = binding.kind;
+                matched = binding.target;
                 break;
             }
         }
-        const module = matched orelse {
+        const target = matched orelse {
             try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
             return error.InvalidExpression;
+        };
+        const module = switch (target) {
+            .builtin => |kind| kind,
+            .local => {
+                try self.report(.invalid_operation, span, "undefined native Sass module function");
+                return error.InvalidExpression;
+            },
         };
         if (module == .string and sassNameEql(qualified.member, "unique-id")) {
             return self.uniqueIdDeterminismFailure(span);
@@ -5179,11 +5498,35 @@ const Engine = struct {
         raw: []const u8,
         span: native_source.Span,
     ) Error!?*const native_value.Value {
-        const constant = (try self.tryModuleConstant(raw, span)) orelse return null;
-        return self.values.own(.{ .number = .{
-            .value = constant,
-            .preserve_precision = true,
-        } });
+        const qualified = parseQualifiedVariable(raw) orelse return null;
+        const target = self.moduleTargetForNamespace(qualified.namespace) orelse {
+            try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
+            return error.InvalidExpression;
+        };
+        return switch (target) {
+            .builtin => |module| {
+                const constant = if (module == .math)
+                    mathModuleConstant(qualified.member)
+                else
+                    null;
+                const value = constant orelse {
+                    try self.report(.undefined_variable, span, "undefined native Sass module variable");
+                    return error.InvalidExpression;
+                };
+                return self.values.own(.{ .number = .{
+                    .value = value,
+                    .preserve_precision = true,
+                } });
+            },
+            .local => |module_index| {
+                const module = &self.local_modules.items[module_index];
+                for (module.variables) |variable| {
+                    if (sassNameEql(variable.name, qualified.member)) return variable.value;
+                }
+                try self.report(.undefined_variable, span, "undefined native Sass module variable");
+                return error.InvalidExpression;
+            },
+        };
     }
 
     fn tryModuleConstant(
@@ -5192,17 +5535,20 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!?f64 {
         const qualified = parseQualifiedVariable(raw) orelse return null;
-        var matched: ?BuiltinModule = null;
-        for (self.modules.items) |binding| {
-            const namespace = binding.namespace orelse continue;
-            if (std.mem.eql(u8, namespace, qualified.namespace)) {
-                matched = binding.kind;
-                break;
-            }
-        }
-        const module = matched orelse {
+        const target = self.moduleTargetForNamespace(qualified.namespace) orelse {
             try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
             return error.InvalidExpression;
+        };
+        const module = switch (target) {
+            .builtin => |kind| kind,
+            .local => {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass arithmetic over local module variables is not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            },
         };
         const value = if (module == .math)
             mathModuleConstant(qualified.member)
@@ -5212,6 +5558,17 @@ const Engine = struct {
             try self.report(.undefined_variable, span, "undefined native Sass module variable");
             return error.InvalidExpression;
         };
+    }
+
+    fn moduleTargetForNamespace(
+        self: *const Engine,
+        namespace: []const u8,
+    ) ?ModuleTarget {
+        for (self.modules.items) |binding| {
+            const loaded = binding.namespace orelse continue;
+            if (std.mem.eql(u8, loaded, namespace)) return binding.target;
+        }
+        return null;
     }
 
     fn tryBuiltinCall(
@@ -15608,8 +15965,12 @@ const Engine = struct {
         for (self.modules.items) |binding| {
             try self.transaction.consumeOperations(1);
             if (binding.namespace != null) continue;
-            if (moduleCallableBuiltin(binding.kind, name)) |builtin| {
-                return builtinFunctionCallable(builtin, binding.kind);
+            const module_kind = switch (binding.target) {
+                .builtin => |kind| kind,
+                .local => continue,
+            };
+            if (moduleCallableBuiltin(module_kind, name)) |builtin| {
+                return builtinFunctionCallable(builtin, module_kind);
             }
         }
         const builtin = globalCallableBuiltin(name) orelse return null;
@@ -15719,7 +16080,18 @@ const Engine = struct {
         for (self.modules.items) |binding| {
             try self.transaction.consumeOperations(1);
             const loaded = binding.namespace orelse continue;
-            if (std.mem.eql(u8, loaded, namespace)) return binding.kind;
+            if (!std.mem.eql(u8, loaded, namespace)) continue;
+            return switch (binding.target) {
+                .builtin => |kind| kind,
+                .local => {
+                    try self.report(
+                        .unsupported_feature,
+                        span,
+                        "native Sass user-module reflection is not implemented yet",
+                    );
+                    return error.UnsupportedFeature;
+                },
+            };
         }
         try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
         return error.InvalidExpression;
@@ -15756,7 +16128,11 @@ const Engine = struct {
         for (self.modules.items) |binding| {
             try self.transaction.consumeOperations(1);
             if (binding.namespace != null) continue;
-            if (moduleBuiltin(binding.kind, name) != null) return true;
+            const module_kind = switch (binding.target) {
+                .builtin => |kind| kind,
+                .local => continue,
+            };
+            if (moduleBuiltin(module_kind, name) != null) return true;
         }
         return false;
     }
@@ -17970,7 +18346,12 @@ const Engine = struct {
 
     fn unprefixedMathConstant(self: *const Engine, name: []const u8) ?f64 {
         for (self.modules.items) |binding| {
-            if (binding.kind != .math or binding.namespace != null) continue;
+            if (binding.namespace != null) continue;
+            const module_kind = switch (binding.target) {
+                .builtin => |kind| kind,
+                .local => continue,
+            };
+            if (module_kind != .math) continue;
             return mathModuleConstant(name);
         }
         return null;
@@ -17982,7 +18363,8 @@ const Engine = struct {
         normalized: []const u8,
     ) Error!?*const native_value.Value {
         if (try self.environment.lookupNonGlobal(scope, normalized)) |item| return item;
-        return self.environment.lookup(self.global_scope, normalized);
+        if (try self.environment.lookup(self.global_scope, normalized)) |item| return item;
+        return self.unprefixedLocalModuleVariable(normalized);
     }
 
     fn normalizeVariable(self: *Engine, raw_name: []const u8) Error![]u8 {
@@ -20830,6 +21212,195 @@ fn parseUseDirective(input: []const u8) ?ParsedUse {
     }
     if (!isSimpleIdentifier(alias)) return null;
     return .{ .url = url, .namespace = alias };
+}
+
+fn defaultModuleNamespace(module_url: []const u8) ?[]const u8 {
+    const slash = std.mem.lastIndexOfScalar(u8, module_url, '/');
+    const name_start = if (slash) |index| index + 1 else 0;
+    var name = module_url[name_start..];
+    if (std.mem.endsWith(u8, name, ".scss")) {
+        name = name[0 .. name.len - ".scss".len];
+    } else if (std.mem.endsWith(u8, name, ".sass")) {
+        name = name[0 .. name.len - ".sass".len];
+    }
+    if (name.len > 0 and name[0] == '_') name = name[1..];
+    if (!isSimpleIdentifier(name)) return null;
+    return name;
+}
+
+fn localModuleCandidateUrls(
+    allocator: std.mem.Allocator,
+    parent_url: []const u8,
+    module_url: []const u8,
+    max_temporary_bytes: usize,
+) native_resolver.Error![][]u8 {
+    if (module_url.len == 0 or module_url.len > max_temporary_bytes or
+        module_url[0] == '/' or
+        std.mem.indexOfAny(u8, module_url, "\x00\r\n\\?#") != null or
+        std.mem.indexOfScalar(u8, module_url, ':') != null)
+    {
+        return error.InvalidUrl;
+    }
+    const extension = std.fs.path.extension(module_url);
+    if (extension.len != 0 and
+        !std.mem.eql(u8, extension, ".scss") and
+        !std.mem.eql(u8, extension, ".sass"))
+    {
+        return error.InvalidUrl;
+    }
+
+    const parent_path = try native_resolver.fileUrlToPath(allocator, parent_url);
+    defer allocator.free(parent_path);
+    const parent_directory = std.fs.path.dirname(parent_path) orelse
+        return error.InvalidUrl;
+    var candidates: std.ArrayList([]u8) = .empty;
+    errdefer freeOwnedStringList(allocator, &candidates);
+
+    if (extension.len != 0) {
+        try appendLocalModuleCandidate(
+            allocator,
+            &candidates,
+            parent_directory,
+            module_url,
+            max_temporary_bytes,
+        );
+        if (!localModuleBasenameStartsWithUnderscore(module_url)) {
+            const partial = try localModulePartialPath(allocator, module_url);
+            defer allocator.free(partial);
+            try appendLocalModuleCandidate(
+                allocator,
+                &candidates,
+                parent_directory,
+                partial,
+                max_temporary_bytes,
+            );
+        }
+    } else {
+        const extensions = [_][]const u8{ ".scss", ".sass" };
+        for (extensions) |candidate_extension| {
+            const explicit = try std.fmt.allocPrint(
+                allocator,
+                "{s}{s}",
+                .{ module_url, candidate_extension },
+            );
+            defer allocator.free(explicit);
+            try appendLocalModuleCandidate(
+                allocator,
+                &candidates,
+                parent_directory,
+                explicit,
+                max_temporary_bytes,
+            );
+            if (!localModuleBasenameStartsWithUnderscore(module_url)) {
+                const partial_base = try localModulePartialPath(allocator, module_url);
+                defer allocator.free(partial_base);
+                const partial = try std.fmt.allocPrint(
+                    allocator,
+                    "{s}{s}",
+                    .{ partial_base, candidate_extension },
+                );
+                defer allocator.free(partial);
+                try appendLocalModuleCandidate(
+                    allocator,
+                    &candidates,
+                    parent_directory,
+                    partial,
+                    max_temporary_bytes,
+                );
+            }
+        }
+    }
+    return candidates.toOwnedSlice(allocator);
+}
+
+fn appendLocalModuleCandidate(
+    allocator: std.mem.Allocator,
+    candidates: *std.ArrayList([]u8),
+    parent_directory: []const u8,
+    relative: []const u8,
+    max_temporary_bytes: usize,
+) native_resolver.Error!void {
+    const absolute = try std.fs.path.resolve(allocator, &.{ parent_directory, relative });
+    defer allocator.free(absolute);
+    if (absolute.len > max_temporary_bytes) return error.InvalidUrl;
+    const candidate_url = try native_resolver.pathToFileUrl(allocator, absolute);
+    errdefer allocator.free(candidate_url);
+    try candidates.append(allocator, candidate_url);
+}
+
+fn localModulePartialPath(
+    allocator: std.mem.Allocator,
+    module_url: []const u8,
+) std.mem.Allocator.Error![]u8 {
+    const slash = std.mem.lastIndexOfScalar(u8, module_url, '/');
+    if (slash) |index| {
+        return std.fmt.allocPrint(
+            allocator,
+            "{s}/_{s}",
+            .{ module_url[0..index], module_url[index + 1 ..] },
+        );
+    }
+    return std.fmt.allocPrint(allocator, "_{s}", .{module_url});
+}
+
+fn localModuleBasenameStartsWithUnderscore(module_url: []const u8) bool {
+    const slash = std.mem.lastIndexOfScalar(u8, module_url, '/');
+    const basename_start = if (slash) |index| index + 1 else 0;
+    const basename = module_url[basename_start..];
+    return basename.len > 0 and basename[0] == '_';
+}
+
+fn freeOwnedStringList(
+    allocator: std.mem.Allocator,
+    items: *std.ArrayList([]u8),
+) void {
+    for (items.items) |item| allocator.free(item);
+    items.deinit(allocator);
+}
+
+fn freeOwnedStrings(allocator: std.mem.Allocator, items: [][]u8) void {
+    for (items) |item| allocator.free(item);
+    if (items.len > 0) allocator.free(items);
+}
+
+fn moduleVariableNamed(variables: []const ModuleVariable, name: []const u8) bool {
+    for (variables) |variable| {
+        if (sassNameEql(variable.name, name)) return true;
+    }
+    return false;
+}
+
+fn valueContainsCallable(value: native_value.Value, depth: u16) bool {
+    if (depth > 64) return true;
+    return switch (value) {
+        .callable => true,
+        .list => |list| blk: {
+            for (list.items) |item| {
+                if (valueContainsCallable(item, depth + 1)) break :blk true;
+            }
+            break :blk false;
+        },
+        .map => |map| blk: {
+            for (map.entries) |entry| {
+                if (valueContainsCallable(entry.key, depth + 1) or
+                    valueContainsCallable(entry.value, depth + 1))
+                {
+                    break :blk true;
+                }
+            }
+            break :blk false;
+        },
+        .argument_list => |arguments| blk: {
+            for (arguments.positional) |item| {
+                if (valueContainsCallable(item, depth + 1)) break :blk true;
+            }
+            for (arguments.keywords) |keyword| {
+                if (valueContainsCallable(keyword.value, depth + 1)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
 }
 
 fn parseQualifiedName(input: []const u8) ?QualifiedName {

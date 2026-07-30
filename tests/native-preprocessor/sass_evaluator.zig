@@ -36587,3 +36587,371 @@ test "native Sass deduplicates deprecations by source location and exact message
     );
     try std.testing.expectEqual(@as(usize, 4), sass_result.nativeDiagnostics().len);
 }
+
+const LocalUseFile = struct {
+    name: []const u8,
+    contents: []const u8,
+};
+
+fn compileWithLocalUseFiles(
+    allocator: std.mem.Allocator,
+    root_name: []const u8,
+    root_input: []const u8,
+    mode: sass.Mode,
+    files: []const LocalUseFile,
+    semantic_limits: sass_evaluator.Limits,
+) !evaluator.ValidatedCss {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    for (files) |file| {
+        const relative = try std.fs.path.join(allocator, &.{ "root", file.name });
+        defer allocator.free(relative);
+        if (std.fs.path.dirname(relative)) |directory| {
+            try tmp.dir.makePath(directory);
+        }
+        try tmp.dir.writeFile(.{ .sub_path = relative, .data = file.contents });
+    }
+    const root_relative = try std.fs.path.join(allocator, &.{ "root", root_name });
+    defer allocator.free(root_relative);
+    try tmp.dir.writeFile(.{ .sub_path = root_relative, .data = root_input });
+
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, root_name });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, root_input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, mode, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(
+        allocator,
+        &sources,
+        &document,
+        &transaction,
+        semantic_limits,
+    );
+    return transaction.finish(.{ .format = .minified, .source_map = true });
+}
+
+test "native Sass loads one-hop local use modules once with visible public variables" {
+    const root_input =
+        \\@use "tokens";
+        \\@use "_tokens.scss" as alias;
+        \\@use "tokens" as *;
+        \\@use "indented.sass" as legacy;
+        \\.root {
+        \\  default: tokens.$public;
+        \\  alias: alias.$public;
+        \\  unprefixed: $public;
+        \\  cross-syntax: legacy.$tone;
+        \\}
+    ;
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_tokens.scss",
+            .contents = "$public: 2px; $_private: 9px; .module { order: first; }",
+        },
+        .{
+            .name = "indented.sass",
+            .contents = "$tone: blue\n.from-sass\n  color: $tone\n",
+        },
+    };
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "input.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".module{order:first}.from-sass{color:blue}.root{default:2px;alias:2px;unprefixed:2px;cross-syntax:blue}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 2), result.dependencies().len);
+    try std.testing.expectEqual(resolver.DependencyKind.use, result.dependencies()[0].kind);
+    try std.testing.expect(std.mem.endsWith(u8, result.dependencies()[0].url, "/_tokens.scss"));
+    try std.testing.expect(std.mem.endsWith(u8, result.dependencies()[1].url, "/indented.sass"));
+    try std.testing.expectEqual(@as(usize, 2), result.edges().len);
+    try std.testing.expectEqualStrings(result.dependencies()[0].url, result.edges()[0].child_url);
+    try std.testing.expectEqualStrings(result.dependencies()[1].url, result.edges()[1].child_url);
+    try std.testing.expect(result.map() != null);
+    const segments = result.map().?.segments();
+    try std.testing.expectEqual(@as(usize, 3), segments.len);
+    try std.testing.expectEqual(@as(u32, 1), segments[0].source_id.?.value);
+    try std.testing.expectEqual(@as(u32, 2), segments[1].source_id.?.value);
+    try std.testing.expectEqual(@as(u32, 0), segments[2].source_id.?.value);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.edges()[0].parent_url.?,
+        "/input.scss",
+    ));
+
+    const indented_root =
+        \\@use "tokens" as theme
+        \\.root
+        \\  value: theme.$public
+    ;
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "input.sass",
+        indented_root,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".module{order:first}.root{value:2px}",
+        sass_result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
+}
+
+test "native Sass local use fails closed for private ambiguous missing cyclic and transitive modules" {
+    const invalid = [_]struct {
+        root_name: []const u8,
+        input: []const u8,
+        files: []const LocalUseFile,
+        expected: anyerror,
+    }{
+        .{
+            .root_name = "private.scss",
+            .input = "@use \"tokens\"; .root { value: tokens.$_private; }",
+            .files = &.{.{
+                .name = "_tokens.scss",
+                .contents = "$_private: 9px;",
+            }},
+            .expected = error.InvalidExpression,
+        },
+        .{
+            .root_name = "ambiguous.scss",
+            .input = "@use \"tokens\";",
+            .files = &.{
+                .{ .name = "tokens.scss", .contents = "$value: 1;" },
+                .{ .name = "_tokens.scss", .contents = "$value: 2;" },
+            },
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .root_name = "missing.scss",
+            .input = "@use \"absent\";",
+            .files = &.{},
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .root_name = "escape.scss",
+            .input = "@use \"../outside\";",
+            .files = &.{.{
+                .name = "../outside.scss",
+                .contents = "$value: escaped;",
+            }},
+            .expected = error.PathEscape,
+        },
+        .{
+            .root_name = "cycle.scss",
+            .input = "@use \"cycle\";",
+            .files = &.{},
+            .expected = error.InvalidSassSyntax,
+        },
+        .{
+            .root_name = "transitive.scss",
+            .input = "@use \"first\";",
+            .files = &.{
+                .{ .name = "_first.scss", .contents = "@use \"second\"; $value: 1;" },
+                .{ .name = "_second.scss", .contents = "$value: 2;" },
+            },
+            .expected = error.UnsupportedFeature,
+        },
+    };
+    for (invalid) |case| {
+        try std.testing.expectError(
+            case.expected,
+            compileWithLocalUseFiles(
+                std.testing.allocator,
+                case.root_name,
+                case.input,
+                .scss,
+                case.files,
+                .{},
+            ),
+        );
+    }
+
+    var limits = sass_evaluator.Limits{};
+    limits.max_modules = 1;
+    try std.testing.expectError(
+        error.ModuleLimitExceeded,
+        compileWithLocalUseFiles(
+            std.testing.allocator,
+            "module-limit.scss",
+            "@use \"first\"; @use \"second\";",
+            .scss,
+            &.{
+                .{ .name = "_first.scss", .contents = "$value: 1;" },
+                .{ .name = "_second.scss", .contents = "$value: 2;" },
+            },
+            limits,
+        ),
+    );
+}
+
+test "native Sass local use reports owned import diagnostics without partial CSS" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const input = "@use \"absent\"; .unreachable { color: red; }";
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.scss" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        error.InvalidSassSyntax,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Severity.err,
+        diagnostics[0].severity,
+    );
+    try std.testing.expectEqual(
+        preprocessor.diagnostics.Code.invalid_import,
+        diagnostics[0].code,
+    );
+    try std.testing.expectEqualStrings(
+        "native Sass local module was not found",
+        diagnostics[0].message,
+    );
+    try std.testing.expectEqual(source_id, diagnostics[0].span.source);
+    try std.testing.expectEqual(@as(u32, 0), diagnostics[0].span.start);
+    try std.testing.expectEqual(@as(u32, 14), diagnostics[0].span.end);
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectEqual(
+        resolver.Stats{ .attempts = 4, .files = 0, .bytes = 0 },
+        transaction.stats(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
+const LocalUseAllocationContext = struct {
+    root: []const u8,
+    root_url: []const u8,
+};
+
+fn exerciseLocalUseAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const LocalUseAllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input = "@use \"tokens\"; .root { value: tokens.$public; }";
+    const source_id = try sources.add(context.root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".module{order:first}.root{value:2px}",
+        result.css(),
+    );
+}
+
+test "native Sass local use handles every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_tokens.scss",
+        .data = "$public: 2px; .module { order: first; }",
+    });
+    const root_input = "@use \"tokens\"; .root { value: tokens.$public; }";
+    try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = root_input });
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const root_path = try std.fs.path.join(std.testing.allocator, &.{ root, "input.scss" });
+    defer std.testing.allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(std.testing.allocator, root_path);
+    defer std.testing.allocator.free(root_url);
+    const context = LocalUseAllocationContext{ .root = root, .root_url = root_url };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLocalUseAllocationFailures,
+        .{&context},
+    );
+}
