@@ -5262,6 +5262,35 @@ const Engine = struct {
                 scope,
                 span,
             ),
+            .opacify => {
+                const legacy_splat = if (module_builtin == null) blk: {
+                    for (ranges.items) |range| {
+                        if (std.mem.endsWith(
+                            u8,
+                            trimWhitespace(body[range.start..range.end]),
+                            "...",
+                        )) break :blk true;
+                    }
+                    break :blk false;
+                } else false;
+                if (legacy_splat) {
+                    return try self.callDirectLegacyColorOpacifyRaw(
+                        body,
+                        ranges.items,
+                        scope,
+                        span,
+                    );
+                }
+                return try self.callFixedBuiltinRaw(
+                    builtin,
+                    module_builtin != null,
+                    raw,
+                    body,
+                    ranges.items,
+                    scope,
+                    span,
+                );
+            },
             .nth,
             .length,
             .list_index,
@@ -5323,7 +5352,6 @@ const Engine = struct {
             .hue,
             .saturation,
             .lightness,
-            .opacify,
             .fade_in,
             .transparentize,
             .fade_out,
@@ -16816,6 +16844,22 @@ const Engine = struct {
         defer evaluated.deinit();
         return (try self.invokeColorInvertFunction(
             builtinFunctionCallable(.invert, null),
+            &evaluated,
+            span,
+        )) orelse unreachable;
+    }
+
+    fn callDirectLegacyColorOpacifyRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        return (try self.invokeColorLegacyAlphaFunction(
+            builtinFunctionCallable(.opacify, null),
             &evaluated,
             span,
         )) orelse unreachable;
