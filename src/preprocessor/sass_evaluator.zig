@@ -804,7 +804,7 @@ fn decodeLocalModuleCallable(callable: native_value.Callable) ?LocalCallableTarg
     };
 }
 
-fn remapLocalModuleExportCallable(
+fn remapLocalModuleOwnedCallable(
     context: usize,
     callable: native_value.Callable,
 ) ?native_value.Callable {
@@ -829,6 +829,30 @@ fn remapLocalModuleExportCallable(
     };
 }
 
+fn remapLocalModuleExportCallable(
+    context: usize,
+    callable: native_value.Callable,
+) ?native_value.Callable {
+    if (context >= hard_modules) return null;
+    if (remapLocalModuleOwnedCallable(context, callable)) |owned| return owned;
+    return switch (callable.kind) {
+        .local_module_function, .local_module_mixin => if (decodeLocalModuleCallable(
+            callable,
+        )) |target|
+            if (target.module_index < context)
+                .{
+                    .kind = callable.kind,
+                    .id = callable.id,
+                    .reexported = true,
+                }
+            else
+                null
+        else
+            null,
+        .builtin_function, .builtin_mixin, .user_function, .mixin => null,
+    };
+}
+
 fn remapLocalModuleConfigurationCallable(
     context: usize,
     callable: native_value.Callable,
@@ -836,7 +860,9 @@ fn remapLocalModuleConfigurationCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
-        .local_module_function, .local_module_mixin => if (decodeLocalModuleCallable(callable)) |target|
+        .local_module_function, .local_module_mixin => if (callable.reexported)
+            null
+        else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index < context) callable else null
         else
             null,
@@ -851,14 +877,18 @@ fn remapLocalModuleArgumentCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
-        .local_module_function => if (decodeLocalModuleCallable(callable)) |target|
+        .local_module_function => if (callable.reexported)
+            null
+        else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index == context)
                 .{ .kind = .user_function, .id = target.callable_id }
             else
                 null
         else
             null,
-        .local_module_mixin => if (decodeLocalModuleCallable(callable)) |target|
+        .local_module_mixin => if (callable.reexported)
+            null
+        else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index == context)
                 .{ .kind = .mixin, .id = target.callable_id }
             else
@@ -1542,9 +1572,9 @@ const Engine = struct {
         return switch (value) {
             .callable => |callable| switch (callable.kind) {
                 .builtin_function, .builtin_mixin => true,
-                .local_module_function, .local_module_mixin => if (decodeLocalModuleCallable(
-                    callable,
-                )) |target|
+                .local_module_function, .local_module_mixin => if (callable.reexported)
+                    false
+                else if (decodeLocalModuleCallable(callable)) |target|
                     self.localModuleCallableExists(target, callable.kind)
                 else
                     false,
@@ -3741,7 +3771,7 @@ const Engine = struct {
                 if (self.parent_module_index) |module_index|
                     .{
                         .context = module_index,
-                        .map = remapLocalModuleExportCallable,
+                        .map = remapLocalModuleOwnedCallable,
                     }
                 else
                     null
@@ -22170,7 +22200,7 @@ fn sassValuesEqualDepth(left: native_value.Value, right: native_value.Value, dep
         .color => |color| native_color.equal(color, right.color),
         .string => |string| std.mem.eql(u8, string.bytes, right.string.bytes),
         .selector => |selector| std.mem.eql(u8, selector.bytes, right.selector.bytes),
-        .callable => |callable| std.meta.eql(callable, right.callable),
+        .callable => |callable| native_value.callableEql(callable, right.callable),
         .list => |list| blk: {
             const other = right.list;
             if (list.separator != other.separator or list.bracketed != other.bracketed or

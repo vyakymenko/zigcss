@@ -88,6 +88,7 @@ pub const ArgumentList = struct {
 pub const Callable = struct {
     kind: CallableKind,
     id: u32,
+    reexported: bool = false,
 };
 
 pub const CallableRemapper = struct {
@@ -397,7 +398,7 @@ fn eqlDepth(left: Value, right: Value, depth: u16) bool {
         .color => |item| eqlColor(item, right.color),
         .string => |item| eqlString(item, right.string),
         .selector => |item| eqlString(item, right.selector),
-        .callable => |item| std.meta.eql(item, right.callable),
+        .callable => |item| callableEql(item, right.callable),
         .list => |item| blk: {
             const other = right.list;
             if (item.separator != other.separator or item.bracketed != other.bracketed or
@@ -443,6 +444,10 @@ fn eqlDepth(left: Value, right: Value, depth: u16) bool {
             break :blk true;
         },
     };
+}
+
+pub fn callableEql(left: Callable, right: Callable) bool {
+    return left.kind == right.kind and left.id == right.id;
 }
 
 fn eqlString(left: String, right: String) bool {
