@@ -425,6 +425,11 @@ const CallableParameter = struct {
     rest: bool = false,
 };
 
+const CallableBindingKind = enum {
+    function,
+    mixin,
+};
+
 const UserFunction = struct {
     allocator: std.mem.Allocator,
     name: []u8,
@@ -2615,6 +2620,7 @@ const Engine = struct {
         parameters: []const CallableParameter,
         arguments: *const EvaluatedCallArguments,
         span: native_source.Span,
+        kind: CallableBindingKind,
     ) Error!BoundCallableArguments {
         const values = try self.allocator.alloc(?*const native_value.Value, parameters.len);
         errdefer if (values.len > 0) self.allocator.free(values);
@@ -2633,13 +2639,13 @@ const Engine = struct {
         for (arguments.positional.items, 0..) |item, index| {
             if (index < fixed_count) {
                 if (values[index] != null) {
-                    return self.argumentsFailure(error.DuplicateArgument, span);
+                    return self.callableArgumentsFailure(error.DuplicateArgument, span, kind);
                 }
                 values[index] = item;
             } else if (rest_index != null) {
                 try rest_positional.append(self.allocator, item.*);
             } else {
-                return self.argumentsFailure(error.PositionalLimitExceeded, span);
+                return self.callableArgumentsFailure(error.PositionalLimitExceeded, span, kind);
             }
         }
 
@@ -2657,7 +2663,7 @@ const Engine = struct {
             }
             if (matched) |index| {
                 if (values[index] != null) {
-                    return self.argumentsFailure(error.DuplicateArgument, span);
+                    return self.callableArgumentsFailure(error.DuplicateArgument, span, kind);
                 }
                 values[index] = keyword.value;
             } else if (rest_index != null) {
@@ -2667,13 +2673,13 @@ const Engine = struct {
                     .normalize_name = keyword.normalize_name,
                 });
             } else {
-                return self.argumentsFailure(error.UnknownArgument, span);
+                return self.callableArgumentsFailure(error.UnknownArgument, span, kind);
             }
         }
 
         for (parameters[0..fixed_count], values[0..fixed_count]) |parameter, value| {
             if (parameter.default_value == null and value == null) {
-                return self.argumentsFailure(error.MissingArgument, span);
+                return self.callableArgumentsFailure(error.MissingArgument, span, kind);
             }
         }
 
@@ -2852,17 +2858,10 @@ const Engine = struct {
 
             const callable = switch (target_value.*) {
                 .callable => |value| value,
-                else => {
-                    try self.report(
-                        .type_mismatch,
-                        span,
-                        "native Sass meta.apply() requires a mixin reference",
-                    );
-                    return error.InvalidExpression;
-                },
+                else => return self.metaApplyMixinFailure(span),
             };
             switch (callable.kind) {
-                .mixin => {
+                .mixin, .local_module_mixin => {
                     var forwarded = EvaluatedCallArguments{ .allocator = self.allocator };
                     defer forwarded.deinit();
                     for (evaluated.positional.items[positional_start..]) |item| {
@@ -2872,17 +2871,34 @@ const Engine = struct {
                         if (mixin_keyword_consumed and index == mixin_keyword_index.?) continue;
                         try self.appendEvaluatedKeyword(&forwarded, keyword, span);
                     }
-                    try self.invokeUserMixin(
-                        callable.id,
-                        &forwarded,
-                        self,
-                        caller_scope,
-                        content_block,
-                        content_parameters,
-                        span,
-                        depth,
-                        context,
-                    );
+                    switch (callable.kind) {
+                        .mixin => try self.invokeUserMixin(
+                            callable.id,
+                            &forwarded,
+                            self,
+                            caller_scope,
+                            content_block,
+                            content_parameters,
+                            span,
+                            depth,
+                            context,
+                        ),
+                        .local_module_mixin => {
+                            const target = decodeLocalModuleCallable(callable) orelse
+                                return self.metaApplyMixinFailure(span);
+                            try self.invokeLocalModuleMixin(
+                                target,
+                                &forwarded,
+                                caller_scope,
+                                content_block,
+                                content_parameters,
+                                span,
+                                depth,
+                                context,
+                            );
+                        },
+                        else => unreachable,
+                    }
                     return;
                 },
                 .builtin_mixin => {
@@ -2909,20 +2925,24 @@ const Engine = struct {
                         },
                     }
                 },
-                .local_module_mixin => return self.localModuleMixinCallableUseFailure(span),
                 .builtin_function,
                 .user_function,
                 .local_module_function,
-                => {
-                    try self.report(
-                        .type_mismatch,
-                        span,
-                        "native Sass meta.apply() requires a mixin reference",
-                    );
-                    return error.InvalidExpression;
-                },
+                => return self.metaApplyMixinFailure(span),
             }
         }
+    }
+
+    fn metaApplyMixinFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .type_mismatch,
+            span,
+            "native Sass meta.apply() requires a mixin reference",
+        ) catch |err| return err;
+        return error.InvalidExpression;
     }
 
     fn callUserMixin(
@@ -2984,8 +3004,37 @@ const Engine = struct {
             span,
         );
         defer evaluated.deinit();
+        try self.invokeLocalModuleMixin(
+            target,
+            &evaluated,
+            caller_scope,
+            content_block,
+            content_parameters,
+            span,
+            depth,
+            context,
+        );
+    }
+
+    fn invokeLocalModuleMixin(
+        self: *Engine,
+        target: LocalCallableTarget,
+        evaluated: *const EvaluatedCallArguments,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        if (target.module_index >= self.local_modules.items.len) {
+            return self.metaApplyMixinFailure(span);
+        }
         const module_engine = self.local_modules.items[target.module_index].engine;
-        var cloned = try self.cloneEvaluatedArgumentsInto(module_engine, &evaluated, span);
+        if (target.callable_id >= module_engine.user_mixins.items.len) {
+            return self.metaApplyMixinFailure(span);
+        }
+        var cloned = try self.cloneEvaluatedArgumentsInto(module_engine, evaluated, span);
         defer cloned.deinit();
         try module_engine.invokeUserMixin(
             target.callable_id,
@@ -3020,7 +3069,12 @@ const Engine = struct {
             try self.report(.syntax, span, "native Sass mixin does not accept a content block");
             return error.InvalidSassSyntax;
         }
-        var bound = try self.bindCallableArguments(mixin.parameters, evaluated, span);
+        var bound = try self.bindCallableArguments(
+            mixin.parameters,
+            evaluated,
+            span,
+            .mixin,
+        );
         defer bound.deinit();
 
         const previous_mixin_body = self.active_mixin_body;
@@ -3160,6 +3214,7 @@ const Engine = struct {
             invocation.parameters,
             evaluated,
             span,
+            .function,
         );
         defer bound.deinit();
 
@@ -3397,7 +3452,12 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         if (function_id >= self.user_functions.items.len) return error.InvalidSassSyntax;
         const function = &self.user_functions.items[function_id];
-        var bound = try self.bindCallableArguments(function.parameters, evaluated, span);
+        var bound = try self.bindCallableArguments(
+            function.parameters,
+            evaluated,
+            span,
+            .function,
+        );
         defer bound.deinit();
 
         const previous_mixin_body = self.active_mixin_body;
@@ -4997,7 +5057,12 @@ const Engine = struct {
                 .default_value = null,
             },
         };
-        var bound = try self.bindCallableArguments(&parameters, &evaluated, span);
+        var bound = try self.bindCallableArguments(
+            &parameters,
+            &evaluated,
+            span,
+            .function,
+        );
         defer bound.deinit();
 
         const condition = bound.values[0].?;
@@ -10878,7 +10943,12 @@ const Engine = struct {
                 .rest = true,
             },
         };
-        var bound = try self.bindCallableArguments(&parameters, evaluated, span);
+        var bound = try self.bindCallableArguments(
+            &parameters,
+            evaluated,
+            span,
+            .function,
+        );
         defer bound.deinit();
 
         if (!module_owned) {
@@ -18672,6 +18742,31 @@ const Engine = struct {
             .fade_out,
             => self.callColorManipulation(builtin, raw, arguments, scope, span),
             else => unreachable,
+        };
+    }
+
+    fn callableArgumentsFailure(
+        self: *Engine,
+        failure: native_arguments.Error,
+        span: native_source.Span,
+        kind: CallableBindingKind,
+    ) Error {
+        if (kind == .function) return self.argumentsFailure(failure, span);
+        const message: []const u8 = switch (failure) {
+            error.ArgumentLimitExceeded => "native Sass mixin argument limit exceeded",
+            error.InvalidArgument => "invalid native Sass mixin argument",
+            error.MissingArgument => "required native Sass mixin argument is missing",
+            error.PositionalLimitExceeded => "native Sass mixin received too many positional arguments",
+            else => return self.argumentsFailure(failure, span),
+        };
+        self.report(
+            if (failure == error.ArgumentLimitExceeded) .resource_limit else .invalid_operation,
+            span,
+            message,
+        ) catch |err| return err;
+        return switch (failure) {
+            error.ArgumentLimitExceeded => error.FunctionArgumentLimitExceeded,
+            else => error.InvalidExpression,
         };
     }
 
