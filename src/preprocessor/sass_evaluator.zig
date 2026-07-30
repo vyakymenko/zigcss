@@ -5438,6 +5438,19 @@ const Engine = struct {
                         span,
                     );
                 }
+                for (ranges.items) |range| {
+                    if (!std.mem.endsWith(
+                        u8,
+                        trimWhitespace(body[range.start..range.end]),
+                        "...",
+                    )) continue;
+                    return try self.callDirectLegacyColorGrayscaleRaw(
+                        body,
+                        ranges.items,
+                        scope,
+                        span,
+                    );
+                }
                 return try self.callFixedBuiltinRaw(
                     builtin,
                     false,
@@ -16724,6 +16737,22 @@ const Engine = struct {
         defer evaluated.deinit();
         return (try self.invokeColorGrayscaleFunction(
             builtinFunctionCallable(.grayscale, .color),
+            &evaluated,
+            span,
+        )) orelse unreachable;
+    }
+
+    fn callDirectLegacyColorGrayscaleRaw(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        var evaluated = try self.evaluateCallArguments(body, ranges, scope, span);
+        defer evaluated.deinit();
+        return (try self.invokeColorGrayscaleFunction(
+            builtinFunctionCallable(.grayscale, null),
             &evaluated,
             span,
         )) orelse unreachable;

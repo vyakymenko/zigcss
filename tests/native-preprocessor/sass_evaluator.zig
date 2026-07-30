@@ -20910,6 +20910,145 @@ fn exerciseDirectColorModuleGrayscaleSplatAllocationFailures(
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Sass expands direct legacy color grayscale splats once in source order" {
+    const input =
+        \\@use "sass:meta";
+        \\$trace: 0;
+        \\@function mark($digit, $value) {
+        \\  $trace: $trace * 10 + $digit !global;
+        \\  @return $value;
+        \\}
+        \\@function forward($args...) {
+        \\  @return grayscale($args...);
+        \\}
+        \\.values {
+        \\  list: grayscale((mark(1, #123456),)...);
+        \\  map: grayscale(("color": mark(2, hwb(240deg 10% 20%)))...);
+        \\  scalar: grayscale(mark(3, hsl(120deg 20% 25%))...);
+        \\  bracketed: grayscale([mark(4, #123456)]...);
+        \\  override: grayscale($color: mark(5, red), ("color": mark(6, #123456))...);
+        \\  rest-positional: forward(#123456);
+        \\  rest-keyword: forward($color: hwb(240deg 10% 20%));
+        \\  transparent: grayscale((transparent,)...);
+        \\  alpha: grayscale((rgba(18, 52, 86, .5),)...);
+        \\  filter-list: grayscale((mark(7, 20%),)...);
+        \\  filter-map: grayscale(("color": mark(8, 30%))...);
+        \\  filter-unit: grayscale((2px,)...);
+        \\  filter-deferred: grayscale((var(--amount),)...);
+        \\  filter-calculation: grayscale((calc(10% + var(--amount)),)...);
+        \\  type-color: meta.type-of(grayscale((#123456,)...));
+        \\  type-filter: meta.type-of(grayscale((20%,)...));
+        \\  trace: $trace;
+        \\}
+    ;
+    var result = try compile(
+        std.testing.allocator,
+        "legacy-color-grayscale-direct-splat.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".values{list:#343434;map:hsl(0,0%,45%);scalar:hsl(120,0%,25%);bracketed:#343434;override:#343434;rest-positional:#343434;rest-keyword:hsl(0,0%,45%);transparent:rgba(0,0,0,0);alpha:rgba(52,52,52,.5);filter-list:grayscale(20%);filter-map:grayscale(30%);filter-unit:grayscale(2px);filter-deferred:grayscale(var(--amount));filter-calculation:grayscale(calc(10% + var(--amount)));type-color:color;type-filter:string;trace:12345678}",
+        result.css(),
+    );
+    const diagnostics = result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 10), diagnostics.len);
+    for (diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    const indented =
+        \\@use "sass:meta" as m
+        \\$trace: 0
+        \\@function mark($digit, $value)
+        \\  $trace: $trace * 10 + $digit !global
+        \\  @return $value
+        \\.sass
+        \\  list: grayscale((mark(1, #123456),)...)
+        \\  map: grayscale((color: mark(2, hwb(240deg 10% 20%)))...)
+        \\  scalar: grayscale(mark(3, hsl(120deg 20% 25%))...)
+        \\  override: grayscale($color: mark(4, red), (color: mark(5, #123456))...)
+        \\  filter: grayscale((mark(6, 20%),)...)
+        \\  deferred: grayscale((var(--amount),)...)
+        \\  type: m.type-of(grayscale((#123456,)...))
+        \\  filter-type: m.type-of(grayscale((20%,)...))
+        \\  trace: $trace
+    ;
+    var sass_result = try compile(
+        std.testing.allocator,
+        "legacy-color-grayscale-direct-splat.sass",
+        indented,
+        .sass,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".sass{list:#343434;map:hsl(0,0%,45%);scalar:hsl(120,0%,25%);override:#343434;filter:grayscale(20%);deferred:grayscale(var(--amount));type:color;filter-type:string;trace:123456}",
+        sass_result.css(),
+    );
+    const sass_diagnostics = sass_result.nativeDiagnostics();
+    try std.testing.expectEqual(@as(usize, 5), sass_diagnostics.len);
+    for (sass_diagnostics) |diagnostic| {
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostic.severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_operation,
+            diagnostic.code,
+        );
+        try std.testing.expectEqualStrings(
+            "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            diagnostic.message,
+        );
+    }
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseDirectLegacyColorGrayscaleSplatAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseDirectLegacyColorGrayscaleSplatAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\.allocation {
+        \\  list: grayscale((#123456,)...);
+        \\  map: grayscale(("color": hsl(120deg 20% 25%))...);
+        \\  filter: grayscale((var(--amount),)...);
+        \\}
+    ;
+    var result = try compile(
+        allocator,
+        "legacy-color-grayscale-direct-splat-allocation.scss",
+        input,
+        .scss,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{list:#343434;map:hsl(120,0%,25%);filter:grayscale(var(--amount))}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 2), result.nativeDiagnostics().len);
+}
+
 test "native Sass meta call invokes color grayscale function references" {
     const input =
         \\@use "sass:meta";
@@ -21173,16 +21312,33 @@ test "native Sass meta call rejects unavailable color grayscale forms arguments 
         );
     }
 
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compile(
+    const legacy_direct_invalid = [_]struct {
+        name: []const u8,
+        invocation: []const u8,
+    }{
+        .{ .name = "legacy-direct-empty-splat", .invocation = "grayscale(()...)" },
+        .{ .name = "legacy-direct-overfull-list-splat", .invocation = "grayscale((#123456, red)...)" },
+        .{ .name = "legacy-direct-unknown-map-splat", .invocation = "grayscale((color: #123456, other: red)...)" },
+        .{ .name = "legacy-direct-invalid-map-key-splat", .invocation = "grayscale((1: #123456)...)" },
+        .{ .name = "legacy-direct-positional-map-duplicate", .invocation = "grayscale(#123456, (color: red)...)" },
+        .{ .name = "legacy-direct-invalid-type", .invocation = "grayscale((true,)...)" },
+        .{ .name = "legacy-direct-modern-color", .invocation = "grayscale((color(display-p3 .1 .2 .3),)...)" },
+        .{ .name = "legacy-direct-rgb-missing", .invocation = "grayscale((rgb(none 0 0),)...)" },
+        .{ .name = "legacy-direct-hsl-missing", .invocation = "grayscale((hsl(none 10% 20%),)...)" },
+        .{ .name = "legacy-direct-hwb-missing", .invocation = "grayscale((hwb(none 10% 20%),)...)" },
+    };
+    for (legacy_direct_invalid) |case| {
+        const input = try std.fmt.allocPrint(
             std.testing.allocator,
-            "legacy-color-grayscale-direct-splat.scss",
-            ".a { value: grayscale((#123456,)...); }",
-            .scss,
-            .{},
-        ),
-    );
+            ".a {{ value: {s}; }}",
+            .{case.invocation},
+        );
+        defer std.testing.allocator.free(input);
+        try std.testing.expectError(
+            error.InvalidExpression,
+            compile(std.testing.allocator, case.name, input, .scss, .{}),
+        );
+    }
 
     try std.testing.expectError(
         error.InvalidExpression,
@@ -21223,6 +21379,16 @@ test "native Sass meta call rejects unavailable color grayscale forms arguments 
             std.testing.allocator,
             "color-grayscale-direct-splat-argument-limit.scss",
             "@use \"sass:color\"; .a { value: color.grayscale((#123456, hsl)...); }",
+            .scss,
+            argument_limits,
+        ),
+    );
+    try std.testing.expectError(
+        error.FunctionArgumentLimitExceeded,
+        compile(
+            std.testing.allocator,
+            "legacy-color-grayscale-direct-splat-argument-limit.scss",
+            ".a { value: grayscale((#123456, red)...); }",
             .scss,
             argument_limits,
         ),

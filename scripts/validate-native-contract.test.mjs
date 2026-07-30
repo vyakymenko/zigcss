@@ -189,6 +189,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('built-in-color-legacy-complement-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-grayscale-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-color-module-grayscale-direct-splat-expansion'), true)
+  assert.equal(sassCore.capabilities.includes('built-in-color-legacy-grayscale-direct-splat-expansion'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-invert-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-opacify-function-invocation'), true)
   assert.equal(sassCore.capabilities.includes('built-in-meta-color-fade-in-function-invocation'), true)
