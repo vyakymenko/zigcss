@@ -24231,6 +24231,306 @@ fn exerciseLegacyAlphaCompoundUnitAllocationFailures(
     try std.testing.expectEqual(@as(usize, 6), result.nativeDiagnostics().len);
 }
 
+const LegacyAlphaModernColorSurface = enum {
+    direct,
+    splat,
+    reflected,
+};
+
+const ExpectedFailureDiagnostic = struct {
+    severity: preprocessor.diagnostics.Severity,
+    code: preprocessor.diagnostics.Code,
+    message: []const u8,
+};
+
+fn expectLegacyAlphaModernColorFailure(
+    allocator: std.mem.Allocator,
+    name: []const u8,
+    input: []const u8,
+    mode: sass.Mode,
+    invocation: []const u8,
+    expected_error: anyerror,
+    expected_diagnostics: []const ExpectedFailureDiagnostic,
+    transaction_limits: evaluator.Limits,
+) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(name, input);
+
+    var parser = try sass.Parser.init(
+        allocator,
+        &sources,
+        source_id,
+        mode,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        transaction_limits,
+        .{},
+    );
+    defer transaction.deinit();
+    sass_evaluator.evaluate(
+        allocator,
+        &sources,
+        &document,
+        &transaction,
+        .{},
+    ) catch |failure| {
+        if (failure == error.OutOfMemory) return error.OutOfMemory;
+        try std.testing.expectEqual(expected_error, failure);
+    };
+
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(expected_diagnostics.len, diagnostics.len);
+    const invocation_start = std.mem.indexOf(u8, input, invocation) orelse
+        return error.TestUnexpectedResult;
+    const invocation_end = invocation_start + invocation.len;
+    for (expected_diagnostics, diagnostics) |expected, diagnostic| {
+        try std.testing.expectEqual(expected.severity, diagnostic.severity);
+        try std.testing.expectEqual(expected.code, diagnostic.code);
+        try std.testing.expectEqualStrings(expected.message, diagnostic.message);
+        try std.testing.expectEqual(source_id, diagnostic.span.source);
+        try std.testing.expectEqual(invocation_start, diagnostic.span.start);
+        try std.testing.expectEqual(invocation_end, diagnostic.span.end);
+    }
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified }),
+    );
+}
+
+fn checkLegacyAlphaModernColorCase(
+    allocator: std.mem.Allocator,
+    function_name: []const u8,
+    modern_color: []const u8,
+    surface: LegacyAlphaModernColorSurface,
+    mode: sass.Mode,
+    expected_error: anyerror,
+    expected_diagnostics: []const ExpectedFailureDiagnostic,
+    transaction_limits: evaluator.Limits,
+) !void {
+    const invocation = switch (surface) {
+        .direct => try std.fmt.allocPrint(
+            allocator,
+            "{s}({s}, .2)",
+            .{ function_name, modern_color },
+        ),
+        .splat => try std.fmt.allocPrint(
+            allocator,
+            "{s}(({s}, .2)...)",
+            .{ function_name, modern_color },
+        ),
+        .reflected => try std.fmt.allocPrint(
+            allocator,
+            "m.call($function, {s}, .2)",
+            .{modern_color},
+        ),
+    };
+    defer allocator.free(invocation);
+
+    const input = switch (mode) {
+        .scss => if (surface == .reflected)
+            try std.fmt.allocPrint(
+                allocator,
+                "@use \"sass:meta\" as m; $function: m.get-function(\"{s}\"); .a {{ value: {s}; }}",
+                .{ function_name, invocation },
+            )
+        else
+            try std.fmt.allocPrint(
+                allocator,
+                ".a {{ value: {s}; }}",
+                .{invocation},
+            ),
+        .sass => if (surface == .reflected)
+            try std.fmt.allocPrint(
+                allocator,
+                "@use \"sass:meta\" as m\n$function: m.get-function(\"{s}\")\n.a\n  value: {s}",
+                .{ function_name, invocation },
+            )
+        else
+            try std.fmt.allocPrint(
+                allocator,
+                ".a\n  value: {s}",
+                .{invocation},
+            ),
+    };
+    defer allocator.free(input);
+    const name = try std.fmt.allocPrint(
+        allocator,
+        "legacy-alpha-modern-color-{s}-{s}-{s}.{s}",
+        .{
+            function_name,
+            @tagName(surface),
+            @tagName(mode),
+            if (mode == .scss) "scss" else "sass",
+        },
+    );
+    defer allocator.free(name);
+
+    try expectLegacyAlphaModernColorFailure(
+        allocator,
+        name,
+        input,
+        mode,
+        invocation,
+        expected_error,
+        expected_diagnostics,
+        transaction_limits,
+    );
+}
+
+test "native Sass legacy alpha functions reject every modern color space with provider diagnostic ownership" {
+    const modern_colors = [_][]const u8{
+        "lab(50% 10 20 / .4)",
+        "lch(50% 20 30deg / .4)",
+        "oklab(50% .1 .2 / .4)",
+        "oklch(50% .1 30deg / .4)",
+        "color(srgb .1 .2 .3 / .4)",
+        "color(srgb-linear .1 .2 .3 / .4)",
+        "color(display-p3 .1 .2 .3 / .4)",
+        "color(a98-rgb .1 .2 .3 / .4)",
+        "color(prophoto-rgb .1 .2 .3 / .4)",
+        "color(rec2020 .1 .2 .3 / .4)",
+        "color(xyz-d50 .1 .2 .3 / .4)",
+        "color(xyz-d65 .1 .2 .3 / .4)",
+        "color(xyz .1 .2 .3 / .4)",
+    };
+    const functions = [_]struct {
+        name: []const u8,
+        message: []const u8,
+    }{
+        .{
+            .name = "opacify",
+            .message = "opacify() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+        },
+        .{
+            .name = "fade-in",
+            .message = "fade-in() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+        },
+        .{
+            .name = "transparentize",
+            .message = "transparentize() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+        },
+        .{
+            .name = "fade-out",
+            .message = "fade-out() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+        },
+    };
+    const surfaces = [_]LegacyAlphaModernColorSurface{
+        .direct,
+        .splat,
+        .reflected,
+    };
+    const modes = [_]sass.Mode{ .scss, .sass };
+
+    for (functions) |function| {
+        const expected = [_]ExpectedFailureDiagnostic{
+            .{
+                .severity = .warning,
+                .code = .invalid_operation,
+                .message = "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+            },
+            .{
+                .severity = .err,
+                .code = .type_mismatch,
+                .message = function.message,
+            },
+        };
+        for (modern_colors) |modern_color| {
+            for (surfaces) |surface| {
+                for (modes) |mode| {
+                    try checkLegacyAlphaModernColorCase(
+                        std.testing.allocator,
+                        function.name,
+                        modern_color,
+                        surface,
+                        mode,
+                        error.InvalidExpression,
+                        &expected,
+                        .{},
+                    );
+                }
+            }
+        }
+    }
+
+    var diagnostic_limits = evaluator.Limits{};
+    diagnostic_limits.diagnostics.max_diagnostics = 1;
+    const limited = [_]ExpectedFailureDiagnostic{.{
+        .severity = .warning,
+        .code = .invalid_operation,
+        .message = "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+    }};
+    try checkLegacyAlphaModernColorCase(
+        std.testing.allocator,
+        "opacify",
+        "color(display-p3 .1 .2 .3 / .4)",
+        .reflected,
+        .scss,
+        error.DiagnosticLimitExceeded,
+        &limited,
+        diagnostic_limits,
+    );
+
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLegacyAlphaModernColorRejectionAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseLegacyAlphaModernColorRejectionAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const expected = [_]ExpectedFailureDiagnostic{
+        .{
+            .severity = .warning,
+            .code = .invalid_operation,
+            .message = "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+        },
+        .{
+            .severity = .err,
+            .code = .type_mismatch,
+            .message = "fade-out() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+        },
+    };
+    try checkLegacyAlphaModernColorCase(
+        allocator,
+        "fade-out",
+        "color(xyz-d50 .1 .2 .3 / .4)",
+        .splat,
+        .sass,
+        error.InvalidExpression,
+        &expected,
+        .{},
+    );
+}
+
 test "native Sass meta call invokes color ie hex str function references" {
     const input =
         \\@use "sass:meta";

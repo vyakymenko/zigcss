@@ -14886,14 +14886,20 @@ const Engine = struct {
         switch (color.space) {
             .rgb, .hsl, .hwb => return color,
             else => {
+                try self.reportDeprecation(
+                    .invalid_operation,
+                    span,
+                    "Global built-in functions are deprecated and will be removed in Dart Sass 3.0.0.",
+                    &.{},
+                );
                 try self.report(
                     .type_mismatch,
                     span,
                     switch (builtin) {
-                        .opacify => "native legacy opacify() supports only RGB, HSL, or HWB colors",
-                        .fade_in => "native legacy fade-in() supports only RGB, HSL, or HWB colors",
-                        .transparentize => "native legacy transparentize() supports only RGB, HSL, or HWB colors",
-                        .fade_out => "native legacy fade-out() supports only RGB, HSL, or HWB colors",
+                        .opacify => "opacify() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+                        .fade_in => "fade-in() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+                        .transparentize => "transparentize() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
+                        .fade_out => "fade-out() is only supported for legacy colors. Please use color.adjust() instead with an explicit $space argument.",
                         else => unreachable,
                     },
                 );
