@@ -191,6 +191,7 @@ const expectedImplementations = Object.freeze([
       'local-use-thirty-eighth-module-reexported-callable-configuration-ownership-foundation',
       'local-use-thirty-ninth-module-reexported-callable-configuration-ownership-foundation',
       'local-use-fortieth-module-reexported-callable-configuration-ownership-foundation',
+      'local-use-forty-first-module-reexported-callable-configuration-ownership-foundation',
       'numeric-arithmetic',
       'canonical-number-serialization',
       'unit-conversion',
