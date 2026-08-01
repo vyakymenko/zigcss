@@ -45375,6 +45375,278 @@ test "native Sass configures a thirty-eighth sibling from re-exported callables"
     try std.testing.expect(sass_result.map() != null);
 }
 
+test "native Sass configures a thirty-ninth sibling from re-exported callables" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const module_names = [_][]const u8{
+        "middle",
+        "third",
+        "fourth",
+        "fifth",
+        "sixth",
+        "seventh",
+        "eighth",
+        "ninth",
+        "tenth",
+        "eleventh",
+        "twelfth",
+        "thirteenth",
+        "fourteenth",
+        "fifteenth",
+        "sixteenth",
+        "seventeenth",
+        "eighteenth",
+        "nineteenth",
+        "twentieth",
+        "twenty-first",
+        "twenty-second",
+        "twenty-third",
+        "twenty-fourth",
+        "twenty-fifth",
+        "twenty-sixth",
+        "twenty-seventh",
+        "twenty-eighth",
+        "twenty-ninth",
+        "thirtieth",
+        "thirty-first",
+        "thirty-second",
+        "thirty-third",
+        "thirty-fourth",
+        "thirty-fifth",
+        "thirty-sixth",
+        "thirty-seventh",
+        "thirty-eighth",
+        "thirty-ninth",
+    };
+    const expected =
+        ".thirty-ninth{direct:4px;nested:6px}.thirty-ninth-internal{value:8px;content:thirty-ninth}.root{direct:10px;enumerated:12px;returned:14px;nested:16px;alias:18px;function-identity:true;owner-identity:true;mixin-content:true}.thirty-ninth-mixin{value:20px;content:root}.alias-mixin{value:22px;content:alias}.state{calls:10}";
+
+    var scss_root: std.ArrayList(u8) = .empty;
+    const scss_writer = scss_root.writer(scratch);
+    try scss_writer.writeAll(
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\@use "owner";
+        \\@use "middle" with ($configured: ("function": owner.$function, "mixin": owner.$mixin));
+        \\@use "_middle.scss" as middle-alias;
+        \\@use "third" with ($configured: middle-alias.$exported);
+        \\
+    );
+    for (module_names[2..], module_names[1 .. module_names.len - 1]) |name, previous| {
+        try scss_writer.print(
+            "@use \"{s}\" with ($configured: {s}.$exported);\n",
+            .{ name, previous },
+        );
+    }
+    try scss_writer.writeAll(
+        \\@use "_thirty-ninth.scss" as thirty-ninth-alias;
+        \\$enumerated: map.get(meta.module-variables("thirty-ninth-alias"), "direct");
+        \\$returned: thirty-ninth.returned();
+        \\$nested: list.nth(map.get(thirty-ninth.$nested, "outer"), 1);
+        \\.root {
+        \\  direct: meta.call(map.get(thirty-ninth.$direct, "function"), 5px);
+        \\  enumerated: meta.call(map.get($enumerated, "function"), 6px);
+        \\  returned: meta.call(map.get($returned, "function"), 7px);
+        \\  nested: meta.call(map.get($nested, "function"), 8px);
+        \\  alias: meta.call(map.get(thirty-ninth-alias.$direct, "function"), 9px);
+        \\  function-identity: map.get(thirty-ninth.$direct, "function") == map.get($returned, "function");
+        \\  owner-identity: owner.$function == map.get(thirty-ninth.$direct, "function");
+        \\  mixin-content: meta.accepts-content(map.get($enumerated, "mixin"));
+        \\}
+        \\@include thirty-ninth.apply(thirty-ninth-mixin, 10px) { content: root; }
+        \\@include thirty-ninth-alias.apply(alias-mixin, 11px) { content: alias; }
+        \\.state { calls: owner.calls(); }
+    );
+
+    var sass_root: std.ArrayList(u8) = .empty;
+    const sass_writer = sass_root.writer(scratch);
+    try sass_writer.writeAll(
+        \\@use "sass:list" as list
+        \\@use "sass:map" as map
+        \\@use "sass:meta" as meta
+        \\@use "legacy-owner" as owner
+        \\@use "legacy-middle" with ($configured: ("function": owner.$function, "mixin": owner.$mixin))
+        \\@use "_legacy-middle.sass" as middle-alias
+        \\@use "legacy-third" with ($configured: middle-alias.$exported)
+        \\
+    );
+    for (module_names[2..], module_names[1 .. module_names.len - 1]) |name, previous| {
+        try sass_writer.print(
+            "@use \"legacy-{s}\" with ($configured: legacy-{s}.$exported)\n",
+            .{ name, previous },
+        );
+    }
+    try sass_writer.writeAll(
+        \\@use "_legacy-thirty-ninth.sass" as thirty-ninth-alias
+        \\$enumerated: map.get(meta.module-variables("thirty-ninth-alias"), "direct")
+        \\$returned: legacy-thirty-ninth.returned()
+        \\$nested: list.nth(map.get(legacy-thirty-ninth.$nested, "outer"), 1)
+        \\.root
+        \\  direct: meta.call(map.get(legacy-thirty-ninth.$direct, "function"), 5px)
+        \\  enumerated: meta.call(map.get($enumerated, "function"), 6px)
+        \\  returned: meta.call(map.get($returned, "function"), 7px)
+        \\  nested: meta.call(map.get($nested, "function"), 8px)
+        \\  alias: meta.call(map.get(thirty-ninth-alias.$direct, "function"), 9px)
+        \\  function-identity: map.get(legacy-thirty-ninth.$direct, "function") == map.get($returned, "function")
+        \\  owner-identity: owner.$function == map.get(legacy-thirty-ninth.$direct, "function")
+        \\  mixin-content: meta.accepts-content(map.get($enumerated, "mixin"))
+        \\@include legacy-thirty-ninth.apply(thirty-ninth-mixin, 10px)
+        \\  content: root
+        \\@include thirty-ninth-alias.apply(alias-mixin, 11px)
+        \\  content: alias
+        \\.state
+        \\  calls: owner.calls()
+    );
+
+    const pass_through_scss = "$configured: null !default; $exported: $configured;";
+    const pass_through_sass =
+        \\$configured: null !default
+        \\$exported: $configured
+    ;
+    const owner_scss =
+        \\@use "sass:meta";
+        \\$calls: 0;
+        \\@function double($value) {
+        \\  $calls: $calls + 1 !global;
+        \\  @return $value * 2;
+        \\}
+        \\@function calls() { @return $calls; }
+        \\@mixin emit($name, $value) {
+        \\  .#{$name} { value: double($value); @content; }
+        \\}
+        \\$function: meta.get-function("double");
+        \\$mixin: meta.get-mixin("emit");
+    ;
+    const terminal_scss =
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\$configured: null !default;
+        \\$direct: $configured;
+        \\$nested: ("outer": ($configured,));
+        \\@function returned() { @return $configured; }
+        \\@function invoke($value) { @return meta.call(map.get($configured, "function"), $value); }
+        \\@mixin apply($name, $value) {
+        \\  @include meta.apply(map.get($configured, "mixin"), $name, $value) { @content; }
+        \\}
+        \\.thirty-ninth {
+        \\  direct: invoke(2px);
+        \\  nested: meta.call(map.get(list.nth(map.get($nested, "outer"), 1), "function"), 3px);
+        \\}
+        \\@include apply(thirty-ninth-internal, 4px) { content: thirty-ninth; }
+    ;
+    const owner_sass =
+        \\@use "sass:meta" as meta
+        \\$calls: 0
+        \\@function double($value)
+        \\  $calls: $calls + 1 !global
+        \\  @return $value * 2
+        \\@function calls()
+        \\  @return $calls
+        \\@mixin emit($name, $value)
+        \\  .#{$name}
+        \\    value: double($value)
+        \\    @content
+        \\$function: meta.get-function("double")
+        \\$mixin: meta.get-mixin("emit")
+    ;
+    const terminal_sass =
+        \\@use "sass:list" as list
+        \\@use "sass:map" as map
+        \\@use "sass:meta" as meta
+        \\$configured: null !default
+        \\$direct: $configured
+        \\$nested: ("outer": ($configured,))
+        \\@function returned()
+        \\  @return $configured
+        \\@function invoke($value)
+        \\  @return meta.call(map.get($configured, "function"), $value)
+        \\@mixin apply($name, $value)
+        \\  @include meta.apply(map.get($configured, "mixin"), $name, $value)
+        \\    @content
+        \\.thirty-ninth
+        \\  direct: invoke(2px)
+        \\  nested: meta.call(map.get(list.nth(map.get($nested, "outer"), 1), "function"), 3px)
+        \\@include apply(thirty-ninth-internal, 4px)
+        \\  content: thirty-ninth
+    ;
+
+    var files: [78]LocalUseFile = undefined;
+    files[0] = .{ .name = "_owner.scss", .contents = owner_scss };
+    for (module_names[0 .. module_names.len - 1], 1..) |name, index| {
+        files[index] = .{
+            .name = try std.fmt.allocPrint(scratch, "_{s}.scss", .{name}),
+            .contents = pass_through_scss,
+        };
+    }
+    files[38] = .{ .name = "_thirty-ninth.scss", .contents = terminal_scss };
+    files[39] = .{ .name = "_legacy-owner.sass", .contents = owner_sass };
+    for (module_names[0 .. module_names.len - 1], 40..) |name, index| {
+        files[index] = .{
+            .name = try std.fmt.allocPrint(scratch, "_legacy-{s}.sass", .{name}),
+            .contents = pass_through_sass,
+        };
+    }
+    files[77] = .{ .name = "_legacy-thirty-ninth.sass", .contents = terminal_sass };
+
+    var result = try compileWithLocalUseFiles(
+        allocator,
+        "thirty-ninth-callable-configuration.scss",
+        scss_root.items,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(expected, result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 39), result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(u8, result.dependencies()[0].url, "/_owner.scss"));
+    for (module_names[0 .. module_names.len - 1], result.dependencies()[1..38]) |name, dependency| {
+        const suffix = try std.fmt.allocPrint(scratch, "/_{s}.scss", .{name});
+        try std.testing.expect(std.mem.endsWith(u8, dependency.url, suffix));
+    }
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[38].url,
+        "/_thirty-ninth.scss",
+    ));
+    try std.testing.expectEqual(@as(usize, 39), result.edges().len);
+    try std.testing.expect(result.map() != null);
+
+    var sass_result = try compileWithLocalUseFiles(
+        allocator,
+        "thirty-ninth-callable-configuration.sass",
+        sass_root.items,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(expected, sass_result.css());
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 39), sass_result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[0].url,
+        "/_legacy-owner.sass",
+    ));
+    for (module_names[0 .. module_names.len - 1], sass_result.dependencies()[1..38]) |name, dependency| {
+        const suffix = try std.fmt.allocPrint(scratch, "/_legacy-{s}.sass", .{name});
+        try std.testing.expect(std.mem.endsWith(u8, dependency.url, suffix));
+    }
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[38].url,
+        "/_legacy-thirty-ninth.sass",
+    ));
+    try std.testing.expectEqual(@as(usize, 39), sass_result.edges().len);
+    try std.testing.expect(sass_result.map() != null);
+}
+
 test "native Sass configures a fourteenth sibling from re-exported callables" {
     const expected =
         ".fourteenth{direct:4px;nested:6px}.fourteenth-internal{value:8px;content:fourteenth}.root{direct:10px;enumerated:12px;returned:14px;nested:16px;alias:18px;function-identity:true;owner-identity:true;mixin-content:true}.fourteenth-mixin{value:20px;content:root}.alias-mixin{value:22px;content:alias}.state{calls:10}";
@@ -47333,6 +47605,10 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
         },
         .{
             .name = "_thirty-ninth.scss",
+            .contents = "$theme: null !default; $exported: $theme;",
+        },
+        .{
+            .name = "_fortieth.scss",
             .contents = "$theme: null !default;",
         },
     };
@@ -47383,7 +47659,7 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
         },
         .{
             .name = "recursive-local-module-callable-reexport.scss",
-            .input = "@use \"first\"; @use \"tokens\" with ($theme: first.$callback); @use \"third\" with ($theme: tokens.$theme); @use \"fourth\" with ($theme: third.$exported); @use \"fifth\" with ($theme: fourth.$exported); @use \"sixth\" with ($theme: fifth.$exported); @use \"seventh\" with ($theme: sixth.$exported); @use \"eighth\" with ($theme: seventh.$exported); @use \"ninth\" with ($theme: eighth.$exported); @use \"tenth\" with ($theme: ninth.$exported); @use \"eleventh\" with ($theme: tenth.$exported); @use \"twelfth\" with ($theme: eleventh.$exported); @use \"thirteenth\" with ($theme: twelfth.$exported); @use \"fourteenth\" with ($theme: thirteenth.$exported); @use \"fifteenth\" with ($theme: fourteenth.$exported); @use \"sixteenth\" with ($theme: fifteenth.$exported); @use \"seventeenth\" with ($theme: sixteenth.$exported); @use \"eighteenth\" with ($theme: seventeenth.$exported); @use \"nineteenth\" with ($theme: eighteenth.$exported); @use \"twentieth\" with ($theme: nineteenth.$exported); @use \"twenty-first\" with ($theme: twentieth.$exported); @use \"twenty-second\" with ($theme: twenty-first.$exported); @use \"twenty-third\" with ($theme: twenty-second.$exported); @use \"twenty-fourth\" with ($theme: twenty-third.$exported); @use \"twenty-fifth\" with ($theme: twenty-fourth.$exported); @use \"twenty-sixth\" with ($theme: twenty-fifth.$exported); @use \"twenty-seventh\" with ($theme: twenty-sixth.$exported); @use \"twenty-eighth\" with ($theme: twenty-seventh.$exported); @use \"twenty-ninth\" with ($theme: twenty-eighth.$exported); @use \"thirtieth\" with ($theme: twenty-ninth.$exported); @use \"thirty-first\" with ($theme: thirtieth.$exported); @use \"thirty-second\" with ($theme: thirty-first.$exported); @use \"thirty-third\" with ($theme: thirty-second.$exported); @use \"thirty-fourth\" with ($theme: thirty-third.$exported); @use \"thirty-fifth\" with ($theme: thirty-fourth.$exported); @use \"thirty-sixth\" with ($theme: thirty-fifth.$exported); @use \"thirty-seventh\" with ($theme: thirty-sixth.$exported); @use \"thirty-eighth\" with ($theme: thirty-seventh.$exported); @use \"thirty-ninth\" with ($theme: thirty-eighth.$exported);",
+            .input = "@use \"first\"; @use \"tokens\" with ($theme: first.$callback); @use \"third\" with ($theme: tokens.$theme); @use \"fourth\" with ($theme: third.$exported); @use \"fifth\" with ($theme: fourth.$exported); @use \"sixth\" with ($theme: fifth.$exported); @use \"seventh\" with ($theme: sixth.$exported); @use \"eighth\" with ($theme: seventh.$exported); @use \"ninth\" with ($theme: eighth.$exported); @use \"tenth\" with ($theme: ninth.$exported); @use \"eleventh\" with ($theme: tenth.$exported); @use \"twelfth\" with ($theme: eleventh.$exported); @use \"thirteenth\" with ($theme: twelfth.$exported); @use \"fourteenth\" with ($theme: thirteenth.$exported); @use \"fifteenth\" with ($theme: fourteenth.$exported); @use \"sixteenth\" with ($theme: fifteenth.$exported); @use \"seventeenth\" with ($theme: sixteenth.$exported); @use \"eighteenth\" with ($theme: seventeenth.$exported); @use \"nineteenth\" with ($theme: eighteenth.$exported); @use \"twentieth\" with ($theme: nineteenth.$exported); @use \"twenty-first\" with ($theme: twentieth.$exported); @use \"twenty-second\" with ($theme: twenty-first.$exported); @use \"twenty-third\" with ($theme: twenty-second.$exported); @use \"twenty-fourth\" with ($theme: twenty-third.$exported); @use \"twenty-fifth\" with ($theme: twenty-fourth.$exported); @use \"twenty-sixth\" with ($theme: twenty-fifth.$exported); @use \"twenty-seventh\" with ($theme: twenty-sixth.$exported); @use \"twenty-eighth\" with ($theme: twenty-seventh.$exported); @use \"twenty-ninth\" with ($theme: twenty-eighth.$exported); @use \"thirtieth\" with ($theme: twenty-ninth.$exported); @use \"thirty-first\" with ($theme: thirtieth.$exported); @use \"thirty-second\" with ($theme: thirty-first.$exported); @use \"thirty-third\" with ($theme: thirty-second.$exported); @use \"thirty-fourth\" with ($theme: thirty-third.$exported); @use \"thirty-fifth\" with ($theme: thirty-fourth.$exported); @use \"thirty-sixth\" with ($theme: thirty-fifth.$exported); @use \"thirty-seventh\" with ($theme: thirty-sixth.$exported); @use \"thirty-eighth\" with ($theme: thirty-seventh.$exported); @use \"thirty-ninth\" with ($theme: thirty-eighth.$exported); @use \"fortieth\" with ($theme: thirty-ninth.$exported);",
             .expected = error.UnsupportedFeature,
         },
         .{
@@ -47615,13 +47891,13 @@ test "native Sass local use configuration owns diagnostics without partial CSS" 
     );
 }
 
-test "native Sass rejects thirty-ninth configured callable re-export hop without partial CSS" {
+test "native Sass rejects fortieth configured callable re-export hop without partial CSS" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
     const input =
-        "@use \"owner\"; @use \"middle\" with ($configured: owner.$function); @use \"third\" with ($configured: middle.$exported); @use \"fourth\" with ($configured: third.$exported); @use \"fifth\" with ($configured: fourth.$exported); @use \"sixth\" with ($configured: fifth.$exported); @use \"seventh\" with ($configured: sixth.$exported); @use \"eighth\" with ($configured: seventh.$exported); @use \"ninth\" with ($configured: eighth.$exported); @use \"tenth\" with ($configured: ninth.$exported); @use \"eleventh\" with ($configured: tenth.$exported); @use \"twelfth\" with ($configured: eleventh.$exported); @use \"thirteenth\" with ($configured: twelfth.$exported); @use \"fourteenth\" with ($configured: thirteenth.$exported); @use \"fifteenth\" with ($configured: fourteenth.$exported); @use \"sixteenth\" with ($configured: fifteenth.$exported); @use \"seventeenth\" with ($configured: sixteenth.$exported); @use \"eighteenth\" with ($configured: seventeenth.$exported); @use \"nineteenth\" with ($configured: eighteenth.$exported); @use \"twentieth\" with ($configured: nineteenth.$exported); @use \"twenty-first\" with ($configured: twentieth.$exported); @use \"twenty-second\" with ($configured: twenty-first.$exported); @use \"twenty-third\" with ($configured: twenty-second.$exported); @use \"twenty-fourth\" with ($configured: twenty-third.$exported); @use \"twenty-fifth\" with ($configured: twenty-fourth.$exported); @use \"twenty-sixth\" with ($configured: twenty-fifth.$exported); @use \"twenty-seventh\" with ($configured: twenty-sixth.$exported); @use \"twenty-eighth\" with ($configured: twenty-seventh.$exported); @use \"twenty-ninth\" with ($configured: twenty-eighth.$exported); @use \"thirtieth\" with ($configured: twenty-ninth.$exported); @use \"thirty-first\" with ($configured: thirtieth.$exported); @use \"thirty-second\" with ($configured: thirty-first.$exported); @use \"thirty-third\" with ($configured: thirty-second.$exported); @use \"thirty-fourth\" with ($configured: thirty-third.$exported); @use \"thirty-fifth\" with ($configured: thirty-fourth.$exported); @use \"thirty-sixth\" with ($configured: thirty-fifth.$exported); @use \"thirty-seventh\" with ($configured: thirty-sixth.$exported); @use \"thirty-eighth\" with ($configured: thirty-seventh.$exported); @use \"thirty-ninth\" with ($configured: thirty-eighth.$exported); .unreachable { color: red; }";
+        "@use \"owner\"; @use \"middle\" with ($configured: owner.$function); @use \"third\" with ($configured: middle.$exported); @use \"fourth\" with ($configured: third.$exported); @use \"fifth\" with ($configured: fourth.$exported); @use \"sixth\" with ($configured: fifth.$exported); @use \"seventh\" with ($configured: sixth.$exported); @use \"eighth\" with ($configured: seventh.$exported); @use \"ninth\" with ($configured: eighth.$exported); @use \"tenth\" with ($configured: ninth.$exported); @use \"eleventh\" with ($configured: tenth.$exported); @use \"twelfth\" with ($configured: eleventh.$exported); @use \"thirteenth\" with ($configured: twelfth.$exported); @use \"fourteenth\" with ($configured: thirteenth.$exported); @use \"fifteenth\" with ($configured: fourteenth.$exported); @use \"sixteenth\" with ($configured: fifteenth.$exported); @use \"seventeenth\" with ($configured: sixteenth.$exported); @use \"eighteenth\" with ($configured: seventeenth.$exported); @use \"nineteenth\" with ($configured: eighteenth.$exported); @use \"twentieth\" with ($configured: nineteenth.$exported); @use \"twenty-first\" with ($configured: twentieth.$exported); @use \"twenty-second\" with ($configured: twenty-first.$exported); @use \"twenty-third\" with ($configured: twenty-second.$exported); @use \"twenty-fourth\" with ($configured: twenty-third.$exported); @use \"twenty-fifth\" with ($configured: twenty-fourth.$exported); @use \"twenty-sixth\" with ($configured: twenty-fifth.$exported); @use \"twenty-seventh\" with ($configured: twenty-sixth.$exported); @use \"twenty-eighth\" with ($configured: twenty-seventh.$exported); @use \"twenty-ninth\" with ($configured: twenty-eighth.$exported); @use \"thirtieth\" with ($configured: twenty-ninth.$exported); @use \"thirty-first\" with ($configured: thirtieth.$exported); @use \"thirty-second\" with ($configured: thirty-first.$exported); @use \"thirty-third\" with ($configured: thirty-second.$exported); @use \"thirty-fourth\" with ($configured: thirty-third.$exported); @use \"thirty-fifth\" with ($configured: thirty-fourth.$exported); @use \"thirty-sixth\" with ($configured: thirty-fifth.$exported); @use \"thirty-seventh\" with ($configured: thirty-sixth.$exported); @use \"thirty-eighth\" with ($configured: thirty-seventh.$exported); @use \"thirty-ninth\" with ($configured: thirty-eighth.$exported); @use \"fortieth\" with ($configured: thirty-ninth.$exported); .unreachable { color: red; }";
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_owner.scss",
@@ -47777,6 +48053,10 @@ test "native Sass rejects thirty-ninth configured callable re-export hop without
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_thirty-ninth.scss",
+        .data = "$configured: null !default; $exported: $configured;",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_fortieth.scss",
         .data = "$configured: null !default;",
     });
     const base = try tmp.dir.realpathAlloc(allocator, ".");
@@ -47826,7 +48106,7 @@ test "native Sass rejects thirty-ninth configured callable re-export hop without
         "native Sass local module configuration only supports built-ins and callables owned by an already retained sibling module",
         diagnostics[0].message,
     );
-    const reexport = "thirty-eighth.$exported";
+    const reexport = "thirty-ninth.$exported";
     const reexport_start = std.mem.indexOf(u8, input, reexport).?;
     try std.testing.expectEqual(source_id, diagnostics[0].span.source);
     try std.testing.expectEqual(
@@ -50999,6 +51279,7 @@ fn exerciseLocalUseAllocationFailures(
         \\@use "thirty-sixth" with ($configured: thirty-fifth.$configured-export);
         \\@use "thirty-seventh" with ($configured: thirty-sixth.$configured-export);
         \\@use "thirty-eighth" with ($configured: thirty-seventh.$configured-export);
+        \\@use "thirty-ninth" with ($configured: thirty-eighth.$configured-export);
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -51613,6 +51894,13 @@ test "native Sass local use handles every allocation failure" {
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_thirty-eighth.scss",
+        .data =
+        \\$configured: null !default;
+        \\$configured-export: $configured;
+        ,
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_thirty-ninth.scss",
         .data =
         \\$configured: null !default;
         \\$configured-export: $configured;
