@@ -778,7 +778,12 @@ const LocalCallableTarget = struct {
 
 const local_callable_component_bits = 16;
 const local_callable_component_mask: u32 = (1 << local_callable_component_bits) - 1;
-const max_configurable_reexport_depth: u16 = 60;
+
+/// Fixed resource boundary for transporting a retained sibling's callable
+/// through module configuration. Depth zero is the original owning module;
+/// depth 60 may configure the terminal sixty-second module, while the next
+/// re-export is rejected before evaluation or CSS emission.
+pub const max_configurable_callable_reexport_depth: u16 = 60;
 
 fn localModuleCallable(
     kind: native_value.CallableKind,
@@ -863,7 +868,7 @@ fn remapLocalModuleConfigurationCallable(
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
         .local_module_function, .local_module_mixin => if (callable.reexport_depth >
-            max_configurable_reexport_depth)
+            max_configurable_callable_reexport_depth)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index < context) callable else null
@@ -1576,7 +1581,7 @@ const Engine = struct {
             .callable => |callable| switch (callable.kind) {
                 .builtin_function, .builtin_mixin => true,
                 .local_module_function, .local_module_mixin => if (callable.reexport_depth >
-                    max_configurable_reexport_depth)
+                    max_configurable_callable_reexport_depth)
                     false
                 else if (decodeLocalModuleCallable(callable)) |target|
                     self.localModuleCallableExists(target, callable.kind)
