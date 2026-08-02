@@ -149,6 +149,7 @@ const expectedImplementations = Object.freeze([
       'local-use-variable-enumeration-foundation',
       'local-use-callable-variable-ownership-foundation',
       'local-use-callable-argument-ownership-foundation',
+      'local-use-caller-callable-argument-ownership-foundation',
       'local-use-callable-result-ownership-foundation',
       'local-use-configuration-foundation',
       'local-use-built-in-callable-configuration-ownership-foundation',

@@ -31,6 +31,8 @@ pub const CallableKind = enum {
     builtin_mixin,
     user_function,
     mixin,
+    parent_function,
+    parent_mixin,
     local_module_function,
     local_module_mixin,
 };

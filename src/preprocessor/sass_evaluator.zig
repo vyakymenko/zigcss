@@ -817,6 +817,14 @@ fn remapLocalModuleOwnedCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
+        .parent_function => if (callable.reexport_depth == 0 and callable.id < hard_callables)
+            .{ .kind = .user_function, .id = callable.id }
+        else
+            null,
+        .parent_mixin => if (callable.reexport_depth == 0 and callable.id < hard_callables)
+            .{ .kind = .mixin, .id = callable.id }
+        else
+            null,
         .user_function => if (callable.id < hard_callables)
             localModuleCallable(.local_module_function, .{
                 .module_index = context,
@@ -856,7 +864,13 @@ fn remapLocalModuleExportCallable(
                 null
         else
             null,
-        .builtin_function, .builtin_mixin, .user_function, .mixin => null,
+        .builtin_function,
+        .builtin_mixin,
+        .user_function,
+        .mixin,
+        .parent_function,
+        .parent_mixin,
+        => null,
     };
 }
 
@@ -874,7 +888,7 @@ fn remapLocalModuleConfigurationCallable(
             if (target.module_index < context) callable else null
         else
             null,
-        .user_function, .mixin => null,
+        .user_function, .mixin, .parent_function, .parent_mixin => null,
     };
 }
 
@@ -885,6 +899,14 @@ fn remapLocalModuleArgumentCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
+        .user_function => if (callable.reexport_depth == 0 and callable.id < hard_callables)
+            .{ .kind = .parent_function, .id = callable.id }
+        else
+            null,
+        .mixin => if (callable.reexport_depth == 0 and callable.id < hard_callables)
+            .{ .kind = .parent_mixin, .id = callable.id }
+        else
+            null,
         .local_module_function => if (callable.reexport_depth != 0)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
@@ -903,7 +925,7 @@ fn remapLocalModuleArgumentCallable(
                 null
         else
             null,
-        .user_function, .mixin => null,
+        .parent_function, .parent_mixin => null,
     };
 }
 
@@ -1587,7 +1609,11 @@ const Engine = struct {
                     self.localModuleCallableExists(target, callable.kind)
                 else
                     false,
-                .user_function, .mixin => false,
+                .user_function,
+                .mixin,
+                .parent_function,
+                .parent_mixin,
+                => false,
             },
             .list => |list| blk: {
                 for (list.items) |item| {
@@ -2149,6 +2175,8 @@ const Engine = struct {
             .builtin_mixin,
             .user_function,
             .mixin,
+            .parent_function,
+            .parent_mixin,
             => false,
         };
     }
@@ -2399,6 +2427,49 @@ const Engine = struct {
             span,
         );
         return self.ownLocalModuleResultValue(target.module_index, result.*, span);
+    }
+
+    fn invokeParentFunction(
+        self: *Engine,
+        function_id: u32,
+        input: *const EvaluatedCallArguments,
+        span: native_source.Span,
+    ) Error!*const native_value.Value {
+        const parent = self.parent_engine orelse return self.metaCallFunctionFailure(span);
+        const module_index = self.parent_module_index orelse
+            return self.metaCallFunctionFailure(span);
+        if (function_id >= parent.user_functions.items.len) {
+            return self.metaCallFunctionFailure(span);
+        }
+        var cloned = try self.cloneEvaluatedArgumentsInto(
+            parent,
+            input,
+            span,
+            .{
+                .context = module_index,
+                .map = remapLocalModuleOwnedCallable,
+            },
+        );
+        defer cloned.deinit();
+        const result = try parent.invokeUserFunction(function_id, &cloned, span);
+        return self.values.ownRemappingCallables(
+            result.*,
+            .{
+                .context = module_index,
+                .map = remapLocalModuleArgumentCallable,
+            },
+        ) catch |failure| switch (failure) {
+            error.InvalidValue => {
+                if (!valueContainsCallable(result.*, 0)) return failure;
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass caller callable result owner is not supported yet",
+                );
+                return error.UnsupportedFeature;
+            },
+            else => return failure,
+        };
     }
 
     fn emitRootComment(self: *Engine, node: *const native_syntax.Node) Error!void {
@@ -3418,7 +3489,7 @@ const Engine = struct {
                 else => return self.metaApplyMixinFailure(span),
             };
             switch (callable.kind) {
-                .mixin, .local_module_mixin => {
+                .mixin, .parent_mixin, .local_module_mixin => {
                     var forwarded = EvaluatedCallArguments{ .allocator = self.allocator };
                     defer forwarded.deinit();
                     for (evaluated.positional.items[positional_start..]) |item| {
@@ -3433,6 +3504,16 @@ const Engine = struct {
                             callable.id,
                             &forwarded,
                             self,
+                            caller_scope,
+                            content_block,
+                            content_parameters,
+                            span,
+                            depth,
+                            context,
+                        ),
+                        .parent_mixin => try self.invokeParentMixin(
+                            callable.id,
+                            &forwarded,
                             caller_scope,
                             content_block,
                             content_parameters,
@@ -3484,6 +3565,7 @@ const Engine = struct {
                 },
                 .builtin_function,
                 .user_function,
+                .parent_function,
                 .local_module_function,
                 => return self.metaApplyMixinFailure(span),
             }
@@ -3631,6 +3713,54 @@ const Engine = struct {
             caller_scope,
             content_block,
             content_parameters,
+            span,
+            depth,
+            context,
+        );
+    }
+
+    fn invokeParentMixin(
+        self: *Engine,
+        mixin_id: u32,
+        evaluated: *const EvaluatedCallArguments,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        const parent = self.parent_engine orelse return self.metaApplyMixinFailure(span);
+        const module_index = self.parent_module_index orelse
+            return self.metaApplyMixinFailure(span);
+        if (mixin_id >= parent.user_mixins.items.len) {
+            return self.metaApplyMixinFailure(span);
+        }
+        if (content_block != null or content_parameters.len != 0) {
+            try self.report(
+                .unsupported_feature,
+                span,
+                "native Sass caller mixin content transport is not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        var cloned = try self.cloneEvaluatedArgumentsInto(
+            parent,
+            evaluated,
+            span,
+            .{
+                .context = module_index,
+                .map = remapLocalModuleOwnedCallable,
+            },
+        );
+        defer cloned.deinit();
+        try parent.invokeUserMixin(
+            mixin_id,
+            &cloned,
+            self,
+            caller_scope,
+            null,
+            &.{},
             span,
             depth,
             context,
@@ -11191,8 +11321,17 @@ const Engine = struct {
                 const module_engine = owner.local_modules.items[target.module_index].engine;
                 break :blk module_engine.user_mixins.items[target.callable_id].accepts_content;
             },
+            .parent_mixin => blk: {
+                const parent = self.parent_engine orelse
+                    return self.metaAcceptsContentTypeFailure(span);
+                if (callable.id >= parent.user_mixins.items.len) {
+                    return self.metaAcceptsContentTypeFailure(span);
+                }
+                break :blk parent.user_mixins.items[callable.id].accepts_content;
+            },
             .builtin_function,
             .user_function,
+            .parent_function,
             .local_module_function,
             => return self.metaAcceptsContentTypeFailure(span),
         };
@@ -11803,6 +11942,7 @@ const Engine = struct {
                 self.invokeUserFunction(callable.id, &forwarded, span)
             else
                 self.metaCallFunctionFailure(span),
+            .parent_function => self.invokeParentFunction(callable.id, &forwarded, span),
             .builtin_function => blk: {
                 if (try self.invokeReflectedLegacyIfFunction(
                     callable,
@@ -12328,7 +12468,11 @@ const Engine = struct {
                 self.invokeLocalModuleFunction(target, &forwarded, span)
             else
                 self.metaCallFunctionFailure(span),
-            .builtin_mixin, .mixin, .local_module_mixin => self.metaCallFunctionFailure(span),
+            .builtin_mixin,
+            .mixin,
+            .parent_mixin,
+            .local_module_mixin,
+            => self.metaCallFunctionFailure(span),
         };
     }
 
@@ -17708,8 +17852,16 @@ const Engine = struct {
             .map => "map",
             .argument_list => "arglist",
             .callable => |callable| switch (callable.kind) {
-                .builtin_mixin, .mixin, .local_module_mixin => "mixin",
-                .builtin_function, .user_function, .local_module_function => "function",
+                .builtin_mixin,
+                .mixin,
+                .parent_mixin,
+                .local_module_mixin,
+                => "mixin",
+                .builtin_function,
+                .user_function,
+                .parent_function,
+                .local_module_function,
+                => "function",
             },
         };
         return self.values.own(.{ .string = .{ .bytes = name } });
@@ -20252,8 +20404,16 @@ const Engine = struct {
         callable: native_value.Callable,
     ) Error!void {
         const kind: []const u8 = switch (callable.kind) {
-            .builtin_function, .user_function, .local_module_function => "function",
-            .builtin_mixin, .mixin, .local_module_mixin => "mixin",
+            .builtin_function,
+            .user_function,
+            .parent_function,
+            .local_module_function,
+            => "function",
+            .builtin_mixin,
+            .mixin,
+            .parent_mixin,
+            .local_module_mixin,
+            => "mixin",
         };
         const name: []const u8 = switch (callable.kind) {
             .user_function => if (callable.id < self.user_functions.items.len)
@@ -20270,6 +20430,20 @@ const Engine = struct {
                 return error.InvalidExpression) {
                 .meta_load_css => "load-css",
                 .meta_apply => "apply",
+            },
+            .parent_function => blk: {
+                const parent = self.parent_engine orelse return error.InvalidExpression;
+                if (callable.id >= parent.user_functions.items.len) {
+                    return error.InvalidExpression;
+                }
+                break :blk parent.user_functions.items[callable.id].name;
+            },
+            .parent_mixin => blk: {
+                const parent = self.parent_engine orelse return error.InvalidExpression;
+                if (callable.id >= parent.user_mixins.items.len) {
+                    return error.InvalidExpression;
+                }
+                break :blk parent.user_mixins.items[callable.id].name;
             },
             .local_module_function => blk: {
                 const target = decodeLocalModuleCallable(callable) orelse
