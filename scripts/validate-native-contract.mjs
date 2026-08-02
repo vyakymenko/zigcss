@@ -3,6 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { validateBuildTestGraph } from './validate-workflows.mjs'
 
 const scriptPath = fileURLToPath(import.meta.url)
 const repositoryRoot = path.resolve(path.dirname(scriptPath), '..')
@@ -774,7 +775,7 @@ export function validateContract(
   validateInternalReachability(contract.implementations, buildFile, productionSources)
   validateNativeImportClosure(contract, productionSources)
 
-  requireText(plan, 'Plan version: 1.3', 'DEVELOPMENT_PLAN.md')
+  requireText(plan, 'Plan version: 1.4', 'DEVELOPMENT_PLAN.md')
   requireText(plan, '## Milestone 10: Self-contained native stylesheet frontends', 'DEVELOPMENT_PLAN.md')
   requireText(plan, '## 17. First self-contained-native autonomous sequence', 'DEVELOPMENT_PLAN.md')
   requireText(decision, '- Status: Accepted', 'ADR-013')
@@ -785,11 +786,11 @@ export function validateContract(
 
   const buildGate = 'npm run test:native-contract && npm run check:native-contract'
   requireText(buildWorkflow, buildGate, 'build workflow')
-  requireText(
-    buildWorkflow,
-    'zig build test-native-preprocessor --summary all',
-    'build workflow',
-  )
+  requireText(buildWorkflow, 'zig build test --summary all', 'build workflow')
+  if (buildWorkflow.includes('zig build test-native-preprocessor --summary all')) {
+    fail('build workflow must not duplicate native frontend coverage before the complete root test graph')
+  }
+  validateBuildTestGraph(buildFile)
   const releaseGate = 'npm run check:native-contract -- --release-tag "$GITHUB_REF_NAME"'
   requireText(releaseWorkflow, releaseGate, 'release workflow')
   requireText(releaseWorkflow, 'npm publish --tag next --provenance', 'release workflow')

@@ -462,16 +462,32 @@ test('requires the native interlock before npm publication preflight', () => {
   )
 })
 
-test('requires the focused native frontend foundation gate in build CI', () => {
+test('requires one complete build graph with every native frontend runner in CI', () => {
   const buildWorkflow = fs.readFileSync(
     path.join(repositoryRoot, '.github/workflows/build.yml'),
     'utf8',
   )
   assert.throws(
-    () => validateContract(loadContract(), { buildWorkflow: buildWorkflow.replace(
-      'zig build test-native-preprocessor --summary all',
+    () => validateContract(loadContract(), { buildWorkflow: buildWorkflow.replaceAll(
       'zig build test --summary all',
+      'zig build test-native-preprocessor --summary all',
     ) }),
-    /build workflow is missing.*test-native-preprocessor/,
+    /build workflow is missing.*zig build test --summary all/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { buildWorkflow: buildWorkflow.replace(
+      'zig build test --summary all',
+      'zig build test-native-preprocessor --summary all\n        run: zig build test --summary all',
+    ) }),
+    /must not duplicate native frontend coverage/,
+  )
+
+  const buildFile = fs.readFileSync(path.join(repositoryRoot, 'build.zig'), 'utf8')
+  assert.throws(
+    () => validateContract(loadContract(), { buildFile: buildFile.replace(
+      '    test_step.dependOn(&run_native_sass_evaluator_tests.step);',
+      '    // removed native Sass evaluator coverage',
+    ) }),
+    /missing native runner run_native_sass_evaluator_tests/,
   )
 })
