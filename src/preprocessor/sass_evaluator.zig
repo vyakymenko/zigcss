@@ -778,7 +778,7 @@ const LocalCallableTarget = struct {
 
 const local_callable_component_bits = 16;
 const local_callable_component_mask: u32 = (1 << local_callable_component_bits) - 1;
-const max_configurable_reexport_depth: u16 = 47;
+const max_configurable_reexport_depth: u16 = 48;
 
 fn localModuleCallable(
     kind: native_value.CallableKind,
