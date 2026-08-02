@@ -1,9 +1,9 @@
 # ZigCSS Development Plan
 
 Status: Approved and in execution
-Plan version: 1.3
+Plan version: 1.4
 Prepared: 2026-07-11  
-Amended: 2026-07-27 (owner-approved xhigh runtime and guarded native publication)
+Amended: 2026-08-02 (owner-approved release-directed convergence and CI throughput control)
 Primary target: a trustworthy, standards-oriented CSS compiler, minifier, Zig library, and CLI  
 Core target release: `0.4.0`
 Preprocessor expansion target: `0.5.0`
@@ -11,7 +11,7 @@ Self-contained native target: `0.6.0`
 
 ## 1. Purpose
 
-This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.3 preserves the completed `0.4.x` CSS recovery and verified unpublished `0.5.x` canonical-preprocessor reference implementation, adds the owner-approved self-contained native frontend program defined by ADR-013, records the xhigh autonomous runtime, and authorizes only the fail-closed native publication path defined below.
+This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.4 preserves the completed `0.4.x` CSS recovery and verified unpublished `0.5.x` canonical-preprocessor reference implementation, the owner-approved self-contained native frontend program defined by ADR-013, the xhigh autonomous runtime, and the fail-closed native publication path. ADR-014 adds finite release-directed convergence and hosted-CI throughput controls so autonomous passes reduce a bounded definition-of-done inventory instead of creating open-ended sibling work.
 
 The current repository is an ambitious prototype. It has useful scaffolding for parsing, optimization, preprocessors, a CLI, an LSP, documentation, packaging, and benchmarks, but the core parser and optimizer are not yet safe enough for production CSS. Development must therefore prioritize correctness and security before new features or performance work.
 
@@ -28,6 +28,7 @@ The following decisions are defaults for the autonomous program. Changing one re
 7. Public performance claims remain withdrawn until benchmarks validate equivalent output using reproducible methodology.
 8. The public compile service remains disabled or strictly isolated until its security gates pass.
 9. A self-contained release may use Zig's standard library and the host operating-system ABI, but stylesheet compilation may not require a language runtime, production package dependency, non-system language library, external executable, child process, runtime download, or network service.
+10. Autonomous progress is measured by closing a finite inventory of release gaps, not by commit count or indefinitely extending a passing numeric boundary. Hosted validation throughput is a release gate and may preempt feature breadth without weakening coverage.
 
 ## 3. Autonomous execution contract
 
@@ -75,6 +76,8 @@ The run may not, without separate explicit authorization:
 
 On 2026-07-27 the owner granted one bounded publication authorization: after `NATIVE-009` proves every native graduation, hosted, release, artifact, provenance, and consumer gate on one immutable candidate already integrated to `origin/main`, the autonomous executor may create and push that candidate's single unused `v*` tag and monitor the existing fail-closed `.github/workflows/release.yml` path through a GitHub prerelease and exact npm `next` publication. This authorization does not revive or publish the provider-backed `0.5.0-rc.1` reference candidate, permit moving or reusing a tag, target npm `latest`, bypass the native machine interlock or workflow, or publish Homebrew, editor-extension, or container channels. Any failed release remains immutable evidence and requires a new ledgered candidate identity before another attempt.
 
+On 2026-08-02 the owner approved ADR-014 and superseded the earlier every-pass `main` integration cadence. The supervisor must still non-force push every clean green checkpoint to the approved recovery branch. It integrates `main` after four green passes, and immediately for `COMPLETE`, a release-candidate gate, or an operator-directed integration. This preserves every checkpoint remotely while giving the bounded hosted Build queue enough time to finish. No publication authority is expanded.
+
 ### 3.4 Work loop
 
 For every work package, the autonomous executor follows this loop:
@@ -90,6 +93,23 @@ For every work package, the autonomous executor follows this loop:
 9. Commit one coherent change with its tests.
 10. Continue to the next unblocked package in dependency order.
 
+### 3.4.1 Release-directed convergence
+
+- `DEVELOPMENT_STATUS.md` owns a finite release-gap inventory. Every active item names its milestone exit criterion, evidence required, dependencies, and a stable lowercase-kebab family code.
+- Each `PROGRESS` pass must reduce or close exactly one named release-gap family and record `ZIGCSS-AUTODEVELOP-GAP: <work-package> <stable-family> <REDUCED|CLOSED>` before its status marker. Commit count, test-count growth, and a moved unsupported boundary are not progress by themselves.
+- A bounded sibling search inspects the exact affected family for omissions; it does not automatically enqueue every discovered sibling.
+- Repeated numeric or ordinal `N+1` expansion is eligible only when a specification, pinned reference provider, data set, or explicit resource contract supplies a predeclared finite terminal bound. Prefer representative lower-bound, terminal-bound, and over-limit coverage or generated parameterization over cloned fixtures for every intermediate value.
+- At most four consecutive `REDUCED` passes may use the same stable family. The next pass is a mandatory convergence review and must report that same family `CLOSED` by establishing and testing its terminal contract, consolidating equivalent evidence, or proving the owning exit criterion is already satisfied. Renaming an unchanged family does not reset the threshold.
+- A convergence review may expose a genuine stop condition, but incomplete local engineering is not a blocker. If closure needs no new authority, the executor makes the safest reversible decision, records it, and continues.
+
+### 3.4.2 CI throughput and checkpoint delivery
+
+- Required coverage may not be weakened, skipped, or silently narrowed to save time. Equivalent parameterization, caching, sharding, and removal of duplicate invocation are allowed when executable policy proves the complete test graph remains owned.
+- A hosted job that reaches 75% of its hard timeout, or repeatedly loses its evidence window to redundant invocations or trigger backlog, preempts new feature breadth until it is brought back under budget.
+- The same semantic suite must not run twice in one hosted job. The root `zig build test` graph owns the native frontend runners; a separate focused native invocation in that same aggregate job is therefore forbidden.
+- The Build workflow uses one non-cancelling concurrency group per ref. GitHub may retain the running job and the newest pending job while superseded queued checkpoints are represented by the recovery branch.
+- Every clean green pass is non-force pushed and read back on the approved recovery branch. `main` is advanced in bounded batches of four green passes, and immediately for completion or release-candidate validation. A push rejection, timeout, drift, or mismatched readback stops integration without rewriting history.
+
 ### 3.5 Stop conditions
 
 Autonomous work pauses rather than guessing when:
@@ -102,6 +122,7 @@ Autonomous work pauses rather than guessing when:
 - The same blocking condition persists after three evidence-gathering attempts.
 - A security issue could be made worse by continuing without review.
 - Tests reveal that an accepted architecture decision is invalid.
+- The mandatory convergence review proves that its release-gap family cannot be closed without new authority, inaccessible external state, or an irreversible product decision.
 
 ## 4. Product contract
 
@@ -809,6 +830,7 @@ tests/preprocessors/native/stylus/
 - Production dependency audit.
 - Bounded preprocessor-host protocol, import confinement, provider smoke, generated-CSS validation, diagnostic, dependency, and source-map tests once Milestone 9 starts.
 - Native migration contract and release interlock, followed by focused native lexer/resolver/evaluator/language tests as their Milestone 10 packages begin.
+- Workflow policy proves the aggregate root test graph still owns every native runner, contains no duplicate native invocation, and retains bounded non-cancelling concurrency.
 - No dirty generated artifacts.
 
 ### Nightly gates
@@ -834,6 +856,7 @@ tests/preprocessors/native/stylus/
 - For a native release, zero production dependencies/optional dependencies, no provider or host files, no compilation child process/network access, and direct-archive plus offline package smokes for all five inputs on every target.
 - Documentation capability matrix generated from the release commit.
 - No unresolved P0 or P1 correctness/security issue.
+- Every required hosted job remains below 75% of its hard timeout on the release commit, or has an approved measured exception with an independently completing equivalent shard.
 
 ## 9. Status tracking
 
@@ -848,6 +871,7 @@ At autonomous start, create `DEVELOPMENT_STATUS.md` with:
 - Known regressions.
 - Next eligible work package.
 - Last full validation result.
+- Finite release-gap inventory with stable family codes, exit-criterion mapping, dependencies, current evidence, and remaining closure work.
 
 Status values:
 
@@ -867,7 +891,7 @@ A package becomes `VERIFIED` only after its focused tests and milestone gates pa
 - Commit tests with the implementation they validate.
 - Do not mix formatting-only rewrites with semantic changes.
 - Never rewrite or discard user-owned changes.
-- Do not push, publish, merge, or deploy without explicit external authorization.
+- Do not push, publish, merge, or deploy without explicit external authorization. Under the recorded 2026-08-02 authorization, the outer supervisor alone pushes every green checkpoint to the recovery branch and integrates `main` in four-pass batches or at completion/release-candidate gates.
 - Recommended commit form: `<type>(<area>): <verified outcome>`.
 - Include the work-package ID in the commit body.
 
@@ -918,6 +942,8 @@ The following decisions are captured or queued under `docs/adr/` during implemen
 - `ADR-010-autonomous-model-requirement.md`
 - `ADR-011-native-plugin-contract.md`
 - `ADR-012-canonical-preprocessor-host.md`
+- `ADR-013-self-contained-native-frontends.md`
+- `ADR-014-autonomous-convergence-and-ci-throughput.md`
 
 ## 13. Release roadmap
 
@@ -1035,6 +1061,7 @@ The autonomous recovery program is complete when:
 - The completed `0.4.x` CSS recovery remains valid independently, but Milestone 9 and the expanded autonomous program are complete only when SCSS, Sass, Less, and Stylus each pass the canonical graduation gate for the exact published provider version.
 - The bounded host, import confinement, diagnostics, dependencies, two-stage source maps, canonical corpora, generated-CSS validation, deterministic CLI/batch/watch/parallel behavior, clean/offline package installation, audits, SBOM/provenance, and public compatibility metadata all pass on one immutable unpublished `0.5.0-rc.1` reference commit.
 - The owner-expanded native program is complete only when Milestone 10 passes on one self-contained release commit: all five languages use native Zig paths, production package dependencies are zero, compile runtime child/network/provider boundaries are absent, and cross-platform direct/archive/package/API evidence is green.
+- The finite release-gap inventory is empty, no convergence review remains open, and the final hosted validation completes within the recorded CI runtime budget.
 
 ## 15. First autonomous sequence
 
@@ -1088,4 +1115,4 @@ Milestone 9 is verified as an unpublished reference. After the 2026-07-17 owner 
 11. Complete `NATIVE-008`: graduate machine rows and update every public claim, example, guide, website input/output panel, and changelog from executable evidence.
 12. Complete `NATIVE-009`: choose an unused native candidate identity, run the complete local/hosted/release matrix, enable the native release interlock only after all gates pass, ensure the exact candidate is integrated to `origin/main`, then use the 2026-07-27 owner authorization to push its single immutable tag and verify the existing workflow's GitHub prerelease plus npm `next` publication. Never revive `0.5.0-rc.1`, move a tag, target npm `latest`, bypass a failed gate, or publish another channel.
 
-Every native package uses the existing common work loop and an additional compatibility rule: the canonical provider path may judge a native result but may not enter production bytes or runtime execution. A partial native implementation remains internal and unavailable rather than replacing a verified reference path.
+Every native package uses the existing common work loop and two additional rules: the canonical provider path may judge a native result but may not enter production bytes or runtime execution; and every pass must reduce a finite release-gap family under section 3.4.1 rather than extend an open-ended sibling sequence. A partial native implementation remains internal and unavailable rather than replacing a verified reference path.

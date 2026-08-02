@@ -13,6 +13,7 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 
 PLAN="$ROOT/DEVELOPMENT_PLAN.md"
 STATUS="$ROOT/DEVELOPMENT_STATUS.md"
+MAIN_BATCH_PASSES="${ZIGCSS_AUTODEVELOP_MAIN_BATCH_PASSES:-4}"
 
 for required in "$PLAN" "$STATUS"; do
   if [[ ! -f "$required" ]]; then
@@ -92,6 +93,14 @@ printf 'Runtime model selection is app state and must be checked by the active C
 
 section 'current ledger work'
 ledger_section 'Current work'
+
+section 'release convergence control'
+if [[ -f "$ROOT/.autodevelop/state/convergence-required" ]]; then
+  printf 'required family: %s\n' "$(cat "$ROOT/.autodevelop/state/convergence-required")"
+else
+  printf 'required family: (none)\n'
+fi
+printf 'main batch progress: %s/%s\n' "$(cat "$ROOT/.autodevelop/state/main-batch-count" 2>/dev/null || printf '0')" "$MAIN_BATCH_PASSES"
 
 section 'active blockers'
 ledger_section 'Active blockers'

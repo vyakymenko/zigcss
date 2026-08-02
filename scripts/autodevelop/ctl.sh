@@ -46,6 +46,8 @@ doctor() {
   printf 'branch: %s\n' "$(git -C "$AUTODEVELOP_ROOT" branch --show-current 2>/dev/null || printf 'unavailable')"
   printf 'model: %s\n' "$AUTODEVELOP_MODEL"
   printf 'reasoning: %s\n' "$AUTODEVELOP_REASONING"
+  printf 'family convergence: %s passes\n' "$AUTODEVELOP_MAX_FAMILY_PASSES"
+  printf 'main integration batch: %s passes\n' "$AUTODEVELOP_MAIN_BATCH_PASSES"
   autodevelop_require_repository || failures=$((failures + 1))
   if [ -z "$AUTODEVELOP_CODEX_BIN" ] || [ ! -x "$AUTODEVELOP_CODEX_BIN" ]; then
     printf 'codex: unavailable\n' >&2
@@ -182,6 +184,12 @@ case "$COMMAND" in
       printf 'BRANCH=%s\n' "$(cat "$AUTODEVELOP_STATE_DIR/last-pushed-branch" 2>/dev/null || printf 'unknown')"
       printf 'MAIN=%s\n' "$(cat "$AUTODEVELOP_STATE_DIR/last-pushed-main-head" 2>/dev/null || printf 'unknown')"
     fi
+    if [ -f "$AUTODEVELOP_STATE_DIR/convergence-required" ]; then
+      printf '\nconvergence review:\n'
+      printf 'FAMILY=%s\n' "$(cat "$AUTODEVELOP_STATE_DIR/convergence-required")"
+    fi
+    printf '\nmain integration batch:\n'
+    printf 'COUNT=%s/%s\n' "$(autodevelop_state_get main-batch-count 0)" "$AUTODEVELOP_MAIN_BATCH_PASSES"
     ;;
   logs)
     touch "$AUTODEVELOP_ORCHESTRATOR_LOG"

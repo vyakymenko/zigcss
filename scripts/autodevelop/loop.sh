@@ -48,10 +48,10 @@ cleanup() {
 }
 
 push_green_checkpoint() {
-  if bash "$HERE/push-checkpoint.sh"; then return 0; fi
-  write_loop_status PUSH_FAILED "green checkpoint remains local; automatic push failed"
-  autodevelop_log ERROR "automatic push failed; supervisor stopped with the clean checkpoint local"
-  autodevelop_notify_local "ZigCSS automatic push failed" "The green checkpoint remains local; inspect the orchestrator log before restarting."
+  if bash "$HERE/push-checkpoint.sh" "$@"; then return 0; fi
+  write_loop_status PUSH_FAILED "green checkpoint remains local or recovery-backed; automatic push failed"
+  autodevelop_log ERROR "automatic push failed; supervisor stopped without rewriting remote history"
+  autodevelop_notify_local "ZigCSS automatic push failed" "The clean checkpoint remains local or recovery-backed; inspect the orchestrator log before restarting."
   return 1
 }
 
@@ -84,19 +84,43 @@ while :; do
   CLASS="$(grep '^CLASS=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2)"
   OUTPUT="$(grep '^OUTPUT=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2-)"
   BLOCKER_CODE="$(grep '^BLOCKER_CODE=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2-)"
+  GAP_PACKAGE="$(grep '^GAP_PACKAGE=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2-)"
+  GAP_FAMILY="$(grep '^GAP_FAMILY=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2-)"
+  GAP_RESULT="$(grep '^GAP_RESULT=' "$AUTODEVELOP_STATE_DIR/last-run.env" 2>/dev/null | cut -d= -f2-)"
   REASON="$(cat "$AUTODEVELOP_STATE_DIR/last-run.reason" 2>/dev/null || true)"
 
   case "$CLASS" in
     PROGRESS)
-      push_green_checkpoint || break
+      push_green_checkpoint --recovery-only || break
+      if ! FAMILY_COUNT="$(autodevelop_record_gap_progress "$GAP_FAMILY" "$GAP_RESULT")"; then
+        touch "$AUTODEVELOP_PAUSE_FILE"
+        write_loop_status ERROR "invalid release-gap convergence state; runner paused"
+        autodevelop_log ERROR "release-gap convergence state rejected after recovery push"
+        continue
+      fi
+      MAIN_BATCH_STATE="$(autodevelop_main_batch_advance)"
+      MAIN_BATCH_DECISION="${MAIN_BATCH_STATE%% *}"
+      MAIN_BATCH_COUNT="${MAIN_BATCH_STATE#* }"
+      if autodevelop_should_integrate_main "$MAIN_BATCH_DECISION" "$GAP_PACKAGE"; then
+        push_green_checkpoint || break
+        autodevelop_state_set main-batch-count 0
+        PUSH_DETAIL="checkpoint backed up and integrated to main"
+      else
+        PUSH_DETAIL="checkpoint backed up to recovery; main batch $MAIN_BATCH_COUNT/$AUTODEVELOP_MAIN_BATCH_PASSES"
+      fi
       autodevelop_state_set consecutive-errors 0
       autodevelop_state_set blocked-count 0
       autodevelop_state_set blocked-code ''
-      write_loop_status PROGRESS "checkpoint atomically pushed to recovery and main; continuing"
+      if [ -f "$AUTODEVELOP_STATE_DIR/convergence-required" ]; then
+        write_loop_status CONVERGENCE "${PUSH_DETAIL}; next pass must close $GAP_FAMILY after $FAMILY_COUNT passes"
+      else
+        write_loop_status PROGRESS "${PUSH_DETAIL}; release-gap family $GAP_FAMILY is $GAP_RESULT"
+      fi
       autodevelop_sleep_interruptible "$AUTODEVELOP_INTER_PASS_SECS" || true
       ;;
     COMPLETE)
       push_green_checkpoint || break
+      autodevelop_state_set main-batch-count 0
       touch "$AUTODEVELOP_COMPLETE_FILE"
       write_loop_status COMPLETE "roadmap completion reported; final checkpoint atomically pushed to recovery and main"
       autodevelop_notify_local "ZigCSS autodevelop complete" "The runner reported complete; review DEVELOPMENT_STATUS.md and local commits."

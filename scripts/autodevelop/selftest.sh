@@ -35,9 +35,30 @@ assert_equal "$(if autodevelop_branch_allowed vale/recovery 0; then printf allow
 assert_equal "$(if autodevelop_branch_allowed main 0; then printf allowed; else printf rejected; fi)" rejected 'production main branch rejected'
 assert_equal "$(if autodevelop_branch_allowed '' 1; then printf allowed; else printf rejected; fi)" allowed 'test-mode detached checkout accepted'
 
-fixture progress 'ZIGCSS-AUTODEVELOP-STATUS: PROGRESS REL-003 checkpointed'
+fixture progress 'ZIGCSS-AUTODEVELOP-GAP: NSASS-011 sass-callable-reexport-depth REDUCED
+ZIGCSS-AUTODEVELOP-STATUS: PROGRESS NSASS-011 checkpointed'
 assert_equal "$(autodevelop_extract_status "$TMP/progress")" PROGRESS 'progress tag'
 assert_equal "$(autodevelop_classify_pass 0 "$TMP/progress")" PROGRESS 'progress classification'
+assert_equal "$(autodevelop_extract_gap_package "$TMP/progress")" NSASS-011 'release-gap package'
+assert_equal "$(autodevelop_extract_gap_family "$TMP/progress")" sass-callable-reexport-depth 'stable release-gap family'
+assert_equal "$(autodevelop_extract_gap_result "$TMP/progress")" REDUCED 'release-gap result'
+assert_equal "$(if autodevelop_valid_gap_marker NSASS-011 sass-callable-reexport-depth REDUCED; then printf valid; else printf invalid; fi)" valid 'release-gap marker accepted'
+assert_equal "$(if autodevelop_valid_gap_marker 'NSASS 011' sass-callable-reexport-depth REDUCED; then printf valid; else printf invalid; fi)" invalid 'malformed work package rejected'
+assert_equal "$(if autodevelop_valid_gap_marker NSASS-011 Sass_Depth REDUCED; then printf valid; else printf invalid; fi)" invalid 'malformed family rejected'
+assert_equal "$(if autodevelop_valid_gap_marker NSASS-011 sass-callable-reexport-depth EXPANDED; then printf valid; else printf invalid; fi)" invalid 'non-convergent gap result rejected'
+
+fixture missing-gap 'ZIGCSS-AUTODEVELOP-STATUS: PROGRESS NSASS-011 checkpointed'
+assert_equal "$(autodevelop_classify_pass 0 "$TMP/missing-gap")" ERROR 'progress without release-gap evidence rejected'
+
+fixture duplicate-gap 'ZIGCSS-AUTODEVELOP-GAP: NSASS-011 sass-callable-reexport-depth REDUCED
+ZIGCSS-AUTODEVELOP-GAP: NSASS-011 sass-callable-reexport-depth CLOSED
+ZIGCSS-AUTODEVELOP-STATUS: PROGRESS NSASS-011 checkpointed'
+assert_equal "$(autodevelop_classify_pass 0 "$TMP/duplicate-gap")" ERROR 'multiple release-gap markers rejected'
+
+fixture invalid-last-gap 'ZIGCSS-AUTODEVELOP-GAP: NSASS-011 sass-callable-reexport-depth REDUCED
+ZIGCSS-AUTODEVELOP-GAP: missing fields
+ZIGCSS-AUTODEVELOP-STATUS: PROGRESS NSASS-011 checkpointed'
+assert_equal "$(autodevelop_classify_pass 0 "$TMP/invalid-last-gap")" ERROR 'invalid final release-gap marker cannot reuse earlier evidence'
 
 fixture blocked 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED controlled-benchmark-archive: irreversible signing policy'
 assert_equal "$(autodevelop_extract_blocker_code "$TMP/blocked")" 'controlled-benchmark-archive' 'stable blocker code'
@@ -73,6 +94,22 @@ assert_equal "$(grep -Fc 'NSTYLUS-010 through NSTYLUS-012' "$PROMPT_OUTPUT")" 1 
 assert_equal "$(grep -Fc 'NATIVE-006 through NATIVE-009' "$PROMPT_OUTPUT")" 1 'prompt retains native graduation dependency order'
 assert_equal "$(if grep -Fq 'Milestone 9 canonical frontend work is active.' "$PROMPT_OUTPUT"; then printf stale; else printf absent; fi)" absent 'prompt removes stale provider milestone'
 assert_equal "$(grep -Fc 'only the first fully graduated native release' "$PROMPT_OUTPUT")" 1 'prompt binds guarded native publication authority'
+assert_equal "$(grep -Fc 'A sibling search is inspection, not an automatic work queue.' "$PROMPT_OUTPUT")" 1 'prompt forbids unbounded sibling queues'
+assert_equal "$(grep -Fc 'predeclared finite terminal bound' "$PROMPT_OUTPUT")" 1 'prompt requires finite numeric bounds'
+assert_equal "$(grep -Fc 'ZIGCSS-AUTODEVELOP-GAP:' "$PROMPT_OUTPUT")" 1 'prompt requires release-gap marker'
+
+autodevelop_state_set convergence-required sass-callable-reexport-depth
+CONVERGENCE_PROMPT="$TMP/run-pass-convergence-prompt"
+bash "$HERE/run-pass.sh" --print-prompt > "$CONVERGENCE_PROMPT"
+assert_equal "$(grep -Fc 'CONVERGENCE REVIEW REQUIRED: sass-callable-reexport-depth' "$CONVERGENCE_PROMPT")" 1 'threshold injects convergence review'
+assert_equal "$(grep -Fc 'must report the same family as CLOSED' "$CONVERGENCE_PROMPT")" 1 'convergence review must close the family'
+rm -f "$AUTODEVELOP_STATE_DIR/convergence-required"
+
+autodevelop_state_set convergence-required 'malformed family'
+MALFORMED_CONVERGENCE_RC=0
+bash "$HERE/run-pass.sh" --print-prompt > /dev/null 2>&1 || MALFORMED_CONVERGENCE_RC=$?
+assert_equal "$MALFORMED_CONVERGENCE_RC" 1 'malformed stored convergence family rejected'
+rm -f "$AUTODEVELOP_STATE_DIR/convergence-required"
 
 fixture prompt-echo 'ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <stable-code>: <reason>'
 assert_equal "$(autodevelop_classify_pass 1 "$TMP/prompt-echo")" ERROR 'prompt marker ignored'
@@ -99,6 +136,26 @@ assert_equal "$(autodevelop_record_blocker controlled-benchmark-archive)" 1 'new
 assert_equal "$(autodevelop_record_blocker controlled-benchmark-archive)" 2 'same stable blocker increments'
 assert_equal "$(autodevelop_record_blocker controlled-benchmark-archive)" 3 'same stable blocker reaches pause threshold'
 assert_equal "$(autodevelop_record_blocker distinct-authority-decision)" 1 'different stable blocker resets count'
+
+assert_equal "$(autodevelop_record_gap_progress sass-callable-reexport-depth REDUCED)" 1 'new release-gap family starts at one'
+assert_equal "$(autodevelop_record_gap_progress sass-callable-reexport-depth REDUCED)" 2 'same release-gap family increments'
+assert_equal "$(autodevelop_record_gap_progress sass-callable-reexport-depth REDUCED)" 3 'release-gap family reaches pre-threshold count'
+assert_equal "$(autodevelop_record_gap_progress sass-callable-reexport-depth REDUCED)" 4 'release-gap family reaches convergence threshold'
+assert_equal "$(cat "$AUTODEVELOP_STATE_DIR/convergence-required")" sass-callable-reexport-depth 'threshold requires convergence review'
+assert_equal "$(autodevelop_record_gap_progress sass-callable-reexport-depth CLOSED)" 0 'closed family resets count'
+assert_equal "$(if [ -e "$AUTODEVELOP_STATE_DIR/convergence-required" ]; then printf present; else printf absent; fi)" absent 'closed family clears convergence state'
+assert_equal "$(autodevelop_record_gap_progress native-less-values REDUCED)" 1 'different release-gap family starts independently'
+
+autodevelop_state_set main-batch-count 0
+assert_equal "$(autodevelop_main_batch_advance)" 'RECOVERY 1' 'first green pass remains recovery-only'
+assert_equal "$(autodevelop_main_batch_advance)" 'RECOVERY 2' 'second green pass remains recovery-only'
+assert_equal "$(autodevelop_main_batch_advance)" 'RECOVERY 3' 'third green pass remains recovery-only'
+assert_equal "$(autodevelop_main_batch_advance)" 'INTEGRATE 4' 'fourth green pass requires main integration'
+autodevelop_state_set main-batch-count 0
+assert_equal "$(autodevelop_state_get main-batch-count)" 0 'successful main integration can reset its batch'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY NSASS-011; then printf yes; else printf no; fi)" no 'ordinary early batch stays recovery-only'
+assert_equal "$(if autodevelop_should_integrate_main INTEGRATE NSASS-011; then printf yes; else printf no; fi)" yes 'batch threshold integrates main'
+assert_equal "$(if autodevelop_should_integrate_main RECOVERY NATIVE-009; then printf yes; else printf no; fi)" yes 'native release validation integrates main immediately'
 
 FAKE_CODEX="$TMP/fake-codex"
 FAKE_ARGS="$TMP/fake-args"
@@ -155,8 +212,14 @@ assert_equal "$UNAPPROVED_REMOTE_RC" 1 'unapproved production push remote reject
 
 PUSH_STATE="$TMP/push-state"
 ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$PUSH_STATE" \
-  bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" > "$TMP/push.log" 2>&1
+  bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" --recovery-only > "$TMP/recovery-push.log" 2>&1
 PUSH_HEAD="$(git -C "$PUSH_REPO" rev-parse HEAD)"
+assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/vale/selftest)" "$PUSH_HEAD" 'green checkpoint pushed to recovery branch'
+assert_equal "$(if git --git-dir="$PUSH_REMOTE" show-ref --verify --quiet refs/heads/main; then printf present; else printf absent; fi)" absent 'recovery-only push does not trigger main'
+assert_equal "$(cat "$PUSH_STATE/state/last-pushed-head")" "$PUSH_HEAD" 'recovery-only head recorded'
+
+ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$PUSH_STATE" \
+  bash "$PUSH_REPO/scripts/autodevelop/push-checkpoint.sh" > "$TMP/push.log" 2>&1
 assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/vale/selftest)" "$PUSH_HEAD" 'green checkpoint pushed to exact branch'
 assert_equal "$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/main)" "$PUSH_HEAD" 'green checkpoint atomically integrated to main'
 assert_equal "$(cat "$PUSH_STATE/state/last-pushed-head")" "$PUSH_HEAD" 'pushed head recorded'
@@ -192,6 +255,18 @@ ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$TMP/integer-state"
 ZIGCSS_AUTODEVELOP_PASS_TIMEOUT_SECS=invalid \
   bash -c '. "$1"; autodevelop_require_repository' _ "$HERE/lib.sh" > /dev/null 2>&1 || INTEGER_RC=$?
 assert_equal "$INTEGER_RC" 1 'invalid numeric configuration rejected'
+
+FAMILY_INTEGER_RC=0
+ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$TMP/family-integer-state" \
+ZIGCSS_AUTODEVELOP_MAX_FAMILY_PASSES=0 \
+  bash -c '. "$1"; autodevelop_require_repository' _ "$HERE/lib.sh" > /dev/null 2>&1 || FAMILY_INTEGER_RC=$?
+assert_equal "$FAMILY_INTEGER_RC" 1 'zero family convergence threshold rejected'
+
+BATCH_INTEGER_RC=0
+ZIGCSS_AUTODEVELOP_TEST_MODE=1 ZIGCSS_AUTODEVELOP_STATE_DIR="$TMP/batch-integer-state" \
+ZIGCSS_AUTODEVELOP_MAIN_BATCH_PASSES=invalid \
+  bash -c '. "$1"; autodevelop_require_repository' _ "$HERE/lib.sh" > /dev/null 2>&1 || BATCH_INTEGER_RC=$?
+assert_equal "$BATCH_INTEGER_RC" 1 'invalid main batch threshold rejected'
 
 LOOP_HOME="$TMP/loop-state"
 mkdir -p "$LOOP_HOME"

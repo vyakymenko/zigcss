@@ -14,5 +14,7 @@ Architecture Decision Records capture choices that constrain more than one work 
 | [ADR-010](ADR-010-autonomous-model-requirement.md) | Accepted | Autonomous model and single-agent gate |
 | [ADR-011](ADR-011-native-plugin-contract.md) | Accepted | Experimental native plugin ordering, ownership, and failure behavior |
 | [ADR-012](ADR-012-canonical-preprocessor-host.md) | Accepted | Version-pinned canonical preprocessors behind one bounded host |
+| [ADR-013](ADR-013-self-contained-native-frontends.md) | Accepted | Self-contained native Zig stylesheet frontends and zero-runtime-dependency graduation |
+| [ADR-014](ADR-014-autonomous-convergence-and-ci-throughput.md) | Accepted | Finite release-gap convergence, hosted CI budget, and batched main integration |
 
 The remaining ADR backlog is listed in `DEVELOPMENT_PLAN.md` and will be resolved when its owning milestone becomes dependency-eligible.

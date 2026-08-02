@@ -24,6 +24,7 @@ describe('foundational architecture decisions', () => {
     'ADR-011-native-plugin-contract.md',
     'ADR-012-canonical-preprocessor-host.md',
     'ADR-013-self-contained-native-frontends.md',
+    'ADR-014-autonomous-convergence-and-ci-throughput.md',
   ]
 
   test.each(decisions)('%s is accepted and records consequences', name => {
@@ -118,6 +119,17 @@ describe('foundational architecture decisions', () => {
     expect(adr).toContain('API0003')
     expect(adr).toContain('publishes no candidate root')
     expect(adr).toContain('not a stable plugin ABI')
+  })
+
+  test('bounds autonomous release-gap families and preserves completing CI evidence', () => {
+    const adr = read('ADR-014-autonomous-convergence-and-ci-throughput.md')
+
+    expect(adr).toContain('finite release-gap inventory')
+    expect(adr).toContain('at most four consecutive `REDUCED` passes')
+    expect(adr).toContain('without weakening coverage')
+    expect(adr).toContain('non-cancelling concurrency group per ref')
+    expect(adr).toContain('`main` is integrated after four green passes')
+    expect(adr).toContain('ZIGCSS-AUTODEVELOP-GAP: <work-package> <stable-family> <REDUCED|CLOSED>')
   })
 
   test('chooses one strict strategy for every inherited format adapter', () => {

@@ -109,6 +109,20 @@ export const workflowPolicy = Object.freeze({
   }),
 })
 
+export const nativeTestRunners = Object.freeze([
+  'run_native_preprocessor_tests',
+  'run_native_foundation_tests',
+  'run_native_resolver_tests',
+  'run_native_evaluator_tests',
+  'run_native_sass_parser_tests',
+  'run_native_sass_arguments_tests',
+  'run_native_sass_numeric_tests',
+  'run_native_sass_color_tests',
+  'run_native_sass_string_tests',
+  'run_native_sass_selector_tests',
+  'run_native_sass_evaluator_tests',
+])
+
 function fail(message) {
   throw new Error(`workflow integrity: ${message}`)
 }
@@ -234,6 +248,35 @@ function validateSelfGate(buildWorkflow) {
   }
 }
 
+function validateBuildThroughput(buildWorkflow) {
+  const concurrency = 'concurrency:\n  group: build-${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: false\n'
+  if (buildWorkflow.split(concurrency).length !== 2) {
+    fail('build.yml must use one bounded non-cancelling concurrency group per workflow ref')
+  }
+  const testJob = splitJobs(buildWorkflow, 'build.yml').get('test').join('\n')
+  if (testJob.includes('zig build test-native-preprocessor')) {
+    fail('build.yml Test Suite must not run the native suite twice')
+  }
+  const aggregate = '      - name: Run Tests\n        run: zig build test --summary all'
+  if (testJob.split(aggregate).length !== 2) {
+    fail('build.yml Test Suite must run exactly one complete root Zig test graph')
+  }
+}
+
+export function validateBuildTestGraph(source) {
+  const start = source.indexOf('    const test_step = b.step("test", "Run unit tests");')
+  const end = source.indexOf('\n\n    const helper_compilation', start)
+  if (start === -1 || end === -1) fail('build.zig complete test step is missing or malformed')
+  const testGraph = source.slice(start, end)
+  for (const runner of nativeTestRunners) {
+    const dependency = `    test_step.dependOn(&${runner}.step);`
+    if (testGraph.split(dependency).length !== 2) {
+      fail(`build.zig complete test graph is missing native runner ${runner}`)
+    }
+  }
+  return { nativeRunners: nativeTestRunners.length }
+}
+
 export function validateWorkflowSources(sources) {
   const names = [...sources.keys()].sort()
   const expectedNames = Object.keys(workflowPolicy).sort()
@@ -249,6 +292,7 @@ export function validateWorkflowSources(sources) {
     actions += result.actions
   }
   validateSelfGate(sources.get('build.yml'))
+  validateBuildThroughput(sources.get('build.yml'))
   return { workflows: names.length, jobs, actions }
 }
 
@@ -265,7 +309,9 @@ export function readWorkflowSources(root = repositoryRoot) {
 }
 
 export function validateWorkflows(root = repositoryRoot) {
-  return validateWorkflowSources(readWorkflowSources(root))
+  const result = validateWorkflowSources(readWorkflowSources(root))
+  validateBuildTestGraph(fs.readFileSync(path.join(root, 'build.zig'), 'utf8'))
+  return result
 }
 
 function main() {

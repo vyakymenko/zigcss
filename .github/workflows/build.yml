@@ -9,6 +9,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build ${{ matrix.os }} - ${{ matrix.arch }}
@@ -206,9 +210,6 @@ jobs:
 
       - name: Test and verify generated capability status
         run: npm run test:capability-status && npm run check:capability-status
-
-      - name: Verify native stylesheet frontend foundations
-        run: zig build test-native-preprocessor --summary all
 
       - name: Run Tests
         run: zig build test --summary all

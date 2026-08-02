@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import test from 'node:test'
 import {
   actionPins,
   readWorkflowSources,
+  validateBuildTestGraph,
   validateWorkflowSources,
   validateWorkflows,
 } from './validate-workflows.mjs'
@@ -92,4 +94,33 @@ test('the workflow security gate runs before dependency installation', () => {
   const sources = cloneSources()
   sources.set('build.yml', sources.get('build.yml').replace('- name: Verify workflow security policy', '- name: Removed gate'))
   assert.throws(() => validateWorkflowSources(sources), /before npm installation/)
+})
+
+test('the build workflow preserves one complete aggregate suite within a bounded queue', () => {
+  const sources = cloneSources()
+  assert.deepEqual(validateWorkflowSources(sources), { workflows: 4, jobs: 9, actions: 28 })
+
+  const unconstrained = cloneSources()
+  unconstrained.set('build.yml', unconstrained.get('build.yml').replace(
+    'concurrency:\n  group: build-${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: false\n\n',
+    '',
+  ))
+  assert.throws(() => validateWorkflowSources(unconstrained), /bounded non-cancelling concurrency/)
+
+  const duplicated = cloneSources()
+  duplicated.set('build.yml', duplicated.get('build.yml').replace(
+    '      - name: Run Tests\n        run: zig build test --summary all',
+    '      - name: Verify native stylesheet frontend foundations\n        run: zig build test-native-preprocessor --summary all\n\n      - name: Run Tests\n        run: zig build test --summary all',
+  ))
+  assert.throws(() => validateWorkflowSources(duplicated), /must not run the native suite twice/)
+})
+
+test('the complete Zig test graph owns every native frontend runner', () => {
+  const source = fs.readFileSync(new URL('../build.zig', import.meta.url), 'utf8')
+  assert.deepEqual(validateBuildTestGraph(source), { nativeRunners: 11 })
+  const weakened = source.replace(
+    '    test_step.dependOn(&run_native_sass_evaluator_tests.step);',
+    '    // removed native Sass evaluator coverage',
+  )
+  assert.throws(() => validateBuildTestGraph(weakened), /missing native runner run_native_sass_evaluator_tests/)
 })

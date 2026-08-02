@@ -6,7 +6,7 @@ The short operator request is only an invocation. This file, `DEVELOPMENT_PLAN.m
 
 ## 1. What is automated
 
-The repository-owned Bash supervisor provides the durable outer loop. It launches exactly one ephemeral non-interactive Codex pass at a time, pins `gpt-5.6-sol` with `xhigh` reasoning, limits each pass to one dependency-eligible package, requires a clean committed checkpoint for progress, automatically pushes and reads back that exact checkpoint on the current `vale/*` branch, and only then starts the next pass. No subagent, child-task, alternate-model, or concurrent-lane path exists.
+The repository-owned Bash supervisor provides the durable outer loop. It launches exactly one ephemeral non-interactive Codex pass at a time, pins `gpt-5.6-sol` with `xhigh` reasoning, limits each pass to one dependency-eligible release gap, requires a clean committed checkpoint for progress, automatically pushes and reads back that exact checkpoint on the current `vale/*` recovery branch, and only then starts the next pass. It integrates `main` after four green passes and immediately for completion or release-candidate validation, so hosted CI can finish while every checkpoint remains remotely recoverable. No subagent, child-task, alternate-model, or concurrent-lane path exists.
 
 The active self-contained native-frontend sequence is part of that same loop: select the earliest dependency-eligible package not marked `VERIFIED` in the durable ledger; complete `NATIVE-001` through `NATIVE-005`, `NSASS-010` through `NSASS-012`, `NLESS-010` through `NLESS-012`, `NSTYLUS-010` through `NSTYLUS-012`, then `NATIVE-006` through `NATIVE-009`. When an umbrella package is in progress, resume its smallest ledger-designated slice before advancing. The external `BENCH-007` scheduled-runner evidence proceeds independently and must not block dependency-eligible native frontend correctness work.
 
@@ -38,7 +38,7 @@ bash scripts/autodevelop/orient.sh
 - Treat `DEVELOPMENT_STATUS.md` as the durable execution ledger. Repository and test evidence outrank memory or stale commentary.
 - Preserve inherited and unrelated changes. Never reset, rewrite, or discard work that is not owned by the current package.
 - Keep exactly one continuation owner active without a token budget: either the interactive persistent goal or this Bash supervisor. Never advance the same worktree manually while the supervisor is running.
-- Model passes must not push ordinary branch checkpoints. Under the operator's 2026-07-13 authorization, only the outer supervisor may automatically push a verified clean checkpoint to `origin` at the current `vale/*` branch and `main`.
+- Model passes must not push ordinary branch checkpoints. Under the operator's 2026-08-02 superseding authorization, only the outer supervisor may automatically push every verified clean checkpoint to `origin` at the current `vale/*` recovery branch and integrate `main` in batches of four, or immediately for completion and release-candidate validation.
 - The owner's 2026-07-27 publication authorization applies only after every `NATIVE-009` gate passes, the native interlock names an exact unused version and reports ready, and that exact candidate commit is already integrated to `origin/main`. The release phase may then create and push the single immutable `v*` tag exactly once; the same or later pass may monitor `.github/workflows/release.yml` and record the GitHub prerelease and npm `next` evidence without recreating the tag. It may not publish `0.5.0-rc.1`, move or reuse tags, target npm `latest`, bypass a gate or workflow, or publish Homebrew, editor-extension, container, documentation, or service channels. Every other deployment, pull request, publication, or external-system mutation still requires new explicit authorization.
 - Do not weaken tests, suppress failures, lower safety gates, or re-enable an unsafe transform to make a package green.
 - Security, parser correctness, semantic preservation, deterministic behavior, and regression evidence take priority over performance or feature count.
@@ -70,10 +70,13 @@ Use the dependency graph and milestone order in `DEVELOPMENT_PLAN.md`.
 
 - Finish a dangling coherent package before starting another.
 - Choose the smallest dependency-eligible slice that advances an exit criterion.
+- Select it from the finite release-gap inventory in `DEVELOPMENT_STATUS.md`; use one stable family code until that underlying gap closes.
 - Prefer a correctness or security boundary over feature breadth.
 - A blocked package is parked with its condition and evidence; continue another eligible package when the graph permits it.
 - Do not invent polish to remain busy. When a milestone's packages are complete, run its exit gate, record the result, and proceed to the next milestone.
 - If the roadmap is underspecified, make the safest reversible engineering decision and record it in the ledger or an ADR. Ask only when the choice is irreversible, outward-facing, or changes approved product scope.
+- A sibling search is inspection, not an automatic queue. Numeric or ordinal `N+1` expansion requires a predeclared finite bound derived from a specification, pinned provider, closed data set, or explicit resource contract.
+- After four consecutive reductions in one family, the next pass is a convergence review. It must close the same family through a tested terminal contract, equivalent evidence consolidation, or proof that the owning exit criterion is satisfied; renaming the family does not reset this rule.
 
 ## 5. Execute one package
 
@@ -83,10 +86,19 @@ Every package follows this order:
 2. **Add or strengthen tests.** Make the desired contract executable and observe the focused failure when practical.
 3. **Implement the smallest correct change.** Respect architecture boundaries and avoid unrelated cleanup.
 4. **Run proportionate verification.** Start focused, then run every affected integration and milestone gate. Use Debug and ReleaseSafe where Zig semantics or memory ownership are involved.
-5. **Search bounded sibling surfaces.** Check the exact family touched for another accepted no-op, collision, claim, ownership path, or duplicate implementation.
+5. **Inspect bounded sibling surfaces.** Check the exact family touched for another accepted no-op, collision, claim, ownership path, or duplicate implementation without automatically enqueueing every sibling.
 6. **Update `DEVELOPMENT_STATUS.md`.** Record state, commands, results, decisions, blockers, and the pending checkpoint.
 7. **Checkpoint intentionally.** Commit one coherent green package with the work-package ID in the body.
 8. **Re-orient immediately.** Record the commit hash in the next ledger update and take the next eligible package.
+
+Every progress response records the release-gap disposition immediately before its status marker:
+
+```text
+ZIGCSS-AUTODEVELOP-GAP: <work-package> <stable-family> <REDUCED|CLOSED>
+ZIGCSS-AUTODEVELOP-STATUS: PROGRESS <short summary>
+```
+
+Missing or malformed gap metadata is an error. `REDUCED` means the ledger's finite remaining work became smaller; moving an unsupported integer to `N+1` without a declared terminal contract does not qualify. `CLOSED` removes that family from the release-gap inventory.
 
 An example commit form is:
 
@@ -103,11 +115,13 @@ Verification scales with the change, but evidence never disappears:
 - Parser/emitter/ownership changes: focused unit and regression tests, then Debug and ReleaseSafe suites.
 - CLI changes: child-process integration tests including exit code, stdout/stderr, filesystem effects, aliases, and malformed inputs.
 - Docs/server changes: focused Vitest coverage, full docs tests, Vite build, and a live container/server smoke when relevant.
-- CI/release changes: workflow regression tests, syntax parsing, real target builds, and artifact inspection where applicable.
+- CI/release changes: workflow regression tests, syntax parsing, real target builds, artifact inspection where applicable, and proof that complete coverage is not duplicated inside one hosted job.
 - Package changes: dry-run contents and a temporary local wrapper/install smoke without publishing.
 - Performance work: reject timing samples until structural or semantic output validation passes.
 
 If a repository-wide gate already failed at baseline, prove the package did not widen it, keep the debt visible in the ledger, and schedule its owning work package. Do not hide it or mix a broad mechanical rewrite into an unrelated semantic commit.
+
+A required hosted job that reaches 75% of its hard timeout is itself release work. Pause feature breadth, remove redundant invocation or safely shard/cache equivalent evidence, and restore a completing hosted window without deleting coverage. Build concurrency keeps the active run and the newest pending commit for each ref instead of repeatedly cancelling the evidence run.
 
 ## 7. Continuation and STOP conditions
 
@@ -120,6 +134,8 @@ A green checkpoint is not a handoff. An interactive task continues in-session; a
 5. The complete roadmap definition of done is achieved and all required evidence is recorded.
 
 Difficulty, a failing test, incomplete work, a long milestone, or a package that benefits from clarification is not a blocker. Diagnose and continue.
+
+Reaching a four-pass family threshold is also not a blocker. It changes the next package into a convergence review. Only new authority, inaccessible external state, or an irreversible product decision discovered during that review can become a stop condition.
 
 Do not treat the roadmap as blocked on the first encounter. Park a local blocker and continue elsewhere when possible. A blocked pass must end with `ZIGCSS-AUTODEVELOP-STATUS: BLOCKED <stable-code>: <reason>`, where the code is lowercase kebab case and remains unchanged while the underlying condition is unchanged. Human-readable wording may evolve without resetting blocker identity. Missing or malformed codes fail as runner errors. The supervisor pauses as blocked only after the same stable code repeats for three consecutive passes and no meaningful in-scope progress remains, matching the Codex goal rule.
 
@@ -158,11 +174,12 @@ Its output is orientation evidence, not a scheduler and not a substitute for the
 - an atomic directory lock and live PID prevent a second supervisor;
 - an initial start requires a clean tree, while a runner-recorded interrupted WIP marker permits only recovery of the same package;
 - `PROGRESS` requires both a new local commit and a clean tree;
-- ordinary model passes cannot push; the outer supervisor alone performs a non-interactive, five-minute-bounded atomic push of `HEAD` to the current `vale/*` branch and `main` on the closed approved `origin`, reads back both exact object IDs under the same bound, records them, and stops immediately on rejection, timeout, or mismatch;
+- ordinary model passes cannot push; the outer supervisor alone performs a non-interactive, five-minute-bounded non-force push of every green `HEAD` to the current `vale/*` recovery branch on the closed approved `origin`, reads back its exact object ID, and integrates `main` atomically with that branch after four passes or immediately for completion/release validation; it stops on rejection, timeout, drift, or mismatch;
+- every `PROGRESS` pass must supply a validated work package, stable release-gap family, and `REDUCED`/`CLOSED` disposition; four reductions in one family force the next pass to close that family before other progress is accepted;
 - state and dependency caches stay under ignored `.autodevelop/` storage;
 - every invocation explicitly selects the approved model and reasoning effort with no fallback;
 - the Codex sandbox admits the worktree plus the worktree/common Git metadata needed for local commits, while the prompt forbids the main checkout and every outward mutation except the exact post-gate `NATIVE-009` tag/workflow action;
 - rate limits use bounded backoff, authentication failure pauses immediately, five consecutive tool failures pause, and the same reported blocker must recur three times before the supervisor pauses as blocked;
 - `COMPLETE` verifies and pushes the final clean checkpoint, then stops the loop for operator review. The supervisor never publishes directly; only an eligible `NATIVE-009` model pass may invoke and verify the separately authorized fail-closed tag workflow.
 
-`scripts/autodevelop/selftest.sh` tests isolated final-message classification, prompt-echo rejection, rate-limit parsing, timeout precedence, authentication detection, exact CLI arguments, and atomic state counters without a model call or repository mutation. The control script exposes no install/deploy/publish command.
+`scripts/autodevelop/selftest.sh` tests isolated final-message classification, prompt-echo rejection, release-gap validation and forced convergence, rate-limit parsing, timeout precedence, authentication detection, exact CLI arguments, recovery-only and integrated push readback, and atomic state counters without a model call or production-remote mutation. The control script exposes no install/deploy/publish command.

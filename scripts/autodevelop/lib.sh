@@ -30,6 +30,8 @@ AUTODEVELOP_BLOCKED_RECHECK_SECS="${ZIGCSS_AUTODEVELOP_BLOCKED_RECHECK_SECS:-180
 AUTODEVELOP_RATE_LIMIT_MAX_SECS="${ZIGCSS_AUTODEVELOP_RATE_LIMIT_MAX_SECS:-3600}"
 AUTODEVELOP_ERROR_BACKOFF_SECS="${ZIGCSS_AUTODEVELOP_ERROR_BACKOFF_SECS:-120}"
 AUTODEVELOP_IDLE_POLL_SECS="${ZIGCSS_AUTODEVELOP_IDLE_POLL_SECS:-5}"
+AUTODEVELOP_MAX_FAMILY_PASSES="${ZIGCSS_AUTODEVELOP_MAX_FAMILY_PASSES:-4}"
+AUTODEVELOP_MAIN_BATCH_PASSES="${ZIGCSS_AUTODEVELOP_MAIN_BATCH_PASSES:-4}"
 
 AUTODEVELOP_CALLER_UMASK="$(umask)"
 umask 077
@@ -96,7 +98,7 @@ autodevelop_state_get() {
   if [ -f "$file" ]; then
     cat "$file"
   else
-    printf '%s\n' "${2:-0}"
+    printf '%s\n' "${2-0}"
   fi
 }
 
@@ -129,6 +131,118 @@ autodevelop_valid_blocker_code() {
   case "$code" in
     ''|*[!a-z0-9-]*|-*|*-|*--*) return 1 ;;
   esac
+}
+
+autodevelop_valid_work_package() {
+  local package="$1"
+  [ "${#package}" -le 64 ] || return 1
+  case "$package" in
+    ''|*[!A-Z0-9-]*|-*|*-|*--*) return 1 ;;
+  esac
+}
+
+autodevelop_valid_gap_marker() {
+  local package="$1"
+  local family="$2"
+  local result="$3"
+  autodevelop_valid_work_package "$package" || return 1
+  autodevelop_valid_gap_progress "$family" "$result"
+}
+
+autodevelop_valid_gap_progress() {
+  local family="$1"
+  local result="$2"
+  autodevelop_valid_blocker_code "$family" || return 1
+  case "$result" in
+    REDUCED|CLOSED) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+autodevelop_extract_gap_line() {
+  tail -80 "$1" 2>/dev/null \
+    | grep -v '<work-package>' \
+    | grep -v '<stable-family>' \
+    | grep -v '<REDUCED|CLOSED>' \
+    | sed -nE '/^[[:space:]]*ZIGCSS-AUTODEVELOP-GAP:/p' \
+    | tail -1 \
+    | sed -nE 's/^[[:space:]]*(ZIGCSS-AUTODEVELOP-GAP:[[:space:]]+[A-Z0-9]+(-[A-Z0-9]+)*[[:space:]]+[a-z0-9]+(-[a-z0-9]+)*[[:space:]]+(REDUCED|CLOSED))[[:space:]]*$/\1/p'
+}
+
+autodevelop_gap_marker_count() {
+  tail -80 "$1" 2>/dev/null \
+    | grep -v '<work-package>' \
+    | grep -v '<stable-family>' \
+    | grep -v '<REDUCED|CLOSED>' \
+    | sed -nE '/^[[:space:]]*ZIGCSS-AUTODEVELOP-GAP:/p' \
+    | wc -l \
+    | awk '{ print $1 }'
+}
+
+autodevelop_extract_gap_package() {
+  autodevelop_extract_gap_line "$1" | awk '{ print $2 }'
+}
+
+autodevelop_extract_gap_family() {
+  autodevelop_extract_gap_line "$1" | awk '{ print $3 }'
+}
+
+autodevelop_extract_gap_result() {
+  autodevelop_extract_gap_line "$1" | awk '{ print $4 }'
+}
+
+autodevelop_record_gap_progress() {
+  local family="$1"
+  local result="$2"
+  local prior count required
+  autodevelop_valid_gap_progress "$family" "$result" || {
+    autodevelop_die "invalid release-gap progress"
+    return 1
+  }
+  required="$(autodevelop_state_get convergence-required '')"
+  if [ "$result" = CLOSED ]; then
+    if [ -n "$required" ] && [ "$family" != "$required" ]; then
+      autodevelop_die "convergence review closed a different release-gap family"
+      return 1
+    fi
+    autodevelop_state_set gap-family ''
+    autodevelop_state_set gap-family-count 0
+    rm -f "$AUTODEVELOP_STATE_DIR/convergence-required"
+    printf '0\n'
+    return
+  fi
+  if [ -n "$required" ]; then
+    autodevelop_die "release-gap family requires closure before another reduction pass"
+    return 1
+  fi
+  prior="$(autodevelop_state_get gap-family '')"
+  if [ "$family" = "$prior" ]; then
+    count="$(autodevelop_state_increment gap-family-count)"
+  else
+    autodevelop_state_set gap-family "$family"
+    autodevelop_state_set gap-family-count 1
+    count=1
+  fi
+  if [ "$count" -ge "$AUTODEVELOP_MAX_FAMILY_PASSES" ]; then
+    autodevelop_state_set convergence-required "$family"
+  fi
+  printf '%s\n' "$count"
+}
+
+autodevelop_main_batch_advance() {
+  local count
+  count="$(autodevelop_state_increment main-batch-count)" || return 1
+  if [ "$count" -ge "$AUTODEVELOP_MAIN_BATCH_PASSES" ]; then
+    printf 'INTEGRATE %s\n' "$count"
+  else
+    printf 'RECOVERY %s\n' "$count"
+  fi
+}
+
+autodevelop_should_integrate_main() {
+  local decision="$1"
+  local package="$2"
+  [ "$decision" = INTEGRATE ] || [ "$package" = NATIVE-009 ]
 }
 
 autodevelop_record_blocker() {
@@ -213,6 +327,8 @@ autodevelop_require_repository() {
   autodevelop_require_positive_integer "$AUTODEVELOP_RATE_LIMIT_MAX_SECS" ZIGCSS_AUTODEVELOP_RATE_LIMIT_MAX_SECS || return 1
   autodevelop_require_positive_integer "$AUTODEVELOP_ERROR_BACKOFF_SECS" ZIGCSS_AUTODEVELOP_ERROR_BACKOFF_SECS || return 1
   autodevelop_require_positive_integer "$AUTODEVELOP_IDLE_POLL_SECS" ZIGCSS_AUTODEVELOP_IDLE_POLL_SECS || return 1
+  autodevelop_require_positive_integer "$AUTODEVELOP_MAX_FAMILY_PASSES" ZIGCSS_AUTODEVELOP_MAX_FAMILY_PASSES || return 1
+  autodevelop_require_positive_integer "$AUTODEVELOP_MAIN_BATCH_PASSES" ZIGCSS_AUTODEVELOP_MAIN_BATCH_PASSES || return 1
 }
 
 autodevelop_extract_status() {
@@ -245,12 +361,22 @@ autodevelop_classify_pass() {
   local rc="$1"
   local output="$2"
   local final_message="${3:-$output}"
-  local status blocker_code size
+  local status blocker_code gap_count gap_package gap_family gap_result size
   status="$(autodevelop_extract_status "$final_message")"
   if [ "$rc" -eq 0 ] && [ -n "$status" ]; then
     if [ "$status" = BLOCKED ]; then
       blocker_code="$(autodevelop_extract_blocker_code "$final_message")"
       if ! autodevelop_valid_blocker_code "$blocker_code"; then
+        printf 'ERROR\n'
+        return
+      fi
+    fi
+    if [ "$status" = PROGRESS ]; then
+      gap_count="$(autodevelop_gap_marker_count "$final_message")"
+      gap_package="$(autodevelop_extract_gap_package "$final_message")"
+      gap_family="$(autodevelop_extract_gap_family "$final_message")"
+      gap_result="$(autodevelop_extract_gap_result "$final_message")"
+      if [ "$gap_count" -ne 1 ] || ! autodevelop_valid_gap_marker "$gap_package" "$gap_family" "$gap_result"; then
         printf 'ERROR\n'
         return
       fi
