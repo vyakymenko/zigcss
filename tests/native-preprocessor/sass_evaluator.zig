@@ -40003,6 +40003,237 @@ test "native Sass caller callable arguments handle every allocation failure" {
     );
 }
 
+test "native Sass owns peer callables across one-hop local module calls" {
+    const expected =
+        ".values{early-direct:6px;late-direct:10px;early-nested:9px;late-nested:15px;early-returned:12px;late-returned:20px;function-identities:true;mixin-identities:true;accepts:false}.early{value:5px}.late{value:6px}.early{value:7px}.late{value:8px}";
+    const root_input =
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\@use "early";
+        \\@use "receiver";
+        \\@use "late";
+        \\$early-function: early.$function;
+        \\$early-mixin: early.$mixin;
+        \\$late-function: late.$function;
+        \\$late-mixin: late.$mixin;
+        \\$nested: ("early": $early-function, "late": $late-function);
+        \\.values {
+        \\  early-direct: receiver.invoke($early-function, 2px);
+        \\  late-direct: receiver.invoke($late-function, 2px);
+        \\  early-nested: receiver.invoke(map.get($nested, "early"), 3px);
+        \\  late-nested: receiver.invoke(map.get($nested, "late"), 3px);
+        \\  early-returned: meta.call(receiver.pass($early-function), 4px);
+        \\  late-returned: meta.call(receiver.pass($late-function), 4px);
+        \\  function-identities: receiver.pass($early-function) == $early-function and receiver.pass($late-function) == $late-function;
+        \\  mixin-identities: receiver.pass($early-mixin) == $early-mixin and receiver.pass($late-mixin) == $late-mixin;
+        \\  accepts: meta.accepts-content(receiver.pass($early-mixin));
+        \\}
+        \\@include receiver.apply($early-mixin, 5px);
+        \\@include receiver.apply($late-mixin, 6px);
+        \\@include meta.apply(receiver.pass($early-mixin), 7px);
+        \\@include meta.apply(receiver.pass($late-mixin), 8px);
+    ;
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_early.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\@function callback($value) { @return $value * 3; }
+            \\@mixin callback-mixin($value) { .early { value: $value; } }
+            \\$function: meta.get-function("callback");
+            \\$mixin: meta.get-mixin("callback-mixin");
+            ,
+        },
+        .{
+            .name = "_receiver.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\@function invoke($callable, $value) { @return meta.call($callable, $value); }
+            \\@function pass($value) { @return $value; }
+            \\@mixin apply($callable, $value) { @include meta.apply($callable, $value); }
+            ,
+        },
+        .{
+            .name = "_late.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\@function callback($value) { @return $value * 5; }
+            \\@mixin callback-mixin($value) { .late { value: $value; } }
+            \\$function: meta.get-function("callback");
+            \\$mixin: meta.get-mixin("callback-mixin");
+            ,
+        },
+    };
+    var result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "local-peer-callable-argument-ownership.scss",
+        root_input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(expected, result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 3), result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(u8, result.dependencies()[0].url, "/_early.scss"));
+    try std.testing.expect(std.mem.endsWith(u8, result.dependencies()[1].url, "/_receiver.scss"));
+    try std.testing.expect(std.mem.endsWith(u8, result.dependencies()[2].url, "/_late.scss"));
+    try std.testing.expect(result.sourceMap() != null);
+
+    const indented_root =
+        \\@use "sass:map" as map
+        \\@use "sass:meta" as meta
+        \\@use "early"
+        \\@use "receiver"
+        \\@use "late"
+        \\$early-function: early.$function
+        \\$early-mixin: early.$mixin
+        \\$late-function: late.$function
+        \\$late-mixin: late.$mixin
+        \\$nested: ("early": $early-function, "late": $late-function)
+        \\.values
+        \\  early-direct: receiver.invoke($early-function, 2px)
+        \\  late-direct: receiver.invoke($late-function, 2px)
+        \\  early-nested: receiver.invoke(map.get($nested, "early"), 3px)
+        \\  late-nested: receiver.invoke(map.get($nested, "late"), 3px)
+        \\  early-returned: meta.call(receiver.pass($early-function), 4px)
+        \\  late-returned: meta.call(receiver.pass($late-function), 4px)
+        \\  function-identities: receiver.pass($early-function) == $early-function and receiver.pass($late-function) == $late-function
+        \\  mixin-identities: receiver.pass($early-mixin) == $early-mixin and receiver.pass($late-mixin) == $late-mixin
+        \\  accepts: meta.accepts-content(receiver.pass($early-mixin))
+        \\@include receiver.apply($early-mixin, 5px)
+        \\@include receiver.apply($late-mixin, 6px)
+        \\@include meta.apply(receiver.pass($early-mixin), 7px)
+        \\@include meta.apply(receiver.pass($late-mixin), 8px)
+    ;
+    const indented_files = [_]LocalUseFile{
+        .{
+            .name = "_early.sass",
+            .contents =
+            \\@use "sass:meta" as meta
+            \\@function callback($value)
+            \\  @return $value * 3
+            \\@mixin callback-mixin($value)
+            \\  .early
+            \\    value: $value
+            \\$function: meta.get-function("callback")
+            \\$mixin: meta.get-mixin("callback-mixin")
+            ,
+        },
+        .{
+            .name = "_receiver.sass",
+            .contents =
+            \\@use "sass:meta" as meta
+            \\@function invoke($callable, $value)
+            \\  @return meta.call($callable, $value)
+            \\@function pass($value)
+            \\  @return $value
+            \\@mixin apply($callable, $value)
+            \\  @include meta.apply($callable, $value)
+            ,
+        },
+        .{
+            .name = "_late.sass",
+            .contents =
+            \\@use "sass:meta" as meta
+            \\@function callback($value)
+            \\  @return $value * 5
+            \\@mixin callback-mixin($value)
+            \\  .late
+            \\    value: $value
+            \\$function: meta.get-function("callback")
+            \\$mixin: meta.get-mixin("callback-mixin")
+            ,
+        },
+    };
+    var sass_result = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "local-peer-callable-argument-ownership.sass",
+        indented_root,
+        .sass,
+        &indented_files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(expected, sass_result.css());
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 3), sass_result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(u8, sass_result.dependencies()[0].url, "/_early.sass"));
+    try std.testing.expect(std.mem.endsWith(u8, sass_result.dependencies()[1].url, "/_receiver.sass"));
+    try std.testing.expect(std.mem.endsWith(u8, sass_result.dependencies()[2].url, "/_late.sass"));
+    try std.testing.expect(sass_result.sourceMap() != null);
+}
+
+fn exercisePeerCallableArgumentAllocationFailures(allocator: std.mem.Allocator) !void {
+    const files = [_]LocalUseFile{
+        .{
+            .name = "_early.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\@function callback($value) { @return $value * 3; }
+            \\@mixin callback-mixin($value) { .early { value: $value; } }
+            \\$function: meta.get-function("callback");
+            \\$mixin: meta.get-mixin("callback-mixin");
+            ,
+        },
+        .{
+            .name = "_receiver.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\@function invoke($callable, $value) { @return meta.call($callable, $value); }
+            \\@function pass($value) { @return $value; }
+            \\@mixin apply($callable, $value) { @include meta.apply($callable, $value); }
+            ,
+        },
+        .{
+            .name = "_late.scss",
+            .contents =
+            \\@use "sass:meta";
+            \\@function callback($value) { @return $value * 5; }
+            \\@mixin callback-mixin($value) { .late { value: $value; } }
+            \\$function: meta.get-function("callback");
+            \\$mixin: meta.get-mixin("callback-mixin");
+            ,
+        },
+    };
+    const input =
+        \\@use "sass:meta";
+        \\@use "early";
+        \\@use "receiver";
+        \\@use "late";
+        \\.allocation {
+        \\  early: receiver.invoke(early.$function, 2px);
+        \\  late: receiver.invoke(late.$function, 2px);
+        \\  returned: meta.call(receiver.pass(late.$function), 3px);
+        \\}
+        \\@include receiver.apply(early.$mixin, 4px);
+        \\@include receiver.apply(late.$mixin, 5px);
+    ;
+    var result = try compileWithLocalUseFiles(
+        allocator,
+        "local-peer-callable-argument-allocation.scss",
+        input,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".allocation{early:6px;late:10px;returned:15px}.early{value:4px}.late{value:5px}",
+        result.css(),
+    );
+}
+
+test "native Sass peer callable arguments handle every allocation failure" {
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exercisePeerCallableArgumentAllocationFailures,
+        .{},
+    );
+}
+
 test "native Sass owns local-module and built-in callable results across local module calls" {
     const root_input =
         \\@use "sass:list";
@@ -40576,24 +40807,14 @@ test "native Sass local module callable references reject missing ambiguous and 
     );
 }
 
-test "native Sass local module function reference invocation rejects invalid cross-arena calls" {
-    const files = [_]LocalUseFile{
-        .{
-            .name = "_functions.scss",
-            .contents =
-            \\@function required($left, $right: 2) { @return $left + $right; }
-            \\@function accepts($value) { @return $value; }
-            ,
-        },
-        .{
-            .name = "_other.scss",
-            .contents =
-            \\@use "sass:meta";
-            \\@function other($value) { @return $value * 3; }
-            \\$callback: meta.get-function("other");
-            ,
-        },
-    };
+test "native Sass local module function reference invocation rejects invalid calls" {
+    const files = [_]LocalUseFile{.{
+        .name = "_functions.scss",
+        .contents =
+        \\@function required($left, $right: 2) { @return $left + $right; }
+        \\@function accepts($value) { @return $value; }
+        ,
+    }};
     const invalid = [_]struct {
         name: []const u8,
         input: []const u8,
@@ -40618,11 +40839,6 @@ test "native Sass local module function reference invocation rejects invalid cro
             .name = "duplicate-local-function-reference-argument.scss",
             .input = "@use \"sass:meta\"; @use \"functions\"; $ref: meta.get-function(\"required\", $module: \"functions\"); .root { value: meta.call($ref, 1, $left: 2); }",
             .expected = error.InvalidExpression,
-        },
-        .{
-            .name = "other-module-owned-local-function-reference-argument.scss",
-            .input = "@use \"sass:meta\"; @use \"functions\"; @use \"other\"; $ref: meta.get-function(\"accepts\", $module: \"functions\"); .root { value: meta.call($ref, (\"nested\": other.$callback)); }",
-            .expected = error.UnsupportedFeature,
         },
     };
     for (invalid) |case| {
@@ -40816,27 +41032,32 @@ test "native Sass local module function reference failures own diagnostics witho
     );
 }
 
-test "native Sass other-module callable argument owners fail without partial CSS" {
+test "native Sass re-exported peer callable arguments fail without partial CSS" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
     const input =
         \\@use "sass:meta";
-        \\@use "functions";
-        \\@use "other";
-        \\$ref: meta.get-function("accepts", $module: "functions");
-        \\$value: meta.call($ref, ("nested": other.$callback));
+        \\@use "owner";
+        \\@use "pass";
+        \\@use "receiver";
+        \\$re-exported: pass.pass(owner.$callback);
+        \\$value: receiver.accepts(("nested": $re-exported));
         \\.unreachable { value: $value; }
     ;
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
     try tmp.dir.writeFile(.{
-        .sub_path = "root/_functions.scss",
-        .data = "@function accepts($value) { @return $value; }",
+        .sub_path = "root/_owner.scss",
+        .data = "@use \"sass:meta\"; @function callback($value) { @return $value; } $callback: meta.get-function(\"callback\");",
     });
     try tmp.dir.writeFile(.{
-        .sub_path = "root/_other.scss",
-        .data = "@use \"sass:meta\"; @function callback($value) { @return $value; } $callback: meta.get-function(\"callback\");",
+        .sub_path = "root/_pass.scss",
+        .data = "@function pass($value) { @return $value; }",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_receiver.scss",
+        .data = "@function accepts($value) { @return $value; }",
     });
     const base = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(base);
@@ -40885,7 +41106,7 @@ test "native Sass other-module callable argument owners fail without partial CSS
         "native Sass local module callable argument owner is not supported yet",
         diagnostics[0].message,
     );
-    const call = "meta.call($ref, (\"nested\": other.$callback))";
+    const call = "receiver.accepts((\"nested\": $re-exported))";
     const call_start = std.mem.indexOf(u8, input, call).?;
     try std.testing.expectEqual(source_id, diagnostics[0].span.source);
     try std.testing.expectEqual(@as(u32, @intCast(call_start)), diagnostics[0].span.start);

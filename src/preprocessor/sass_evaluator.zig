@@ -853,7 +853,9 @@ fn remapLocalModuleExportCallable(
         .local_module_function, .local_module_mixin => if (decodeLocalModuleCallable(
             callable,
         )) |target|
-            if (target.module_index < context and
+            if (target.module_index != context and
+                target.module_index < hard_modules and
+                target.callable_id < hard_callables and
                 callable.reexport_depth < std.math.maxInt(u16))
                 .{
                     .kind = callable.kind,
@@ -910,8 +912,10 @@ fn remapLocalModuleArgumentCallable(
         .local_module_function => if (callable.reexport_depth != 0)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
-            if (target.module_index == context)
+            if (target.module_index == context and target.callable_id < hard_callables)
                 .{ .kind = .user_function, .id = target.callable_id }
+            else if (target.module_index < hard_modules and target.callable_id < hard_callables)
+                callable
             else
                 null
         else
@@ -919,8 +923,10 @@ fn remapLocalModuleArgumentCallable(
         .local_module_mixin => if (callable.reexport_depth != 0)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
-            if (target.module_index == context)
+            if (target.module_index == context and target.callable_id < hard_callables)
                 .{ .kind = .mixin, .id = target.callable_id }
+            else if (target.module_index < hard_modules and target.callable_id < hard_callables)
+                callable
             else
                 null
         else
@@ -2188,7 +2194,7 @@ const Engine = struct {
     ) ?*Engine {
         if (self.parent_engine) |parent| {
             const module_index = self.parent_module_index orelse return null;
-            if (target.module_index >= module_index or
+            if (target.module_index == module_index or
                 !parent.localModuleCallableExists(target, kind))
             {
                 return null;
