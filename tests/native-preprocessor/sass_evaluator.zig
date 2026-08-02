@@ -48979,6 +48979,289 @@ test "native Sass configures a fifty-first sibling from re-exported callables" {
     try std.testing.expect(sass_result.map() != null);
 }
 
+test "native Sass configures a fifty-second sibling from re-exported callables" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    const module_names = [_][]const u8{
+        "middle",
+        "third",
+        "fourth",
+        "fifth",
+        "sixth",
+        "seventh",
+        "eighth",
+        "ninth",
+        "tenth",
+        "eleventh",
+        "twelfth",
+        "thirteenth",
+        "fourteenth",
+        "fifteenth",
+        "sixteenth",
+        "seventeenth",
+        "eighteenth",
+        "nineteenth",
+        "twentieth",
+        "twenty-first",
+        "twenty-second",
+        "twenty-third",
+        "twenty-fourth",
+        "twenty-fifth",
+        "twenty-sixth",
+        "twenty-seventh",
+        "twenty-eighth",
+        "twenty-ninth",
+        "thirtieth",
+        "thirty-first",
+        "thirty-second",
+        "thirty-third",
+        "thirty-fourth",
+        "thirty-fifth",
+        "thirty-sixth",
+        "thirty-seventh",
+        "thirty-eighth",
+        "thirty-ninth",
+        "fortieth",
+        "forty-first",
+        "forty-second",
+        "forty-third",
+        "forty-fourth",
+        "forty-fifth",
+        "forty-sixth",
+        "forty-seventh",
+        "forty-eighth",
+        "forty-ninth",
+        "fiftieth",
+        "fifty-first",
+        "fifty-second",
+    };
+    // Dart Sass 1.101.0 compileStringAsync rejects a @content block on
+    // meta.apply, so this depth slice keeps content transport outside scope.
+    const expected =
+        ".fifty-second{direct:4px;nested:6px}.fifty-second-internal{value:8px}.root{direct:10px;enumerated:12px;returned:14px;nested:16px;alias:18px;function-identity:true;owner-identity:true;mixin-content:true}.fifty-second-mixin{value:20px}.alias-mixin{value:22px}.state{calls:10}";
+
+    var scss_root: std.ArrayList(u8) = .empty;
+    const scss_writer = scss_root.writer(scratch);
+    try scss_writer.writeAll(
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\@use "owner";
+        \\@use "middle" with ($configured: ("function": owner.$function, "mixin": owner.$mixin));
+        \\@use "_middle.scss" as middle-alias;
+        \\@use "third" with ($configured: middle-alias.$exported);
+        \\
+    );
+    for (module_names[2..], module_names[1 .. module_names.len - 1]) |name, previous| {
+        try scss_writer.print(
+            "@use \"{s}\" with ($configured: {s}.$exported);\n",
+            .{ name, previous },
+        );
+    }
+    try scss_writer.writeAll(
+        \\@use "_fifty-second.scss" as fifty-second-alias;
+        \\$enumerated: map.get(meta.module-variables("fifty-second-alias"), "direct");
+        \\$returned: fifty-second.returned();
+        \\$nested: list.nth(map.get(fifty-second.$nested, "outer"), 1);
+        \\.root {
+        \\  direct: meta.call(map.get(fifty-second.$direct, "function"), 5px);
+        \\  enumerated: meta.call(map.get($enumerated, "function"), 6px);
+        \\  returned: meta.call(map.get($returned, "function"), 7px);
+        \\  nested: meta.call(map.get($nested, "function"), 8px);
+        \\  alias: meta.call(map.get(fifty-second-alias.$direct, "function"), 9px);
+        \\  function-identity: map.get(fifty-second.$direct, "function") == map.get($returned, "function");
+        \\  owner-identity: owner.$function == map.get(fifty-second.$direct, "function");
+        \\  mixin-content: meta.accepts-content(map.get($enumerated, "mixin"));
+        \\}
+        \\@include fifty-second.apply(fifty-second-mixin, 10px);
+        \\@include fifty-second-alias.apply(alias-mixin, 11px);
+        \\.state { calls: owner.calls(); }
+    );
+
+    var sass_root: std.ArrayList(u8) = .empty;
+    const sass_writer = sass_root.writer(scratch);
+    try sass_writer.writeAll(
+        \\@use "sass:list" as list
+        \\@use "sass:map" as map
+        \\@use "sass:meta" as meta
+        \\@use "legacy-owner" as owner
+        \\@use "legacy-middle" with ($configured: ("function": owner.$function, "mixin": owner.$mixin))
+        \\@use "_legacy-middle.sass" as middle-alias
+        \\@use "legacy-third" with ($configured: middle-alias.$exported)
+        \\
+    );
+    for (module_names[2..], module_names[1 .. module_names.len - 1]) |name, previous| {
+        try sass_writer.print(
+            "@use \"legacy-{s}\" with ($configured: legacy-{s}.$exported)\n",
+            .{ name, previous },
+        );
+    }
+    try sass_writer.writeAll(
+        \\@use "_legacy-fifty-second.sass" as fifty-second-alias
+        \\$enumerated: map.get(meta.module-variables("fifty-second-alias"), "direct")
+        \\$returned: legacy-fifty-second.returned()
+        \\$nested: list.nth(map.get(legacy-fifty-second.$nested, "outer"), 1)
+        \\.root
+        \\  direct: meta.call(map.get(legacy-fifty-second.$direct, "function"), 5px)
+        \\  enumerated: meta.call(map.get($enumerated, "function"), 6px)
+        \\  returned: meta.call(map.get($returned, "function"), 7px)
+        \\  nested: meta.call(map.get($nested, "function"), 8px)
+        \\  alias: meta.call(map.get(fifty-second-alias.$direct, "function"), 9px)
+        \\  function-identity: map.get(legacy-fifty-second.$direct, "function") == map.get($returned, "function")
+        \\  owner-identity: owner.$function == map.get(legacy-fifty-second.$direct, "function")
+        \\  mixin-content: meta.accepts-content(map.get($enumerated, "mixin"))
+        \\@include legacy-fifty-second.apply(fifty-second-mixin, 10px)
+        \\@include fifty-second-alias.apply(alias-mixin, 11px)
+        \\.state
+        \\  calls: owner.calls()
+    );
+
+    const pass_through_scss = "$configured: null !default; $exported: $configured;";
+    const pass_through_sass =
+        \\$configured: null !default
+        \\$exported: $configured
+    ;
+    const owner_scss =
+        \\@use "sass:meta";
+        \\$calls: 0;
+        \\@function double($value) {
+        \\  $calls: $calls + 1 !global;
+        \\  @return $value * 2;
+        \\}
+        \\@function calls() { @return $calls; }
+        \\@mixin emit($name, $value) {
+        \\  .#{$name} { value: double($value); @content; }
+        \\}
+        \\$function: meta.get-function("double");
+        \\$mixin: meta.get-mixin("emit");
+    ;
+    const terminal_scss =
+        \\@use "sass:list";
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\$configured: null !default;
+        \\$direct: $configured;
+        \\$nested: ("outer": ($configured,));
+        \\@function returned() { @return $configured; }
+        \\@function invoke($value) { @return meta.call(map.get($configured, "function"), $value); }
+        \\@mixin apply($name, $value) {
+        \\  @include meta.apply(map.get($configured, "mixin"), $name, $value);
+        \\}
+        \\.fifty-second {
+        \\  direct: invoke(2px);
+        \\  nested: meta.call(map.get(list.nth(map.get($nested, "outer"), 1), "function"), 3px);
+        \\}
+        \\@include apply(fifty-second-internal, 4px);
+    ;
+    const owner_sass =
+        \\@use "sass:meta" as meta
+        \\$calls: 0
+        \\@function double($value)
+        \\  $calls: $calls + 1 !global
+        \\  @return $value * 2
+        \\@function calls()
+        \\  @return $calls
+        \\@mixin emit($name, $value)
+        \\  .#{$name}
+        \\    value: double($value)
+        \\    @content
+        \\$function: meta.get-function("double")
+        \\$mixin: meta.get-mixin("emit")
+    ;
+    const terminal_sass =
+        \\@use "sass:list" as list
+        \\@use "sass:map" as map
+        \\@use "sass:meta" as meta
+        \\$configured: null !default
+        \\$direct: $configured
+        \\$nested: ("outer": ($configured,))
+        \\@function returned()
+        \\  @return $configured
+        \\@function invoke($value)
+        \\  @return meta.call(map.get($configured, "function"), $value)
+        \\@mixin apply($name, $value)
+        \\  @include meta.apply(map.get($configured, "mixin"), $name, $value)
+        \\.fifty-second
+        \\  direct: invoke(2px)
+        \\  nested: meta.call(map.get(list.nth(map.get($nested, "outer"), 1), "function"), 3px)
+        \\@include apply(fifty-second-internal, 4px)
+    ;
+
+    var files: [104]LocalUseFile = undefined;
+    files[0] = .{ .name = "_owner.scss", .contents = owner_scss };
+    for (module_names[0 .. module_names.len - 1], 1..) |name, index| {
+        files[index] = .{
+            .name = try std.fmt.allocPrint(scratch, "_{s}.scss", .{name}),
+            .contents = pass_through_scss,
+        };
+    }
+    files[51] = .{ .name = "_fifty-second.scss", .contents = terminal_scss };
+    files[52] = .{ .name = "_legacy-owner.sass", .contents = owner_sass };
+    for (module_names[0 .. module_names.len - 1], 53..) |name, index| {
+        files[index] = .{
+            .name = try std.fmt.allocPrint(scratch, "_legacy-{s}.sass", .{name}),
+            .contents = pass_through_sass,
+        };
+    }
+    files[103] = .{ .name = "_legacy-fifty-second.sass", .contents = terminal_sass };
+
+    var result = try compileWithLocalUseFiles(
+        allocator,
+        "fifty-second-callable-configuration.scss",
+        scss_root.items,
+        .scss,
+        &files,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(expected, result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 52), result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(u8, result.dependencies()[0].url, "/_owner.scss"));
+    for (module_names[0 .. module_names.len - 1], result.dependencies()[1..51]) |name, dependency| {
+        const suffix = try std.fmt.allocPrint(scratch, "/_{s}.scss", .{name});
+        try std.testing.expect(std.mem.endsWith(u8, dependency.url, suffix));
+    }
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        result.dependencies()[51].url,
+        "/_fifty-second.scss",
+    ));
+    try std.testing.expectEqual(@as(usize, 52), result.edges().len);
+    try std.testing.expect(result.map() != null);
+
+    var sass_result = try compileWithLocalUseFiles(
+        allocator,
+        "fifty-second-callable-configuration.sass",
+        sass_root.items,
+        .sass,
+        &files,
+        .{},
+    );
+    defer sass_result.deinit();
+    try std.testing.expectEqualStrings(expected, sass_result.css());
+    try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 52), sass_result.dependencies().len);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[0].url,
+        "/_legacy-owner.sass",
+    ));
+    for (module_names[0 .. module_names.len - 1], sass_result.dependencies()[1..51]) |name, dependency| {
+        const suffix = try std.fmt.allocPrint(scratch, "/_legacy-{s}.sass", .{name});
+        try std.testing.expect(std.mem.endsWith(u8, dependency.url, suffix));
+    }
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        sass_result.dependencies()[51].url,
+        "/_legacy-fifty-second.sass",
+    ));
+    try std.testing.expectEqual(@as(usize, 52), sass_result.edges().len);
+    try std.testing.expect(sass_result.map() != null);
+}
+
 test "native Sass configures a fourteenth sibling from re-exported callables" {
     const expected =
         ".fourteenth{direct:4px;nested:6px}.fourteenth-internal{value:8px;content:fourteenth}.root{direct:10px;enumerated:12px;returned:14px;nested:16px;alias:18px;function-identity:true;owner-identity:true;mixin-content:true}.fourteenth-mixin{value:20px;content:root}.alias-mixin{value:22px;content:alias}.state{calls:10}";
@@ -50989,6 +51272,10 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
         },
         .{
             .name = "_fifty-second.scss",
+            .contents = "$theme: null !default; $exported: $theme;",
+        },
+        .{
+            .name = "_fifty-third.scss",
             .contents = "$theme: null !default;",
         },
     };
@@ -51067,7 +51354,7 @@ test "native Sass local use configuration rejects unsafe and repeated forms" {
         const input = if (std.mem.eql(u8, case.name, "recursive-local-module-callable-reexport.scss"))
             try std.mem.concat(std.testing.allocator, u8, &.{
                 case.input,
-                " @use \"fiftieth\" with ($theme: forty-ninth.$exported); @use \"fifty-first\" with ($theme: fiftieth.$exported); @use \"fifty-second\" with ($theme: fifty-first.$exported);",
+                " @use \"fiftieth\" with ($theme: forty-ninth.$exported); @use \"fifty-first\" with ($theme: fiftieth.$exported); @use \"fifty-second\" with ($theme: fifty-first.$exported); @use \"fifty-third\" with ($theme: fifty-second.$exported);",
             })
         else
             case.input;
@@ -51279,7 +51566,7 @@ test "native Sass local use configuration owns diagnostics without partial CSS" 
     );
 }
 
-test "native Sass rejects fifty-second configured callable re-export hop without partial CSS" {
+test "native Sass rejects fifty-third configured callable re-export hop without partial CSS" {
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -51291,8 +51578,10 @@ test "native Sass rejects fifty-second configured callable re-export hop without
         " @use \"fiftieth\" with ($configured: forty-ninth.$exported);";
     const fifty_first_input = fiftieth_input ++
         " @use \"fifty-first\" with ($configured: fiftieth.$exported);";
-    const input = fifty_first_input ++
-        " @use \"fifty-second\" with ($configured: fifty-first.$exported);" ++ unreachable_rule;
+    const fifty_second_input = fifty_first_input ++
+        " @use \"fifty-second\" with ($configured: fifty-first.$exported);";
+    const input = fifty_second_input ++
+        " @use \"fifty-third\" with ($configured: fifty-second.$exported);" ++ unreachable_rule;
     try tmp.dir.writeFile(.{ .sub_path = "root/input.scss", .data = input });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_owner.scss",
@@ -51500,6 +51789,10 @@ test "native Sass rejects fifty-second configured callable re-export hop without
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_fifty-second.scss",
+        .data = "$configured: null !default; $exported: $configured;",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_fifty-third.scss",
         .data = "$configured: null !default;",
     });
     const base = try tmp.dir.realpathAlloc(allocator, ".");
@@ -51549,7 +51842,7 @@ test "native Sass rejects fifty-second configured callable re-export hop without
         "native Sass local module configuration only supports built-ins and callables owned by an already retained sibling module",
         diagnostics[0].message,
     );
-    const reexport = "fifty-first.$exported";
+    const reexport = "fifty-second.$exported";
     const reexport_start = std.mem.indexOf(u8, input, reexport).?;
     try std.testing.expectEqual(source_id, diagnostics[0].span.source);
     try std.testing.expectEqual(
@@ -54735,6 +55028,7 @@ fn exerciseLocalUseAllocationFailures(
         \\@use "forty-ninth" with ($configured: forty-eighth.$configured-export);
         \\@use "fiftieth" with ($configured: forty-ninth.$configured-export);
         \\@use "fifty-first" with ($configured: fiftieth.$configured-export);
+        \\@use "fifty-second" with ($configured: fifty-first.$configured-export);
         \\$function: meta.get-function("double", $module: "tokens");
         \\$mixin: meta.get-mixin("emit", "tokens");
         \\$exported-function: tokens.$exported-function;
@@ -55440,6 +55734,13 @@ test "native Sass local use handles every allocation failure" {
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_fifty-first.scss",
+        .data =
+        \\$configured: null !default;
+        \\$configured-export: $configured;
+        ,
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_fifty-second.scss",
         .data =
         \\$configured: null !default;
         \\$configured-export: $configured;
