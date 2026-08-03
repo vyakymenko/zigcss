@@ -52,8 +52,8 @@ test('accepts the bounded native Sass implementation contract', () => {
   assert.deepEqual(contract.sassConformance, {
     ownerPackage: 'NSASS-012',
     releaseGapFamily: 'native-sass-conformance',
-    state: 'in-progress',
-    packageState: 'in-progress',
+    state: 'closed',
+    packageState: 'verified',
     oracle: {
       id: 'dart-sass',
       package: 'sass',
@@ -62,50 +62,30 @@ test('accepts the bounded native Sass implementation contract', () => {
       manifest: 'tests/preprocessors/sass/corpus/manifest.json',
       caseCount: 80,
     },
-    completedCaseCount: 9,
-    remainingCaseCount: 71,
-    completedCohorts: [{
-      feature: 'variables',
-      caseIds: ['scss-variable-scope'],
+    completedCaseCount: 80,
+    remainingCaseCount: 0,
+    terminalContract: {
+      selectionDerived: true,
+      successCaseCount: 60,
+      errorCaseCount: 20,
+      deterministicRunsPerSuccessCase: 2,
+      fuzzMutationsPerCase: 3,
+      maxConcurrentCompilations: 4,
       evidenceTests: [
-        'native Sass matches the pinned variables conformance cohort deterministically',
+        'native Sass closes the finite pinned success corpus deterministically',
+        'native Sass rejects the finite pinned error corpus deterministically',
+        'native Sass parser owns finite resource and cancellation boundaries',
+        'native Sass compilation is deterministic under bounded concurrency',
+        'native Sass finite corpus seeds bounded parser and evaluator fuzzing',
+        'native Sass successful transaction handles every allocation failure',
       ],
-    }, {
-      feature: 'operators',
-      caseIds: [
-        'scss-operator-precedence',
-        'scss-plus-comments',
-        'scss-minus-whitespace',
-      ],
-      evidenceTests: [
-        'native Sass matches the pinned operators conformance cohort deterministically',
-      ],
-    }, {
-      feature: 'control-flow',
-      caseIds: [
-        'scss-if-escaped',
-        'scss-for-inclusive',
-        'scss-for-compatible-units',
-      ],
-      evidenceTests: [
-        'native Sass matches the pinned control flow conformance cohort deterministically',
-      ],
-    }, {
-      feature: 'functions',
-      caseIds: [
-        'scss-function-double-underscore',
-        'scss-function-escaped',
-      ],
-      evidenceTests: [
-        'native Sass matches the pinned functions conformance cohort deterministically',
-      ],
-    }],
+    },
     gates: {
-      corpusDifferential: 'in-progress',
-      negativeAndResource: 'not-started',
-      deterministicConcurrency: 'not-started',
-      fuzz: 'not-started',
-      allocationFailure: 'not-started',
+      corpusDifferential: 'verified',
+      negativeAndResource: 'verified',
+      deterministicConcurrency: 'verified',
+      fuzz: 'verified',
+      allocationFailure: 'verified',
     },
   })
   assert.deepEqual(contract.sassEvaluatorClosure, {
@@ -514,7 +494,8 @@ test('rejects widened, unpinned, or unevidenced native Sass conformance progress
     contract => { contract.sassConformance.releaseGapFamily = 'renamed-conformance' },
     contract => { contract.sassConformance.completedCaseCount = 5 },
     contract => { contract.sassConformance.remainingCaseCount = 75 },
-    contract => { contract.sassConformance.completedCohorts[0].caseIds.push('unknown-case') },
+    contract => { contract.sassConformance.terminalContract.successCaseCount = 59 },
+    contract => { contract.sassConformance.terminalContract.selectionDerived = false },
     contract => { contract.sassConformance.gates.corpusDifferential = 'complete' },
   ]) {
     const changed = clone(loadContract())
@@ -525,7 +506,7 @@ test('rejects widened, unpinned, or unevidenced native Sass conformance progress
   const missingEvidence = fs
     .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/sass_conformance.zig'), 'utf8')
     .replace(
-      'test "native Sass matches the pinned variables conformance cohort deterministically"',
+      'test "native Sass closes the finite pinned success corpus deterministically"',
       'test "removed"',
     )
   assert.throws(

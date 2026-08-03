@@ -13,6 +13,7 @@ const native_resolver = @import("resolver.zig");
 const native_source = @import("source.zig");
 const native_sourcemap = @import("sourcemap.zig");
 const core_diagnostics = @import("../diagnostics.zig");
+const core_equivalence = @import("../css/equivalence.zig");
 const core_pipeline = @import("../css/pipeline.zig");
 
 pub const intermediate_source_name = "zigcss-native:///intermediate.css";
@@ -80,6 +81,28 @@ pub const Error = std.mem.Allocator.Error ||
 };
 
 pub const GeneratedPosition = native_sourcemap.GeneratedPosition;
+
+/// Compares two complete generated stylesheets through the stable typed CSS
+/// pipeline. This is internal conformance support, not a public stylesheet
+/// frontend API.
+pub fn equivalentCss(
+    allocator: std.mem.Allocator,
+    left: []const u8,
+    right: []const u8,
+) !bool {
+    var left_parsed = try core_pipeline.parse(allocator, "native-conformance-left.css", left);
+    defer left_parsed.deinit();
+    var right_parsed = try core_pipeline.parse(allocator, "native-conformance-right.css", right);
+    defer right_parsed.deinit();
+    if (left_parsed.hasErrors() or right_parsed.hasErrors()) return false;
+    return core_equivalence.equivalent(
+        allocator,
+        left_parsed.file(),
+        left_parsed.rules,
+        right_parsed.file(),
+        right_parsed.rules,
+    );
+}
 
 const State = enum {
     open,

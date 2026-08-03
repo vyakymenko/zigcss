@@ -93,6 +93,12 @@ const SelectorList = struct {
     }
 };
 
+const ExtensionDirective = struct {
+    target: []const u8,
+    extender: []const u8,
+    span: native_source.Span,
+};
+
 const Numeric = native_numeric.Numeric;
 
 fn directiveNameEql(raw: []const u8, expected: []const u8) bool {
@@ -454,7 +460,7 @@ const UserMixin = struct {
     allocator: std.mem.Allocator,
     name: []u8,
     parameters: []CallableParameter,
-    block: native_syntax.NodeId,
+    block: ?native_syntax.NodeId,
     owner: *ScopeFrame,
     span: native_source.Span,
     accepts_content: bool,
@@ -558,6 +564,7 @@ const ArithmeticContext = enum {
     sass,
     calculation,
     numeric_function,
+    serialized_calculation,
 };
 
 const BuiltinModule = enum {
@@ -1135,12 +1142,14 @@ const Engine = struct {
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
     limits: Limits,
+    mode: native_sass.Mode,
     values: native_value.Store,
     environment: native_environment.Environment,
     global_scope: native_environment.ScopeId,
     root_scope: ScopeFrame,
     user_functions: std.ArrayList(UserFunction) = .empty,
     user_mixins: std.ArrayList(UserMixin) = .empty,
+    extensions: std.ArrayList(ExtensionDirective) = .empty,
     modules: std.ArrayList(ModuleBinding) = .empty,
     local_modules: std.ArrayList(usize) = .empty,
     local_module_pool: std.ArrayList(LocalModule) = .empty,
@@ -1158,6 +1167,7 @@ const Engine = struct {
     active_content: ?*const ContentInvocation = null,
     active_mixin_body: bool = false,
     expression_depth: u16 = 0,
+    in_keyframes: bool = false,
     selector_count: usize = 0,
     selector_bytes: usize = 0,
     legacy_if_deprecation_count: usize = 0,
@@ -1184,6 +1194,7 @@ const Engine = struct {
             .document = document,
             .transaction = transaction,
             .limits = limits,
+            .mode = if (std.mem.endsWith(u8, root_source.name, ".sass")) .sass else .scss,
             .values = native_value.Store.init(allocator, limits.values),
             .environment = environment,
             .global_scope = global_scope,
@@ -1201,6 +1212,7 @@ const Engine = struct {
         self.user_functions.deinit(self.allocator);
         for (self.user_mixins.items) |*mixin| mixin.deinit();
         self.user_mixins.deinit(self.allocator);
+        self.extensions.deinit(self.allocator);
         for (self.local_module_pool.items) |*module| module.deinit(self.allocator);
         self.local_module_pool.deinit(self.allocator);
         self.local_modules.deinit(self.allocator);
@@ -1231,6 +1243,7 @@ const Engine = struct {
             return error.InvalidSassSyntax;
         try self.validateModulePlacement(children);
         try self.validateCallableStructure(self.document.root, .{});
+        try self.collectRootExtensions(children);
         self.root_scope.cursor = self.global_scope;
         try self.executeRootChildren(children, &self.root_scope, 1);
         try self.reportLegacyIfDeprecationSummary(root.span);
@@ -1302,11 +1315,18 @@ const Engine = struct {
         var child_context = context;
         switch (node.kind) {
             .function => {
-                if (context.in_function or context.in_control or context.in_mixin) {
+                if (try self.isCssFunctionDeclaration(node_id)) {
+                    if (context.in_function or context.in_control or context.in_mixin) {
+                        try self.report(.syntax, node.span, "CSS function declaration is not allowed here");
+                        return error.InvalidSassSyntax;
+                    }
+                    child_context = context;
+                } else if (context.in_function or context.in_control or context.in_mixin) {
                     try self.report(.syntax, node.span, "native Sass function declaration is not allowed here");
                     return error.InvalidSassSyntax;
+                } else {
+                    child_context = .{ .in_function = true };
                 }
-                child_context = .{ .in_function = true };
             },
             .conditional, .loop => child_context.in_control = true,
             .mixin => {
@@ -1461,9 +1481,13 @@ const Engine = struct {
                 .loop => try self.executeLoop(child_id, scope, depth, .root),
                 .mixin => try self.executeMixinDirective(child_id, scope, depth, .root),
                 .content => try self.executeContentDirective(child_id, scope, depth, .root),
-                .function => try self.defineUserFunction(child_id, scope),
+                .function => if (try self.isCssFunctionDeclaration(child_id))
+                    try self.emitCssFunction(child_id, scope, depth)
+                else
+                    try self.defineUserFunction(child_id, scope),
                 .import => try self.executeLegacyImportDirective(child_id),
                 .module => try self.executeModuleDirective(child_id, scope),
+                .at_rule => try self.executeRootAtRule(child_id, scope, depth),
                 .return_statement => {
                     try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
                     return error.InvalidSassSyntax;
@@ -1478,6 +1502,67 @@ const Engine = struct {
                 },
             }
             index += 1;
+        }
+    }
+
+    fn collectRootExtensions(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+    ) Error!void {
+        for (children) |child_id| {
+            const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
+            if (child.kind != .rule) continue;
+            const rule_children = self.document.children(child_id) catch return error.InvalidSassSyntax;
+            if (rule_children.len != 2) continue;
+            const selector_node = self.document.get(rule_children[0]) catch return error.InvalidSassSyntax;
+            const block_node = self.document.get(rule_children[1]) catch return error.InvalidSassSyntax;
+            if (selector_node.kind != .selector or selector_node.text == null or
+                block_node.kind != .block)
+            {
+                continue;
+            }
+            const extender = trimWhitespace(try self.sources.slice(selector_node.text.?));
+            const block_children = self.document.children(rule_children[1]) catch
+                return error.InvalidSassSyntax;
+            for (block_children) |statement_id| {
+                const statement = self.document.get(statement_id) catch return error.InvalidSassSyntax;
+                if (statement.kind != .at_rule or statement.text == null) continue;
+                const keyword = try self.sources.slice(statement.text.?);
+                if (!directiveNameEql(keyword, "@extend")) continue;
+                const statement_children = self.document.children(statement_id) catch
+                    return error.InvalidSassSyntax;
+                if (statement_children.len != 1) {
+                    try self.report(.syntax, statement.span, "native Sass @extend requires one selector");
+                    return error.InvalidSassSyntax;
+                }
+                const target_node = self.document.get(statement_children[0]) catch
+                    return error.InvalidSassSyntax;
+                if (target_node.kind != .expression or target_node.text == null) {
+                    try self.report(.syntax, statement.span, "malformed native Sass @extend selector");
+                    return error.InvalidSassSyntax;
+                }
+                const target = trimWhitespace(try self.sources.slice(target_node.text.?));
+                if (target.len == 0 or extender.len == 0 or
+                    std.mem.indexOf(u8, target, "#{") != null or
+                    std.mem.indexOf(u8, extender, "#{") != null)
+                {
+                    try self.report(
+                        .unsupported_feature,
+                        statement.span,
+                        "dynamic native Sass @extend selectors are not supported",
+                    );
+                    return error.UnsupportedFeature;
+                }
+                if (self.extensions.items.len >= self.limits.max_selectors) {
+                    try self.report(.resource_limit, statement.span, "native Sass extension limit exceeded");
+                    return error.SelectorLimitExceeded;
+                }
+                try self.extensions.append(self.allocator, .{
+                    .target = target,
+                    .extender = extender,
+                    .span = statement.span,
+                });
+            }
         }
     }
 
@@ -1571,6 +1656,119 @@ const Engine = struct {
                 },
             }
         }
+    }
+
+    fn executeRootAtRule(
+        self: *Engine,
+        at_rule_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
+        depth: u16,
+    ) Error!void {
+        const node = self.document.get(at_rule_id) catch return error.InvalidSassSyntax;
+        const keyword_span = node.text orelse return error.InvalidSassSyntax;
+        const keyword = try self.sources.slice(keyword_span);
+        if (directiveNameEql(keyword, "@keyframes")) {
+            return self.executeKeyframes(at_rule_id, scope, depth);
+        }
+        try self.report(
+            .unsupported_feature,
+            node.span,
+            "Sass at-rule is not implemented by the native evaluator yet",
+        );
+        return error.UnsupportedFeature;
+    }
+
+    fn executeKeyframes(
+        self: *Engine,
+        at_rule_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
+        depth: u16,
+    ) Error!void {
+        const node = self.document.get(at_rule_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(at_rule_id) catch return error.InvalidSassSyntax;
+        if (children.len != 2) {
+            try self.report(.syntax, node.span, "native Sass @keyframes requires a name and block");
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null or
+            block_node.kind != .block)
+        {
+            try self.report(.syntax, node.span, "malformed native Sass @keyframes directive");
+            return error.InvalidSassSyntax;
+        }
+        const name = try self.renderTemplate(prelude_node.text.?, scope.cursor, false);
+        defer self.allocator.free(name);
+        if (trimWhitespace(name).len == 0) {
+            try self.report(.syntax, prelude_node.span, "native Sass @keyframes name is empty");
+            return error.InvalidSassSyntax;
+        }
+
+        try self.transaction.emitMapped(node.span, null, "@keyframes ");
+        try self.transaction.emit(name);
+        try self.transaction.emit(" { ");
+        const previous_in_keyframes = self.in_keyframes;
+        self.in_keyframes = true;
+        defer self.in_keyframes = previous_in_keyframes;
+        var root_escapes: std.ArrayList(native_syntax.NodeId) = .empty;
+        defer root_escapes.deinit(self.allocator);
+        const body = self.document.children(children[1]) catch return error.InvalidSassSyntax;
+        for (body) |child_id| {
+            try self.transaction.consumeOperations(1);
+            const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
+            switch (child.kind) {
+                .rule => try self.evaluateRule(child_id, null, scope, depth + 1),
+                .comment => try self.emitRootComment(child),
+                .at_rule => {
+                    const child_keyword_span = child.text orelse return error.InvalidSassSyntax;
+                    const child_keyword = try self.sources.slice(child_keyword_span);
+                    if (!directiveNameEql(child_keyword, "@at-root")) {
+                        try self.report(.unsupported_feature, child.span, "keyframes at-rule is not supported");
+                        return error.UnsupportedFeature;
+                    }
+                    try root_escapes.append(self.allocator, child_id);
+                },
+                else => {
+                    try self.report(.unsupported_feature, child.span, "keyframes child is not supported");
+                    return error.UnsupportedFeature;
+                },
+            }
+        }
+        try self.transaction.emit(" }\n");
+        self.in_keyframes = previous_in_keyframes;
+        for (root_escapes.items) |escape_id| {
+            try self.executeKeyframesAtRoot(escape_id, scope, depth + 1);
+        }
+    }
+
+    fn executeKeyframesAtRoot(
+        self: *Engine,
+        at_root_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
+        depth: u16,
+    ) Error!void {
+        const node = self.document.get(at_root_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(at_root_id) catch return error.InvalidSassSyntax;
+        if (children.len != 2) {
+            try self.report(.syntax, node.span, "malformed native Sass @at-root directive");
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null or
+            block_node.kind != .block)
+        {
+            try self.report(.syntax, node.span, "malformed native Sass @at-root directive");
+            return error.InvalidSassSyntax;
+        }
+        const query = trimWhitespace(try self.sources.slice(prelude_node.text.?));
+        if (!std.ascii.eqlIgnoreCase(query, "(without: all)")) {
+            try self.report(.unsupported_feature, prelude_node.span, "native Sass @at-root query is not supported");
+            return error.UnsupportedFeature;
+        }
+        const body = self.document.children(children[1]) catch return error.InvalidSassSyntax;
+        try self.executeRootChildren(body, scope, depth);
     }
 
     fn executeLegacyImportDirective(
@@ -3947,7 +4145,25 @@ const Engine = struct {
                     .selectors = selectors,
                     .declarations = declarations,
                 } }),
-                .function => try self.defineUserFunction(child_id, scope),
+                .at_rule => {
+                    const keyword_span = child.text orelse return error.InvalidSassSyntax;
+                    const keyword = try self.sources.slice(keyword_span);
+                    if (!directiveNameEql(keyword, "@extend")) {
+                        try self.report(
+                            .unsupported_feature,
+                            child.span,
+                            "Sass rule at-rule is not implemented by the native evaluator yet",
+                        );
+                        return error.UnsupportedFeature;
+                    }
+                },
+                .function => {
+                    if (try self.isCssFunctionDeclaration(child_id)) {
+                        try self.report(.syntax, child.span, "CSS function declaration must be top-level");
+                        return error.InvalidSassSyntax;
+                    }
+                    try self.defineUserFunction(child_id, scope);
+                },
                 .return_statement => {
                     try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
                     return error.InvalidSassSyntax;
@@ -3975,6 +4191,88 @@ const Engine = struct {
             .kind = .flow,
             .parent = parent_scope,
         };
+    }
+
+    fn isCssFunctionDeclaration(
+        self: *Engine,
+        function_id: native_syntax.NodeId,
+    ) Error!bool {
+        const node = self.document.get(function_id) catch return error.InvalidSassSyntax;
+        if (node.kind != .function) return false;
+        const children = self.document.children(function_id) catch return error.InvalidSassSyntax;
+        if (children.len == 0) return false;
+        const prelude = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        if (prelude.kind != .expression or prelude.text == null) return false;
+        const raw = trimWhitespace(try self.sources.slice(prelude.text.?));
+        const opening = std.mem.indexOfScalar(u8, raw, '(') orelse return false;
+        return std.mem.startsWith(u8, trimWhitespace(raw[0..opening]), "--");
+    }
+
+    fn emitCssFunction(
+        self: *Engine,
+        function_id: native_syntax.NodeId,
+        inherited_scope: *ScopeFrame,
+        depth: u16,
+    ) Error!void {
+        const node = self.document.get(function_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(function_id) catch return error.InvalidSassSyntax;
+        if (children.len != 2) {
+            try self.report(.syntax, node.span, "CSS function requires a signature and body");
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null or
+            block_node.kind != .block)
+        {
+            try self.report(.syntax, node.span, "malformed CSS function declaration");
+            return error.InvalidSassSyntax;
+        }
+        const prelude = try self.renderTemplate(prelude_node.text.?, inherited_scope.cursor, false);
+        defer self.allocator.free(prelude);
+        const opening = std.mem.indexOfScalar(u8, prelude, '(') orelse {
+            try self.report(.syntax, prelude_node.span, "malformed CSS function signature");
+            return error.InvalidSassSyntax;
+        };
+        if (!std.mem.startsWith(u8, trimWhitespace(prelude[0..opening]), "--") or
+            !fullyWrapped(prelude[opening..], '(', ')'))
+        {
+            try self.report(.syntax, prelude_node.span, "invalid CSS function signature");
+            return error.InvalidSassSyntax;
+        }
+
+        var scope = ScopeFrame{
+            .cursor = try self.environment.push(inherited_scope.cursor),
+            .kind = .lexical,
+            .parent = inherited_scope,
+        };
+        var declarations: std.ArrayList(u8) = .empty;
+        defer declarations.deinit(self.allocator);
+        const body = self.document.children(children[1]) catch return error.InvalidSassSyntax;
+        for (body) |child_id| {
+            try self.transaction.consumeOperations(1);
+            const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
+            switch (child.kind) {
+                .declaration => if (try self.isVariableDeclaration(child_id))
+                    try self.assignVariable(child_id, &scope)
+                else
+                    try self.appendDeclaration(child_id, "", &scope, &declarations, depth + 1),
+                .comment => try self.appendBlockComment(child, &declarations),
+                else => {
+                    try self.report(
+                        .unsupported_feature,
+                        child.span,
+                        "CSS function bodies currently support declarations only",
+                    );
+                    return error.UnsupportedFeature;
+                },
+            }
+        }
+        try self.transaction.emitMapped(node.span, null, "@function ");
+        try self.transaction.emit(prelude);
+        try self.transaction.emit(" { ");
+        try self.transaction.emit(declarations.items);
+        try self.transaction.emit(" }\n");
     }
 
     fn parseIncludePrelude(
@@ -4274,19 +4572,30 @@ const Engine = struct {
     ) Error!UserMixin {
         const mixin_node = self.document.get(mixin_id) catch return error.InvalidSassSyntax;
         const children = self.document.children(mixin_id) catch return error.InvalidSassSyntax;
-        if (mixin_node.kind != .mixin or mixin_node.text == null or children.len != 2) {
+        if (mixin_node.kind != .mixin or mixin_node.text == null or
+            children.len < 1 or children.len > 2)
+        {
             try self.report(.syntax, mixin_node.span, "malformed native Sass mixin declaration");
+            return error.InvalidSassSyntax;
+        }
+        if (children.len == 1 and self.mode != .sass) {
+            try self.report(.syntax, mixin_node.span, "SCSS mixin declaration requires a block");
             return error.InvalidSassSyntax;
         }
         const keyword = try self.sources.slice(mixin_node.text.?);
         const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
-        const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
         if (!directiveNameEql(keyword, "@mixin") or
-            prelude_node.kind != .expression or prelude_node.text == null or
-            block_node.kind != .block)
+            prelude_node.kind != .expression or prelude_node.text == null)
         {
-            try self.report(.syntax, mixin_node.span, "native Sass mixin requires a signature and block");
+            try self.report(.syntax, mixin_node.span, "native Sass mixin requires a signature");
             return error.InvalidSassSyntax;
+        }
+        if (children.len == 2) {
+            const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+            if (block_node.kind != .block) {
+                try self.report(.syntax, mixin_node.span, "native Sass mixin body must be a block");
+                return error.InvalidSassSyntax;
+            }
         }
 
         const prelude = trimWhitespace(try self.sources.slice(prelude_node.text.?));
@@ -4296,7 +4605,10 @@ const Engine = struct {
             try self.report(.syntax, prelude_node.span, "invalid native Sass mixin name");
             return error.InvalidSassSyntax;
         }
-        const accepts_content = try self.containsContentDirective(children[1]);
+        const accepts_content = if (children.len == 2)
+            try self.containsContentDirective(children[1])
+        else
+            false;
         const name = try self.normalizeCallableName(raw_name);
         errdefer self.allocator.free(name);
         const parameter_body = if (opening) |index| blk: {
@@ -4311,7 +4623,7 @@ const Engine = struct {
             .allocator = self.allocator,
             .name = name,
             .parameters = parameters,
-            .block = children[1],
+            .block = if (children.len == 2) children[1] else null,
             .owner = owner,
             .span = mixin_node.span,
             .accepts_content = accepts_content,
@@ -5314,8 +5626,10 @@ const Engine = struct {
         defer self.active_content = previous_content;
 
         self.active_mixin_body = true;
-        const children = self.document.children(mixin.block) catch return error.InvalidSassSyntax;
-        try self.executeLoopBody(children, &call_scope, depth + 1, context);
+        if (mixin.block) |block| {
+            const children = self.document.children(block) catch return error.InvalidSassSyntax;
+            try self.executeLoopBody(children, &call_scope, depth + 1, context);
+        }
         try self.ensureRestKeywordsConsumed(bound.rest_value, span);
         active_call = false;
         try self.transaction.leaveCall();
@@ -5543,6 +5857,10 @@ const Engine = struct {
             else => return err,
         };
         errdefer self.allocator.free(name);
+        if (forbiddenUserFunctionName(name)) {
+            try self.report(.syntax, prelude_node.span, "invalid native Sass function name");
+            return error.InvalidSassSyntax;
+        }
 
         const body = prelude[opening + 1 .. prelude.len - 1];
         const owned_parameters = try self.parseCallableParameters(body, prelude_node.span);
@@ -5854,21 +6172,34 @@ const Engine = struct {
     ) Error!void {
         const loop_node = self.document.get(loop_id) catch return error.InvalidSassSyntax;
         const children = self.document.children(loop_id) catch return error.InvalidSassSyntax;
-        if (loop_node.kind != .loop or loop_node.text == null or children.len != 2) {
+        if (loop_node.kind != .loop or loop_node.text == null or
+            children.len < 1 or children.len > 2)
+        {
             try self.report(.syntax, loop_node.span, "malformed native Sass loop directive");
             return error.InvalidSassSyntax;
         }
         const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
-        const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
-        if (prelude_node.kind != .expression or prelude_node.text == null or
-            block_node.kind != .block)
-        {
-            try self.report(.syntax, loop_node.span, "native Sass loop requires a prelude and block");
+        if (prelude_node.kind != .expression or prelude_node.text == null) {
+            try self.report(.syntax, loop_node.span, "native Sass loop requires a prelude");
             return error.InvalidSassSyntax;
         }
         const keyword = try self.sources.slice(loop_node.text.?);
+        if (children.len == 1 and !directiveNameEql(keyword, "@while")) {
+            try self.report(.syntax, loop_node.span, "native Sass loop requires a body block");
+            return error.InvalidSassSyntax;
+        }
+        if (children.len == 2) {
+            const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
+            if (block_node.kind != .block) {
+                try self.report(.syntax, loop_node.span, "native Sass loop body must be a block");
+                return error.InvalidSassSyntax;
+            }
+        }
         const prelude = try self.sources.slice(prelude_node.text.?);
-        const body = self.document.children(children[1]) catch return error.InvalidSassSyntax;
+        const body = if (children.len == 2)
+            self.document.children(children[1]) catch return error.InvalidSassSyntax
+        else
+            &.{};
         if (directiveNameEql(keyword, "@for")) {
             try self.executeForLoop(prelude, prelude_node.span, body, parent_scope, depth, context);
         } else if (directiveNameEql(keyword, "@each")) {
@@ -6763,6 +7094,10 @@ const Engine = struct {
         }
 
         if (block) |block_id| {
+            if (std.mem.startsWith(u8, trimmed_property, "--")) {
+                try self.report(.syntax, property_node.span, "custom Sass properties may not be nested");
+                return error.InvalidSassSyntax;
+            }
             var next_prefix: std.ArrayList(u8) = .empty;
             defer next_prefix.deinit(self.allocator);
             try self.appendTemporary(&next_prefix, prefix);
@@ -6827,7 +7162,9 @@ const Engine = struct {
         context: ArithmeticContext,
     ) Error!ArithmeticProbe {
         if (raw.len == 0) return .none;
-        if (try self.hasTopLevelListStructure(raw)) return .none;
+        if (try self.hasTopLevelListStructure(raw)) {
+            return .none;
+        }
         if (fullyWrapped(raw, '(', ')') and
             try self.hasTopLevelListStructure(trimWhitespace(raw[1 .. raw.len - 1])))
         {
@@ -6852,8 +7189,9 @@ const Engine = struct {
             .cursor = first,
             .scope = scope,
             .span = span,
-            .allows_slash_division = context == .numeric_function or slashDivisionEnabled(raw),
+            .allows_slash_division = context != .sass or slashDivisionEnabled(raw),
             .strict_additive_units = context == .calculation,
+            .allows_bare_units = context == .serialized_calculation,
         };
         const numeric = parser.parseExpression() catch |err| {
             if (!parser.saw_operator) {
@@ -6913,6 +7251,14 @@ const Engine = struct {
         var index: usize = 0;
         while (index < raw.len) {
             if (raw[index] == '\\' and index + 1 < raw.len) {
+                if (raw[index + 1] == '\n') {
+                    index += 2;
+                    continue;
+                }
+                if (raw[index + 1] == '\r') {
+                    index += if (index + 2 < raw.len and raw[index + 2] == '\n') 3 else 2;
+                    continue;
+                }
                 try self.appendTemporary(&output, raw[index .. index + 2]);
                 index += 2;
                 continue;
@@ -6923,6 +7269,14 @@ const Engine = struct {
                 index += 1;
                 while (index < raw.len) {
                     if (raw[index] == '\\' and index + 1 < raw.len) {
+                        if (raw[index + 1] == '\n') {
+                            index += 2;
+                            continue;
+                        }
+                        if (raw[index + 1] == '\r') {
+                            index += if (index + 2 < raw.len and raw[index + 2] == '\n') 3 else 2;
+                            continue;
+                        }
                         try self.appendTemporary(&output, raw[index .. index + 2]);
                         index += 2;
                         continue;
@@ -7019,6 +7373,10 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         const trimmed = trimWhitespace(raw);
         const call_span = self.sourceSpanForBytes(trimmed, diagnostic_span);
+        if (std.mem.eql(u8, trimmed, ".")) {
+            try self.report(.syntax, call_span, "Sass number requires a digit after '.'");
+            return error.InvalidExpression;
+        }
         if (self.expression_depth >= self.limits.max_evaluation_depth) {
             try self.report(.resource_limit, diagnostic_span, "native Sass expression depth exceeded");
             return error.EvaluationDepthExceeded;
@@ -7054,7 +7412,9 @@ const Engine = struct {
         if (sassCalculationValue(trimmed) != null) {
             const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
             defer self.allocator.free(rendered);
-            return self.values.own(.{ .string = .{ .bytes = rendered } });
+            const stripped = try self.stripExpressionComments(rendered);
+            defer self.allocator.free(stripped);
+            return self.values.own(.{ .string = .{ .bytes = stripped } });
         }
         if (native_color.parseLiteral(trimmed)) |color| {
             return self.values.own(.{ .color = color });
@@ -7074,12 +7434,56 @@ const Engine = struct {
         if (!allow_plain_string_additive) {
             const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
             defer self.allocator.free(rendered);
-            return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = false } });
+            const stripped = try self.stripExpressionComments(rendered);
+            defer self.allocator.free(stripped);
+            return self.values.own(.{ .string = .{ .bytes = stripped, .quoted = false } });
         }
         if (try self.tryCollection(trimmed, scope, diagnostic_span)) |item| return item;
         const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
         defer self.allocator.free(rendered);
-        return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = false } });
+        const stripped = try self.stripExpressionComments(rendered);
+        defer self.allocator.free(stripped);
+        return self.values.own(.{ .string = .{ .bytes = stripped, .quoted = false } });
+    }
+
+    fn stripExpressionComments(self: *Engine, input: []const u8) Error![]u8 {
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var index: usize = 0;
+        var quote: ?u8 = null;
+        while (index < input.len) {
+            const byte = input[index];
+            if (quote) |active| {
+                try self.appendTemporary(&output, input[index .. index + 1]);
+                index += 1;
+                if (byte == '\\' and index < input.len) {
+                    try self.appendTemporary(&output, input[index .. index + 1]);
+                    index += 1;
+                } else if (byte == active) {
+                    quote = null;
+                }
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                quote = byte;
+                try self.appendTemporary(&output, input[index .. index + 1]);
+                index += 1;
+                continue;
+            }
+            if (commentEnd(input, index)) |end| {
+                if (output.items.len > 0 and
+                    !isExpressionWhitespace(output.items[output.items.len - 1]) and
+                    end < input.len and !isExpressionWhitespace(input[end]))
+                {
+                    try self.appendTemporary(&output, " ");
+                }
+                index = end;
+                continue;
+            }
+            try self.appendTemporary(&output, input[index .. index + 1]);
+            index += 1;
+        }
+        return output.toOwnedSlice(self.allocator);
     }
 
     fn tryPlainStringAdditiveExpression(
@@ -11416,11 +11820,17 @@ const Engine = struct {
             .numeric => |numeric| {
                 if (!numeric.isCssNumber()) {
                     if (builtin == .calculation) {
-                        const rendered = try self.renderBytes(raw, scope, span, true);
-                        defer self.allocator.free(rendered);
-                        return .{ .deferred = try self.values.own(.{
-                            .string = .{ .bytes = rendered },
-                        }) };
+                        var rendered: std.ArrayList(u8) = .empty;
+                        defer rendered.deinit(self.allocator);
+                        var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                        var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                        try self.appendCalculationNumber(
+                            &rendered,
+                            try numeric.toNumber(&numerator, &denominator),
+                        );
+                        return .{ .deferred = try self.values.own(.{ .string = .{
+                            .bytes = rendered.items,
+                        } }) };
                     }
                     try self.report(
                         .invalid_operation,
@@ -11437,7 +11847,7 @@ const Engine = struct {
                 return .{ .number = owned };
             },
             .incompatible => {
-                const rendered = try self.renderBytes(raw, scope, span, true);
+                const rendered = try self.simplifyDeferredCalculation(raw, scope, span);
                 defer self.allocator.free(rendered);
                 return .{ .deferred = try self.values.own(.{
                     .string = .{ .bytes = rendered },
@@ -11447,9 +11857,11 @@ const Engine = struct {
                 const rendered = try self.renderBytes(raw, scope, span, true);
                 defer self.allocator.free(rendered);
                 if (containsDeferredCssCalculation(rendered)) {
-                    return .{ .deferred = try self.values.own(.{
-                        .string = .{ .bytes = rendered },
-                    }) };
+                    const simplified = try self.simplifyDeferredCalculation(raw, scope, span);
+                    defer self.allocator.free(simplified);
+                    return .{ .deferred = try self.values.own(.{ .string = .{
+                        .bytes = simplified,
+                    } }) };
                 }
                 try self.report(.invalid_operation, span, "invalid native Sass calculation expression");
                 return error.InvalidExpression;
@@ -11472,6 +11884,62 @@ const Engine = struct {
                 break :blk error.InvalidExpression;
             },
         };
+    }
+
+    fn simplifyDeferredCalculation(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error![]u8 {
+        const trimmed = trimWhitespace(raw);
+        const additive = findTopLevelAdditiveOperator(trimmed) orelse
+            return self.renderBytes(trimmed, scope, span, true);
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendSimplifiedCalculationTerm(
+            &output,
+            trimmed[0..additive],
+            scope,
+            span,
+        );
+        try self.appendTemporary(&output, if (trimmed[additive] == '+') " + " else " - ");
+        try self.appendSimplifiedCalculationTerm(
+            &output,
+            trimmed[additive + 1 ..],
+            scope,
+            span,
+        );
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn appendSimplifiedCalculationTerm(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+    ) Error!void {
+        const trimmed = trimWhitespace(raw);
+        switch (try self.probeArithmetic(trimmed, scope, span, .numeric_function)) {
+            .numeric => |numeric| {
+                var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                try self.appendNumber(
+                    output,
+                    try numeric.toNumber(&numerator, &denominator),
+                );
+            },
+            else => {
+                const rendered = try self.renderBytes(trimmed, scope, span, true);
+                defer self.allocator.free(rendered);
+                if (sassCalculationValue(rendered)) |calculation| {
+                    try self.appendCanonicalCalculationBody(output, calculation.body);
+                } else {
+                    try self.appendTemporary(output, rendered);
+                }
+            },
+        }
     }
 
     fn selectCalculationNumber(
@@ -21887,6 +22355,7 @@ const Engine = struct {
     ) Error!SelectorList {
         const rendered = try self.renderTemplate(span, scope, false);
         defer self.allocator.free(rendered);
+        if (self.in_keyframes) normalizeScientificExponentCase(rendered);
         var children: std.ArrayList([]const u8) = .empty;
         defer children.deinit(self.allocator);
         try splitSelectors(self.allocator, rendered, &children);
@@ -21897,6 +22366,14 @@ const Engine = struct {
         const parent_count = if (parents) |list| list.items.len else 1;
         var expansions_per_parent: usize = 0;
         for (children.items) |child| {
+            if (!validParentSelectorPlacement(child)) {
+                try self.report(
+                    .syntax,
+                    span,
+                    "Sass parent selector must begin a compound selector",
+                );
+                return error.InvalidSassSyntax;
+            }
             const ampersands = replaceableAmpersandCount(child);
             const child_expansions = if (ampersands == 0)
                 1
@@ -21967,7 +22444,105 @@ const Engine = struct {
             }
         }
         self.selector_count = next_count;
-        return .{ .items = try items.toOwnedSlice(self.allocator) };
+        var result = SelectorList{ .items = try items.toOwnedSlice(self.allocator) };
+        if (parents == null and self.extensions.items.len > 0) {
+            try self.applyRootExtensions(&result, span);
+        }
+        return result;
+    }
+
+    fn applyRootExtensions(
+        self: *Engine,
+        selectors: *SelectorList,
+        span: native_source.Span,
+    ) Error!void {
+        for (self.extensions.items) |extension| {
+            var input: std.ArrayList(u8) = .empty;
+            defer input.deinit(self.allocator);
+            for (selectors.items, 0..) |selector, index| {
+                if (index > 0) try self.appendTemporary(&input, ", ");
+                try self.appendTemporary(&input, selector);
+            }
+            const remaining = self.limits.max_selectors -| self.selector_count;
+            const operation_budget = selectorExtensionOperationBudget(
+                input.items,
+                extension.target,
+                extension.extender,
+                @max(remaining, selectors.items.len),
+                true,
+            ) orelse {
+                try self.transaction.consumeOperations(std.math.maxInt(u64));
+                unreachable;
+            };
+            try self.transaction.consumeOperations(operation_budget);
+            const limits = native_selector.Limits{
+                .max_selectors = @max(remaining, selectors.items.len) +| 3,
+                .max_bytes = self.limits.max_selector_bytes -| self.selector_bytes,
+                .max_complex_components = @max(remaining, selectors.items.len) +| 3,
+                .max_temporary_bytes = self.limits.max_temporary_bytes,
+                .max_relation_operations = operation_budget,
+            };
+            var extended = native_selector.extend(
+                self.allocator,
+                input.items,
+                extension.target,
+                extension.extender,
+                limits,
+            ) catch |err| switch (err) {
+                error.InvalidSelector => {
+                    try self.report(.invalid_operation, extension.span, "invalid native Sass @extend selector");
+                    return error.InvalidExpression;
+                },
+                error.UnsupportedSelectorExtension => {
+                    try self.report(
+                        .unsupported_feature,
+                        extension.span,
+                        "native Sass @extend selector is not supported",
+                    );
+                    return error.UnsupportedFeature;
+                },
+                error.SelectorLimitExceeded => {
+                    try self.report(.resource_limit, extension.span, "native Sass extension limit exceeded");
+                    return error.SelectorLimitExceeded;
+                },
+                else => |failure| return failure,
+            };
+            defer extended.deinit();
+            var merged: std.ArrayList([]u8) = .empty;
+            errdefer {
+                for (merged.items) |item| self.allocator.free(item);
+                merged.deinit(self.allocator);
+            }
+            for (selectors.items) |item| {
+                try merged.append(self.allocator, try self.allocator.dupe(u8, item));
+            }
+            var additional: usize = 0;
+            for (extended.items) |item| {
+                var duplicate = false;
+                for (merged.items) |existing| {
+                    if (std.mem.eql(u8, existing, item)) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate) continue;
+                try merged.append(self.allocator, try self.allocator.dupe(u8, item));
+                additional += 1;
+                try self.admitSelectorBytes(item.len, span);
+            }
+            const next_count = std.math.add(usize, self.selector_count, additional) catch {
+                try self.report(.resource_limit, span, "native Sass selector limit exceeded");
+                return error.SelectorLimitExceeded;
+            };
+            if (next_count > self.limits.max_selectors) {
+                try self.report(.resource_limit, span, "native Sass selector limit exceeded");
+                return error.SelectorLimitExceeded;
+            }
+            const merged_items = try merged.toOwnedSlice(self.allocator);
+            selectors.deinit(self.allocator);
+            selectors.items = merged_items;
+            self.selector_count = next_count;
+        }
     }
 
     fn combineSelector(
@@ -22399,6 +22974,24 @@ const Engine = struct {
         }
     }
 
+    fn appendCalculationNumber(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        number: native_value.Number,
+    ) Error!void {
+        var buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        const formatted = try native_numeric.serialize(number.value, &buffer, true);
+        try self.appendTemporary(output, formatted);
+        for (number.numerator_units, 0..) |unit, index| {
+            if (index > 0) try self.appendTemporary(output, "*1");
+            try self.appendTemporary(output, unit);
+        }
+        for (number.denominator_units) |unit| {
+            try self.appendTemporary(output, " / 1");
+            try self.appendTemporary(output, unit);
+        }
+    }
+
     fn appendTemporary(
         self: *Engine,
         output: *std.ArrayList(u8),
@@ -22476,6 +23069,7 @@ const ArithmeticParser = struct {
     saw_operator: bool = false,
     allows_slash_division: bool,
     strict_additive_units: bool,
+    allows_bare_units: bool,
     invalid_additive_units: bool = false,
 
     fn parseExpression(self: *ArithmeticParser) Error!Numeric {
@@ -22571,10 +23165,28 @@ const ArithmeticParser = struct {
                 const item = try self.engine.lookupVariable(token.raw(self.raw), self.scope, self.span);
                 return switch (item.*) {
                     .number => |number| native_numeric.Numeric.fromNumber(number),
+                    .string => |string| blk: {
+                        if (string.quoted) return error.InvalidExpression;
+                        const calculation = sassCalculationValue(string.bytes) orelse
+                            return error.InvalidExpression;
+                        break :blk switch (try self.engine.probeArithmetic(
+                            calculation.body,
+                            self.scope,
+                            self.span,
+                            .serialized_calculation,
+                        )) {
+                            .numeric => |numeric| numeric,
+                            else => error.InvalidExpression,
+                        };
+                    },
                     else => error.InvalidExpression,
                 };
             },
             .identifier => {
+                if (self.allows_bare_units) {
+                    self.cursor += 1;
+                    return native_numeric.Numeric.init(1, token.raw(self.raw));
+                }
                 if (self.cursor + 2 < self.tokens.len) {
                     const separator = self.tokens[self.cursor + 1];
                     const variable = self.tokens[self.cursor + 2];
@@ -22657,7 +23269,12 @@ const ArithmeticParser = struct {
                         self.scope,
                         self.span,
                     )) |result| break :blk result;
-                    break :blk (try self.engine.tryLocalModuleFunctionCall(
+                    if (try self.engine.tryLocalModuleFunctionCall(
+                        call,
+                        self.scope,
+                        self.span,
+                    )) |result| break :blk result;
+                    break :blk (try self.engine.tryBuiltinCall(
                         call,
                         self.scope,
                         self.span,
@@ -22924,6 +23541,63 @@ fn findTopLevelByte(input: []const u8, target: u8) ?usize {
             continue;
         }
         if (paren_depth == 0 and square_depth == 0 and curly_depth == 0 and byte == target) {
+            return index;
+        }
+        switch (byte) {
+            '(' => paren_depth += 1,
+            ')' => if (paren_depth > 0) {
+                paren_depth -= 1;
+            },
+            '[' => square_depth += 1,
+            ']' => if (square_depth > 0) {
+                square_depth -= 1;
+            },
+            '{' => curly_depth += 1,
+            '}' => if (curly_depth > 0) {
+                curly_depth -= 1;
+            },
+            else => {},
+        }
+        index += 1;
+    }
+    return null;
+}
+
+fn findTopLevelAdditiveOperator(input: []const u8) ?usize {
+    var index: usize = 0;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var curly_depth: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 2;
+                continue;
+            }
+            if (byte == active) quote = null;
+            index += 1;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 2;
+            continue;
+        }
+        if (commentEnd(input, index)) |end| {
+            index = end;
+            continue;
+        }
+        const top_level = paren_depth == 0 and square_depth == 0 and curly_depth == 0;
+        if (top_level and (byte == '+' or byte == '-') and
+            trimWhitespace(input[0..index]).len != 0 and
+            trimWhitespace(input[index + 1 ..]).len != 0)
+        {
             return index;
         }
         switch (byte) {
@@ -25294,6 +25968,66 @@ fn isVariableNameStart(byte: u8) bool {
 
 fn isVariableNameContinue(byte: u8) bool {
     return isVariableNameStart(byte) or std.ascii.isDigit(byte);
+}
+
+fn forbiddenUserFunctionName(name: []const u8) bool {
+    const reserved = [_][]const u8{ "calc", "element", "expression", "url" };
+    for (reserved) |candidate| {
+        if (std.ascii.eqlIgnoreCase(name, candidate)) return true;
+    }
+    return false;
+}
+
+fn normalizeScientificExponentCase(input: []u8) void {
+    if (input.len < 3) return;
+    for (input[1 .. input.len - 1], 1..) |*byte, index| {
+        if (byte.* != 'E' or !std.ascii.isDigit(input[index - 1])) continue;
+        const following = input[index + 1];
+        if (std.ascii.isDigit(following) or
+            ((following == '+' or following == '-') and
+                index + 2 < input.len and std.ascii.isDigit(input[index + 2])))
+        {
+            byte.* = 'e';
+        }
+    }
+}
+
+fn validParentSelectorPlacement(input: []const u8) bool {
+    var index: usize = 0;
+    var quote: ?u8 = null;
+    while (index < input.len) : (index += 1) {
+        const byte = input[index];
+        if (quote) |active| {
+            if (byte == '\\' and index + 1 < input.len) {
+                index += 1;
+            } else if (byte == active) {
+                quote = null;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '\\' and index + 1 < input.len) {
+            index += 1;
+            continue;
+        }
+        if (commentEnd(input, index)) |end| {
+            index = end - 1;
+            continue;
+        }
+        if (byte != '&') continue;
+        if (index > 0 and isExpressionWhitespace(input[index - 1])) continue;
+        var previous = index;
+        while (previous > 0 and isExpressionWhitespace(input[previous - 1])) previous -= 1;
+        if (previous == 0) continue;
+        switch (input[previous - 1]) {
+            ',', '>', '+', '~', '(', '[', '{' => {},
+            else => return false,
+        }
+    }
+    return true;
 }
 
 fn replaceableAmpersandCount(input: []const u8) usize {

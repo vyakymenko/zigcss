@@ -176,8 +176,8 @@
   "sassConformance": {
     "ownerPackage": "NSASS-012",
     "releaseGapFamily": "native-sass-conformance",
-    "state": "in-progress",
-    "packageState": "in-progress",
+    "state": "closed",
+    "packageState": "verified",
     "oracle": {
       "id": "dart-sass",
       "package": "sass",
@@ -186,55 +186,30 @@
       "manifest": "tests/preprocessors/sass/corpus/manifest.json",
       "caseCount": 80
     },
-    "completedCaseCount": 9,
-    "remainingCaseCount": 71,
-    "completedCohorts": [
-      {
-        "feature": "variables",
-        "caseIds": ["scss-variable-scope"],
-        "evidenceTests": [
-          "native Sass matches the pinned variables conformance cohort deterministically"
-        ]
-      },
-      {
-        "feature": "operators",
-        "caseIds": [
-          "scss-operator-precedence",
-          "scss-plus-comments",
-          "scss-minus-whitespace"
-        ],
-        "evidenceTests": [
-          "native Sass matches the pinned operators conformance cohort deterministically"
-        ]
-      },
-      {
-        "feature": "control-flow",
-        "caseIds": [
-          "scss-if-escaped",
-          "scss-for-inclusive",
-          "scss-for-compatible-units"
-        ],
-        "evidenceTests": [
-          "native Sass matches the pinned control flow conformance cohort deterministically"
-        ]
-      },
-      {
-        "feature": "functions",
-        "caseIds": [
-          "scss-function-double-underscore",
-          "scss-function-escaped"
-        ],
-        "evidenceTests": [
-          "native Sass matches the pinned functions conformance cohort deterministically"
-        ]
-      }
-    ],
+    "completedCaseCount": 80,
+    "remainingCaseCount": 0,
+    "terminalContract": {
+      "selectionDerived": true,
+      "successCaseCount": 60,
+      "errorCaseCount": 20,
+      "deterministicRunsPerSuccessCase": 2,
+      "fuzzMutationsPerCase": 3,
+      "maxConcurrentCompilations": 4,
+      "evidenceTests": [
+        "native Sass closes the finite pinned success corpus deterministically",
+        "native Sass rejects the finite pinned error corpus deterministically",
+        "native Sass parser owns finite resource and cancellation boundaries",
+        "native Sass compilation is deterministic under bounded concurrency",
+        "native Sass finite corpus seeds bounded parser and evaluator fuzzing",
+        "native Sass successful transaction handles every allocation failure"
+      ]
+    },
     "gates": {
-      "corpusDifferential": "in-progress",
-      "negativeAndResource": "not-started",
-      "deterministicConcurrency": "not-started",
-      "fuzz": "not-started",
-      "allocationFailure": "not-started"
+      "corpusDifferential": "verified",
+      "negativeAndResource": "verified",
+      "deterministicConcurrency": "verified",
+      "fuzz": "verified",
+      "allocationFailure": "verified"
     }
   },
   "foundations": [
@@ -591,7 +566,13 @@
       "current": "native-internal",
       "ownerPackage": "NSASS-012",
       "adapters": ["scss", "sass"],
-      "capabilities": ["pinned-corpus-differential"],
+      "capabilities": [
+        "pinned-corpus-differential",
+        "strict-negative-resource",
+        "deterministic-concurrency",
+        "bounded-fuzz",
+        "allocation-failure"
+      ],
       "nativeSources": [],
       "testSources": ["tests/native-preprocessor/sass_conformance.zig"],
       "testStep": "test-native-sass-conformance",

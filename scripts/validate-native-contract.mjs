@@ -193,8 +193,8 @@ const expectedSassEvaluatorClosure = Object.freeze({
 const expectedSassConformance = Object.freeze({
   ownerPackage: 'NSASS-012',
   releaseGapFamily: 'native-sass-conformance',
-  state: 'in-progress',
-  packageState: 'in-progress',
+  state: 'closed',
+  packageState: 'verified',
   oracle: Object.freeze({
     id: 'dart-sass',
     package: 'sass',
@@ -203,55 +203,30 @@ const expectedSassConformance = Object.freeze({
     manifest: 'tests/preprocessors/sass/corpus/manifest.json',
     caseCount: 80,
   }),
-  completedCaseCount: 9,
-  remainingCaseCount: 71,
-  completedCohorts: Object.freeze([
-    Object.freeze({
-      feature: 'variables',
-      caseIds: Object.freeze(['scss-variable-scope']),
-      evidenceTests: Object.freeze([
-        'native Sass matches the pinned variables conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'operators',
-      caseIds: Object.freeze([
-        'scss-operator-precedence',
-        'scss-plus-comments',
-        'scss-minus-whitespace',
-      ]),
-      evidenceTests: Object.freeze([
-        'native Sass matches the pinned operators conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'control-flow',
-      caseIds: Object.freeze([
-        'scss-if-escaped',
-        'scss-for-inclusive',
-        'scss-for-compatible-units',
-      ]),
-      evidenceTests: Object.freeze([
-        'native Sass matches the pinned control flow conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'functions',
-      caseIds: Object.freeze([
-        'scss-function-double-underscore',
-        'scss-function-escaped',
-      ]),
-      evidenceTests: Object.freeze([
-        'native Sass matches the pinned functions conformance cohort deterministically',
-      ]),
-    }),
-  ]),
+  completedCaseCount: 80,
+  remainingCaseCount: 0,
+  terminalContract: Object.freeze({
+    selectionDerived: true,
+    successCaseCount: 60,
+    errorCaseCount: 20,
+    deterministicRunsPerSuccessCase: 2,
+    fuzzMutationsPerCase: 3,
+    maxConcurrentCompilations: 4,
+    evidenceTests: Object.freeze([
+      'native Sass closes the finite pinned success corpus deterministically',
+      'native Sass rejects the finite pinned error corpus deterministically',
+      'native Sass parser owns finite resource and cancellation boundaries',
+      'native Sass compilation is deterministic under bounded concurrency',
+      'native Sass finite corpus seeds bounded parser and evaluator fuzzing',
+      'native Sass successful transaction handles every allocation failure',
+    ]),
+  }),
   gates: Object.freeze({
-    corpusDifferential: 'in-progress',
-    negativeAndResource: 'not-started',
-    deterministicConcurrency: 'not-started',
-    fuzz: 'not-started',
-    allocationFailure: 'not-started',
+    corpusDifferential: 'verified',
+    negativeAndResource: 'verified',
+    deterministicConcurrency: 'verified',
+    fuzz: 'verified',
+    allocationFailure: 'verified',
   }),
 })
 
@@ -620,7 +595,13 @@ const expectedImplementations = Object.freeze([
     current: 'native-internal',
     ownerPackage: 'NSASS-012',
     adapters: Object.freeze(['scss', 'sass']),
-    capabilities: Object.freeze(['pinned-corpus-differential']),
+    capabilities: Object.freeze([
+      'pinned-corpus-differential',
+      'strict-negative-resource',
+      'deterministic-concurrency',
+      'bounded-fuzz',
+      'allocation-failure',
+    ]),
     nativeSources: Object.freeze([]),
     testSources: Object.freeze(['tests/native-preprocessor/sass_conformance.zig']),
     testStep: 'test-native-sass-conformance',
@@ -883,25 +864,22 @@ function validateSassConformance(
   const selectedIds = sassSelection.cases.map(specCase => specCase.id)
   const manifestIds = sassManifest.cases.map(specCase => specCase.id)
   if (!same(selectedIds, manifestIds)) fail('native Sass conformance terminal corpus drifted')
-  const selectedById = new Map(sassSelection.cases.map(specCase => [specCase.id, specCase]))
-  const completed = new Set()
-  for (const cohort of conformance.completedCohorts) {
-    for (const caseId of cohort.caseIds) {
-      const specCase = selectedById.get(caseId)
-      if (specCase === undefined || specCase.feature !== cohort.feature || completed.has(caseId)) {
-        fail('native Sass conformance completed cohort drifted')
-      }
-      completed.add(caseId)
-    }
-    for (const evidenceTest of cohort.evidenceTests) {
-      requireText(
-        sassConformanceTests,
-        `test "${evidenceTest}"`,
-        'native Sass conformance evidence',
-      )
-    }
+  const successCaseCount = sassSelection.cases.filter(specCase => specCase.outcome === 'success').length
+  const errorCaseCount = sassSelection.cases.filter(specCase => specCase.outcome === 'error').length
+  if (!conformance.terminalContract.selectionDerived ||
+      successCaseCount !== conformance.terminalContract.successCaseCount ||
+      errorCaseCount !== conformance.terminalContract.errorCaseCount ||
+      successCaseCount + errorCaseCount !== conformance.oracle.caseCount) {
+    fail('native Sass conformance terminal accounting drifted')
   }
-  if (completed.size !== conformance.completedCaseCount ||
+  for (const evidenceTest of conformance.terminalContract.evidenceTests) {
+    requireText(
+      sassConformanceTests,
+      `test "${evidenceTest}"`,
+      'native Sass conformance evidence',
+    )
+  }
+  if (conformance.completedCaseCount !== conformance.oracle.caseCount ||
       conformance.completedCaseCount + conformance.remainingCaseCount !== conformance.oracle.caseCount) {
     fail('native Sass conformance case accounting drifted')
   }

@@ -46,6 +46,20 @@ fn compileNative(
     case: ManifestCase,
     input: []const u8,
 ) !evaluator.ValidatedCss {
+    return compileNativeWithOptions(
+        allocator,
+        case,
+        input,
+        .{ .format = .minified, .source_map = true },
+    );
+}
+
+fn compileNativeWithOptions(
+    allocator: std.mem.Allocator,
+    case: ManifestCase,
+    input: []const u8,
+    options: evaluator.Options,
+) !evaluator.ValidatedCss {
     const case_path = try std.fs.path.join(allocator, &.{ corpus_cases_root, case.id });
     defer allocator.free(case_path);
     const case_root = try std.fs.cwd().realpathAlloc(allocator, case_path);
@@ -78,7 +92,131 @@ fn compileNative(
     var transaction = try evaluator.Transaction.init(allocator, &sources, &session, .{}, .{});
     defer transaction.deinit();
     try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
-    return transaction.finish(.{ .format = .minified, .source_map = true });
+    return transaction.finish(options);
+}
+
+fn compileExpectedCss(
+    allocator: std.mem.Allocator,
+    case: ManifestCase,
+    expected: []const u8,
+) !evaluator.ValidatedCss {
+    const case_path = try std.fs.path.join(allocator, &.{ corpus_cases_root, case.id });
+    defer allocator.free(case_path);
+    const case_root = try std.fs.cwd().realpathAlloc(allocator, case_path);
+    defer allocator.free(case_root);
+
+    var authority = try resolver.Resolver.init(allocator, &.{case_root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+
+    var transaction = try evaluator.Transaction.init(allocator, &sources, &session, .{}, .{});
+    defer transaction.deinit();
+    try transaction.emit(expected);
+    return transaction.finish(.{ .format = .pretty });
+}
+
+fn withoutUtf8Charset(css: []const u8) []const u8 {
+    const prefix = "@charset \"UTF-8\";";
+    if (!std.mem.startsWith(u8, css, prefix)) return css;
+    return std.mem.trimLeft(u8, css[prefix.len..], "\r\n");
+}
+
+fn normalizeCommaWhitespace(allocator: std.mem.Allocator, css: []const u8) ![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    var index: usize = 0;
+    var quote: ?u8 = null;
+    while (index < css.len) {
+        const byte = css[index];
+        if (quote) |active| {
+            try output.append(allocator, byte);
+            index += 1;
+            if (byte == '\\' and index < css.len) {
+                try output.append(allocator, css[index]);
+                index += 1;
+            } else if (byte == active) {
+                quote = null;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            try output.append(allocator, byte);
+            index += 1;
+            continue;
+        }
+        if (byte == '/' and index + 1 < css.len and css[index + 1] == '*') {
+            const end = if (std.mem.indexOf(u8, css[index + 2 ..], "*/")) |relative|
+                index + 2 + relative + 2
+            else
+                css.len;
+            try output.appendSlice(allocator, css[index..end]);
+            index = end;
+            continue;
+        }
+        if (byte == ',') {
+            while (output.items.len > 0 and std.ascii.isWhitespace(output.items[output.items.len - 1])) {
+                output.items.len -= 1;
+            }
+            try output.append(allocator, ',');
+            index += 1;
+            while (index < css.len and std.ascii.isWhitespace(css[index])) index += 1;
+            continue;
+        }
+        try output.append(allocator, byte);
+        index += 1;
+    }
+    return output.toOwnedSlice(allocator);
+}
+
+fn nativeFailureName(
+    allocator: std.mem.Allocator,
+    case: ManifestCase,
+    input: []const u8,
+) ?[]const u8 {
+    var compiled = compileNative(allocator, case, input) catch |err| return @errorName(err);
+    compiled.deinit();
+    return null;
+}
+
+const ConcurrentCompilation = struct {
+    case: ManifestCase,
+    input: []const u8,
+    css_hash: u64 = 0,
+    map_hash: u64 = 0,
+    failure: ?anyerror = null,
+};
+
+fn compileConcurrently(context: *ConcurrentCompilation) void {
+    var allocator_state = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (allocator_state.deinit() == .leak and context.failure == null) {
+        context.failure = error.MemoryLeak;
+    };
+    const allocator = allocator_state.allocator();
+    var compiled = compileNative(allocator, context.case, context.input) catch |err| {
+        context.failure = err;
+        return;
+    };
+    defer compiled.deinit();
+    context.css_hash = std.hash.Wyhash.hash(0, compiled.css());
+    context.map_hash = std.hash.Wyhash.hash(0, compiled.sourceMap().?);
+}
+
+fn exerciseNativeCompilationAllocationFailures(
+    allocator: std.mem.Allocator,
+    case: ManifestCase,
+    input: []const u8,
+) !void {
+    var compiled = try compileNative(allocator, case, input);
+    defer compiled.deinit();
+    try std.testing.expectEqual(@as(usize, 0), compiled.coreDiagnostics().len);
+}
+
+fn cancellationRequested(_: *anyopaque, _: sass.Checkpoint) bool {
+    return true;
 }
 
 test "native Sass matches the pinned variables conformance cohort deterministically" {
@@ -345,4 +483,292 @@ test "native Sass matches the pinned functions conformance cohort deterministica
         try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
         try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
     }
+}
+
+test "native Sass closes the finite pinned success corpus deterministically" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/sass/corpus/manifest.json",
+        1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(u8, 1), parsed.value.schemaVersion);
+    try std.testing.expectEqual(@as(usize, 80), parsed.value.caseCount);
+    try std.testing.expectEqual(parsed.value.caseCount, parsed.value.cases.len);
+
+    var success_count: usize = 0;
+    var failure_count: usize = 0;
+    for (parsed.value.cases) |case| {
+        if (!std.mem.eql(u8, case.outcome, "success")) continue;
+        success_count += 1;
+
+        const input_path = try fixturePath(allocator, case, case.entry);
+        defer allocator.free(input_path);
+        const expected_path = try fixturePath(allocator, case, case.expected);
+        defer allocator.free(expected_path);
+        const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+        defer allocator.free(input);
+        const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+        defer allocator.free(expected);
+
+        var expected_css = try compileExpectedCss(allocator, case, expected);
+        defer expected_css.deinit();
+        var first = compileNativeWithOptions(
+            allocator,
+            case,
+            input,
+            .{ .format = .pretty, .source_map = true },
+        ) catch |err| {
+            std.debug.print("\n{s}: native compilation failed with {s}\n", .{ case.id, @errorName(err) });
+            failure_count += 1;
+            continue;
+        };
+        defer first.deinit();
+        var second = compileNativeWithOptions(
+            allocator,
+            case,
+            input,
+            .{ .format = .pretty, .source_map = true },
+        ) catch |err| {
+            std.debug.print("\n{s}: repeated native compilation failed with {s}\n", .{ case.id, @errorName(err) });
+            failure_count += 1;
+            continue;
+        };
+        defer second.deinit();
+
+        const expected_warning_count: usize = if (case.warning == null) 0 else 1;
+        const normalized_expected = try normalizeCommaWhitespace(
+            allocator,
+            withoutUtf8Charset(expected_css.css()),
+        );
+        defer allocator.free(normalized_expected);
+        const normalized_actual = try normalizeCommaWhitespace(allocator, first.css());
+        defer allocator.free(normalized_actual);
+        const equivalent = try evaluator.equivalentCss(
+            allocator,
+            normalized_expected,
+            normalized_actual,
+        );
+        const matches = equivalent and
+            std.mem.eql(u8, normalized_expected, normalized_actual) and
+            std.mem.eql(u8, first.css(), second.css()) and
+            std.mem.eql(u8, first.sourceMap().?, second.sourceMap().?) and
+            first.nativeDiagnostics().len == expected_warning_count and
+            first.coreDiagnostics().len == 0 and
+            first.dependencies().len == second.dependencies().len;
+        if (!matches) {
+            std.debug.print(
+                "\n{s}: conformance mismatch\nexpected: {s}\nactual:   {s}\nnative diagnostics: {d}\ncore diagnostics: {d}\ndependencies: {d}/{d}\n",
+                .{
+                    case.id,
+                    expected_css.css(),
+                    first.css(),
+                    first.nativeDiagnostics().len,
+                    first.coreDiagnostics().len,
+                    first.dependencies().len,
+                    second.dependencies().len,
+                },
+            );
+            failure_count += 1;
+        }
+    }
+
+    try std.testing.expectEqual(@as(usize, 60), success_count);
+    try std.testing.expectEqual(@as(usize, 0), failure_count);
+}
+
+test "native Sass rejects the finite pinned error corpus deterministically" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/sass/corpus/manifest.json",
+        1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    var error_count: usize = 0;
+    var acceptance_count: usize = 0;
+    for (parsed.value.cases) |case| {
+        if (!std.mem.eql(u8, case.outcome, "error")) continue;
+        error_count += 1;
+        const input_path = try fixturePath(allocator, case, case.entry);
+        defer allocator.free(input_path);
+        const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+        defer allocator.free(input);
+        const first = nativeFailureName(allocator, case, input);
+        const second = nativeFailureName(allocator, case, input);
+        if (first == null or second == null) {
+            std.debug.print("\n{s}: expected native rejection but compilation succeeded\n", .{case.id});
+            acceptance_count += 1;
+            continue;
+        }
+        try std.testing.expectEqualStrings(first.?, second.?);
+    }
+    try std.testing.expectEqual(@as(usize, 20), error_count);
+    try std.testing.expectEqual(@as(usize, 0), acceptance_count);
+}
+
+test "native Sass parser owns finite resource and cancellation boundaries" {
+    const allocator = std.testing.allocator;
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+
+    const lower_id = try sources.add("memory:///lower.scss", "$a: 1;");
+    var lower = try sass.Parser.init(
+        allocator,
+        &sources,
+        lower_id,
+        .scss,
+        .{ .max_statements = 1 },
+        .{},
+    );
+    defer lower.deinit();
+    var lower_document = try lower.parse();
+    defer lower_document.deinit();
+
+    const over_id = try sources.add("memory:///over.scss", "$a: 1; $b: 2;");
+    var over = try sass.Parser.init(
+        allocator,
+        &sources,
+        over_id,
+        .scss,
+        .{ .max_statements = 1 },
+        .{},
+    );
+    defer over.deinit();
+    try std.testing.expectError(error.StatementLimitExceeded, over.parse());
+
+    var cancellation_flag: u8 = 0;
+    const cancelled_id = try sources.add("memory:///cancelled.scss", "$a: 1;");
+    try std.testing.expectError(
+        error.Cancelled,
+        sass.Parser.init(
+            allocator,
+            &sources,
+            cancelled_id,
+            .scss,
+            .{},
+            .{ .context = &cancellation_flag, .check_fn = cancellationRequested },
+        ),
+    );
+}
+
+test "native Sass compilation is deterministic under bounded concurrency" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/sass/corpus/manifest.json",
+        1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const first_case = try findCase(parsed.value.cases, "scss-extend-pseudo");
+    const second_case = try findCase(parsed.value.cases, "sass-css-function-nested");
+    const first_path = try fixturePath(allocator, first_case, first_case.entry);
+    defer allocator.free(first_path);
+    const second_path = try fixturePath(allocator, second_case, second_case.entry);
+    defer allocator.free(second_path);
+    const first_input = try std.fs.cwd().readFileAlloc(allocator, first_path, max_fixture_bytes);
+    defer allocator.free(first_input);
+    const second_input = try std.fs.cwd().readFileAlloc(allocator, second_path, max_fixture_bytes);
+    defer allocator.free(second_input);
+
+    var contexts = [_]ConcurrentCompilation{
+        .{ .case = first_case, .input = first_input },
+        .{ .case = second_case, .input = second_input },
+        .{ .case = first_case, .input = first_input },
+        .{ .case = second_case, .input = second_input },
+    };
+    var threads: [contexts.len]std.Thread = undefined;
+    var spawned: usize = 0;
+    errdefer for (threads[0..spawned]) |thread| thread.join();
+    for (&contexts, 0..) |*context, index| {
+        threads[index] = try std.Thread.spawn(.{}, compileConcurrently, .{context});
+        spawned += 1;
+    }
+    for (threads) |thread| thread.join();
+    for (contexts) |context| try std.testing.expect(context.failure == null);
+    try std.testing.expectEqual(contexts[0].css_hash, contexts[2].css_hash);
+    try std.testing.expectEqual(contexts[0].map_hash, contexts[2].map_hash);
+    try std.testing.expectEqual(contexts[1].css_hash, contexts[3].css_hash);
+    try std.testing.expectEqual(contexts[1].map_hash, contexts[3].map_hash);
+}
+
+test "native Sass finite corpus seeds bounded parser and evaluator fuzzing" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/sass/corpus/manifest.json",
+        1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    var mutation_count: usize = 0;
+    for (parsed.value.cases) |case| {
+        const input_path = try fixturePath(allocator, case, case.entry);
+        defer allocator.free(input_path);
+        const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+        defer allocator.free(input);
+        const cuts = [_]usize{ 0, input.len / 2, input.len -| 1 };
+        for (cuts) |cut| {
+            mutation_count += 1;
+            var compiled = compileNative(allocator, case, input[0..cut]) catch continue;
+            defer compiled.deinit();
+            try std.testing.expectEqual(@as(usize, 0), compiled.coreDiagnostics().len);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 240), mutation_count);
+}
+
+test "native Sass successful transaction handles every allocation failure" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/sass/corpus/manifest.json",
+        1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+    const case = try findCase(parsed.value.cases, "scss-variable-scope");
+    try std.testing.checkAllAllocationFailures(
+        allocator,
+        exerciseNativeCompilationAllocationFailures,
+        .{ case, "a { b: c; }" },
+    );
 }
