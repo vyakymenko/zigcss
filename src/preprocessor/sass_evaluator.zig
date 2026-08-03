@@ -752,6 +752,7 @@ const ModuleBinding = struct {
 
 const ModuleVariable = struct {
     name: []u8,
+    value: ?*const native_value.Value = null,
 };
 
 const LocalModule = struct {
@@ -1077,6 +1078,7 @@ const Engine = struct {
     modules: std.ArrayList(ModuleBinding) = .empty,
     local_modules: std.ArrayList(usize) = .empty,
     local_module_pool: std.ArrayList(LocalModule) = .empty,
+    forwarded_variables: std.ArrayList(ModuleVariable) = .empty,
     local_module_count: usize = 0,
     module_depth: u16 = 0,
     parent_engine: ?*Engine = null,
@@ -1130,6 +1132,8 @@ const Engine = struct {
         for (self.local_module_pool.items) |*module| module.deinit(self.allocator);
         self.local_module_pool.deinit(self.allocator);
         self.local_modules.deinit(self.allocator);
+        for (self.forwarded_variables.items) |variable| self.allocator.free(variable.name);
+        self.forwarded_variables.deinit(self.allocator);
         self.modules.deinit(self.allocator);
         self.deprecations.deinit(self.allocator);
         self.environment.deinit();
@@ -1385,12 +1389,7 @@ const Engine = struct {
         const keyword_span = node.text orelse return error.InvalidSassSyntax;
         const keyword = try self.sources.slice(keyword_span);
         if (std.ascii.eqlIgnoreCase(keyword, "@forward")) {
-            try self.report(
-                .unsupported_feature,
-                node.span,
-                "native Sass @forward is not implemented yet",
-            );
-            return error.UnsupportedFeature;
+            return self.executeForwardDirective(node_id, scope);
         }
         if (!std.ascii.eqlIgnoreCase(keyword, "@use")) {
             try self.report(.syntax, node.span, "unknown native Sass module directive");
@@ -1488,6 +1487,54 @@ const Engine = struct {
         });
     }
 
+    fn executeForwardDirective(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+        scope: *ScopeFrame,
+    ) Error!void {
+        const node = self.document.get(node_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(node_id) catch return error.InvalidSassSyntax;
+        if (children.len != 1) {
+            try self.report(
+                .syntax,
+                node.span,
+                "native Sass @forward requires one module URL and no block",
+            );
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null) {
+            try self.report(.syntax, node.span, "native Sass @forward requires a module URL");
+            return error.InvalidSassSyntax;
+        }
+        const prelude = try self.sources.slice(prelude_node.text.?);
+        const parsed = parseForwardDirective(prelude) orelse {
+            try self.report(.syntax, node.span, "malformed native Sass @forward directive");
+            return error.InvalidSassSyntax;
+        };
+        if (std.mem.startsWith(u8, parsed.url, "sass:")) {
+            try self.report(
+                .unsupported_feature,
+                node.span,
+                "native Sass forwarding built-in modules is not implemented yet",
+            );
+            return error.UnsupportedFeature;
+        }
+        var configuration = try self.evaluateModuleConfiguration(
+            parsed.configuration,
+            scope.cursor,
+            prelude_node.span,
+        );
+        defer configuration.deinit(self.allocator);
+        const module_index = try self.loadLocalModule(
+            node.span.source,
+            parsed.url,
+            &configuration,
+            node.span,
+        );
+        try self.forwardLocalModuleVariables(module_index, node.span);
+    }
+
     fn evaluateModuleConfiguration(
         self: *Engine,
         body: ?[]const u8,
@@ -1516,7 +1563,7 @@ const Engine = struct {
             try self.report(
                 .syntax,
                 span,
-                "native Sass @use configuration requires at least one variable",
+                "native Sass module configuration requires at least one variable",
             );
             return error.InvalidSassSyntax;
         }
@@ -1538,7 +1585,7 @@ const Engine = struct {
                 try self.report(
                     .syntax,
                     entry_span,
-                    "native Sass @use configuration requires variable names",
+                    "native Sass module configuration requires variable names",
                 );
                 return error.InvalidSassSyntax;
             };
@@ -1546,7 +1593,7 @@ const Engine = struct {
                 try self.report(
                     .syntax,
                     entry_span,
-                    "native Sass @use configuration does not accept argument expansion",
+                    "native Sass module configuration does not accept argument expansion",
                 );
                 return error.InvalidSassSyntax;
             }
@@ -1610,7 +1657,7 @@ const Engine = struct {
         const message: []const u8 = if (failure == error.ArgumentLimitExceeded)
             "native Sass module configuration limit exceeded"
         else
-            "malformed native Sass @use configuration";
+            "malformed native Sass module configuration";
         self.report(code, span, message) catch |err| return err;
         return if (failure == error.ArgumentLimitExceeded)
             error.FunctionArgumentLimitExceeded
@@ -2114,6 +2161,58 @@ const Engine = struct {
         module_engine.root_scope.cursor = module_engine.global_scope;
     }
 
+    fn forwardLocalModuleVariables(
+        self: *Engine,
+        module_index: usize,
+        span: native_source.Span,
+    ) Error!void {
+        const module = self.localModule(module_index);
+        for (module.variables) |variable| {
+            if (moduleVariableNamed(self.forwarded_variables.items, variable.name)) {
+                try self.report(
+                    .duplicate_binding,
+                    span,
+                    "forwarded native Sass module variable conflicts with an existing variable",
+                );
+                return error.InvalidExpression;
+            }
+        }
+
+        const original_len = self.forwarded_variables.items.len;
+        errdefer {
+            for (self.forwarded_variables.items[original_len..]) |variable| {
+                self.allocator.free(variable.name);
+            }
+            self.forwarded_variables.items.len = original_len;
+        }
+        try self.forwarded_variables.ensureUnusedCapacity(
+            self.allocator,
+            module.variables.len,
+        );
+        for (module.variables) |variable| {
+            const source_value = try localModuleVariableValue(module, variable);
+            const value = self.ownLocalModuleExportValue(
+                module_index,
+                source_value.*,
+            ) catch |failure| switch (failure) {
+                error.InvalidValue => {
+                    try self.report(
+                        .unsupported_feature,
+                        span,
+                        "native Sass forwarded callable-valued variables are not implemented yet",
+                    );
+                    return error.UnsupportedFeature;
+                },
+                else => return failure,
+            };
+            const name = try self.allocator.dupe(u8, variable.name);
+            self.forwarded_variables.appendAssumeCapacity(.{
+                .name = name,
+                .value = value,
+            });
+        }
+    }
+
     fn clonePublicModuleVariables(
         self: *Engine,
         module_engine: *Engine,
@@ -2155,6 +2254,15 @@ const Engine = struct {
             errdefer self.allocator.free(name);
             try variables.append(self.allocator, .{ .name = name });
         }
+        for (module_engine.forwarded_variables.items) |variable| {
+            if (moduleVariableNamed(variables.items, variable.name)) continue;
+            const name = try self.allocator.dupe(u8, variable.name);
+            errdefer self.allocator.free(name);
+            try variables.append(self.allocator, .{
+                .name = name,
+                .value = variable.value,
+            });
+        }
         return variables.toOwnedSlice(self.allocator);
     }
 
@@ -2189,10 +2297,7 @@ const Engine = struct {
             const module = self.localModule(module_index);
             for (module.variables) |variable| {
                 if (!sassNameEql(variable.name, name)) continue;
-                const value = try module.engine.environment.lookup(
-                    module.engine.global_scope,
-                    variable.name,
-                ) orelse return error.InvalidSassSyntax;
+                const value = try localModuleVariableValue(module, variable);
                 return try self.ownLocalModuleExportValueOrReport(
                     module_index,
                     value.*,
@@ -6918,15 +7023,20 @@ const Engine = struct {
                 const module = self.localModule(module_index);
                 for (module.variables) |variable| {
                     if (!sassNameEql(variable.name, qualified.member)) continue;
-                    const value = try module.engine.environment.lookup(
-                        module.engine.global_scope,
-                        variable.name,
-                    ) orelse return error.InvalidSassSyntax;
+                    const value = try localModuleVariableValue(module, variable);
                     return try self.ownLocalModuleExportValueOrReport(
                         module_index,
                         value.*,
                         span,
                     );
+                }
+                if (isPrivateModuleMember(qualified.member)) {
+                    try self.report(
+                        .invalid_operation,
+                        span,
+                        "private native Sass module variable cannot be accessed",
+                    );
+                    return error.InvalidExpression;
                 }
                 try self.report(.undefined_variable, span, "undefined native Sass module variable");
                 return error.InvalidExpression;
@@ -11780,10 +11890,7 @@ const Engine = struct {
         try entries.ensureTotalCapacity(self.allocator, module.variables.len);
         for (module.variables) |variable| {
             try self.transaction.consumeOperations(1);
-            const value = try module.engine.environment.lookup(
-                module.engine.global_scope,
-                variable.name,
-            ) orelse return error.InvalidSassSyntax;
+            const value = try localModuleVariableValue(module, variable);
             entries.appendAssumeCapacity(.{
                 .key = .{ .string = .{
                     .bytes = variable.name,
@@ -23144,6 +23251,12 @@ fn parseUseDirective(input: []const u8) ?ParsedUse {
     return result;
 }
 
+fn parseForwardDirective(input: []const u8) ?ParsedUse {
+    const parsed = parseUseDirective(input) orelse return null;
+    if (parsed.namespace != null or parsed.unprefixed) return null;
+    return parsed;
+}
+
 fn defaultModuleNamespace(module_url: []const u8) ?[]const u8 {
     const slash = std.mem.lastIndexOfScalar(u8, module_url, '/');
     const name_start = if (slash) |index| index + 1 else 0;
@@ -23308,6 +23421,17 @@ fn moduleVariableNamed(variables: []const ModuleVariable, name: []const u8) bool
         if (sassNameEql(variable.name, name)) return true;
     }
     return false;
+}
+
+fn localModuleVariableValue(
+    module: *const LocalModule,
+    variable: ModuleVariable,
+) Error!*const native_value.Value {
+    if (variable.value) |value| return value;
+    return try module.engine.environment.lookup(
+        module.engine.global_scope,
+        variable.name,
+    ) orelse error.InvalidSassSyntax;
 }
 
 fn valueContainsCallable(value: native_value.Value, depth: u16) bool {

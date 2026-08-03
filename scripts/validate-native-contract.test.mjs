@@ -93,7 +93,6 @@ test('accepts the closed native Sass implementation contract', () => {
         'meta-load-css',
       ],
       referenceCases: [
-        'scss-forward-config',
         'scss-meta-load-css',
         'scss-import-import-only',
       ],
@@ -120,6 +119,17 @@ test('accepts the closed native Sass implementation contract', () => {
           'native Sass transitive local use enforces graph limits without partial CSS',
           'native Sass transitive use graph handles every allocation failure',
         ],
+      }, {
+        feature: 'forward-config',
+        state: 'native-foundation',
+        referenceCases: ['scss-forward-config'],
+        evidenceTests: [
+          'native Sass forwards the pinned configured module once',
+          'native Sass exposes forwarded public variables without duplicate evaluation',
+          'native Sass forward configuration failures own exact diagnostics',
+          'native Sass forward resolution enforces confinement and graph limits',
+          'native Sass configured forward handles every allocation failure',
+        ],
       }],
     },
     conformancePackage: 'NSASS-012',
@@ -127,6 +137,7 @@ test('accepts the closed native Sass implementation contract', () => {
   const sassCore = contract.implementations[1]
   assert.equal(sassCore.capabilities.includes('local-use-pinned-resolution-foundation'), true)
   assert.equal(sassCore.capabilities.includes('local-use-transitive-graph-foundation'), true)
+  assert.equal(sassCore.capabilities.includes('local-forward-config-foundation'), true)
   assert.equal(sassCore.capabilities.includes('legacy-color-core'), true)
   assert.equal(sassCore.capabilities.includes('closed-named-colors'), true)
   assert.equal(sassCore.capabilities.includes('color-space-equality'), true)

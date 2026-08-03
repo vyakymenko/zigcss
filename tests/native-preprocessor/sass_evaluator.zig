@@ -36801,6 +36801,329 @@ test "native Sass evaluates the pinned transitive use graph once" {
     }
 }
 
+test "native Sass forwards the pinned configured module once" {
+    const ExpectedEdge = struct {
+        parent_suffix: []const u8,
+        child_suffix: []const u8,
+    };
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        files: []const LocalUseFile,
+        dependency_suffixes: []const []const u8,
+        edges: []const ExpectedEdge,
+    }{
+        .{
+            .root_name = "input.scss",
+            .root_input = "@use \"midstream\";",
+            .mode = .scss,
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"upstream\" with ($a: configured);" },
+                .{ .name = "_upstream.scss", .contents = "$a: original !default; b { c: $a; }" },
+            },
+            .dependency_suffixes = &.{ "/_midstream.scss", "/_upstream.scss" },
+            .edges = &.{
+                .{ .parent_suffix = "/input.scss", .child_suffix = "/_midstream.scss" },
+                .{ .parent_suffix = "/_midstream.scss", .child_suffix = "/_upstream.scss" },
+            },
+        },
+        .{
+            .root_name = "input.sass",
+            .root_input = "@use \"midstream\"",
+            .mode = .sass,
+            .files = &.{
+                .{ .name = "_midstream.sass", .contents = "@forward \"upstream\" with ($a: configured)" },
+                .{ .name = "_upstream.sass", .contents = "$a: original !default\nb\n  c: $a" },
+            },
+            .dependency_suffixes = &.{ "/_midstream.sass", "/_upstream.sass" },
+            .edges = &.{
+                .{ .parent_suffix = "/input.sass", .child_suffix = "/_midstream.sass" },
+                .{ .parent_suffix = "/_midstream.sass", .child_suffix = "/_upstream.sass" },
+            },
+        },
+    };
+
+    for (cases) |case| {
+        var first = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer first.deinit();
+        var second = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer second.deinit();
+
+        try std.testing.expectEqualStrings("b{c:configured}", first.css());
+        try std.testing.expectEqualStrings(first.css(), second.css());
+        try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+        try std.testing.expectEqual(case.dependency_suffixes.len, first.dependencies().len);
+        for (case.dependency_suffixes, first.dependencies()) |suffix, dependency| {
+            try std.testing.expectEqual(resolver.DependencyKind.use, dependency.kind);
+            try std.testing.expect(std.mem.endsWith(u8, dependency.url, suffix));
+        }
+        try std.testing.expectEqual(case.edges.len, first.edges().len);
+        for (case.edges, first.edges()) |expected, edge| {
+            try std.testing.expect(std.mem.endsWith(u8, edge.parent_url.?, expected.parent_suffix));
+            try std.testing.expect(std.mem.endsWith(u8, edge.child_url, expected.child_suffix));
+        }
+        try std.testing.expectEqualSlices(
+            preprocessor.sourcemap.Segment,
+            first.map().?.segments(),
+            second.map().?.segments(),
+        );
+        try std.testing.expectEqual(@as(usize, 1), first.map().?.segments().len);
+        try std.testing.expectEqual(@as(u32, 2), first.map().?.segments()[0].source_id.?.value);
+    }
+}
+
+test "native Sass exposes forwarded public variables without duplicate evaluation" {
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        files: []const LocalUseFile,
+        expected_css: []const u8,
+    }{
+        .{
+            .root_name = "forwarded-members.scss",
+            .root_input = "@use \"midstream\"; @use \"upstream\"; .root { forwarded: midstream.$a; direct: upstream.$a; }",
+            .mode = .scss,
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"upstream\" with ($a: configured);" },
+                .{ .name = "_upstream.scss", .contents = "$a: original !default; .upstream { value: $a; }" },
+            },
+            .expected_css = ".upstream{value:configured}.root{forwarded:configured;direct:configured}",
+        },
+        .{
+            .root_name = "forwarded-members.sass",
+            .root_input = "@use \"midstream\"\n@use \"upstream\"\n.root\n  forwarded: midstream.$a\n  direct: upstream.$a",
+            .mode = .sass,
+            .files = &.{
+                .{ .name = "_midstream.sass", .contents = "@forward \"upstream\" with ($a: configured)" },
+                .{ .name = "_upstream.sass", .contents = "$a: original !default\n.upstream\n  value: $a" },
+            },
+            .expected_css = ".upstream{value:configured}.root{forwarded:configured;direct:configured}",
+        },
+        .{
+            .root_name = "forwarded-local-precedence.scss",
+            .root_input = "@use \"midstream\"; .root { value: midstream.$a; }",
+            .mode = .scss,
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "$a: midstream; @forward \"upstream\";" },
+                .{ .name = "_upstream.scss", .contents = "$a: upstream;" },
+            },
+            .expected_css = ".root{value:midstream}",
+        },
+        .{
+            .root_name = "forwarded-late-local-precedence.scss",
+            .root_input = "@use \"midstream\"; .root { value: midstream.$a; }",
+            .mode = .scss,
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"upstream\"; $a: midstream;" },
+                .{ .name = "_upstream.scss", .contents = "$a: upstream;" },
+            },
+            .expected_css = ".root{value:midstream}",
+        },
+    };
+
+    for (cases) |case| {
+        var result = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer result.deinit();
+
+        try std.testing.expectEqualStrings(case.expected_css, result.css());
+        try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 2), result.dependencies().len);
+        const expected_edge_count: usize = if (std.mem.indexOf(u8, case.root_input, "@use \"upstream\"") != null)
+            3
+        else
+            2;
+        try std.testing.expectEqual(expected_edge_count, result.edges().len);
+        const expected_segment_count: usize = if (std.mem.indexOf(u8, case.expected_css, ".upstream") != null)
+            2
+        else
+            1;
+        try std.testing.expectEqual(expected_segment_count, result.map().?.segments().len);
+        if (expected_segment_count == 2) {
+            try std.testing.expectEqual(@as(u32, 2), result.map().?.segments()[0].source_id.?.value);
+            try std.testing.expectEqual(@as(u32, 0), result.map().?.segments()[1].source_id.?.value);
+        } else {
+            try std.testing.expectEqual(@as(u32, 0), result.map().?.segments()[0].source_id.?.value);
+        }
+    }
+}
+
+test "native Sass forward configuration failures own exact diagnostics" {
+    const invalid = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        files: []const LocalUseFile,
+        expected_error: anyerror,
+        expected_code: preprocessor.diagnostics.Code,
+        expected_message: []const u8,
+        expected_span: []const u8,
+    }{
+        .{
+            .root_name = "empty-forward.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" with ();" }},
+            .expected_error = error.InvalidSassSyntax,
+            .expected_code = .syntax,
+            .expected_message = "native Sass module configuration requires at least one variable",
+            .expected_span = "\"upstream\" with ()",
+        },
+        .{
+            .root_name = "duplicate-forward-config.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" with ($a: one, $a: two);" }},
+            .expected_error = error.InvalidExpression,
+            .expected_code = .invalid_operation,
+            .expected_message = "native Sass configuration variable may only be specified once",
+            .expected_span = "$a: two",
+        },
+        .{
+            .root_name = "private-forward-config.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"upstream\" with ($_a: configured);" },
+                .{ .name = "_upstream.scss", .contents = "$_a: original !default;" },
+            },
+            .expected_error = error.InvalidExpression,
+            .expected_code = .invalid_operation,
+            .expected_message = "private native Sass module variables cannot be configured",
+            .expected_span = "$_a: configured",
+        },
+        .{
+            .root_name = "nondefault-forward-config.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"upstream\" with ($a: configured);" },
+                .{ .name = "_upstream.scss", .contents = "$a: original;" },
+            },
+            .expected_error = error.InvalidExpression,
+            .expected_code = .invalid_operation,
+            .expected_message = "native Sass configuration variable was not declared with !default in the module",
+            .expected_span = "$a: configured",
+        },
+        .{
+            .root_name = "prefixed-forward.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" as token-*;" }},
+            .expected_error = error.InvalidSassSyntax,
+            .expected_code = .syntax,
+            .expected_message = "malformed native Sass @forward directive",
+            .expected_span = "@forward \"upstream\" as token-*;",
+        },
+        .{
+            .root_name = "duplicate-forward-member.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"first\"; @forward \"second\";" },
+                .{ .name = "_first.scss", .contents = "$shared: first;" },
+                .{ .name = "_second.scss", .contents = "$shared: second;" },
+            },
+            .expected_error = error.InvalidExpression,
+            .expected_code = .duplicate_binding,
+            .expected_message = "forwarded native Sass module variable conflicts with an existing variable",
+            .expected_span = "@forward \"second\";",
+        },
+        .{
+            .root_name = "private-forward-member.scss",
+            .root_input = "@use \"midstream\"; .root { value: midstream.$_private; }",
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"upstream\";" },
+                .{ .name = "_upstream.scss", .contents = "$_private: hidden;" },
+            },
+            .expected_error = error.InvalidExpression,
+            .expected_code = .invalid_operation,
+            .expected_message = "private native Sass module variable cannot be accessed",
+            .expected_span = "midstream.$_private",
+        },
+    };
+
+    for (invalid) |case| {
+        try expectLocalUseFailure(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            .scss,
+            case.files,
+            case.expected_error,
+            case.expected_code,
+            case.expected_message,
+            case.expected_span,
+        );
+    }
+}
+
+test "native Sass forward resolution enforces confinement and graph limits" {
+    try expectLocalUseFailure(
+        std.testing.allocator,
+        "forward-escape.scss",
+        "@use \"midstream\";",
+        .scss,
+        &.{
+            .{ .name = "_midstream.scss", .contents = "@forward \"../outside\";" },
+            .{ .name = "../outside.scss", .contents = "$value: escaped;" },
+        },
+        error.PathEscape,
+        .invalid_import,
+        "native Sass local module load was rejected",
+        "@forward \"../outside\";",
+    );
+
+    const files = [_]LocalUseFile{
+        .{ .name = "_midstream.scss", .contents = "@forward \"upstream\";" },
+        .{ .name = "_upstream.scss", .contents = "$value: upstream;" },
+    };
+    try expectLocalUseFailureWithLimits(
+        std.testing.allocator,
+        "forward-depth.scss",
+        "@use \"midstream\";",
+        .scss,
+        &files,
+        error.DepthLimitExceeded,
+        .resource_limit,
+        "native Sass local module limit exceeded",
+        "@forward \"upstream\";",
+        .{},
+        .{ .max_depth = 2 },
+    );
+
+    var module_limits = sass_evaluator.Limits{};
+    module_limits.max_modules = 1;
+    try expectLocalUseFailureWithLimits(
+        std.testing.allocator,
+        "forward-module-limit.scss",
+        "@use \"midstream\";",
+        .scss,
+        &files,
+        error.ModuleLimitExceeded,
+        .resource_limit,
+        "native Sass module limit exceeded",
+        "@forward \"upstream\";",
+        module_limits,
+        .{},
+    );
+}
+
 test "native Sass transitive use preserves parent callable ownership" {
     const cases = [_]struct {
         root_name: []const u8,
@@ -36943,6 +37266,80 @@ test "native Sass transitive use graph handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         backing.allocator(),
         exerciseTransitiveUseAllocationFailures,
+        .{&context},
+    );
+}
+
+const ForwardAllocationContext = struct {
+    root: []const u8,
+    root_url: []const u8,
+};
+
+fn exerciseForwardAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const ForwardAllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input = "@use \"midstream\"; .root { value: midstream.$a; }";
+    const source_id = try sources.add(context.root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings("b{c:configured}.root{value:configured}", result.css());
+    try std.testing.expectEqual(@as(usize, 2), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 2), result.edges().len);
+    try std.testing.expectEqual(@as(usize, 2), result.map().?.segments().len);
+}
+
+test "native Sass configured forward handles every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_midstream.scss",
+        .data = "@forward \"upstream\" with ($a: configured);",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_upstream.scss",
+        .data = "$a: original !default; b { c: $a; }",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/input.scss",
+        .data = "@use \"midstream\"; .root { value: midstream.$a; }",
+    });
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const root_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root, "input.scss" },
+    );
+    defer std.testing.allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(std.testing.allocator, root_path);
+    defer std.testing.allocator.free(root_url);
+    const context = ForwardAllocationContext{ .root = root, .root_url = root_url };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseForwardAllocationFailures,
         .{&context},
     );
 }
