@@ -3484,6 +3484,9 @@ const Engine = struct {
         depth: u16,
         context: LoopBodyContext,
     ) Error!void {
+        if (content_block != null or content_parameters.len != 0) {
+            return self.metaApplyMixinContentFailure(span);
+        }
         var mixin_keyword_index: ?usize = null;
         for (evaluated.keywords.items, 0..) |keyword, index| {
             if (evaluatedKeywordNameEql(keyword, "mixin")) {
@@ -3541,8 +3544,6 @@ const Engine = struct {
                             callable.id,
                             &forwarded,
                             caller_scope,
-                            content_block,
-                            content_parameters,
                             span,
                             depth,
                             context,
@@ -3550,11 +3551,6 @@ const Engine = struct {
                         .local_module_mixin => {
                             const target = decodeLocalModuleCallable(callable) orelse
                                 return self.metaApplyMixinFailure(span);
-                            if (callable.peer_argument_transport and
-                                (content_block != null or content_parameters.len != 0))
-                            {
-                                return self.crossEngineMixinContentFailure(span);
-                            }
                             try self.invokeLocalModuleMixin(
                                 target,
                                 &forwarded,
@@ -3755,8 +3751,6 @@ const Engine = struct {
         mixin_id: u32,
         evaluated: *const EvaluatedCallArguments,
         caller_scope: *ScopeFrame,
-        content_block: ?native_syntax.NodeId,
-        content_parameters: []const CallableParameter,
         span: native_source.Span,
         depth: u16,
         context: LoopBodyContext,
@@ -3766,9 +3760,6 @@ const Engine = struct {
             return self.metaApplyMixinFailure(span);
         if (mixin_id >= parent.user_mixins.items.len) {
             return self.metaApplyMixinFailure(span);
-        }
-        if (content_block != null or content_parameters.len != 0) {
-            return self.crossEngineMixinContentFailure(span);
         }
         var cloned = try self.cloneEvaluatedArgumentsInto(
             parent,
@@ -3793,7 +3784,7 @@ const Engine = struct {
         );
     }
 
-    fn crossEngineMixinContentFailure(
+    fn metaApplyMixinContentFailure(
         self: *Engine,
         span: native_source.Span,
     ) Error {

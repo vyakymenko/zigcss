@@ -152,6 +152,7 @@ const expectedImplementations = Object.freeze([
       'local-use-caller-callable-argument-ownership-foundation',
       'local-use-peer-callable-argument-ownership-foundation',
       'local-use-cross-engine-mixin-content-rejection',
+      'local-use-meta-apply-mixin-content-rejection',
       'local-use-callable-result-ownership-foundation',
       'local-use-configuration-foundation',
       'local-use-built-in-callable-configuration-ownership-foundation',
