@@ -88,25 +88,35 @@ test('accepts the closed native Sass implementation contract', () => {
     remainingPlanDomain: {
       releaseGapFamily: 'native-sass-module-system',
       features: [
-        'use-resolution',
         'transitive-use',
         'forward',
         'legacy-import',
         'meta-load-css',
       ],
       referenceCases: [
-        'scss-use-sass-extension',
-        'scss-use-scss-extension',
-        'scss-use-import-only-exclusion',
-        'scss-use-partial-index',
         'scss-forward-config',
         'scss-meta-load-css',
         'scss-import-import-only',
       ],
+      completedSlices: [{
+        feature: 'use-resolution',
+        state: 'native-foundation',
+        referenceCases: [
+          'scss-use-sass-extension',
+          'scss-use-scss-extension',
+          'scss-use-import-only-exclusion',
+          'scss-use-partial-index',
+        ],
+        evidenceTests: [
+          'native Sass resolves the pinned one-hop use selection matrix',
+          'native Sass local use handles every allocation failure',
+        ],
+      }],
     },
     conformancePackage: 'NSASS-012',
   })
   const sassCore = contract.implementations[1]
+  assert.equal(sassCore.capabilities.includes('local-use-pinned-resolution-foundation'), true)
   assert.equal(sassCore.capabilities.includes('legacy-color-core'), true)
   assert.equal(sassCore.capabilities.includes('closed-named-colors'), true)
   assert.equal(sassCore.capabilities.includes('color-space-equality'), true)
@@ -387,6 +397,7 @@ test('rejects an open ended or renamed native Sass evaluator closure', () => {
         contract.sassEvaluatorClosure.releaseGapFamily
     },
     contract => { contract.sassEvaluatorClosure.remainingPlanDomain.referenceCases.pop() },
+    contract => { contract.sassEvaluatorClosure.remainingPlanDomain.completedSlices[0].referenceCases.pop() },
   ]) {
     const changed = clone(loadContract())
     mutate(changed)
@@ -401,6 +412,14 @@ test('binds the native Sass evaluator closure to executable and pinned reference
   assert.throws(
     () => validateContract(loadContract(), { sassEvaluatorTests: missingSemanticEvidence }),
     /native Sass evaluator evidence.*missing/,
+  )
+
+  const missingModuleEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/sass_evaluator.zig'), 'utf8')
+    .replace('test "native Sass resolves the pinned one-hop use selection matrix"', 'test "removed"')
+  assert.throws(
+    () => validateContract(loadContract(), { sassEvaluatorTests: missingModuleEvidence }),
+    /native Sass module-system evidence.*missing/,
   )
 
   const changedSelection = JSON.parse(fs.readFileSync(

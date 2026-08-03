@@ -103,20 +103,31 @@ const expectedSassEvaluatorClosure = Object.freeze({
   remainingPlanDomain: Object.freeze({
     releaseGapFamily: 'native-sass-module-system',
     features: Object.freeze([
-      'use-resolution',
       'transitive-use',
       'forward',
       'legacy-import',
       'meta-load-css',
     ]),
     referenceCases: Object.freeze([
-      'scss-use-sass-extension',
-      'scss-use-scss-extension',
-      'scss-use-import-only-exclusion',
-      'scss-use-partial-index',
       'scss-forward-config',
       'scss-meta-load-css',
       'scss-import-import-only',
+    ]),
+    completedSlices: Object.freeze([
+      Object.freeze({
+        feature: 'use-resolution',
+        state: 'native-foundation',
+        referenceCases: Object.freeze([
+          'scss-use-sass-extension',
+          'scss-use-scss-extension',
+          'scss-use-import-only-exclusion',
+          'scss-use-partial-index',
+        ]),
+        evidenceTests: Object.freeze([
+          'native Sass resolves the pinned one-hop use selection matrix',
+          'native Sass local use handles every allocation failure',
+        ]),
+      }),
     ]),
   }),
   conformancePackage: 'NSASS-012',
@@ -197,6 +208,7 @@ const expectedImplementations = Object.freeze([
       'variables',
       'variable-modifiers',
       'local-use-single-module-loading-foundation',
+      'local-use-pinned-resolution-foundation',
       'local-use-callable-member-foundation',
       'local-use-callable-existence-foundation',
       'local-use-callable-reference-foundation',
@@ -662,6 +674,23 @@ function validateSassEvaluatorClosure(
   for (const referenceCase of closure.remainingPlanDomain.referenceCases) {
     if (!selectedCases.has(referenceCase)) {
       fail(`native Sass evaluator oracle is missing ${referenceCase}`)
+    }
+  }
+  for (const completedSlice of closure.remainingPlanDomain.completedSlices) {
+    if (closure.remainingPlanDomain.features.includes(completedSlice.feature)) {
+      fail('native Sass module-system progress retained a completed feature')
+    }
+    for (const referenceCase of completedSlice.referenceCases) {
+      if (!selectedCases.has(referenceCase)) {
+        fail(`native Sass evaluator oracle is missing ${referenceCase}`)
+      }
+    }
+    for (const evidenceTest of completedSlice.evidenceTests) {
+      requireText(
+        sassEvaluatorTests,
+        `test "${evidenceTest}"`,
+        'native Sass module-system evidence',
+      )
     }
   }
   requireText(

@@ -1734,32 +1734,25 @@ const Engine = struct {
         }
     }
 
-    fn loadLocalModule(
+    fn selectLocalModuleCandidate(
         self: *Engine,
-        parent_source_id: native_source.SourceId,
-        module_url: []const u8,
-        configuration: *const ModuleConfiguration,
+        session: *native_resolver.Session,
+        parent_url: []const u8,
+        candidate_urls: []const []const u8,
         span: native_source.Span,
-    ) Error!usize {
-        const parent = try self.sources.get(parent_source_id);
-        const candidate_urls = localModuleCandidateUrls(
-            self.allocator,
-            parent.name,
-            module_url,
-            self.limits.max_temporary_bytes,
-        ) catch |failure| return self.failLocalModuleLoad(failure, span);
-        defer freeOwnedStrings(self.allocator, candidate_urls);
-
-        const session = try self.transaction.resolverSession();
+    ) Error!?native_resolver.Loaded {
         var selected: ?native_resolver.Loaded = null;
         errdefer if (selected) |*loaded| loaded.deinit();
         for (candidate_urls) |candidate_url| {
             var loaded = session.load(candidate_url, .{
                 .kind = .use,
-                .ancestry = &.{parent.name},
+                .ancestry = &.{parent_url},
             }) catch |failure| switch (failure) {
                 error.Missing => continue,
-                else => return self.failLocalModuleLoad(failure, span),
+                else => {
+                    _ = try self.failLocalModuleLoad(failure, span);
+                    unreachable;
+                },
             };
             if (selected != null) {
                 loaded.deinit();
@@ -1773,6 +1766,51 @@ const Engine = struct {
                 return error.InvalidSassSyntax;
             }
             selected = loaded;
+        }
+        return selected;
+    }
+
+    fn loadLocalModule(
+        self: *Engine,
+        parent_source_id: native_source.SourceId,
+        module_url: []const u8,
+        configuration: *const ModuleConfiguration,
+        span: native_source.Span,
+    ) Error!usize {
+        const parent = try self.sources.get(parent_source_id);
+        const session = try self.transaction.resolverSession();
+        var selected = direct: {
+            const candidates = localModuleCandidateUrls(
+                self.allocator,
+                parent.name,
+                module_url,
+                self.limits.max_temporary_bytes,
+                .direct,
+            ) catch |failure| return self.failLocalModuleLoad(failure, span);
+            defer freeOwnedStrings(self.allocator, candidates);
+            break :direct try self.selectLocalModuleCandidate(
+                session,
+                parent.name,
+                candidates,
+                span,
+            );
+        };
+        errdefer if (selected) |*loaded| loaded.deinit();
+        if (selected == null and std.fs.path.extension(module_url).len == 0) {
+            const candidates = localModuleCandidateUrls(
+                self.allocator,
+                parent.name,
+                module_url,
+                self.limits.max_temporary_bytes,
+                .index,
+            ) catch |failure| return self.failLocalModuleLoad(failure, span);
+            defer freeOwnedStrings(self.allocator, candidates);
+            selected = try self.selectLocalModuleCandidate(
+                session,
+                parent.name,
+                candidates,
+                span,
+            );
         }
 
         var loaded = selected orelse {
@@ -23050,11 +23088,14 @@ fn defaultModuleNamespace(module_url: []const u8) ?[]const u8 {
     return name;
 }
 
+const LocalModuleCandidateGroup = enum { direct, index };
+
 fn localModuleCandidateUrls(
     allocator: std.mem.Allocator,
     parent_url: []const u8,
     module_url: []const u8,
     max_temporary_bytes: usize,
+    group: LocalModuleCandidateGroup,
 ) native_resolver.Error![][]u8 {
     if (module_url.len == 0 or module_url.len > max_temporary_bytes or
         module_url[0] == '/' or
@@ -23079,60 +23120,67 @@ fn localModuleCandidateUrls(
     errdefer freeOwnedStringList(allocator, &candidates);
 
     if (extension.len != 0) {
-        try appendLocalModuleCandidate(
+        if (group == .index) return error.InvalidUrl;
+        try appendLocalModuleStylesheetCandidates(
             allocator,
             &candidates,
             parent_directory,
             module_url,
             max_temporary_bytes,
         );
-        if (!localModuleBasenameStartsWithUnderscore(module_url)) {
-            const partial = try localModulePartialPath(allocator, module_url);
-            defer allocator.free(partial);
-            try appendLocalModuleCandidate(
-                allocator,
-                &candidates,
-                parent_directory,
-                partial,
-                max_temporary_bytes,
-            );
-        }
     } else {
         const extensions = [_][]const u8{ ".scss", ".sass" };
         for (extensions) |candidate_extension| {
-            const explicit = try std.fmt.allocPrint(
-                allocator,
-                "{s}{s}",
-                .{ module_url, candidate_extension },
-            );
-            defer allocator.free(explicit);
-            try appendLocalModuleCandidate(
+            const relative = switch (group) {
+                .direct => try std.fmt.allocPrint(
+                    allocator,
+                    "{s}{s}",
+                    .{ module_url, candidate_extension },
+                ),
+                .index => try std.fmt.allocPrint(
+                    allocator,
+                    "{s}/index{s}",
+                    .{ module_url, candidate_extension },
+                ),
+            };
+            defer allocator.free(relative);
+            try appendLocalModuleStylesheetCandidates(
                 allocator,
                 &candidates,
                 parent_directory,
-                explicit,
+                relative,
                 max_temporary_bytes,
             );
-            if (!localModuleBasenameStartsWithUnderscore(module_url)) {
-                const partial_base = try localModulePartialPath(allocator, module_url);
-                defer allocator.free(partial_base);
-                const partial = try std.fmt.allocPrint(
-                    allocator,
-                    "{s}{s}",
-                    .{ partial_base, candidate_extension },
-                );
-                defer allocator.free(partial);
-                try appendLocalModuleCandidate(
-                    allocator,
-                    &candidates,
-                    parent_directory,
-                    partial,
-                    max_temporary_bytes,
-                );
-            }
         }
     }
     return candidates.toOwnedSlice(allocator);
+}
+
+fn appendLocalModuleStylesheetCandidates(
+    allocator: std.mem.Allocator,
+    candidates: *std.ArrayList([]u8),
+    parent_directory: []const u8,
+    relative: []const u8,
+    max_temporary_bytes: usize,
+) native_resolver.Error!void {
+    try appendLocalModuleCandidate(
+        allocator,
+        candidates,
+        parent_directory,
+        relative,
+        max_temporary_bytes,
+    );
+    if (localModuleBasenameStartsWithUnderscore(relative)) return;
+
+    const partial = try localModulePartialPath(allocator, relative);
+    defer allocator.free(partial);
+    try appendLocalModuleCandidate(
+        allocator,
+        candidates,
+        parent_directory,
+        partial,
+        max_temporary_bytes,
+    );
 }
 
 fn appendLocalModuleCandidate(

@@ -86,15 +86,27 @@
     ],
     "remainingPlanDomain": {
       "releaseGapFamily": "native-sass-module-system",
-      "features": ["use-resolution", "transitive-use", "forward", "legacy-import", "meta-load-css"],
+      "features": ["transitive-use", "forward", "legacy-import", "meta-load-css"],
       "referenceCases": [
-        "scss-use-sass-extension",
-        "scss-use-scss-extension",
-        "scss-use-import-only-exclusion",
-        "scss-use-partial-index",
         "scss-forward-config",
         "scss-meta-load-css",
         "scss-import-import-only"
+      ],
+      "completedSlices": [
+        {
+          "feature": "use-resolution",
+          "state": "native-foundation",
+          "referenceCases": [
+            "scss-use-sass-extension",
+            "scss-use-scss-extension",
+            "scss-use-import-only-exclusion",
+            "scss-use-partial-index"
+          ],
+          "evidenceTests": [
+            "native Sass resolves the pinned one-hop use selection matrix",
+            "native Sass local use handles every allocation failure"
+          ]
+        }
       ]
     },
     "conformancePackage": "NSASS-012"
@@ -163,6 +175,7 @@
         "variables",
         "variable-modifiers",
         "local-use-single-module-loading-foundation",
+        "local-use-pinned-resolution-foundation",
         "local-use-callable-member-foundation",
         "local-use-callable-existence-foundation",
         "local-use-callable-reference-foundation",

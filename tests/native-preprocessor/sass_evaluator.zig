@@ -36585,6 +36585,90 @@ test "native Sass declares a finite callable re-export depth contract" {
     );
 }
 
+test "native Sass resolves the pinned one-hop use selection matrix" {
+    const cases = [_]struct {
+        root_input: []const u8,
+        files: []const LocalUseFile,
+        expected_css: []const u8,
+        expected_dependency_suffix: []const u8,
+    }{
+        .{
+            .root_input = "@use \"other.sass\";",
+            .files = &.{
+                .{ .name = "other.sass", .contents = "a\n  syntax: sass" },
+                .{ .name = "other.scss", .contents = "a { syntax: scss; }" },
+                .{ .name = "other.css", .contents = "a { syntax: css; }" },
+            },
+            .expected_css = "a{syntax:sass}",
+            .expected_dependency_suffix = "/other.sass",
+        },
+        .{
+            .root_input = "@use \"other.scss\";",
+            .files = &.{
+                .{ .name = "other.sass", .contents = "a\n  syntax: sass" },
+                .{ .name = "other.scss", .contents = "a { syntax: scss; }" },
+                .{ .name = "other.css", .contents = "a { syntax: css; }" },
+            },
+            .expected_css = "a{syntax:scss}",
+            .expected_dependency_suffix = "/other.scss",
+        },
+        .{
+            .root_input = "@use \"other\";",
+            .files = &.{
+                .{ .name = "other.import.scss", .contents = "a { import-only: true; }" },
+                .{ .name = "other.scss", .contents = "a { import-only: false; }" },
+            },
+            .expected_css = "a{import-only:false}",
+            .expected_dependency_suffix = "/other.scss",
+        },
+        .{
+            .root_input = "@use \"dir\";",
+            .files = &.{
+                .{ .name = "dir/_index.scss", .contents = ".foo { a: b; }" },
+            },
+            .expected_css = ".foo{a:b}",
+            .expected_dependency_suffix = "/dir/_index.scss",
+        },
+        .{
+            .root_input = "@use \"direct\";",
+            .files = &.{
+                .{ .name = "direct.scss", .contents = ".choice { source: direct; }" },
+                .{ .name = "direct/_index.scss", .contents = ".choice { source: index; }" },
+            },
+            .expected_css = ".choice{source:direct}",
+            .expected_dependency_suffix = "/direct.scss",
+        },
+    };
+
+    for (cases) |case| {
+        var result = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            "input.scss",
+            case.root_input,
+            .scss,
+            case.files,
+            .{},
+        );
+        defer result.deinit();
+
+        try std.testing.expectEqualStrings(case.expected_css, result.css());
+        try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+        try std.testing.expectEqual(resolver.DependencyKind.use, result.dependencies()[0].kind);
+        try std.testing.expect(std.mem.endsWith(
+            u8,
+            result.dependencies()[0].url,
+            case.expected_dependency_suffix,
+        ));
+        try std.testing.expectEqual(@as(usize, 1), result.edges().len);
+        try std.testing.expectEqualStrings(
+            result.dependencies()[0].url,
+            result.edges()[0].child_url,
+        );
+        try std.testing.expect(result.map() != null);
+    }
+}
+
 fn compileWithLocalUseFiles(
     allocator: std.mem.Allocator,
     root_name: []const u8,
@@ -42361,6 +42445,21 @@ test "native Sass local use fails closed for private ambiguous missing cyclic an
         );
     }
 
+    try expectLocalUseFailure(
+        std.testing.allocator,
+        "ambiguous-index.scss",
+        "@use \"tokens\";",
+        .scss,
+        &.{
+            .{ .name = "tokens/index.scss", .contents = "$value: 1;" },
+            .{ .name = "tokens/_index.scss", .contents = "$value: 2;" },
+        },
+        error.InvalidSassSyntax,
+        .invalid_import,
+        "native Sass local module URL is ambiguous",
+        "@use \"tokens\";",
+    );
+
     var limits = sass_evaluator.Limits{};
     limits.max_modules = 1;
     try std.testing.expectError(
@@ -42441,7 +42540,7 @@ test "native Sass local use reports owned import diagnostics without partial CSS
         transaction.position(),
     );
     try std.testing.expectEqual(
-        resolver.Stats{ .attempts = 4, .files = 0, .bytes = 0 },
+        resolver.Stats{ .attempts = 8, .files = 0, .bytes = 0 },
         transaction.stats(),
     );
     try std.testing.expectError(
@@ -42469,6 +42568,7 @@ fn exerciseLocalUseAllocationFailures(
         \\@use "sass:meta";
         \\@use "sass:map";
         \\@use "sass:math";
+        \\@use "index-module";
         \\@use "owner";
         \\@use "tokens" with ($configured: (
         \\  "function": meta.get-function("abs", $module: "math"),
@@ -42693,6 +42793,11 @@ test "native Sass local use handles every allocation failure" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
+    try tmp.dir.makePath("root/index-module");
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/index-module/_index.scss",
+        .data = "$allocation-evidence: index-fallback;",
+    });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_owner.scss",
         .data =
