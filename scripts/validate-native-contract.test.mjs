@@ -18,9 +18,9 @@ function clone(value) {
   return structuredClone(value)
 }
 
-test('accepts the closed native Sass implementation contract', () => {
+test('accepts the bounded native Sass implementation contract', () => {
   const contract = validateContract(loadContract())
-  assert.equal(contract.schemaVersion, 4)
+  assert.equal(contract.schemaVersion, 5)
   assert.equal(contract.state, 'native-foundation')
   assert.equal(contract.nativeReleaseReady, false)
   assert.deepEqual(contract.nativePublicationAuthority, {
@@ -47,7 +47,38 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.deepEqual(contract.implementations.map(implementation => implementation.id), [
     'native-sass-parser',
     'native-sass-semantic-core',
+    'native-sass-conformance',
   ])
+  assert.deepEqual(contract.sassConformance, {
+    ownerPackage: 'NSASS-012',
+    releaseGapFamily: 'native-sass-conformance',
+    state: 'in-progress',
+    packageState: 'in-progress',
+    oracle: {
+      id: 'dart-sass',
+      package: 'sass',
+      version: '1.101.0',
+      selection: 'tests/preprocessors/sass/corpus/selection.json',
+      manifest: 'tests/preprocessors/sass/corpus/manifest.json',
+      caseCount: 80,
+    },
+    completedCaseCount: 1,
+    remainingCaseCount: 79,
+    completedCohorts: [{
+      feature: 'variables',
+      caseIds: ['scss-variable-scope'],
+      evidenceTests: [
+        'native Sass matches the pinned variables conformance cohort deterministically',
+      ],
+    }],
+    gates: {
+      corpusDifferential: 'in-progress',
+      negativeAndResource: 'not-started',
+      deterministicConcurrency: 'not-started',
+      fuzz: 'not-started',
+      allocationFailure: 'not-started',
+    },
+  })
   assert.deepEqual(contract.sassEvaluatorClosure, {
     ownerPackage: 'NSASS-011',
     releaseGapFamily: 'native-sass-evaluation',
@@ -449,6 +480,31 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(fs.realpathSync(contractPath).startsWith(`${repositoryRoot}${path.sep}`), true)
 })
 
+test('rejects widened, unpinned, or unevidenced native Sass conformance progress', () => {
+  for (const mutate of [
+    contract => { contract.sassConformance.releaseGapFamily = 'renamed-conformance' },
+    contract => { contract.sassConformance.completedCaseCount = 2 },
+    contract => { contract.sassConformance.remainingCaseCount = 78 },
+    contract => { contract.sassConformance.completedCohorts[0].caseIds.push('unknown-case') },
+    contract => { contract.sassConformance.gates.corpusDifferential = 'complete' },
+  ]) {
+    const changed = clone(loadContract())
+    mutate(changed)
+    assert.throws(() => validateContract(changed), /native Sass conformance/)
+  }
+
+  const missingEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/sass_conformance.zig'), 'utf8')
+    .replace(
+      'test "native Sass matches the pinned variables conformance cohort deterministically"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { sassConformanceTests: missingEvidence }),
+    /native Sass conformance evidence.*missing/,
+  )
+})
+
 test('rejects an open ended or renamed native Sass evaluator closure', () => {
   for (const mutate of [
     contract => { contract.sassEvaluatorClosure.state = 'reduced' },
@@ -667,5 +723,12 @@ test('requires one complete build graph with every native frontend runner in CI'
       '    // removed native Sass evaluator coverage',
     ) }),
     /missing native runner run_native_sass_evaluator_tests/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { buildFile: buildFile.replace(
+      '    test_step.dependOn(&run_native_sass_conformance_tests.step);',
+      '    // removed native Sass conformance coverage',
+    ) }),
+    /missing native runner run_native_sass_conformance_tests/,
   )
 })

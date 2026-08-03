@@ -190,6 +190,39 @@ const expectedSassEvaluatorClosure = Object.freeze({
   conformancePackage: 'NSASS-012',
 })
 
+const expectedSassConformance = Object.freeze({
+  ownerPackage: 'NSASS-012',
+  releaseGapFamily: 'native-sass-conformance',
+  state: 'in-progress',
+  packageState: 'in-progress',
+  oracle: Object.freeze({
+    id: 'dart-sass',
+    package: 'sass',
+    version: '1.101.0',
+    selection: 'tests/preprocessors/sass/corpus/selection.json',
+    manifest: 'tests/preprocessors/sass/corpus/manifest.json',
+    caseCount: 80,
+  }),
+  completedCaseCount: 1,
+  remainingCaseCount: 79,
+  completedCohorts: Object.freeze([
+    Object.freeze({
+      feature: 'variables',
+      caseIds: Object.freeze(['scss-variable-scope']),
+      evidenceTests: Object.freeze([
+        'native Sass matches the pinned variables conformance cohort deterministically',
+      ]),
+    }),
+  ]),
+  gates: Object.freeze({
+    corpusDifferential: 'in-progress',
+    negativeAndResource: 'not-started',
+    deterministicConcurrency: 'not-started',
+    fuzz: 'not-started',
+    allocationFailure: 'not-started',
+  }),
+})
+
 const expectedCurrentDependencies = Object.freeze({
   'image-size': '0.5.5',
   less: '4.6.7',
@@ -550,6 +583,18 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-sass-conformance',
+    current: 'native-internal',
+    ownerPackage: 'NSASS-012',
+    adapters: Object.freeze(['scss', 'sass']),
+    capabilities: Object.freeze(['pinned-corpus-differential']),
+    nativeSources: Object.freeze([]),
+    testSources: Object.freeze(['tests/native-preprocessor/sass_conformance.zig']),
+    testStep: 'test-native-sass-conformance',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -780,6 +825,61 @@ function validateSassEvaluatorClosure(
   }
 }
 
+function validateSassConformance(
+  conformance,
+  contract,
+  plan,
+  sassSelection,
+  sassManifest,
+  sassConformanceTests,
+) {
+  if (!same(conformance, expectedSassConformance)) {
+    fail('native Sass conformance contract drifted')
+  }
+  const oracle = contract.referenceOracles.find(candidate => candidate.id === conformance.oracle.id)
+  if (oracle === undefined || oracle.package !== conformance.oracle.package ||
+      oracle.version !== conformance.oracle.version) {
+    fail('native Sass conformance oracle drifted')
+  }
+  if (!Array.isArray(sassSelection.cases) ||
+      !Array.isArray(sassManifest.cases) ||
+      sassSelection.cases.length !== conformance.oracle.caseCount ||
+      sassManifest.caseCount !== conformance.oracle.caseCount ||
+      sassManifest.cases.length !== conformance.oracle.caseCount) {
+    fail('native Sass conformance terminal corpus drifted')
+  }
+  const selectedIds = sassSelection.cases.map(specCase => specCase.id)
+  const manifestIds = sassManifest.cases.map(specCase => specCase.id)
+  if (!same(selectedIds, manifestIds)) fail('native Sass conformance terminal corpus drifted')
+  const selectedById = new Map(sassSelection.cases.map(specCase => [specCase.id, specCase]))
+  const completed = new Set()
+  for (const cohort of conformance.completedCohorts) {
+    for (const caseId of cohort.caseIds) {
+      const specCase = selectedById.get(caseId)
+      if (specCase === undefined || specCase.feature !== cohort.feature || completed.has(caseId)) {
+        fail('native Sass conformance completed cohort drifted')
+      }
+      completed.add(caseId)
+    }
+    for (const evidenceTest of cohort.evidenceTests) {
+      requireText(
+        sassConformanceTests,
+        `test "${evidenceTest}"`,
+        'native Sass conformance evidence',
+      )
+    }
+  }
+  if (completed.size !== conformance.completedCaseCount ||
+      conformance.completedCaseCount + conformance.remainingCaseCount !== conformance.oracle.caseCount) {
+    fail('native Sass conformance case accounting drifted')
+  }
+  requireText(
+    plan,
+    '`NSASS-012` | Pass the pinned Sass reference corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates',
+    'DEVELOPMENT_PLAN.md native Sass conformance package',
+  )
+}
+
 function validateInternalReachability(implementations, buildFile, productionSources) {
   requireText(buildFile, 'root_source_file = b.path("src/preprocessor.zig")', 'build.zig')
   for (const implementation of implementations) {
@@ -859,12 +959,17 @@ export function validateContract(
     releaseWorkflow = fs.readFileSync(repositoryFile('.github/workflows/release.yml'), 'utf8'),
     buildFile = fs.readFileSync(repositoryFile('build.zig'), 'utf8'),
     sassSelection = loadJson('tests/preprocessors/sass/corpus/selection.json'),
+    sassManifest = loadJson('tests/preprocessors/sass/corpus/manifest.json'),
     sassEvaluatorSource = fs.readFileSync(
       repositoryFile('src/preprocessor/sass_evaluator.zig'),
       'utf8',
     ),
     sassEvaluatorTests = fs.readFileSync(
       repositoryFile('tests/native-preprocessor/sass_evaluator.zig'),
+      'utf8',
+    ),
+    sassConformanceTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/sass_conformance.zig'),
       'utf8',
     ),
     productionSources = loadProductionSources(),
@@ -884,13 +989,14 @@ export function validateContract(
       'productionBoundary',
       'referenceOracles',
       'sassEvaluatorClosure',
+      'sassConformance',
       'foundations',
       'implementations',
       'adapters',
     ],
     'root',
   )
-  if (contract.schemaVersion !== 4) fail('schemaVersion must be 4')
+  if (contract.schemaVersion !== 5) fail('schemaVersion must be 5')
   if (contract.state !== 'native-foundation') fail('state must remain native-foundation during Milestone 10')
   if (contract.nativeReleaseReady !== false) fail('native release must remain fail-closed')
   if (contract.nativeReleaseVersion !== null) fail('nativeReleaseVersion must remain null while closed')
@@ -909,6 +1015,14 @@ export function validateContract(
     sassSelection,
     sassEvaluatorSource,
     sassEvaluatorTests,
+  )
+  validateSassConformance(
+    contract.sassConformance,
+    contract,
+    plan,
+    sassSelection,
+    sassManifest,
+    sassConformanceTests,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
