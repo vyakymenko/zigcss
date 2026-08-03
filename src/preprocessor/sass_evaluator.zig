@@ -740,6 +740,17 @@ fn moduleFunctionDefinitions(kind: BuiltinModule) []const ModuleFunctionDefiniti
     };
 }
 
+fn builtinModuleForUrl(url: []const u8) ?BuiltinModule {
+    if (std.mem.eql(u8, url, "sass:color")) return .color;
+    if (std.mem.eql(u8, url, "sass:list")) return .list;
+    if (std.mem.eql(u8, url, "sass:map")) return .map;
+    if (std.mem.eql(u8, url, "sass:math")) return .math;
+    if (std.mem.eql(u8, url, "sass:meta")) return .meta;
+    if (std.mem.eql(u8, url, "sass:selector")) return .selector;
+    if (std.mem.eql(u8, url, "sass:string")) return .string;
+    return null;
+}
+
 const ModuleTarget = union(enum) {
     builtin: BuiltinModule,
     local: usize,
@@ -782,6 +793,14 @@ const LocalCallableTarget = struct {
 const ModuleCallable = struct {
     name: []u8,
     target: LocalCallableTarget,
+    order: usize,
+    renamed: bool,
+};
+
+const ForwardedBuiltinCallable = struct {
+    name: []u8,
+    callable: native_value.Callable,
+    order: usize,
 };
 
 const local_callable_component_bits = 16;
@@ -990,6 +1009,26 @@ const ParsedUse = struct {
     configuration: ?[]const u8 = null,
 };
 
+const ForwardVisibility = enum {
+    all,
+    show,
+    hide,
+};
+
+const ParsedForward = struct {
+    url: []const u8,
+    prefix: []const u8 = "",
+    visibility: ForwardVisibility = .all,
+    members: []const u8 = "",
+    member_count: usize = 0,
+    configuration: ?[]const u8 = null,
+};
+
+const ForwardMemberKind = enum {
+    variable,
+    callable,
+};
+
 const ModuleConfigurationEntry = struct {
     name: []u8,
     value: *const native_value.Value,
@@ -1104,6 +1143,10 @@ const Engine = struct {
     forwarded_variables: std.ArrayList(ModuleVariable) = .empty,
     forwarded_functions: std.ArrayList(ModuleCallable) = .empty,
     forwarded_mixins: std.ArrayList(ModuleCallable) = .empty,
+    forwarded_builtin_functions: std.ArrayList(ForwardedBuiltinCallable) = .empty,
+    forwarded_builtin_mixins: std.ArrayList(ForwardedBuiltinCallable) = .empty,
+    forwarded_function_order: usize = 0,
+    forwarded_mixin_order: usize = 0,
     local_module_count: usize = 0,
     module_depth: u16 = 0,
     parent_engine: ?*Engine = null,
@@ -1163,6 +1206,10 @@ const Engine = struct {
         self.forwarded_functions.deinit(self.allocator);
         for (self.forwarded_mixins.items) |mixin| self.allocator.free(mixin.name);
         self.forwarded_mixins.deinit(self.allocator);
+        for (self.forwarded_builtin_functions.items) |function| self.allocator.free(function.name);
+        self.forwarded_builtin_functions.deinit(self.allocator);
+        for (self.forwarded_builtin_mixins.items) |mixin| self.allocator.free(mixin.name);
+        self.forwarded_builtin_mixins.deinit(self.allocator);
         self.modules.deinit(self.allocator);
         self.deprecations.deinit(self.allocator);
         self.environment.deinit();
@@ -1445,22 +1492,7 @@ const Engine = struct {
             prelude_node.span,
         );
         defer configuration.deinit(self.allocator);
-        const builtin_kind: ?BuiltinModule = if (std.mem.eql(u8, parsed.url, "sass:color"))
-            .color
-        else if (std.mem.eql(u8, parsed.url, "sass:list"))
-            .list
-        else if (std.mem.eql(u8, parsed.url, "sass:map"))
-            .map
-        else if (std.mem.eql(u8, parsed.url, "sass:math"))
-            .math
-        else if (std.mem.eql(u8, parsed.url, "sass:meta"))
-            .meta
-        else if (std.mem.eql(u8, parsed.url, "sass:selector"))
-            .selector
-        else if (std.mem.eql(u8, parsed.url, "sass:string"))
-            .string
-        else
-            null;
+        const builtin_kind = builtinModuleForUrl(parsed.url);
         if (builtin_kind == null and std.mem.startsWith(u8, parsed.url, "sass:")) {
             try self.report(
                 .unsupported_feature,
@@ -1541,11 +1573,31 @@ const Engine = struct {
             try self.report(.syntax, node.span, "malformed native Sass @forward directive");
             return error.InvalidSassSyntax;
         };
+        if (parsed.member_count > self.limits.max_callables) {
+            try self.report(
+                .resource_limit,
+                node.span,
+                "native Sass forward member filter limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        }
+        if (builtinModuleForUrl(parsed.url)) |builtin_kind| {
+            if (parsed.configuration != null) {
+                try self.report(
+                    .invalid_operation,
+                    node.span,
+                    "native Sass built-in modules cannot be configured",
+                );
+                return error.InvalidExpression;
+            }
+            try self.forwardBuiltinModule(builtin_kind, parsed, node.span);
+            return;
+        }
         if (std.mem.startsWith(u8, parsed.url, "sass:")) {
             try self.report(
                 .unsupported_feature,
                 node.span,
-                "native Sass forwarding built-in modules is not implemented yet",
+                "native Sass built-in module is not implemented yet",
             );
             return error.UnsupportedFeature;
         }
@@ -1561,8 +1613,8 @@ const Engine = struct {
             &configuration,
             node.span,
         );
-        try self.forwardLocalModuleVariables(module_index, node.span);
-        try self.forwardLocalModuleCallables(module_index, node.span);
+        try self.forwardLocalModuleVariables(module_index, parsed, node.span);
+        try self.forwardLocalModuleCallables(module_index, parsed, node.span);
     }
 
     fn evaluateModuleConfiguration(
@@ -2194,20 +2246,10 @@ const Engine = struct {
     fn forwardLocalModuleVariables(
         self: *Engine,
         module_index: usize,
+        forward: ParsedForward,
         span: native_source.Span,
     ) Error!void {
         const module = self.localModule(module_index);
-        for (module.variables) |variable| {
-            if (moduleVariableNamed(self.forwarded_variables.items, variable.name)) {
-                try self.report(
-                    .duplicate_binding,
-                    span,
-                    "forwarded native Sass module variable conflicts with an existing variable",
-                );
-                return error.InvalidExpression;
-            }
-        }
-
         const original_len = self.forwarded_variables.items.len;
         errdefer {
             for (self.forwarded_variables.items[original_len..]) |variable| {
@@ -2215,11 +2257,19 @@ const Engine = struct {
             }
             self.forwarded_variables.items.len = original_len;
         }
-        try self.forwarded_variables.ensureUnusedCapacity(
-            self.allocator,
-            module.variables.len,
-        );
         for (module.variables) |variable| {
+            const name = try self.forwardedMemberName(forward, variable.name);
+            defer self.allocator.free(name);
+            if (!forwardMemberVisible(forward, .variable, name)) continue;
+            if (moduleVariableNamed(self.forwarded_variables.items[0..original_len], name)) {
+                try self.report(
+                    .duplicate_binding,
+                    span,
+                    "forwarded native Sass module variable conflicts with an existing variable",
+                );
+                return error.InvalidExpression;
+            }
+            if (moduleVariableNamed(self.forwarded_variables.items[original_len..], name)) continue;
             const source_value = try localModuleVariableValue(module, variable);
             const value = self.ownLocalModuleExportValue(
                 module_index,
@@ -2235,17 +2285,101 @@ const Engine = struct {
                 },
                 else => return failure,
             };
-            const name = try self.allocator.dupe(u8, variable.name);
-            self.forwarded_variables.appendAssumeCapacity(.{
-                .name = name,
+            const owned_name = try self.allocator.dupe(u8, name);
+            errdefer self.allocator.free(owned_name);
+            try self.forwarded_variables.append(self.allocator, .{
+                .name = owned_name,
                 .value = value,
             });
+        }
+    }
+
+    fn forwardBuiltinModule(
+        self: *Engine,
+        module: BuiltinModule,
+        forward: ParsedForward,
+        span: native_source.Span,
+    ) Error!void {
+        const original_variable_len = self.forwarded_variables.items.len;
+        const original_function_len = self.forwarded_builtin_functions.items.len;
+        const original_mixin_len = self.forwarded_builtin_mixins.items.len;
+        errdefer {
+            for (self.forwarded_variables.items[original_variable_len..]) |variable| {
+                self.allocator.free(variable.name);
+            }
+            self.forwarded_variables.items.len = original_variable_len;
+            for (self.forwarded_builtin_functions.items[original_function_len..]) |function| {
+                self.allocator.free(function.name);
+            }
+            self.forwarded_builtin_functions.items.len = original_function_len;
+            for (self.forwarded_builtin_mixins.items[original_mixin_len..]) |mixin| {
+                self.allocator.free(mixin.name);
+            }
+            self.forwarded_builtin_mixins.items.len = original_mixin_len;
+        }
+
+        if (module == .math) {
+            for (math_constants) |constant| {
+                const name = try self.forwardedMemberName(forward, constant.name);
+                defer self.allocator.free(name);
+                if (!forwardMemberVisible(forward, .variable, name)) continue;
+                if (moduleVariableNamed(self.forwarded_variables.items, name)) {
+                    try self.report(
+                        .duplicate_binding,
+                        span,
+                        "forwarded native Sass module variable conflicts with an existing variable",
+                    );
+                    return error.InvalidExpression;
+                }
+                const value = try self.values.own(.{ .number = .{
+                    .value = constant.value,
+                    .preserve_precision = true,
+                } });
+                const owned_name = try self.allocator.dupe(u8, name);
+                errdefer self.allocator.free(owned_name);
+                try self.forwarded_variables.append(self.allocator, .{
+                    .name = owned_name,
+                    .value = value,
+                });
+            }
+        }
+
+        for (moduleFunctionDefinitions(module)) |definition| {
+            const name = try self.forwardedMemberName(forward, definition.name);
+            defer self.allocator.free(name);
+            if (!forwardMemberVisible(forward, .callable, name)) continue;
+            try self.appendForwardedBuiltinFunction(
+                name,
+                builtinFunctionCallable(definition.builtin, module),
+                span,
+            );
+        }
+
+        if (module == .meta) {
+            const mixins = [_]struct {
+                name: []const u8,
+                builtin: BuiltinMixin,
+            }{
+                .{ .name = "load-css", .builtin = .meta_load_css },
+                .{ .name = "apply", .builtin = .meta_apply },
+            };
+            for (mixins) |definition| {
+                const name = try self.forwardedMemberName(forward, definition.name);
+                defer self.allocator.free(name);
+                if (!forwardMemberVisible(forward, .callable, name)) continue;
+                try self.appendForwardedBuiltinMixin(
+                    name,
+                    .{ .kind = .builtin_mixin, .id = @intFromEnum(definition.builtin) },
+                    span,
+                );
+            }
         }
     }
 
     fn forwardLocalModuleCallables(
         self: *Engine,
         module_index: usize,
+        forward: ParsedForward,
         span: native_source.Span,
     ) Error!void {
         const module_engine = self.localModule(module_index).engine;
@@ -2262,13 +2396,47 @@ const Engine = struct {
             self.forwarded_mixins.items.len = original_mixin_len;
         }
 
-        for (module_engine.forwarded_functions.items) |function| {
-            try self.appendForwardedModuleFunction(
-                module_index,
-                function.name,
-                original_function_len,
-                span,
-            );
+        var local_function_index: usize = 0;
+        var builtin_function_index: usize = 0;
+        while (local_function_index < module_engine.forwarded_functions.items.len or
+            builtin_function_index < module_engine.forwarded_builtin_functions.items.len)
+        {
+            const take_local = builtin_function_index >=
+                module_engine.forwarded_builtin_functions.items.len or
+                (local_function_index < module_engine.forwarded_functions.items.len and
+                    module_engine.forwarded_functions.items[local_function_index].order <
+                        module_engine.forwarded_builtin_functions.items[builtin_function_index].order);
+            if (take_local) {
+                const function = module_engine.forwarded_functions.items[local_function_index];
+                local_function_index += 1;
+                const name = try self.forwardedMemberName(forward, function.name);
+                defer self.allocator.free(name);
+                if (!forwardMemberVisible(forward, .callable, name)) continue;
+                try self.appendForwardedModuleFunction(
+                    module_index,
+                    name,
+                    function.name,
+                    original_function_len,
+                    span,
+                );
+            } else {
+                const function = module_engine.forwarded_builtin_functions.items[builtin_function_index];
+                builtin_function_index += 1;
+                const name = try self.forwardedMemberName(forward, function.name);
+                defer self.allocator.free(name);
+                if (!forwardMemberVisible(forward, .callable, name)) continue;
+                if (module_engine.publicLocalModuleFunctionInOwnScope(function.name) != null) {
+                    try self.appendForwardedModuleFunction(
+                        module_index,
+                        name,
+                        function.name,
+                        original_function_len,
+                        span,
+                    );
+                } else {
+                    try self.appendForwardedBuiltinFunction(name, function.callable, span);
+                }
+            }
         }
         for (module_engine.user_functions.items) |function| {
             if (function.owner != &module_engine.root_scope or
@@ -2276,21 +2444,59 @@ const Engine = struct {
             {
                 continue;
             }
+            const name = try self.forwardedMemberName(forward, function.name);
+            defer self.allocator.free(name);
+            if (!forwardMemberVisible(forward, .callable, name)) continue;
             try self.appendForwardedModuleFunction(
                 module_index,
+                name,
                 function.name,
                 original_function_len,
                 span,
             );
         }
 
-        for (module_engine.forwarded_mixins.items) |mixin| {
-            try self.appendForwardedModuleMixin(
-                module_index,
-                mixin.name,
-                original_mixin_len,
-                span,
-            );
+        var local_mixin_index: usize = 0;
+        var builtin_mixin_index: usize = 0;
+        while (local_mixin_index < module_engine.forwarded_mixins.items.len or
+            builtin_mixin_index < module_engine.forwarded_builtin_mixins.items.len)
+        {
+            const take_local = builtin_mixin_index >=
+                module_engine.forwarded_builtin_mixins.items.len or
+                (local_mixin_index < module_engine.forwarded_mixins.items.len and
+                    module_engine.forwarded_mixins.items[local_mixin_index].order <
+                        module_engine.forwarded_builtin_mixins.items[builtin_mixin_index].order);
+            if (take_local) {
+                const mixin = module_engine.forwarded_mixins.items[local_mixin_index];
+                local_mixin_index += 1;
+                const name = try self.forwardedMemberName(forward, mixin.name);
+                defer self.allocator.free(name);
+                if (!forwardMemberVisible(forward, .callable, name)) continue;
+                try self.appendForwardedModuleMixin(
+                    module_index,
+                    name,
+                    mixin.name,
+                    original_mixin_len,
+                    span,
+                );
+            } else {
+                const mixin = module_engine.forwarded_builtin_mixins.items[builtin_mixin_index];
+                builtin_mixin_index += 1;
+                const name = try self.forwardedMemberName(forward, mixin.name);
+                defer self.allocator.free(name);
+                if (!forwardMemberVisible(forward, .callable, name)) continue;
+                if (module_engine.publicLocalModuleMixinInOwnScope(mixin.name) != null) {
+                    try self.appendForwardedModuleMixin(
+                        module_index,
+                        name,
+                        mixin.name,
+                        original_mixin_len,
+                        span,
+                    );
+                } else {
+                    try self.appendForwardedBuiltinMixin(name, mixin.callable, span);
+                }
+            }
         }
         for (module_engine.user_mixins.items) |mixin| {
             if (mixin.owner != &module_engine.root_scope or
@@ -2298,8 +2504,12 @@ const Engine = struct {
             {
                 continue;
             }
+            const name = try self.forwardedMemberName(forward, mixin.name);
+            defer self.allocator.free(name);
+            if (!forwardMemberVisible(forward, .callable, name)) continue;
             try self.appendForwardedModuleMixin(
                 module_index,
+                name,
                 mixin.name,
                 original_mixin_len,
                 span,
@@ -2310,11 +2520,14 @@ const Engine = struct {
     fn appendForwardedModuleFunction(
         self: *Engine,
         module_index: usize,
-        name: []const u8,
+        exported_name: []const u8,
+        source_name: []const u8,
         original_len: usize,
         span: native_source.Span,
     ) Error!void {
-        if (moduleCallableNamed(self.forwarded_functions.items[0..original_len], name)) {
+        if (moduleCallableNamed(self.forwarded_functions.items[0..original_len], exported_name) or
+            forwardedBuiltinCallableNamed(self.forwarded_builtin_functions.items, exported_name))
+        {
             try self.report(
                 .duplicate_binding,
                 span,
@@ -2322,7 +2535,7 @@ const Engine = struct {
             );
             return error.InvalidExpression;
         }
-        if (moduleCallableNamed(self.forwarded_functions.items[original_len..], name)) return;
+        if (moduleCallableNamed(self.forwarded_functions.items[original_len..], exported_name)) return;
         if (self.forwardedCallableLimitReached() or
             self.forwarded_functions.items.len >= std.math.maxInt(u32))
         {
@@ -2333,24 +2546,38 @@ const Engine = struct {
             );
             return error.CallableLimitExceeded;
         }
-        const target = self.publicLocalModuleFunction(module_index, name) orelse
+        const target = self.publicLocalModuleFunction(module_index, source_name) orelse
             return error.InvalidSassSyntax;
-        const owned_name = try self.allocator.dupe(u8, name);
+        const owned_name = try self.allocator.dupe(u8, exported_name);
         errdefer self.allocator.free(owned_name);
+        const order = self.forwarded_function_order;
+        self.forwarded_function_order = std.math.add(usize, order, 1) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass forwarded module callable limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        };
         try self.forwarded_functions.append(self.allocator, .{
             .name = owned_name,
             .target = target,
+            .order = order,
+            .renamed = !sassNameEql(exported_name, source_name),
         });
     }
 
     fn appendForwardedModuleMixin(
         self: *Engine,
         module_index: usize,
-        name: []const u8,
+        exported_name: []const u8,
+        source_name: []const u8,
         original_len: usize,
         span: native_source.Span,
     ) Error!void {
-        if (moduleCallableNamed(self.forwarded_mixins.items[0..original_len], name)) {
+        if (moduleCallableNamed(self.forwarded_mixins.items[0..original_len], exported_name) or
+            forwardedBuiltinCallableNamed(self.forwarded_builtin_mixins.items, exported_name))
+        {
             try self.report(
                 .duplicate_binding,
                 span,
@@ -2358,7 +2585,7 @@ const Engine = struct {
             );
             return error.InvalidExpression;
         }
-        if (moduleCallableNamed(self.forwarded_mixins.items[original_len..], name)) return;
+        if (moduleCallableNamed(self.forwarded_mixins.items[original_len..], exported_name)) return;
         if (self.forwardedCallableLimitReached() or
             self.forwarded_mixins.items.len >= std.math.maxInt(u32))
         {
@@ -2369,13 +2596,108 @@ const Engine = struct {
             );
             return error.CallableLimitExceeded;
         }
-        const target = self.publicLocalModuleMixin(module_index, name) orelse
+        const target = self.publicLocalModuleMixin(module_index, source_name) orelse
             return error.InvalidSassSyntax;
-        const owned_name = try self.allocator.dupe(u8, name);
+        const owned_name = try self.allocator.dupe(u8, exported_name);
         errdefer self.allocator.free(owned_name);
+        const order = self.forwarded_mixin_order;
+        self.forwarded_mixin_order = std.math.add(usize, order, 1) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass forwarded module callable limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        };
         try self.forwarded_mixins.append(self.allocator, .{
             .name = owned_name,
             .target = target,
+            .order = order,
+            .renamed = !sassNameEql(exported_name, source_name),
+        });
+    }
+
+    fn appendForwardedBuiltinFunction(
+        self: *Engine,
+        name: []const u8,
+        callable: native_value.Callable,
+        span: native_source.Span,
+    ) Error!void {
+        if (moduleCallableNamed(self.forwarded_functions.items, name) or
+            forwardedBuiltinCallableNamed(self.forwarded_builtin_functions.items, name))
+        {
+            try self.report(
+                .duplicate_binding,
+                span,
+                "forwarded native Sass module function conflicts with an existing function",
+            );
+            return error.InvalidExpression;
+        }
+        if (self.forwardedCallableLimitReached()) {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass forwarded module callable limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        }
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+        const order = self.forwarded_function_order;
+        self.forwarded_function_order = std.math.add(usize, order, 1) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass forwarded module callable limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        };
+        try self.forwarded_builtin_functions.append(self.allocator, .{
+            .name = owned_name,
+            .callable = callable,
+            .order = order,
+        });
+    }
+
+    fn appendForwardedBuiltinMixin(
+        self: *Engine,
+        name: []const u8,
+        callable: native_value.Callable,
+        span: native_source.Span,
+    ) Error!void {
+        if (moduleCallableNamed(self.forwarded_mixins.items, name) or
+            forwardedBuiltinCallableNamed(self.forwarded_builtin_mixins.items, name))
+        {
+            try self.report(
+                .duplicate_binding,
+                span,
+                "forwarded native Sass module mixin conflicts with an existing mixin",
+            );
+            return error.InvalidExpression;
+        }
+        if (self.forwardedCallableLimitReached()) {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass forwarded module callable limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        }
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+        const order = self.forwarded_mixin_order;
+        self.forwarded_mixin_order = std.math.add(usize, order, 1) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass forwarded module callable limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        };
+        try self.forwarded_builtin_mixins.append(self.allocator, .{
+            .name = owned_name,
+            .callable = callable,
+            .order = order,
         });
     }
 
@@ -2390,8 +2712,44 @@ const Engine = struct {
             self.forwarded_functions.items.len,
             self.forwarded_mixins.items.len,
         ) catch return true;
-        const total = std.math.add(usize, local_count, forwarded_count) catch return true;
+        const builtin_count = std.math.add(
+            usize,
+            self.forwarded_builtin_functions.items.len,
+            self.forwarded_builtin_mixins.items.len,
+        ) catch return true;
+        const partial = std.math.add(usize, local_count, forwarded_count) catch return true;
+        const total = std.math.add(usize, partial, builtin_count) catch return true;
         return total >= self.limits.max_callables;
+    }
+
+    fn forwardedMemberName(
+        self: *Engine,
+        forward: ParsedForward,
+        source_name: []const u8,
+    ) Error![]u8 {
+        const length = std.math.add(usize, forward.prefix.len, source_name.len) catch {
+            try self.report(
+                .resource_limit,
+                (self.document.get(self.document.root) catch return error.InvalidSassSyntax).span,
+                "native Sass forwarded member name limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        };
+        if (length > self.limits.max_temporary_bytes) {
+            try self.report(
+                .resource_limit,
+                (self.document.get(self.document.root) catch return error.InvalidSassSyntax).span,
+                "native Sass forwarded member name limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        }
+        const result = try self.allocator.alloc(u8, length);
+        @memcpy(result[0..forward.prefix.len], forward.prefix);
+        @memcpy(result[forward.prefix.len..], source_name);
+        for (result) |*byte| {
+            if (byte.* == '_') byte.* = '-';
+        }
+        return result;
     }
 
     fn clonePublicModuleVariables(
@@ -2569,9 +2927,43 @@ const Engine = struct {
             return .{
                 .module_index = module_index,
                 .callable_id = @intCast(forwarded_index),
-                .identity = function.target.identity,
+                .identity = if (function.renamed)
+                    self.localModuleCallableIdentity(module_index, @intCast(forwarded_index))
+                else
+                    function.target.identity,
                 .forwarded_member = true,
             };
+        }
+        return null;
+    }
+
+    fn publicLocalModuleBuiltinFunction(
+        self: *const Engine,
+        module_index: usize,
+        name: []const u8,
+    ) ?native_value.Callable {
+        const module_engine = self.localModule(module_index).engine;
+        if (module_engine.publicLocalModuleFunctionInOwnScope(name) != null) return null;
+        for (module_engine.forwarded_builtin_functions.items) |function| {
+            if (sassNameEql(function.name, name)) return function.callable;
+        }
+        return null;
+    }
+
+    fn publicLocalModuleFunctionInOwnScope(
+        self: *const Engine,
+        name: []const u8,
+    ) ?u32 {
+        var index = self.user_functions.items.len;
+        while (index > 0) {
+            index -= 1;
+            const function = self.user_functions.items[index];
+            if (function.owner == &self.root_scope and
+                !isPrivateModuleMember(function.name) and
+                sassNameEql(function.name, name))
+            {
+                return @intCast(index);
+            }
         }
         return null;
     }
@@ -2603,9 +2995,43 @@ const Engine = struct {
             return .{
                 .module_index = module_index,
                 .callable_id = @intCast(forwarded_index),
-                .identity = mixin.target.identity,
+                .identity = if (mixin.renamed)
+                    self.localModuleCallableIdentity(module_index, @intCast(forwarded_index))
+                else
+                    mixin.target.identity,
                 .forwarded_member = true,
             };
+        }
+        return null;
+    }
+
+    fn publicLocalModuleBuiltinMixin(
+        self: *const Engine,
+        module_index: usize,
+        name: []const u8,
+    ) ?native_value.Callable {
+        const module_engine = self.localModule(module_index).engine;
+        if (module_engine.publicLocalModuleMixinInOwnScope(name) != null) return null;
+        for (module_engine.forwarded_builtin_mixins.items) |mixin| {
+            if (sassNameEql(mixin.name, name)) return mixin.callable;
+        }
+        return null;
+    }
+
+    fn publicLocalModuleMixinInOwnScope(
+        self: *const Engine,
+        name: []const u8,
+    ) ?u32 {
+        var index = self.user_mixins.items.len;
+        while (index > 0) {
+            index -= 1;
+            const mixin = self.user_mixins.items[index];
+            if (mixin.owner == &self.root_scope and
+                !isPrivateModuleMember(mixin.name) and
+                sassNameEql(mixin.name, name))
+            {
+                return @intCast(index);
+            }
         }
         return null;
     }
@@ -2707,17 +3133,21 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             }
-            return self.publicLocalModuleFunction(
+            if (self.publicLocalModuleFunction(
                 module_index,
                 qualified.member,
-            ) orelse {
+            )) |callable| return callable;
+            if (self.publicLocalModuleBuiltinFunction(module_index, qualified.member) != null) {
+                return null;
+            }
+            {
                 try self.report(
                     .invalid_operation,
                     span,
                     "undefined native Sass module function",
                 );
                 return error.InvalidExpression;
-            };
+            }
         }
         if (!isSimpleIdentifier(raw_name)) return null;
 
@@ -2765,17 +3195,21 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             }
-            return self.publicLocalModuleMixin(
+            if (self.publicLocalModuleMixin(
                 module_index,
                 qualified.member,
-            ) orelse {
+            )) |callable| return callable;
+            if (self.publicLocalModuleBuiltinMixin(module_index, qualified.member) != null) {
+                return null;
+            }
+            {
                 try self.report(
                     .invalid_operation,
                     span,
                     "undefined native Sass module mixin",
                 );
                 return error.InvalidExpression;
-            };
+            }
         }
         if (!isSimpleIdentifier(raw_name)) return null;
 
@@ -7155,11 +7589,18 @@ const Engine = struct {
         if (isSimpleIdentifier(name)) {
             for (self.modules.items) |binding| {
                 if (binding.namespace != null) continue;
-                const module_kind = switch (binding.target) {
-                    .builtin => |kind| kind,
-                    .local => continue,
-                };
-                if (moduleBuiltinMixin(module_kind, name)) |builtin| return builtin;
+                switch (binding.target) {
+                    .builtin => |module_kind| {
+                        if (moduleBuiltinMixin(module_kind, name)) |builtin| return builtin;
+                    },
+                    .local => |module_index| {
+                        const callable = self.publicLocalModuleBuiltinMixin(
+                            module_index,
+                            name,
+                        ) orelse continue;
+                        return std.meta.intToEnum(BuiltinMixin, callable.id) catch continue;
+                    },
+                }
             }
             return null;
         }
@@ -7177,14 +7618,17 @@ const Engine = struct {
             try self.report(.invalid_operation, span, "Sass module namespace is not loaded");
             return error.InvalidExpression;
         };
-        const module = switch (target) {
-            .builtin => |kind| kind,
-            .local => {
-                try self.report(.invalid_operation, span, "undefined native Sass module mixin");
-                return error.InvalidExpression;
-            },
+        const builtin = switch (target) {
+            .builtin => |module| moduleBuiltinMixin(module, qualified.member),
+            .local => |module_index| if (self.publicLocalModuleBuiltinMixin(
+                module_index,
+                qualified.member,
+            )) |callable|
+                std.meta.intToEnum(BuiltinMixin, callable.id) catch null
+            else
+                null,
         };
-        return moduleBuiltinMixin(module, qualified.member) orelse {
+        return builtin orelse {
             try self.report(.invalid_operation, span, "undefined native Sass module mixin");
             return error.InvalidExpression;
         };
@@ -7200,7 +7644,17 @@ const Engine = struct {
                 if (binding.namespace != null) continue;
                 const module_kind = switch (binding.target) {
                     .builtin => |kind| kind,
-                    .local => continue,
+                    .local => |module_index| {
+                        const callable = self.publicLocalModuleBuiltinFunction(
+                            module_index,
+                            name,
+                        ) orelse continue;
+                        const reference = decodeBuiltinFunctionCallable(callable.id) orelse continue;
+                        if (reference.owner == .string and sassNameEql(name, "unique-id")) {
+                            return self.uniqueIdDeterminismFailure(span);
+                        }
+                        return reference.builtin;
+                    },
                 };
                 const builtin = switch (module_kind) {
                     .color => colorModuleBuiltin(name),
@@ -7244,9 +7698,22 @@ const Engine = struct {
         };
         const module = switch (target) {
             .builtin => |kind| kind,
-            .local => {
-                try self.report(.invalid_operation, span, "undefined native Sass module function");
-                return error.InvalidExpression;
+            .local => |module_index| {
+                const callable = self.publicLocalModuleBuiltinFunction(
+                    module_index,
+                    qualified.member,
+                ) orelse {
+                    try self.report(.invalid_operation, span, "undefined native Sass module function");
+                    return error.InvalidExpression;
+                };
+                const reference = decodeBuiltinFunctionCallable(callable.id) orelse {
+                    try self.report(.invalid_operation, span, "undefined native Sass module function");
+                    return error.InvalidExpression;
+                };
+                if (reference.owner == .string and sassNameEql(qualified.member, "unique-id")) {
+                    return self.uniqueIdDeterminismFailure(span);
+                }
+                return reference.builtin;
             },
         };
         if (module == .string and sassNameEql(qualified.member, "unique-id")) {
@@ -11927,6 +12394,11 @@ const Engine = struct {
                     normalized,
                 )) |callable_target|
                     localModuleCallable(.local_module_mixin, callable_target)
+                else if (self.publicLocalModuleBuiltinMixin(
+                    module_index,
+                    normalized,
+                )) |callable|
+                    callable
                 else {
                     try self.report(
                         .invalid_operation,
@@ -12025,9 +12497,21 @@ const Engine = struct {
             );
             return error.TemporaryLimitExceeded;
         };
-        const temporary_bytes = std.math.mul(
+        const total_callable_count = std.math.add(
             usize,
             callable_count,
+            module_engine.forwarded_builtin_mixins.items.len,
+        ) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module mixin enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        };
+        const temporary_bytes = std.math.mul(
+            usize,
+            total_callable_count,
             @sizeOf(native_value.Entry),
         ) catch {
             try self.report(
@@ -12050,21 +12534,54 @@ const Engine = struct {
         defer entries.deinit(self.allocator);
         try entries.ensureTotalCapacity(
             self.allocator,
-            callable_count,
+            total_callable_count,
         );
-        for (module_engine.forwarded_mixins.items) |mixin| {
+        var local_mixin_index: usize = 0;
+        var builtin_mixin_index: usize = 0;
+        while (local_mixin_index < module_engine.forwarded_mixins.items.len or
+            builtin_mixin_index < module_engine.forwarded_builtin_mixins.items.len)
+        {
+            const take_local = builtin_mixin_index >=
+                module_engine.forwarded_builtin_mixins.items.len or
+                (local_mixin_index < module_engine.forwarded_mixins.items.len and
+                    module_engine.forwarded_mixins.items[local_mixin_index].order <
+                        module_engine.forwarded_builtin_mixins.items[builtin_mixin_index].order);
             try self.transaction.consumeOperations(1);
-            const target = self.publicLocalModuleMixin(
-                module_index,
-                mixin.name,
-            ) orelse continue;
-            entries.appendAssumeCapacity(.{
-                .key = .{ .string = .{
-                    .bytes = mixin.name,
-                    .quoted = true,
-                } },
-                .value = .{ .callable = localModuleCallable(.local_module_mixin, target) },
-            });
+            if (take_local) {
+                const mixin = module_engine.forwarded_mixins.items[local_mixin_index];
+                local_mixin_index += 1;
+                const target = self.publicLocalModuleMixin(
+                    module_index,
+                    mixin.name,
+                ) orelse continue;
+                entries.appendAssumeCapacity(.{
+                    .key = .{ .string = .{
+                        .bytes = mixin.name,
+                        .quoted = true,
+                    } },
+                    .value = .{ .callable = localModuleCallable(.local_module_mixin, target) },
+                });
+            } else {
+                const mixin = module_engine.forwarded_builtin_mixins.items[builtin_mixin_index];
+                builtin_mixin_index += 1;
+                const callable = if (self.publicLocalModuleMixin(
+                    module_index,
+                    mixin.name,
+                )) |target|
+                    localModuleCallable(.local_module_mixin, target)
+                else
+                    self.publicLocalModuleBuiltinMixin(
+                        module_index,
+                        mixin.name,
+                    ) orelse continue;
+                entries.appendAssumeCapacity(.{
+                    .key = .{ .string = .{
+                        .bytes = mixin.name,
+                        .quoted = true,
+                    } },
+                    .value = .{ .callable = callable },
+                });
+            }
         }
         for (module_engine.user_mixins.items) |mixin| {
             try self.transaction.consumeOperations(1);
@@ -12265,9 +12782,21 @@ const Engine = struct {
             );
             return error.TemporaryLimitExceeded;
         };
-        const temporary_bytes = std.math.mul(
+        const total_callable_count = std.math.add(
             usize,
             callable_count,
+            module_engine.forwarded_builtin_functions.items.len,
+        ) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module function enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        };
+        const temporary_bytes = std.math.mul(
+            usize,
+            total_callable_count,
             @sizeOf(native_value.Entry),
         ) catch {
             try self.report(
@@ -12290,21 +12819,54 @@ const Engine = struct {
         defer entries.deinit(self.allocator);
         try entries.ensureTotalCapacity(
             self.allocator,
-            callable_count,
+            total_callable_count,
         );
-        for (module_engine.forwarded_functions.items) |function| {
+        var local_function_index: usize = 0;
+        var builtin_function_index: usize = 0;
+        while (local_function_index < module_engine.forwarded_functions.items.len or
+            builtin_function_index < module_engine.forwarded_builtin_functions.items.len)
+        {
+            const take_local = builtin_function_index >=
+                module_engine.forwarded_builtin_functions.items.len or
+                (local_function_index < module_engine.forwarded_functions.items.len and
+                    module_engine.forwarded_functions.items[local_function_index].order <
+                        module_engine.forwarded_builtin_functions.items[builtin_function_index].order);
             try self.transaction.consumeOperations(1);
-            const target = self.publicLocalModuleFunction(
-                module_index,
-                function.name,
-            ) orelse continue;
-            entries.appendAssumeCapacity(.{
-                .key = .{ .string = .{
-                    .bytes = function.name,
-                    .quoted = true,
-                } },
-                .value = .{ .callable = localModuleCallable(.local_module_function, target) },
-            });
+            if (take_local) {
+                const function = module_engine.forwarded_functions.items[local_function_index];
+                local_function_index += 1;
+                const target = self.publicLocalModuleFunction(
+                    module_index,
+                    function.name,
+                ) orelse continue;
+                entries.appendAssumeCapacity(.{
+                    .key = .{ .string = .{
+                        .bytes = function.name,
+                        .quoted = true,
+                    } },
+                    .value = .{ .callable = localModuleCallable(.local_module_function, target) },
+                });
+            } else {
+                const function = module_engine.forwarded_builtin_functions.items[builtin_function_index];
+                builtin_function_index += 1;
+                const callable = if (self.publicLocalModuleFunction(
+                    module_index,
+                    function.name,
+                )) |target|
+                    localModuleCallable(.local_module_function, target)
+                else
+                    self.publicLocalModuleBuiltinFunction(
+                        module_index,
+                        function.name,
+                    ) orelse continue;
+                entries.appendAssumeCapacity(.{
+                    .key = .{ .string = .{
+                        .bytes = function.name,
+                        .quoted = true,
+                    } },
+                    .value = .{ .callable = callable },
+                });
+            }
         }
         for (module_engine.user_functions.items) |function| {
             try self.transaction.consumeOperations(1);
@@ -12396,6 +12958,11 @@ const Engine = struct {
                     normalized,
                 )) |callable_target|
                     localModuleCallable(.local_module_function, callable_target)
+                else if (self.publicLocalModuleBuiltinFunction(
+                    module_index,
+                    normalized,
+                )) |callable|
+                    callable
                 else {
                     try self.report(
                         .invalid_operation,
@@ -18042,6 +18609,11 @@ const Engine = struct {
                     name,
                 )) |target|
                     localModuleCallable(.local_module_function, target)
+                else if (self.publicLocalModuleBuiltinFunction(
+                    module_index,
+                    name,
+                )) |callable|
+                    callable
                 else
                     continue,
             };
@@ -18094,6 +18666,11 @@ const Engine = struct {
                     name,
                 )) |target|
                     localModuleCallable(.local_module_mixin, target)
+                else if (self.publicLocalModuleBuiltinMixin(
+                    module_index,
+                    name,
+                )) |callable|
+                    callable
                 else
                     continue,
             };
@@ -18177,6 +18754,9 @@ const Engine = struct {
                     .local => |module_index| self.publicLocalModuleFunction(
                         module_index,
                         normalized,
+                    ) != null or self.publicLocalModuleBuiltinFunction(
+                        module_index,
+                        normalized,
                     ) != null,
                 }
             else
@@ -18185,6 +18765,9 @@ const Engine = struct {
                 switch (target) {
                     .builtin => |kind| moduleBuiltinMixin(kind, normalized) != null,
                     .local => |module_index| self.publicLocalModuleMixin(
+                        module_index,
+                        normalized,
+                    ) != null or self.publicLocalModuleBuiltinMixin(
                         module_index,
                         normalized,
                     ) != null,
@@ -18311,7 +18894,11 @@ const Engine = struct {
                     if (moduleBuiltin(module_kind, name) != null) return true;
                 },
                 .local => |module_index| {
-                    if (self.publicLocalModuleFunction(module_index, name) == null) continue;
+                    if (self.publicLocalModuleFunction(module_index, name) == null and
+                        self.publicLocalModuleBuiltinFunction(module_index, name) == null)
+                    {
+                        continue;
+                    }
                     if (matched_local_module) |matched| {
                         if (matched == module_index) continue;
                         try self.report(
@@ -18342,9 +18929,16 @@ const Engine = struct {
             if (binding.namespace != null) continue;
             const module_index = switch (binding.target) {
                 .local => |index| index,
-                .builtin => continue,
+                .builtin => |module_kind| {
+                    if (moduleBuiltinMixin(module_kind, name) != null) return true;
+                    continue;
+                },
             };
-            if (self.publicLocalModuleMixin(module_index, name) == null) continue;
+            if (self.publicLocalModuleMixin(module_index, name) == null and
+                self.publicLocalModuleBuiltinMixin(module_index, name) == null)
+            {
+                continue;
+            }
             if (matched_local_module) |matched| {
                 if (matched == module_index) continue;
                 try self.report(
@@ -23553,10 +24147,144 @@ fn parseUseDirective(input: []const u8) ?ParsedUse {
     return result;
 }
 
-fn parseForwardDirective(input: []const u8) ?ParsedUse {
-    const parsed = parseUseDirective(input) orelse return null;
-    if (parsed.namespace != null or parsed.unprefixed) return null;
-    return parsed;
+fn parseForwardDirective(input: []const u8) ?ParsedForward {
+    const raw = trimWhitespace(input);
+    if (raw.len < 3 or (raw[0] != '\'' and raw[0] != '"')) return null;
+    const quote = raw[0];
+    var closing: ?usize = null;
+    var index: usize = 1;
+    while (index < raw.len) : (index += 1) {
+        if (raw[index] == '\\') return null;
+        if (raw[index] == quote) {
+            closing = index;
+            break;
+        }
+    }
+    const end = closing orelse return null;
+    const url = raw[1..end];
+    if (url.len == 0 or std.mem.indexOf(u8, url, "#{") != null) return null;
+
+    var result = ParsedForward{ .url = url };
+    var tail = trimWhitespace(raw[end + 1 ..]);
+    if (tail.len == 0) return result;
+
+    if (tail.len > 2 and std.mem.startsWith(u8, tail, "as") and
+        isExpressionWhitespace(tail[2]))
+    {
+        tail = trimWhitespace(tail[2..]);
+        var prefix_end: usize = 0;
+        while (prefix_end < tail.len and !isExpressionWhitespace(tail[prefix_end])) {
+            prefix_end += 1;
+        }
+        const prefix_token = tail[0..prefix_end];
+        if (prefix_token.len < 3 or !std.mem.endsWith(u8, prefix_token, "-*")) return null;
+        const prefix = prefix_token[0 .. prefix_token.len - 1];
+        if (!isSimpleIdentifier(prefix)) return null;
+        result.prefix = prefix;
+        tail = trimWhitespace(tail[prefix_end..]);
+        if (tail.len == 0) return result;
+    }
+
+    if (forwardVisibilityPrefix(tail)) |visibility| {
+        result.visibility = visibility.kind;
+        tail = trimWhitespace(tail[visibility.consumed..]);
+        const configuration_start = forwardConfigurationStart(tail);
+        result.members = trimWhitespace(if (configuration_start) |start|
+            tail[0..start]
+        else
+            tail);
+        result.member_count = forwardMemberCount(result.members) orelse return null;
+        if (configuration_start) |start| {
+            tail = trimWhitespace(tail[start..]);
+        } else {
+            return result;
+        }
+    }
+
+    if (tail.len <= "with".len or
+        !std.mem.startsWith(u8, tail, "with") or
+        !isExpressionWhitespace(tail["with".len]))
+    {
+        return null;
+    }
+    const wrapper = trimWhitespace(tail["with".len..]);
+    if (!fullyWrapped(wrapper, '(', ')')) return null;
+    result.configuration = wrapper[1 .. wrapper.len - 1];
+    return result;
+}
+
+const ForwardVisibilityPrefix = struct {
+    kind: ForwardVisibility,
+    consumed: usize,
+};
+
+fn forwardVisibilityPrefix(input: []const u8) ?ForwardVisibilityPrefix {
+    inline for (.{
+        .{ "show", ForwardVisibility.show },
+        .{ "hide", ForwardVisibility.hide },
+    }) |candidate| {
+        if (input.len > candidate[0].len and
+            std.mem.startsWith(u8, input, candidate[0]) and
+            isExpressionWhitespace(input[candidate[0].len]))
+        {
+            return .{ .kind = candidate[1], .consumed = candidate[0].len };
+        }
+    }
+    return null;
+}
+
+fn forwardConfigurationStart(input: []const u8) ?usize {
+    var index: usize = 0;
+    while (index + "with".len < input.len) : (index += 1) {
+        if (!std.mem.startsWith(u8, input[index..], "with")) continue;
+        if (index > 0 and !isExpressionWhitespace(input[index - 1])) continue;
+        const after = index + "with".len;
+        if (!isExpressionWhitespace(input[after])) continue;
+        const wrapper = trimWhitespace(input[after..]);
+        if (wrapper.len > 0 and wrapper[0] == '(') return index;
+    }
+    return null;
+}
+
+fn forwardMemberCount(input: []const u8) ?usize {
+    if (input.len == 0) return null;
+    var count: usize = 0;
+    var start: usize = 0;
+    var index: usize = 0;
+    while (index <= input.len) : (index += 1) {
+        if (index != input.len and input[index] != ',') continue;
+        const member = trimWhitespace(input[start..index]);
+        if (!validForwardMember(member)) return null;
+        count = std.math.add(usize, count, 1) catch return null;
+        start = index + 1;
+    }
+    return count;
+}
+
+fn validForwardMember(member: []const u8) bool {
+    const name = if (member.len > 0 and member[0] == '$') member[1..] else member;
+    return isSimpleIdentifier(name);
+}
+
+fn forwardMemberVisible(
+    forward: ParsedForward,
+    kind: ForwardMemberKind,
+    exported_name: []const u8,
+) bool {
+    if (forward.visibility == .all) return true;
+    var matched = false;
+    var start: usize = 0;
+    var index: usize = 0;
+    while (index <= forward.members.len) : (index += 1) {
+        if (index != forward.members.len and forward.members[index] != ',') continue;
+        const member = trimWhitespace(forward.members[start..index]);
+        const variable = member.len > 0 and member[0] == '$';
+        const kind_matches = variable == (kind == .variable);
+        const name = if (variable) member[1..] else member;
+        matched = matched or (kind_matches and sassNameEql(name, exported_name));
+        start = index + 1;
+    }
+    return if (forward.visibility == .show) matched else !matched;
 }
 
 fn defaultModuleNamespace(module_url: []const u8) ?[]const u8 {
@@ -23726,6 +24454,16 @@ fn moduleVariableNamed(variables: []const ModuleVariable, name: []const u8) bool
 }
 
 fn moduleCallableNamed(callables: []const ModuleCallable, name: []const u8) bool {
+    for (callables) |callable| {
+        if (sassNameEql(callable.name, name)) return true;
+    }
+    return false;
+}
+
+fn forwardedBuiltinCallableNamed(
+    callables: []const ForwardedBuiltinCallable,
+    name: []const u8,
+) bool {
     for (callables) |callable| {
         if (sassNameEql(callable.name, name)) return true;
     }

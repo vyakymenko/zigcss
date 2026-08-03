@@ -85,8 +85,8 @@
       "native Sass meta.apply mixin content rejection handles every allocation failure"
     ],
     "remainingPlanDomain": {
-      "releaseGapFamily": "native-sass-module-system",
-      "features": ["forward", "legacy-import", "meta-load-css"],
+      "releaseGapFamily": "native-sass-dynamic-loading",
+      "features": ["legacy-import", "meta-load-css"],
       "referenceCases": [
         "scss-meta-load-css",
         "scss-import-import-only"
@@ -137,6 +137,17 @@
             "native Sass exposes forwarded public callables without duplicate evaluation",
             "native Sass local callables override forwarded members",
             "native Sass forward configuration failures own exact diagnostics",
+            "native Sass forward resolution enforces confinement and graph limits",
+            "native Sass configured forward handles every allocation failure"
+          ]
+        },
+        {
+          "feature": "forward-terminal-contract",
+          "state": "native-foundation",
+          "referenceCases": [],
+          "evidenceTests": [
+            "native Sass forward prefix and filters cover the finite public member contract",
+            "native Sass forward covers the finite built-in module inventory",
             "native Sass forward resolution enforces confinement and graph limits",
             "native Sass configured forward handles every allocation failure"
           ]
@@ -213,6 +224,7 @@
         "local-use-transitive-graph-foundation",
         "local-forward-config-foundation",
         "local-forward-callable-foundation",
+        "local-forward-terminal-contract-foundation",
         "local-use-callable-member-foundation",
         "local-use-callable-existence-foundation",
         "local-use-callable-reference-foundation",

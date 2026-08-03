@@ -86,9 +86,8 @@ test('accepts the closed native Sass implementation contract', () => {
       'native Sass meta.apply mixin content rejection handles every allocation failure',
     ],
     remainingPlanDomain: {
-      releaseGapFamily: 'native-sass-module-system',
+      releaseGapFamily: 'native-sass-dynamic-loading',
       features: [
-        'forward',
         'legacy-import',
         'meta-load-css',
       ],
@@ -141,6 +140,16 @@ test('accepts the closed native Sass implementation contract', () => {
           'native Sass forward resolution enforces confinement and graph limits',
           'native Sass configured forward handles every allocation failure',
         ],
+      }, {
+        feature: 'forward-terminal-contract',
+        state: 'native-foundation',
+        referenceCases: [],
+        evidenceTests: [
+          'native Sass forward prefix and filters cover the finite public member contract',
+          'native Sass forward covers the finite built-in module inventory',
+          'native Sass forward resolution enforces confinement and graph limits',
+          'native Sass configured forward handles every allocation failure',
+        ],
       }],
     },
     conformancePackage: 'NSASS-012',
@@ -150,6 +159,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('local-use-transitive-graph-foundation'), true)
   assert.equal(sassCore.capabilities.includes('local-forward-config-foundation'), true)
   assert.equal(sassCore.capabilities.includes('local-forward-callable-foundation'), true)
+  assert.equal(sassCore.capabilities.includes('local-forward-terminal-contract-foundation'), true)
   assert.equal(sassCore.capabilities.includes('legacy-color-core'), true)
   assert.equal(sassCore.capabilities.includes('closed-named-colors'), true)
   assert.equal(sassCore.capabilities.includes('color-space-equality'), true)

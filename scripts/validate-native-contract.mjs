@@ -101,9 +101,8 @@ const expectedSassEvaluatorClosure = Object.freeze({
     'native Sass meta.apply mixin content rejection handles every allocation failure',
   ]),
   remainingPlanDomain: Object.freeze({
-    releaseGapFamily: 'native-sass-module-system',
+    releaseGapFamily: 'native-sass-dynamic-loading',
     features: Object.freeze([
-      'forward',
       'legacy-import',
       'meta-load-css',
     ]),
@@ -157,6 +156,17 @@ const expectedSassEvaluatorClosure = Object.freeze({
           'native Sass exposes forwarded public callables without duplicate evaluation',
           'native Sass local callables override forwarded members',
           'native Sass forward configuration failures own exact diagnostics',
+          'native Sass forward resolution enforces confinement and graph limits',
+          'native Sass configured forward handles every allocation failure',
+        ]),
+      }),
+      Object.freeze({
+        feature: 'forward-terminal-contract',
+        state: 'native-foundation',
+        referenceCases: Object.freeze([]),
+        evidenceTests: Object.freeze([
+          'native Sass forward prefix and filters cover the finite public member contract',
+          'native Sass forward covers the finite built-in module inventory',
           'native Sass forward resolution enforces confinement and graph limits',
           'native Sass configured forward handles every allocation failure',
         ]),
@@ -245,6 +255,7 @@ const expectedImplementations = Object.freeze([
       'local-use-transitive-graph-foundation',
       'local-forward-config-foundation',
       'local-forward-callable-foundation',
+      'local-forward-terminal-contract-foundation',
       'local-use-callable-member-foundation',
       'local-use-callable-existence-foundation',
       'local-use-callable-reference-foundation',

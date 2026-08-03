@@ -32119,7 +32119,7 @@ test "native Sass color module rejects unresolved ambiguous or unsupported use" 
         },
         .{
             .name = "unsupported-forward.scss",
-            .input = "@forward \"sass:color\";",
+            .input = "@forward \"sass:root\";",
             .expected = error.UnsupportedFeature,
         },
     };
@@ -37123,6 +37123,339 @@ test "native Sass exposes forwarded public callables without duplicate evaluatio
     }
 }
 
+test "native Sass forward prefix and filters cover the finite public member contract" {
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        files: []const LocalUseFile,
+    }{
+        .{
+            .root_name = "forward-prefix-filter.scss",
+            .root_input =
+            \\@use "sass:map";
+            \\@use "sass:meta";
+            \\@use "bridge" as b;
+            \\@use "shown" as source;
+            \\$functions: meta.module-functions("b");
+            \\$mixins: meta.module-mixins("b");
+            \\.root {
+            \\  public: b.$theme-public;
+            \\  collision: b.$theme-collision;
+            \\  shown: b.theme-token();
+            \\  hidden-var: b.$safe-keep;
+            \\  hidden-fn: b.safe-keep-fn();
+            \\  renamed-same: meta.get-function("theme-token", $module: "b") == meta.get-function("token", $module: "source");
+            \\  function-keys: meta.inspect(map.keys($functions));
+            \\  mixin-keys: meta.inspect(map.keys($mixins));
+            \\}
+            \\@include b.theme-emit;
+            \\@include b.theme-collision-mixin;
+            \\@include b.safe-keep-mixin;
+            ,
+            .mode = .scss,
+            .files = &.{
+                .{
+                    .name = "_bridge.scss",
+                    .contents =
+                    \\@forward "shown" as theme-* show $theme-public, $theme-collision, theme-token, theme-collision-fn, theme-emit, theme-collision-mixin;
+                    \\@forward "hidden" as safe-* hide $safe-omit, safe-omit-fn, safe-omit-mixin;
+                    \\$theme-collision: local;
+                    \\@function theme-collision-fn() { @return local; }
+                    \\@mixin theme-collision-mixin() { .local { value: yes; } }
+                    ,
+                },
+                .{
+                    .name = "_shown.scss",
+                    .contents =
+                    \\$public: red;
+                    \\$collision: upstream;
+                    \\$_private: hidden;
+                    \\@function token() { @return 3; }
+                    \\@function collision-fn() { @return upstream; }
+                    \\@function _private-fn() { @return hidden; }
+                    \\@mixin emit() { .shown { value: yes; } }
+                    \\@mixin collision-mixin() { .upstream { value: yes; } }
+                    \\@mixin _private-mixin() { .private { value: no; } }
+                    ,
+                },
+                .{
+                    .name = "_hidden.scss",
+                    .contents =
+                    \\$keep: blue;
+                    \\$omit: black;
+                    \\@function keep-fn() { @return 4; }
+                    \\@function omit-fn() { @return 9; }
+                    \\@mixin keep-mixin() { .hidden-keep { value: yes; } }
+                    \\@mixin omit-mixin() { .hidden-omit { value: no; } }
+                    ,
+                },
+            },
+        },
+        .{
+            .root_name = "forward-prefix-filter.sass",
+            .root_input =
+            \\@use "sass:map" as map
+            \\@use "sass:meta" as meta
+            \\@use "bridge" as b
+            \\@use "shown" as source
+            \\$functions: meta.module-functions("b")
+            \\$mixins: meta.module-mixins("b")
+            \\.root
+            \\  public: b.$theme-public
+            \\  collision: b.$theme-collision
+            \\  shown: b.theme-token()
+            \\  hidden-var: b.$safe-keep
+            \\  hidden-fn: b.safe-keep-fn()
+            \\  renamed-same: meta.get-function("theme-token", $module: "b") == meta.get-function("token", $module: "source")
+            \\  function-keys: meta.inspect(map.keys($functions))
+            \\  mixin-keys: meta.inspect(map.keys($mixins))
+            \\@include b.theme-emit
+            \\@include b.theme-collision-mixin
+            \\@include b.safe-keep-mixin
+            ,
+            .mode = .sass,
+            .files = &.{
+                .{
+                    .name = "_bridge.sass",
+                    .contents =
+                    \\@forward "shown" as theme-* show $theme-public, $theme-collision, theme-token, theme-collision-fn, theme-emit, theme-collision-mixin
+                    \\@forward "hidden" as safe-* hide $safe-omit, safe-omit-fn, safe-omit-mixin
+                    \\$theme-collision: local
+                    \\@function theme-collision-fn()
+                    \\  @return local
+                    \\@mixin theme-collision-mixin()
+                    \\  .local
+                    \\    value: yes
+                    ,
+                },
+                .{
+                    .name = "_shown.sass",
+                    .contents =
+                    \\$public: red
+                    \\$collision: upstream
+                    \\$_private: hidden
+                    \\@function token()
+                    \\  @return 3
+                    \\@function collision-fn()
+                    \\  @return upstream
+                    \\@function _private-fn()
+                    \\  @return hidden
+                    \\@mixin emit()
+                    \\  .shown
+                    \\    value: yes
+                    \\@mixin collision-mixin()
+                    \\  .upstream
+                    \\    value: yes
+                    \\@mixin _private-mixin()
+                    \\  .private
+                    \\    value: no
+                    ,
+                },
+                .{
+                    .name = "_hidden.sass",
+                    .contents =
+                    \\$keep: blue
+                    \\$omit: black
+                    \\@function keep-fn()
+                    \\  @return 4
+                    \\@function omit-fn()
+                    \\  @return 9
+                    \\@mixin keep-mixin()
+                    \\  .hidden-keep
+                    \\    value: yes
+                    \\@mixin omit-mixin()
+                    \\  .hidden-omit
+                    \\    value: no
+                    ,
+                },
+            },
+        },
+    };
+
+    for (cases) |case| {
+        var first = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer first.deinit();
+        var second = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer second.deinit();
+
+        try std.testing.expectEqualStrings(
+            ".root{public:red;collision:local;shown:3;hidden-var:blue;hidden-fn:4;renamed-same:false;function-keys:\"theme-token\", \"theme-collision-fn\", \"safe-keep-fn\";mixin-keys:\"theme-emit\", \"theme-collision-mixin\", \"safe-keep-mixin\"}.shown{value:yes}.local{value:yes}.hidden-keep{value:yes}",
+            first.css(),
+        );
+        try std.testing.expectEqualStrings(first.css(), second.css());
+        try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 3), first.dependencies().len);
+        try std.testing.expectEqual(@as(usize, 4), first.edges().len);
+        try std.testing.expectEqualSlices(
+            preprocessor.sourcemap.Segment,
+            first.map().?.segments(),
+            second.map().?.segments(),
+        );
+        var saw_root = false;
+        var saw_shown = false;
+        var saw_hidden = false;
+        for (first.map().?.segments()) |segment| {
+            const source_id = segment.source_id orelse continue;
+            saw_root = saw_root or source_id.value == 0;
+            saw_shown = saw_shown or source_id.value == 2;
+            saw_hidden = saw_hidden or source_id.value == 3;
+        }
+        try std.testing.expect(saw_root);
+        try std.testing.expect(saw_shown);
+        try std.testing.expect(saw_hidden);
+    }
+}
+
+test "native Sass forward covers the finite built-in module inventory" {
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        bridge_name: []const u8,
+        bridge_input: []const u8,
+        local_name: []const u8,
+        local_input: []const u8,
+        gateway_name: []const u8,
+        gateway_input: []const u8,
+    }{
+        .{
+            .root_name = "forward-builtins.scss",
+            .root_input =
+            \\@use "sass:color";
+            \\@use "sass:map";
+            \\@use "sass:meta";
+            \\@use "gateway";
+            \\@use "bridge" as direct;
+            \\@mixin emit($value) { .emitted { value: $value; } }
+            \\$mixin: meta.get-mixin("emit");
+            \\$functions: meta.module-functions("gateway");
+            \\$direct-functions: meta.module-functions("direct");
+            \\.root {
+            \\  adjusted: gateway.adjust(#000, $red: 10);
+            \\  list-length: gateway.list-length((a, b));
+            \\  map-get: gateway.map-get((a: 1), a);
+            \\  pi: gateway.$m-pi;
+            \\  absolute: gateway.m-abs(-2px);
+            \\  collision: gateway.m-floor(1.2);
+            \\  inspected: gateway.reflect-inspect((a: 1));
+            \\  superselector: gateway.selector-is-superselector(".a", ".a.b");
+            \\  quoted: gateway.string-quote(token);
+            \\  local: gateway.local-token();
+            \\  function-order: meta.inspect(map.keys($functions));
+            \\  direct-order: meta.inspect(map.keys($direct-functions));
+            \\  same: meta.get-function("adjust", $module: "gateway") == meta.get-function("adjust", $module: "color");
+            \\}
+            \\@include gateway.reflect-apply($mixin, ok);
+            ,
+            .mode = .scss,
+            .bridge_name = "_bridge.scss",
+            .bridge_input =
+            \\@forward "sass:color" show adjust;
+            \\@forward "local" show local-token;
+            \\@forward "sass:list" as list-* show list-length;
+            \\@forward "sass:map" as map-* show map-get;
+            \\@forward "sass:math" as m-* show $m-pi, m-abs, m-floor;
+            \\@forward "sass:meta" as reflect-* show reflect-inspect, reflect-apply;
+            \\@forward "sass:selector" as selector-* show selector-is-superselector;
+            \\@forward "sass:string" as string-* show string-quote;
+            \\@function m-floor($value) { @return local; }
+            ,
+            .local_name = "_local.scss",
+            .local_input = "@function local-token() { @return local; }",
+            .gateway_name = "_gateway.scss",
+            .gateway_input = "@forward \"bridge\";",
+        },
+        .{
+            .root_name = "forward-builtins.sass",
+            .root_input =
+            \\@use "sass:color" as color
+            \\@use "sass:map" as map
+            \\@use "sass:meta" as meta
+            \\@use "gateway" as gateway
+            \\@use "bridge" as direct
+            \\@mixin emit($value)
+            \\  .emitted
+            \\    value: $value
+            \\$mixin: meta.get-mixin("emit")
+            \\$functions: meta.module-functions("gateway")
+            \\$direct-functions: meta.module-functions("direct")
+            \\.root
+            \\  adjusted: gateway.adjust(#000, $red: 10)
+            \\  list-length: gateway.list-length((a, b))
+            \\  map-get: gateway.map-get((a: 1), a)
+            \\  pi: gateway.$m-pi
+            \\  absolute: gateway.m-abs(-2px)
+            \\  collision: gateway.m-floor(1.2)
+            \\  inspected: gateway.reflect-inspect((a: 1))
+            \\  superselector: gateway.selector-is-superselector(".a", ".a.b")
+            \\  quoted: gateway.string-quote(token)
+            \\  local: gateway.local-token()
+            \\  function-order: meta.inspect(map.keys($functions))
+            \\  direct-order: meta.inspect(map.keys($direct-functions))
+            \\  same: meta.get-function("adjust", $module: "gateway") == meta.get-function("adjust", $module: "color")
+            \\@include gateway.reflect-apply($mixin, ok)
+            ,
+            .mode = .sass,
+            .bridge_name = "_bridge.sass",
+            .bridge_input =
+            \\@forward "sass:color" show adjust
+            \\@forward "local" show local-token
+            \\@forward "sass:list" as list-* show list-length
+            \\@forward "sass:map" as map-* show map-get
+            \\@forward "sass:math" as m-* show $m-pi, m-abs, m-floor
+            \\@forward "sass:meta" as reflect-* show reflect-inspect, reflect-apply
+            \\@forward "sass:selector" as selector-* show selector-is-superselector
+            \\@forward "sass:string" as string-* show string-quote
+            \\@function m-floor($value)
+            \\  @return local
+            ,
+            .local_name = "_local.sass",
+            .local_input = "@function local-token()\n  @return local",
+            .gateway_name = "_gateway.sass",
+            .gateway_input = "@forward \"bridge\"",
+        },
+    };
+
+    for (cases) |case| {
+        var result = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            &.{
+                .{ .name = case.bridge_name, .contents = case.bridge_input },
+                .{ .name = case.local_name, .contents = case.local_input },
+                .{ .name = case.gateway_name, .contents = case.gateway_input },
+            },
+            .{},
+        );
+        defer result.deinit();
+        try std.testing.expectEqualStrings(
+            ".root{adjusted:#0a0000;list-length:2;map-get:1;pi:3.1415926536;absolute:2px;collision:local;inspected:(a: 1);superselector:true;quoted:\"token\";local:local;function-order:\"adjust\", \"local-token\", \"list-length\", \"map-get\", \"m-abs\", \"m-floor\", \"reflect-inspect\", \"selector-is-superselector\", \"string-quote\";direct-order:\"adjust\", \"local-token\", \"list-length\", \"map-get\", \"m-abs\", \"m-floor\", \"reflect-inspect\", \"selector-is-superselector\", \"string-quote\";same:true}.emitted{value:ok}",
+            result.css(),
+        );
+        try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 3), result.dependencies().len);
+        try std.testing.expectEqual(@as(usize, 4), result.edges().len);
+        try std.testing.expect(result.sourceMap() != null);
+    }
+}
+
 test "native Sass local callables override forwarded members" {
     const cases = [_]struct {
         root_name: []const u8,
@@ -37293,29 +37626,29 @@ test "native Sass forward configuration failures own exact diagnostics" {
         .{
             .root_name = "prefixed-forward.scss",
             .root_input = "@use \"midstream\";",
-            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" as token-*;" }},
+            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" as token-;" }},
             .expected_error = error.InvalidSassSyntax,
             .expected_code = .syntax,
             .expected_message = "malformed native Sass @forward directive",
-            .expected_span = "@forward \"upstream\" as token-*;",
+            .expected_span = "@forward \"upstream\" as token-;",
         },
         .{
             .root_name = "shown-forward.scss",
             .root_input = "@use \"midstream\";",
-            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" show token, emit;" }},
+            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" show token,;" }},
             .expected_error = error.InvalidSassSyntax,
             .expected_code = .syntax,
             .expected_message = "malformed native Sass @forward directive",
-            .expected_span = "@forward \"upstream\" show token, emit;",
+            .expected_span = "@forward \"upstream\" show token,;",
         },
         .{
             .root_name = "hidden-forward.scss",
             .root_input = "@use \"midstream\";",
-            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" hide token, emit;" }},
+            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" hide $;" }},
             .expected_error = error.InvalidSassSyntax,
             .expected_code = .syntax,
             .expected_message = "malformed native Sass @forward directive",
-            .expected_span = "@forward \"upstream\" hide token, emit;",
+            .expected_span = "@forward \"upstream\" hide $;",
         },
         .{
             .root_name = "duplicate-forward-member.scss",
@@ -37452,6 +37785,49 @@ test "native Sass forward resolution enforces confinement and graph limits" {
         "native Sass forwarded module callable limit exceeded",
         "@forward \"second\";",
         callable_limits,
+        .{},
+    );
+
+    var filter_limits = sass_evaluator.Limits{};
+    filter_limits.max_callables = 3;
+    var terminal_filter = try compileWithLocalUseFiles(
+        std.testing.allocator,
+        "forward-filter-terminal.scss",
+        "@use \"midstream\"; .root { one: midstream.one(); two: midstream.two(); three: midstream.three(); }",
+        .scss,
+        &.{
+            .{
+                .name = "_midstream.scss",
+                .contents = "@forward \"upstream\" show one, two, three;",
+            },
+            .{
+                .name = "_upstream.scss",
+                .contents = "@function one() { @return 1; } @function two() { @return 2; } @function three() { @return 3; }",
+            },
+        },
+        filter_limits,
+    );
+    defer terminal_filter.deinit();
+    try std.testing.expectEqualStrings(
+        ".root{one:1;two:2;three:3}",
+        terminal_filter.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), terminal_filter.nativeDiagnostics().len);
+
+    try expectLocalUseFailureWithLimits(
+        std.testing.allocator,
+        "forward-filter-limit.scss",
+        "@use \"midstream\";",
+        .scss,
+        &.{.{
+            .name = "_midstream.scss",
+            .contents = "@forward \"upstream\" show one, two, three, four;",
+        }},
+        error.CallableLimitExceeded,
+        .resource_limit,
+        "native Sass forward member filter limit exceeded",
+        "@forward \"upstream\" show one, two, three, four;",
+        filter_limits,
         .{},
     );
 }
@@ -37621,15 +37997,17 @@ fn exerciseForwardAllocationFailures(
         \\@use "sass:map";
         \\@use "sass:meta";
         \\@use "midstream";
-        \\$function: meta.get-function("token", $module: "midstream");
+        \\$function: meta.get-function("theme-token", $module: "midstream");
         \\$mixins: meta.module-mixins("midstream");
         \\.root {
-        \\  value: midstream.$a;
-        \\  direct: midstream.token(1);
+        \\  value: midstream.$theme-a;
+        \\  direct: midstream.theme-token(1);
         \\  reflected: meta.call($function, 2);
+        \\  pi: midstream.$m-pi;
+        \\  absolute: midstream.m-abs(-2px);
         \\}
-        \\@include midstream.emit(direct);
-        \\@include meta.apply(map.get($mixins, "emit"), reflected);
+        \\@include midstream.theme-emit(direct);
+        \\@include meta.apply(map.get($mixins, "theme-emit"), reflected);
     ;
     const source_id = try sources.add(context.root_url, input);
     var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
@@ -37648,7 +38026,7 @@ fn exerciseForwardAllocationFailures(
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        "b{c:configured}.root{value:configured;direct:upstream-1;reflected:upstream-2}.emitted{value:direct}.emitted{value:reflected}",
+        "b{c:configured}.root{value:configured;direct:upstream-1;reflected:upstream-2;pi:3.1415926536;absolute:2px}.emitted{value:direct}.emitted{value:reflected}",
         result.css(),
     );
     try std.testing.expectEqual(@as(usize, 2), result.dependencies().len);
@@ -37662,7 +38040,7 @@ test "native Sass configured forward handles every allocation failure" {
     try tmp.dir.makeDir("root");
     try tmp.dir.writeFile(.{
         .sub_path = "root/_midstream.scss",
-        .data = "@forward \"upstream\" with ($a: configured);",
+        .data = "@forward \"upstream\" as theme-* show $theme-a, theme-token, theme-emit with ($a: configured); @forward \"sass:math\" as m-* show $m-pi, m-abs;",
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_upstream.scss",
