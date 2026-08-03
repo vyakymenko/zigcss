@@ -62,8 +62,8 @@ test('accepts the bounded native Sass implementation contract', () => {
       manifest: 'tests/preprocessors/sass/corpus/manifest.json',
       caseCount: 80,
     },
-    completedCaseCount: 7,
-    remainingCaseCount: 73,
+    completedCaseCount: 9,
+    remainingCaseCount: 71,
     completedCohorts: [{
       feature: 'variables',
       caseIds: ['scss-variable-scope'],
@@ -89,6 +89,15 @@ test('accepts the bounded native Sass implementation contract', () => {
       ],
       evidenceTests: [
         'native Sass matches the pinned control flow conformance cohort deterministically',
+      ],
+    }, {
+      feature: 'functions',
+      caseIds: [
+        'scss-function-double-underscore',
+        'scss-function-escaped',
+      ],
+      evidenceTests: [
+        'native Sass matches the pinned functions conformance cohort deterministically',
       ],
     }],
     gates: {

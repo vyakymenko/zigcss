@@ -5531,11 +5531,17 @@ const Engine = struct {
             return error.InvalidSassSyntax;
         }
         const raw_name = trimWhitespace(prelude[0..opening]);
-        if (!isSimpleIdentifier(raw_name) or std.mem.startsWith(u8, raw_name, "--")) {
+        if (std.mem.startsWith(u8, raw_name, "--")) {
             try self.report(.syntax, prelude_node.span, "invalid native Sass function name");
             return error.InvalidSassSyntax;
         }
-        const name = try self.normalizeCallableName(raw_name);
+        const name = self.normalizeCallableName(raw_name) catch |err| switch (err) {
+            error.InvalidSassSyntax => {
+                try self.report(.syntax, prelude_node.span, "invalid native Sass function name");
+                return err;
+            },
+            else => return err,
+        };
         errdefer self.allocator.free(name);
 
         const body = prelude[opening + 1 .. prelude.len - 1];
@@ -5560,8 +5566,10 @@ const Engine = struct {
         if (opening == 0 or !fullyWrapped(raw[opening..], '(', ')')) return null;
         const raw_name = raw[0..opening];
         if (legacyIfIdentifierEql(raw_name)) return null;
-        if (!isSimpleIdentifier(raw_name)) return null;
-        const function_id = try self.lookupUserFunction(raw_name, caller_scope) orelse return null;
+        const function_id = self.lookupUserFunction(raw_name, caller_scope) catch |err| switch (err) {
+            error.InvalidSassSyntax => return null,
+            else => return err,
+        } orelse return null;
         const body = raw[opening + 1 .. raw.len - 1];
         var ranges: std.ArrayList(ExpressionRange) = .empty;
         defer ranges.deinit(self.allocator);
@@ -5782,13 +5790,48 @@ const Engine = struct {
     }
 
     fn normalizeCallableName(self: *Engine, raw_name: []const u8) Error![]u8 {
-        if (!isSimpleIdentifier(raw_name) or raw_name.len > self.limits.max_temporary_bytes) {
+        if (raw_name.len == 0 or raw_name.len > self.limits.max_temporary_bytes) {
             return error.InvalidSassSyntax;
         }
-        const normalized = try self.allocator.dupe(u8, raw_name);
-        for (normalized) |*byte| {
-            if (byte.* == '_') byte.* = '-';
+
+        var normalized_length: usize = 0;
+        var index: usize = 0;
+        var ordinal: usize = 0;
+        while (index < raw_name.len) : (ordinal += 1) {
+            const escaped = raw_name[index] == '\\';
+            const decoded = decodeCalculationIdentifierScalar(raw_name, index) orelse
+                return error.InvalidSassSyntax;
+            if (!cssFunctionNameScalarAllowed(decoded.scalar, ordinal, escaped)) {
+                return error.InvalidSassSyntax;
+            }
+            const encoded_length = std.unicode.utf8CodepointSequenceLength(decoded.scalar) catch
+                return error.InvalidSassSyntax;
+            normalized_length = std.math.add(usize, normalized_length, encoded_length) catch
+                return error.TemporaryLimitExceeded;
+            if (normalized_length > self.limits.max_temporary_bytes) {
+                return error.TemporaryLimitExceeded;
+            }
+            index = decoded.end;
         }
+
+        const normalized = try self.allocator.alloc(u8, normalized_length);
+        errdefer self.allocator.free(normalized);
+        index = 0;
+        var output_index: usize = 0;
+        while (index < raw_name.len) {
+            const decoded = decodeCalculationIdentifierScalar(raw_name, index) orelse unreachable;
+            if (decoded.scalar == '_') {
+                normalized[output_index] = '-';
+                output_index += 1;
+            } else {
+                var encoded: [4]u8 = undefined;
+                const encoded_length = std.unicode.utf8Encode(decoded.scalar, &encoded) catch unreachable;
+                @memcpy(normalized[output_index..][0..encoded_length], encoded[0..encoded_length]);
+                output_index += encoded_length;
+            }
+            index = decoded.end;
+        }
+        std.debug.assert(output_index == normalized.len);
         return normalized;
     }
 

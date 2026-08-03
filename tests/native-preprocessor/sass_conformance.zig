@@ -278,3 +278,71 @@ test "native Sass matches the pinned control flow conformance cohort determinist
         try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
     }
 }
+
+test "native Sass matches the pinned functions conformance cohort deterministically" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/sass/corpus/manifest.json",
+        1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(u8, 1), parsed.value.schemaVersion);
+    try std.testing.expectEqual(@as(usize, 80), parsed.value.caseCount);
+
+    const expectations = [_]struct {
+        id: []const u8,
+        fixture_css: []const u8,
+        native_css: []const u8,
+    }{
+        .{
+            .id = "scss-function-double-underscore",
+            .fixture_css = "b {\n  c: 1;\n}\n",
+            .native_css = "b{c:1}",
+        },
+        .{
+            .id = "scss-function-escaped",
+            .fixture_css = "a {\n  b: 1;\n}\n",
+            .native_css = "a{b:1}",
+        },
+    };
+
+    for (expectations) |expectation| {
+        const case = try findCase(parsed.value.cases, expectation.id);
+        try std.testing.expectEqualStrings("functions", case.feature);
+        try std.testing.expectEqualStrings("scss", case.syntax);
+        try std.testing.expectEqualStrings("success", case.outcome);
+        try std.testing.expect(case.warning == null);
+
+        const input_path = try fixturePath(allocator, case, case.entry);
+        defer allocator.free(input_path);
+        const expected_path = try fixturePath(allocator, case, case.expected);
+        defer allocator.free(expected_path);
+        const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+        defer allocator.free(input);
+        const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+        defer allocator.free(expected);
+
+        try std.testing.expectEqualStrings(expectation.fixture_css, expected);
+
+        var first = try compileNative(allocator, case, input);
+        defer first.deinit();
+        var second = try compileNative(allocator, case, input);
+        defer second.deinit();
+
+        try std.testing.expectEqualStrings(expectation.native_css, first.css());
+        try std.testing.expectEqualStrings(first.css(), second.css());
+        try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+        try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    }
+}

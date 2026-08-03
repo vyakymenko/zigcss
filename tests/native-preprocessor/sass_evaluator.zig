@@ -35885,7 +35885,7 @@ fn exerciseAllocationFailures(
         \\$math-max-css: max(var(--maximum), 2px);
         \\$math-clamp-css: clamp(1px, var(--number), 3px);
         \\$math-hypot-css: hypot(var(--leg), 4px);
-        \\@function allocation-value($value, $extra: 1) { @return $value + $extra; }
+        \\@function allocation-\76 alue($value, $extra: 1) { @return $value + $extra; }
         \\@function allocation-rest($head, $tail...) { @return nth($tail, 1); }
         \\@function allocation-target($left, $right: 0) { @return $left + $right; }
         \\@function allocation-proxy($args...) { @return allocation-target($args...); }
@@ -35909,8 +35909,8 @@ fn exerciseAllocationFailures(
         \\  list-joined: $list-joined;
         \\  list-zipped: $list-zipped;
         \\  list-slashed: $list-slashed;
-        \\  function-value: allocation_value(2);
-        \\  plain-function: outer(allocation-value(2));
+        \\  function-value: allocation_\76 alue(2);
+        \\  plain-function: outer(allocation-\000076alue(2));
         \\  rest-function: allocation-rest(1, (2, 3)...);
         \\  forwarded-function: allocation-proxy($left: 2, $right: 3);
         \\  inspected-keyword: allocation-keyword($value: 4);
