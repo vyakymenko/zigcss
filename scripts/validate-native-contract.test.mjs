@@ -62,13 +62,23 @@ test('accepts the bounded native Sass implementation contract', () => {
       manifest: 'tests/preprocessors/sass/corpus/manifest.json',
       caseCount: 80,
     },
-    completedCaseCount: 1,
-    remainingCaseCount: 79,
+    completedCaseCount: 4,
+    remainingCaseCount: 76,
     completedCohorts: [{
       feature: 'variables',
       caseIds: ['scss-variable-scope'],
       evidenceTests: [
         'native Sass matches the pinned variables conformance cohort deterministically',
+      ],
+    }, {
+      feature: 'operators',
+      caseIds: [
+        'scss-operator-precedence',
+        'scss-plus-comments',
+        'scss-minus-whitespace',
+      ],
+      evidenceTests: [
+        'native Sass matches the pinned operators conformance cohort deterministically',
       ],
     }],
     gates: {
@@ -483,8 +493,8 @@ test('accepts the bounded native Sass implementation contract', () => {
 test('rejects widened, unpinned, or unevidenced native Sass conformance progress', () => {
   for (const mutate of [
     contract => { contract.sassConformance.releaseGapFamily = 'renamed-conformance' },
-    contract => { contract.sassConformance.completedCaseCount = 2 },
-    contract => { contract.sassConformance.remainingCaseCount = 78 },
+    contract => { contract.sassConformance.completedCaseCount = 5 },
+    contract => { contract.sassConformance.remainingCaseCount = 75 },
     contract => { contract.sassConformance.completedCohorts[0].caseIds.push('unknown-case') },
     contract => { contract.sassConformance.gates.corpusDifferential = 'complete' },
   ]) {

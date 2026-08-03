@@ -186,14 +186,25 @@
       "manifest": "tests/preprocessors/sass/corpus/manifest.json",
       "caseCount": 80
     },
-    "completedCaseCount": 1,
-    "remainingCaseCount": 79,
+    "completedCaseCount": 4,
+    "remainingCaseCount": 76,
     "completedCohorts": [
       {
         "feature": "variables",
         "caseIds": ["scss-variable-scope"],
         "evidenceTests": [
           "native Sass matches the pinned variables conformance cohort deterministically"
+        ]
+      },
+      {
+        "feature": "operators",
+        "caseIds": [
+          "scss-operator-precedence",
+          "scss-plus-comments",
+          "scss-minus-whitespace"
+        ],
+        "evidenceTests": [
+          "native Sass matches the pinned operators conformance cohort deterministically"
         ]
       }
     ],

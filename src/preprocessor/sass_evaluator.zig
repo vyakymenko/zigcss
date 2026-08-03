@@ -4411,6 +4411,23 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         span: native_source.Span,
     ) Error!EvaluatedCallArguments {
+        return self.evaluateCallArgumentsWithPlainStringAdditive(
+            body,
+            ranges,
+            scope,
+            span,
+            true,
+        );
+    }
+
+    fn evaluateCallArgumentsWithPlainStringAdditive(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        scope: native_environment.ScopeId,
+        span: native_source.Span,
+        allow_plain_string_additive: bool,
+    ) Error!EvaluatedCallArguments {
         var result = EvaluatedCallArguments{ .allocator = self.allocator };
         errdefer result.deinit();
         var parsed = native_arguments.parseAlloc(
@@ -4422,10 +4439,11 @@ const Engine = struct {
         defer parsed.deinit();
 
         for (parsed.items) |argument| {
-            const item = try self.evaluateExpressionBytes(
+            const item = try self.evaluateExpressionBytesWithPlainStringAdditive(
                 body[argument.value.start..argument.value.end],
                 scope,
                 span,
+                allow_plain_string_additive,
             );
             if (argument.splat) {
                 try self.expandCallSplat(&result, item, span);
@@ -6937,6 +6955,21 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         diagnostic_span: native_source.Span,
     ) Error!*const native_value.Value {
+        return self.evaluateExpressionBytesWithPlainStringAdditive(
+            raw,
+            scope,
+            diagnostic_span,
+            true,
+        );
+    }
+
+    fn evaluateExpressionBytesWithPlainStringAdditive(
+        self: *Engine,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        diagnostic_span: native_source.Span,
+        allow_plain_string_additive: bool,
+    ) Error!*const native_value.Value {
         const trimmed = trimWhitespace(raw);
         const call_span = self.sourceSpanForBytes(trimmed, diagnostic_span);
         if (self.expression_depth >= self.limits.max_evaluation_depth) {
@@ -6985,13 +7018,78 @@ const Engine = struct {
             var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
             return self.values.own(.{ .number = try numeric.toNumber(&numerator, &denominator) });
         }
+        if (allow_plain_string_additive) {
+            if (try self.tryPlainStringAdditiveExpression(trimmed)) |item| return item;
+        }
         if (try self.tryPlainCssFunctionCall(trimmed, scope, diagnostic_span)) |item| {
             return item;
+        }
+        if (!allow_plain_string_additive) {
+            const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
+            defer self.allocator.free(rendered);
+            return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = false } });
         }
         if (try self.tryCollection(trimmed, scope, diagnostic_span)) |item| return item;
         const rendered = try self.renderBytes(trimmed, scope, diagnostic_span, true);
         defer self.allocator.free(rendered);
         return self.values.own(.{ .string = .{ .bytes = rendered, .quoted = false } });
+    }
+
+    fn tryPlainStringAdditiveExpression(
+        self: *Engine,
+        raw: []const u8,
+    ) Error!?*const native_value.Value {
+        var has_candidate = std.mem.indexOfScalar(u8, raw, '+') != null;
+        if (!has_candidate) {
+            for (raw, 0..) |byte, index| {
+                if (byte != '-') continue;
+                const left_trivia = index > 0 and
+                    (isExpressionWhitespace(raw[index - 1]) or
+                        (index > 1 and raw[index - 2] == '*' and raw[index - 1] == '/'));
+                const right_trivia = index + 1 < raw.len and
+                    (isExpressionWhitespace(raw[index + 1]) or
+                        (index + 2 < raw.len and raw[index + 1] == '/' and raw[index + 2] == '*'));
+                if (left_trivia or right_trivia) {
+                    has_candidate = true;
+                    break;
+                }
+            }
+        }
+        if (!has_candidate) return null;
+
+        var options = native_lexer.Options{};
+        options.max_input_bytes = @max(raw.len, 1);
+        options.max_tokens = self.limits.max_expression_tokens;
+        const tokens = try native_lexer.tokenizeAlloc(self.allocator, raw, .scss, options);
+        defer self.allocator.free(tokens);
+
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        var expect_operand = true;
+        var pending_operator: ?u8 = null;
+        var operator_count: usize = 0;
+        for (tokens) |token| {
+            if (token.kind == .eof or isExpressionTrivia(token.kind)) continue;
+            if (expect_operand) {
+                if (token.kind != .identifier) return null;
+                if (pending_operator == '-') try self.appendTemporary(&output, "-");
+                try self.appendTemporary(&output, token.raw(raw));
+                pending_operator = null;
+                expect_operand = false;
+                continue;
+            }
+
+            if (token.kind != .operator) return null;
+            const operation = token.raw(raw);
+            if (!std.mem.eql(u8, operation, "+") and !std.mem.eql(u8, operation, "-")) {
+                return null;
+            }
+            pending_operator = operation[0];
+            operator_count += 1;
+            expect_operand = true;
+        }
+        if (operator_count == 0 or expect_operand) return null;
+        return self.values.own(.{ .string = .{ .bytes = output.items, .quoted = false } });
     }
 
     fn sourceSpanForBytes(
@@ -11083,11 +11181,12 @@ const Engine = struct {
             }
         }
 
-        var evaluated = try self.evaluateCallArguments(
+        var evaluated = try self.evaluateCallArgumentsWithPlainStringAdditive(
             body,
             ranges.items,
             scope,
             span,
+            !std.ascii.eqlIgnoreCase(name, "url"),
         );
         defer evaluated.deinit();
         if (evaluated.keywords.items.len != 0) {
