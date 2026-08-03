@@ -1438,6 +1438,7 @@ const Engine = struct {
                 .mixin => try self.executeMixinDirective(child_id, scope, depth, .root),
                 .content => try self.executeContentDirective(child_id, scope, depth, .root),
                 .function => try self.defineUserFunction(child_id, scope),
+                .import => try self.executeLegacyImportDirective(child_id),
                 .module => try self.executeModuleDirective(child_id, scope),
                 .return_statement => {
                     try self.report(.syntax, child.span, "Sass @return is only valid inside a function");
@@ -1454,6 +1455,41 @@ const Engine = struct {
             }
             index += 1;
         }
+    }
+
+    fn executeLegacyImportDirective(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+    ) Error!void {
+        const node = self.document.get(node_id) catch return error.InvalidSassSyntax;
+        const children = self.document.children(node_id) catch return error.InvalidSassSyntax;
+        if (children.len != 1) {
+            try self.report(
+                .syntax,
+                node.span,
+                "native Sass @import requires one module URL and no block",
+            );
+            return error.InvalidSassSyntax;
+        }
+        const prelude_node = self.document.get(children[0]) catch
+            return error.InvalidSassSyntax;
+        if (prelude_node.kind != .expression or prelude_node.text == null) {
+            try self.report(.syntax, node.span, "native Sass @import requires a module URL");
+            return error.InvalidSassSyntax;
+        }
+        const prelude = try self.sources.slice(prelude_node.text.?);
+        const module_url = parseLegacyImportDirective(prelude) orelse {
+            try self.report(.syntax, node.span, "malformed native Sass @import directive");
+            return error.InvalidSassSyntax;
+        };
+        try self.reportDeprecation(
+            .invalid_import,
+            prelude_node.span,
+            "Sass @import rules are deprecated and will be removed in Dart Sass 3.0.0. " ++
+                "More info and automated migrator: https://sass-lang.com/d/import",
+            &.{},
+        );
+        try self.loadLegacyImport(node.span.source, module_url, prelude_node.span);
     }
 
     fn executeModuleDirective(
@@ -1863,13 +1899,15 @@ const Engine = struct {
         session: *native_resolver.Session,
         ancestry: []const []const u8,
         candidate_urls: []const []const u8,
+        dependency_kind: native_resolver.DependencyKind,
+        ambiguity_message: []const u8,
         span: native_source.Span,
     ) Error!?native_resolver.Loaded {
         var selected: ?native_resolver.Loaded = null;
         errdefer if (selected) |*loaded| loaded.deinit();
         for (candidate_urls) |candidate_url| {
             var loaded = session.load(candidate_url, .{
-                .kind = .use,
+                .kind = dependency_kind,
                 .ancestry = ancestry,
             }) catch |failure| switch (failure) {
                 error.Missing => continue,
@@ -1885,7 +1923,7 @@ const Engine = struct {
                 try self.report(
                     .invalid_import,
                     span,
-                    "native Sass local module URL is ambiguous",
+                    ambiguity_message,
                 );
                 return error.InvalidSassSyntax;
             }
@@ -1940,6 +1978,117 @@ const Engine = struct {
         return ancestry;
     }
 
+    fn loadLegacyImport(
+        self: *Engine,
+        parent_source_id: native_source.SourceId,
+        module_url: []const u8,
+        span: native_source.Span,
+    ) Error!void {
+        const parent = try self.sources.get(parent_source_id);
+        const session = try self.transaction.resolverSession();
+        const ancestry = try self.localModuleAncestry(parent_source_id);
+        defer self.allocator.free(ancestry);
+
+        var selected: ?native_resolver.Loaded = null;
+        errdefer if (selected) |*loaded| loaded.deinit();
+        if (std.fs.path.extension(module_url).len == 0) {
+            const import_only_candidates = legacyImportCandidateUrls(
+                self.allocator,
+                parent.name,
+                module_url,
+                self.limits.max_temporary_bytes,
+                .import_only,
+            ) catch |failure| {
+                _ = try self.failLocalModuleLoad(failure, span);
+                unreachable;
+            };
+            defer freeOwnedStrings(self.allocator, import_only_candidates);
+            selected = try self.selectLocalModuleCandidate(
+                session,
+                ancestry,
+                import_only_candidates,
+                .import,
+                "native Sass legacy import URL is ambiguous",
+                span,
+            );
+        }
+        if (selected == null) {
+            const candidates = legacyImportCandidateUrls(
+                self.allocator,
+                parent.name,
+                module_url,
+                self.limits.max_temporary_bytes,
+                .ordinary,
+            ) catch |failure| {
+                _ = try self.failLocalModuleLoad(failure, span);
+                unreachable;
+            };
+            defer freeOwnedStrings(self.allocator, candidates);
+            selected = try self.selectLocalModuleCandidate(
+                session,
+                ancestry,
+                candidates,
+                .import,
+                "native Sass legacy import URL is ambiguous",
+                span,
+            );
+        }
+
+        var loaded = selected orelse {
+            try self.report(.invalid_import, span, "native Sass legacy import was not found");
+            return error.InvalidSassSyntax;
+        };
+        selected = null;
+        defer loaded.deinit();
+
+        const pool_owner = self.localModulePoolOwner();
+        if (pool_owner.local_module_count >= self.limits.max_modules) {
+            try self.report(.resource_limit, span, "native Sass module limit exceeded");
+            return error.ModuleLimitExceeded;
+        }
+        pool_owner.local_module_count += 1;
+        errdefer pool_owner.local_module_count -= 1;
+
+        const source_id = self.sources.add(loaded.url, loaded.contents) catch |failure| {
+            if (failure == error.OutOfMemory) return error.OutOfMemory;
+            try self.report(.resource_limit, span, "native Sass source limit exceeded");
+            return failure;
+        };
+        const mode: native_sass.Mode = if (std.mem.endsWith(u8, loaded.url, ".sass"))
+            .sass
+        else
+            .scss;
+        var parser = native_sass.Parser.init(
+            self.allocator,
+            self.sources,
+            source_id,
+            mode,
+            .{},
+            .{},
+        ) catch |failure| {
+            if (failure == error.OutOfMemory) return error.OutOfMemory;
+            try self.report(.syntax, span, "native Sass legacy import could not be parsed");
+            return failure;
+        };
+        defer parser.deinit();
+        var document = parser.parse() catch |failure| {
+            try self.copyParserDiagnostics(parser.diagnostics());
+            return failure;
+        };
+        defer document.deinit();
+        var import_engine = try Engine.init(
+            self.allocator,
+            self.sources,
+            &document,
+            self.transaction,
+            self.limits,
+        );
+        defer import_engine.deinit();
+        import_engine.module_depth = self.module_depth + 1;
+        import_engine.parent_engine = self;
+        try import_engine.run();
+    }
+
     fn loadLocalModule(
         self: *Engine,
         parent_source_id: native_source.SourceId,
@@ -1964,6 +2113,8 @@ const Engine = struct {
                 session,
                 ancestry,
                 candidates,
+                .use,
+                "native Sass local module URL is ambiguous",
                 span,
             );
         };
@@ -1981,6 +2132,8 @@ const Engine = struct {
                 session,
                 ancestry,
                 candidates,
+                .use,
+                "native Sass local module URL is ambiguous",
                 span,
             );
         }
@@ -24095,6 +24248,26 @@ fn trimWhitespace(input: []const u8) []const u8 {
     return std.mem.trim(u8, input, " \t\r\n\x0c");
 }
 
+fn parseLegacyImportDirective(input: []const u8) ?[]const u8 {
+    const raw = trimWhitespace(input);
+    if (raw.len < 3 or (raw[0] != '\'' and raw[0] != '"')) return null;
+    const quote = raw[0];
+    var closing: ?usize = null;
+    var index: usize = 1;
+    while (index < raw.len) : (index += 1) {
+        if (raw[index] == '\\') return null;
+        if (raw[index] == quote) {
+            closing = index;
+            break;
+        }
+    }
+    const end = closing orelse return null;
+    if (trimWhitespace(raw[end + 1 ..]).len != 0) return null;
+    const url = raw[1..end];
+    if (url.len == 0 or std.mem.indexOf(u8, url, "#{") != null) return null;
+    return url;
+}
+
 fn parseUseDirective(input: []const u8) ?ParsedUse {
     const raw = trimWhitespace(input);
     if (raw.len < 3 or (raw[0] != '\'' and raw[0] != '"')) return null;
@@ -24302,6 +24475,69 @@ fn defaultModuleNamespace(module_url: []const u8) ?[]const u8 {
 }
 
 const LocalModuleCandidateGroup = enum { direct, index };
+const LegacyImportCandidateGroup = enum { import_only, ordinary };
+
+fn legacyImportCandidateUrls(
+    allocator: std.mem.Allocator,
+    parent_url: []const u8,
+    module_url: []const u8,
+    max_temporary_bytes: usize,
+    group: LegacyImportCandidateGroup,
+) native_resolver.Error![][]u8 {
+    if (module_url.len == 0 or module_url.len > max_temporary_bytes or
+        module_url[0] == '/' or
+        std.mem.indexOfAny(u8, module_url, "\x00\r\n\\?#") != null or
+        std.mem.indexOfScalar(u8, module_url, ':') != null)
+    {
+        return error.InvalidUrl;
+    }
+    const extension = std.fs.path.extension(module_url);
+    if (extension.len != 0 and
+        !std.mem.eql(u8, extension, ".scss") and
+        !std.mem.eql(u8, extension, ".sass"))
+    {
+        return error.InvalidUrl;
+    }
+    if (group == .import_only and extension.len != 0) return error.InvalidUrl;
+
+    const parent_path = try native_resolver.fileUrlToPath(allocator, parent_url);
+    defer allocator.free(parent_path);
+    const parent_directory = std.fs.path.dirname(parent_path) orelse
+        return error.InvalidUrl;
+    var candidates: std.ArrayList([]u8) = .empty;
+    errdefer freeOwnedStringList(allocator, &candidates);
+
+    if (extension.len != 0) {
+        try appendLocalModuleStylesheetCandidates(
+            allocator,
+            &candidates,
+            parent_directory,
+            module_url,
+            max_temporary_bytes,
+        );
+    } else {
+        const extensions = if (group == .import_only)
+            [_][]const u8{ ".import.scss", ".import.sass" }
+        else
+            [_][]const u8{ ".scss", ".sass" };
+        for (extensions) |candidate_extension| {
+            const relative = try std.fmt.allocPrint(
+                allocator,
+                "{s}{s}",
+                .{ module_url, candidate_extension },
+            );
+            defer allocator.free(relative);
+            try appendLocalModuleStylesheetCandidates(
+                allocator,
+                &candidates,
+                parent_directory,
+                relative,
+                max_temporary_bytes,
+            );
+        }
+    }
+    return candidates.toOwnedSlice(allocator);
+}
 
 fn localModuleCandidateUrls(
     allocator: std.mem.Allocator,

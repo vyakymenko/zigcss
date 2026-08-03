@@ -102,14 +102,8 @@ const expectedSassEvaluatorClosure = Object.freeze({
   ]),
   remainingPlanDomain: Object.freeze({
     releaseGapFamily: 'native-sass-dynamic-loading',
-    features: Object.freeze([
-      'legacy-import',
-      'meta-load-css',
-    ]),
-    referenceCases: Object.freeze([
-      'scss-meta-load-css',
-      'scss-import-import-only',
-    ]),
+    features: Object.freeze(['meta-load-css']),
+    referenceCases: Object.freeze(['scss-meta-load-css']),
     completedSlices: Object.freeze([
       Object.freeze({
         feature: 'use-resolution',
@@ -169,6 +163,16 @@ const expectedSassEvaluatorClosure = Object.freeze({
           'native Sass forward covers the finite built-in module inventory',
           'native Sass forward resolution enforces confinement and graph limits',
           'native Sass configured forward handles every allocation failure',
+        ]),
+      }),
+      Object.freeze({
+        feature: 'legacy-import',
+        state: 'native-foundation',
+        referenceCases: Object.freeze(['scss-import-import-only']),
+        evidenceTests: Object.freeze([
+          'native Sass resolves the pinned legacy import-only precedence',
+          'native Sass legacy import rejects malformed directives without partial CSS',
+          'native Sass legacy import handles every allocation failure',
         ]),
       }),
     ]),
@@ -256,6 +260,7 @@ const expectedImplementations = Object.freeze([
       'local-forward-config-foundation',
       'local-forward-callable-foundation',
       'local-forward-terminal-contract-foundation',
+      'local-legacy-import-only-precedence-foundation',
       'local-use-callable-member-foundation',
       'local-use-callable-existence-foundation',
       'local-use-callable-reference-foundation',

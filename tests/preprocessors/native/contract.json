@@ -86,11 +86,8 @@
     ],
     "remainingPlanDomain": {
       "releaseGapFamily": "native-sass-dynamic-loading",
-      "features": ["legacy-import", "meta-load-css"],
-      "referenceCases": [
-        "scss-meta-load-css",
-        "scss-import-import-only"
-      ],
+      "features": ["meta-load-css"],
+      "referenceCases": ["scss-meta-load-css"],
       "completedSlices": [
         {
           "feature": "use-resolution",
@@ -150,6 +147,16 @@
             "native Sass forward covers the finite built-in module inventory",
             "native Sass forward resolution enforces confinement and graph limits",
             "native Sass configured forward handles every allocation failure"
+          ]
+        },
+        {
+          "feature": "legacy-import",
+          "state": "native-foundation",
+          "referenceCases": ["scss-import-import-only"],
+          "evidenceTests": [
+            "native Sass resolves the pinned legacy import-only precedence",
+            "native Sass legacy import rejects malformed directives without partial CSS",
+            "native Sass legacy import handles every allocation failure"
           ]
         }
       ]
@@ -225,6 +232,7 @@
         "local-forward-config-foundation",
         "local-forward-callable-foundation",
         "local-forward-terminal-contract-foundation",
+        "local-legacy-import-only-precedence-foundation",
         "local-use-callable-member-foundation",
         "local-use-callable-existence-foundation",
         "local-use-callable-reference-foundation",

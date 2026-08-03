@@ -36669,6 +36669,190 @@ test "native Sass resolves the pinned one-hop use selection matrix" {
     }
 }
 
+test "native Sass resolves the pinned legacy import-only precedence" {
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        expected_css: []const u8,
+    }{
+        .{
+            .root_name = "input.scss",
+            .root_input =
+            \\// The extension of the import-only file doesn't need to match the extension of
+            \\// the use-only file.
+            \\@import "other";
+            ,
+            .mode = .scss,
+            .expected_css = "a{import-only:true}",
+        },
+        .{
+            .root_name = "input.sass",
+            .root_input =
+            \\@import "other"
+            \\.root
+            \\  after: true
+            ,
+            .mode = .sass,
+            .expected_css = "a{import-only:true}.root{after:true}",
+        },
+    };
+    const files = [_]LocalUseFile{
+        .{ .name = "other.import.sass", .contents = "a\n  import-only: true" },
+        .{ .name = "other.scss", .contents = "a { import-only: false; }" },
+    };
+    const warning =
+        "Sass @import rules are deprecated and will be removed in Dart Sass 3.0.0. " ++
+        "More info and automated migrator: https://sass-lang.com/d/import";
+
+    for (cases) |case| {
+        var result = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            &files,
+            .{},
+        );
+        defer result.deinit();
+
+        try std.testing.expectEqualStrings(case.expected_css, result.css());
+        const diagnostics = result.nativeDiagnostics();
+        try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Severity.warning,
+            diagnostics[0].severity,
+        );
+        try std.testing.expectEqual(
+            preprocessor.diagnostics.Code.invalid_import,
+            diagnostics[0].code,
+        );
+        try std.testing.expectEqualStrings(warning, diagnostics[0].message);
+        const import_url = "\"other\"";
+        const import_start = std.mem.indexOf(u8, case.root_input, import_url).?;
+        try std.testing.expectEqual(@as(u32, 0), diagnostics[0].span.source.value);
+        try std.testing.expectEqual(
+            @as(u32, @intCast(import_start)),
+            diagnostics[0].span.start,
+        );
+        try std.testing.expectEqual(
+            @as(u32, @intCast(import_start + import_url.len)),
+            diagnostics[0].span.end,
+        );
+
+        try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+        try std.testing.expectEqual(
+            resolver.DependencyKind.import,
+            result.dependencies()[0].kind,
+        );
+        try std.testing.expect(std.mem.endsWith(
+            u8,
+            result.dependencies()[0].url,
+            "/other.import.sass",
+        ));
+        try std.testing.expectEqual(@as(usize, 1), result.edges().len);
+        try std.testing.expectEqualStrings(
+            result.dependencies()[0].url,
+            result.edges()[0].child_url,
+        );
+        try std.testing.expect(result.map() != null);
+        try std.testing.expect(result.sourceMap() != null);
+    }
+}
+
+test "native Sass legacy import rejects malformed directives without partial CSS" {
+    try expectLocalUseFailure(
+        std.testing.allocator,
+        "malformed-import.scss",
+        "@import \"other\", \"second\"; .unreachable { color: red; }",
+        .scss,
+        &.{},
+        error.InvalidSassSyntax,
+        .syntax,
+        "malformed native Sass @import directive",
+        "@import \"other\", \"second\";",
+    );
+}
+
+const LegacyImportAllocationContext = struct {
+    root: []const u8,
+    root_url: []const u8,
+};
+
+fn exerciseLegacyImportAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const LegacyImportAllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input = "@import \"other\"; .root { after: true; }";
+    const source_id = try sources.add(context.root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "a{import-only:true}.root{after:true}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 1), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+    try std.testing.expectEqual(resolver.DependencyKind.import, result.dependencies()[0].kind);
+    try std.testing.expectEqual(@as(usize, 1), result.edges().len);
+    try std.testing.expect(result.map().?.segments().len >= 2);
+}
+
+test "native Sass legacy import handles every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/other.import.sass",
+        .data = "a\n  import-only: true",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/other.scss",
+        .data = "a { import-only: false; }",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/input.scss",
+        .data = "@import \"other\"; .root { after: true; }",
+    });
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const root_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root, "input.scss" },
+    );
+    defer std.testing.allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(std.testing.allocator, root_path);
+    defer std.testing.allocator.free(root_url);
+    const context = LegacyImportAllocationContext{ .root = root, .root_url = root_url };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseLegacyImportAllocationFailures,
+        .{&context},
+    );
+}
+
 test "native Sass evaluates the pinned transitive use graph once" {
     const ExpectedEdge = struct {
         parent_suffix: []const u8,
