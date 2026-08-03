@@ -1000,7 +1000,7 @@ fn continuesDirectivePrelude(
         "@mixin",   "@return",   "@supports", "@use",    "@warn",    "@while",
     };
     for (requiring_prelude) |directive| {
-        if (std.ascii.eqlIgnoreCase(raw, directive)) return true;
+        if (native_lexer.identifierEqlIgnoreCaseAscii(raw, directive)) return true;
     }
     return false;
 }
@@ -1032,23 +1032,29 @@ fn hasWhitespaceBetween(
 }
 
 fn directiveKind(raw: []const u8) native_syntax.Kind {
-    if (std.ascii.eqlIgnoreCase(raw, "@if") or std.ascii.eqlIgnoreCase(raw, "@else")) {
+    if (native_lexer.identifierEqlIgnoreCaseAscii(raw, "@if") or
+        native_lexer.identifierEqlIgnoreCaseAscii(raw, "@else"))
+    {
         return .conditional;
     }
-    if (std.ascii.eqlIgnoreCase(raw, "@for") or
-        std.ascii.eqlIgnoreCase(raw, "@each") or
-        std.ascii.eqlIgnoreCase(raw, "@while"))
+    if (native_lexer.identifierEqlIgnoreCaseAscii(raw, "@for") or
+        native_lexer.identifierEqlIgnoreCaseAscii(raw, "@each") or
+        native_lexer.identifierEqlIgnoreCaseAscii(raw, "@while"))
     {
         return .loop;
     }
-    if (std.ascii.eqlIgnoreCase(raw, "@mixin") or std.ascii.eqlIgnoreCase(raw, "@include")) {
+    if (native_lexer.identifierEqlIgnoreCaseAscii(raw, "@mixin") or
+        native_lexer.identifierEqlIgnoreCaseAscii(raw, "@include"))
+    {
         return .mixin;
     }
-    if (std.ascii.eqlIgnoreCase(raw, "@function")) return .function;
-    if (std.ascii.eqlIgnoreCase(raw, "@return")) return .return_statement;
-    if (std.ascii.eqlIgnoreCase(raw, "@content")) return .content;
-    if (std.ascii.eqlIgnoreCase(raw, "@import")) return .import;
-    if (std.ascii.eqlIgnoreCase(raw, "@use") or std.ascii.eqlIgnoreCase(raw, "@forward")) {
+    if (native_lexer.identifierEqlIgnoreCaseAscii(raw, "@function")) return .function;
+    if (native_lexer.identifierEqlIgnoreCaseAscii(raw, "@return")) return .return_statement;
+    if (native_lexer.identifierEqlIgnoreCaseAscii(raw, "@content")) return .content;
+    if (native_lexer.identifierEqlIgnoreCaseAscii(raw, "@import")) return .import;
+    if (native_lexer.identifierEqlIgnoreCaseAscii(raw, "@use") or
+        native_lexer.identifierEqlIgnoreCaseAscii(raw, "@forward"))
+    {
         return .module;
     }
     return .at_rule;

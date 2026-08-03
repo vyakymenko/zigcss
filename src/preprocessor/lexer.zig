@@ -631,6 +631,73 @@ fn isNameContinue(value: u8) bool {
     return isNameStart(value) or std.ascii.isDigit(value) or value == '-';
 }
 
+/// Compares a tokenized identifier with an ASCII semantic name while decoding
+/// the CSS escapes that the lossless token intentionally retains.
+pub fn identifierEqlIgnoreCaseAscii(raw: []const u8, expected: []const u8) bool {
+    var raw_index: usize = 0;
+    var expected_index: usize = 0;
+    while (raw_index < raw.len and expected_index < expected.len) {
+        const scalar: u32 = if (raw[raw_index] == '\\') escaped: {
+            raw_index += 1;
+            if (raw_index >= raw.len or isNewlineByte(raw[raw_index])) return false;
+            if (!std.ascii.isHex(raw[raw_index])) {
+                const byte = raw[raw_index];
+                if (byte >= 0x80) return false;
+                raw_index += 1;
+                break :escaped byte;
+            }
+
+            var value: u32 = 0;
+            var digits: u8 = 0;
+            while (raw_index < raw.len and digits < 6 and
+                std.ascii.isHex(raw[raw_index])) : (digits += 1)
+            {
+                value = value * 16 + hexValue(raw[raw_index]);
+                raw_index += 1;
+            }
+            if (raw_index < raw.len and
+                (isHorizontalWhitespace(raw[raw_index]) or isNewlineByte(raw[raw_index])))
+            {
+                if (raw[raw_index] == '\r' and
+                    raw_index + 1 < raw.len and raw[raw_index + 1] == '\n')
+                {
+                    raw_index += 2;
+                } else {
+                    raw_index += 1;
+                }
+            }
+            break :escaped if (value == 0 or value > 0x10ffff or
+                (value >= 0xd800 and value <= 0xdfff))
+                0xfffd
+            else
+                value;
+        } else unescaped: {
+            const byte = raw[raw_index];
+            if (byte >= 0x80) return false;
+            raw_index += 1;
+            break :unescaped byte;
+        };
+
+        const expected_byte = expected[expected_index];
+        if (expected_byte >= 0x80 or scalar > 0x7f or
+            std.ascii.toLower(@as(u8, @intCast(scalar))) != std.ascii.toLower(expected_byte))
+        {
+            return false;
+        }
+        expected_index += 1;
+    }
+    return raw_index == raw.len and expected_index == expected.len;
+}
+
+fn hexValue(value: u8) u32 {
+    return if (value >= '0' and value <= '9')
+        value - '0'
+    else if (value >= 'a' and value <= 'f')
+        value - 'a' + 10
+    else
+        value - 'A' + 10;
+}
+
 pub fn tokenizeAlloc(
     allocator: std.mem.Allocator,
     source: []const u8,

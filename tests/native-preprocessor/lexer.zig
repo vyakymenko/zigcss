@@ -221,6 +221,18 @@ test "identifiers variables hashes and unsigned numbers preserve spelling" {
     try expectLossless(source, tokens);
 }
 
+test "identifier semantic equality decodes bounded CSS escapes" {
+    try std.testing.expect(lexer.identifierEqlIgnoreCaseAscii("@else", "@else"));
+    try std.testing.expect(lexer.identifierEqlIgnoreCaseAscii("@ELSE", "@else"));
+    try std.testing.expect(lexer.identifierEqlIgnoreCaseAscii("@\\-else", "@-else"));
+    try std.testing.expect(lexer.identifierEqlIgnoreCaseAscii("@\\65lse", "@else"));
+    try std.testing.expect(lexer.identifierEqlIgnoreCaseAscii("@\\000065 lse", "@else"));
+    try std.testing.expect(!lexer.identifierEqlIgnoreCaseAscii("@\\0000065lse", "@else"));
+    try std.testing.expect(!lexer.identifierEqlIgnoreCaseAscii("@\\0lse", "@else"));
+    try std.testing.expect(!lexer.identifierEqlIgnoreCaseAscii("@élse", "@else"));
+    try std.testing.expect(!lexer.identifierEqlIgnoreCaseAscii("@else", "@élse"));
+}
+
 test "malformed bytes and dangling constructs always make lossless progress" {
     const source = [_]u8{ 0, 0x1f, 0xff, ' ', '"', 'x' };
     const tokens = try tokenize(&source, .scss);

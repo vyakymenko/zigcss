@@ -95,6 +95,10 @@ const SelectorList = struct {
 
 const Numeric = native_numeric.Numeric;
 
+fn directiveNameEql(raw: []const u8, expected: []const u8) bool {
+    return native_lexer.identifierEqlIgnoreCaseAscii(raw, expected);
+}
+
 const VariableAssignment = struct {
     value: []const u8,
     default: bool = false,
@@ -1308,13 +1312,13 @@ const Engine = struct {
             .mixin => {
                 const keyword_span = node.text orelse return error.InvalidSassSyntax;
                 const keyword = try self.sources.slice(keyword_span);
-                if (std.ascii.eqlIgnoreCase(keyword, "@mixin")) {
+                if (directiveNameEql(keyword, "@mixin")) {
                     if (context.in_function or context.in_control or context.in_mixin) {
                         try self.report(.syntax, node.span, "native Sass mixin declaration is not allowed here");
                         return error.InvalidSassSyntax;
                     }
                     child_context = .{ .in_mixin = true, .allows_content = true };
-                } else if (std.ascii.eqlIgnoreCase(keyword, "@include")) {
+                } else if (directiveNameEql(keyword, "@include")) {
                     if (context.in_function) {
                         try self.report(.syntax, node.span, "Sass functions may not include mixins");
                         return error.InvalidSassSyntax;
@@ -1391,9 +1395,9 @@ const Engine = struct {
                 if (context.in_function) {
                     const keyword_span = node.text orelse return error.InvalidSassSyntax;
                     const keyword = try self.sources.slice(keyword_span);
-                    if (!std.ascii.eqlIgnoreCase(keyword, "@warn") and
-                        !std.ascii.eqlIgnoreCase(keyword, "@error") and
-                        !std.ascii.eqlIgnoreCase(keyword, "@debug"))
+                    if (!directiveNameEql(keyword, "@warn") and
+                        !directiveNameEql(keyword, "@error") and
+                        !directiveNameEql(keyword, "@debug"))
                     {
                         try self.report(.syntax, node.span, "at-rule is not valid inside a Sass function");
                         return error.InvalidSassSyntax;
@@ -1532,7 +1536,7 @@ const Engine = struct {
                     const keyword = try self.sources.slice(keyword_span);
                     const at_rule_children = self.document.children(child_id) catch
                         return error.InvalidSassSyntax;
-                    if (!std.ascii.eqlIgnoreCase(keyword, "@at-root") or
+                    if (!directiveNameEql(keyword, "@at-root") or
                         at_rule_children.len != 1)
                     {
                         try self.report(
@@ -1612,10 +1616,10 @@ const Engine = struct {
         const node = self.document.get(node_id) catch return error.InvalidSassSyntax;
         const keyword_span = node.text orelse return error.InvalidSassSyntax;
         const keyword = try self.sources.slice(keyword_span);
-        if (std.ascii.eqlIgnoreCase(keyword, "@forward")) {
+        if (directiveNameEql(keyword, "@forward")) {
             return self.executeForwardDirective(node_id, scope);
         }
-        if (!std.ascii.eqlIgnoreCase(keyword, "@use")) {
+        if (!directiveNameEql(keyword, "@use")) {
             try self.report(.syntax, node.span, "unknown native Sass module directive");
             return error.InvalidSassSyntax;
         }
@@ -4095,11 +4099,11 @@ const Engine = struct {
             return error.InvalidSassSyntax;
         }
         const keyword = try self.sources.slice(directive.text.?);
-        if (std.ascii.eqlIgnoreCase(keyword, "@mixin")) {
+        if (directiveNameEql(keyword, "@mixin")) {
             try self.defineUserMixin(directive_id, scope);
             return;
         }
-        if (!std.ascii.eqlIgnoreCase(keyword, "@include")) {
+        if (!directiveNameEql(keyword, "@include")) {
             try self.report(.syntax, directive.span, "unknown native Sass mixin directive");
             return error.InvalidSassSyntax;
         }
@@ -4277,7 +4281,7 @@ const Engine = struct {
         const keyword = try self.sources.slice(mixin_node.text.?);
         const prelude_node = self.document.get(children[0]) catch return error.InvalidSassSyntax;
         const block_node = self.document.get(children[1]) catch return error.InvalidSassSyntax;
-        if (!std.ascii.eqlIgnoreCase(keyword, "@mixin") or
+        if (!directiveNameEql(keyword, "@mixin") or
             prelude_node.kind != .expression or prelude_node.text == null or
             block_node.kind != .block)
         {
@@ -5822,11 +5826,11 @@ const Engine = struct {
         const keyword = try self.sources.slice(loop_node.text.?);
         const prelude = try self.sources.slice(prelude_node.text.?);
         const body = self.document.children(children[1]) catch return error.InvalidSassSyntax;
-        if (std.ascii.eqlIgnoreCase(keyword, "@for")) {
+        if (directiveNameEql(keyword, "@for")) {
             try self.executeForLoop(prelude, prelude_node.span, body, parent_scope, depth, context);
-        } else if (std.ascii.eqlIgnoreCase(keyword, "@each")) {
+        } else if (directiveNameEql(keyword, "@each")) {
             try self.executeEachLoop(prelude, prelude_node.span, body, parent_scope, depth, context);
-        } else if (std.ascii.eqlIgnoreCase(keyword, "@while")) {
+        } else if (directiveNameEql(keyword, "@while")) {
             try self.executeWhileLoop(prelude, prelude_node.span, body, parent_scope, depth, context);
         } else {
             try self.report(.syntax, loop_node.span, "unknown native Sass loop directive");
@@ -6394,8 +6398,8 @@ const Engine = struct {
             return error.InvalidSassSyntax;
         };
         const keyword = try self.sources.slice(text_span);
-        if (std.ascii.eqlIgnoreCase(keyword, "@if")) return .if_branch;
-        if (std.ascii.eqlIgnoreCase(keyword, "@else")) return .else_branch;
+        if (directiveNameEql(keyword, "@if")) return .if_branch;
+        if (directiveNameEql(keyword, "@else")) return .else_branch;
         try self.report(.syntax, node.span, "unknown Sass conditional directive");
         return error.InvalidSassSyntax;
     }

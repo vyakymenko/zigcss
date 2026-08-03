@@ -203,8 +203,8 @@ const expectedSassConformance = Object.freeze({
     manifest: 'tests/preprocessors/sass/corpus/manifest.json',
     caseCount: 80,
   }),
-  completedCaseCount: 4,
-  remainingCaseCount: 76,
+  completedCaseCount: 7,
+  remainingCaseCount: 73,
   completedCohorts: Object.freeze([
     Object.freeze({
       feature: 'variables',
@@ -222,6 +222,17 @@ const expectedSassConformance = Object.freeze({
       ]),
       evidenceTests: Object.freeze([
         'native Sass matches the pinned operators conformance cohort deterministically',
+      ]),
+    }),
+    Object.freeze({
+      feature: 'control-flow',
+      caseIds: Object.freeze([
+        'scss-if-escaped',
+        'scss-for-inclusive',
+        'scss-for-compatible-units',
+      ]),
+      evidenceTests: Object.freeze([
+        'native Sass matches the pinned control flow conformance cohort deterministically',
       ]),
     }),
   ]),
