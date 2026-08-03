@@ -36571,6 +36571,13 @@ const LocalUseFile = struct {
     contents: []const u8,
 };
 
+test "native Sass declares a finite callable evaluator convergence contract" {
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        sass_evaluator.max_callable_argument_transport_edges,
+    );
+}
+
 test "native Sass declares a finite callable re-export depth contract" {
     try std.testing.expectEqual(
         @as(u16, 60),

@@ -53,6 +53,52 @@
       "productionInNativeTarget": false
     }
   ],
+  "sassEvaluatorClosure": {
+    "ownerPackage": "NSASS-011",
+    "releaseGapFamily": "native-sass-evaluation",
+    "state": "closed",
+    "packageState": "in-progress",
+    "oracle": {
+      "id": "dart-sass",
+      "package": "sass",
+      "version": "1.101.0",
+      "selection": "tests/preprocessors/sass/corpus/selection.json",
+      "caseCount": 80
+    },
+    "terminalContract": {
+      "syntaxes": ["scss", "sass"],
+      "callableKinds": ["function", "mixin"],
+      "argumentOwnerClasses": ["caller", "earlier-peer", "later-peer"],
+      "reflectedContentOwnerClasses": ["receiver", "configured", "reexported", "caller", "peer"],
+      "maxArgumentTransportEdges": 1,
+      "reflectedContentOutcome": "reject-with-exact-syntax-diagnostic",
+      "reflectedContentDiagnostic": "Mixin doesn't accept a content block."
+    },
+    "evidenceTests": [
+      "native Sass owns caller callables across one-hop local module calls",
+      "native Sass caller callable arguments handle every allocation failure",
+      "native Sass owns peer callables across one-hop local module calls",
+      "native Sass peer callable arguments handle every allocation failure",
+      "native Sass re-exported peer callable arguments fail without partial CSS",
+      "native Sass rejects caller and peer callable content transport through meta.apply",
+      "native Sass rejects same-engine mixin content through meta.apply",
+      "native Sass meta.apply mixin content rejection handles every allocation failure"
+    ],
+    "remainingPlanDomain": {
+      "releaseGapFamily": "native-sass-module-system",
+      "features": ["use-resolution", "transitive-use", "forward", "legacy-import", "meta-load-css"],
+      "referenceCases": [
+        "scss-use-sass-extension",
+        "scss-use-scss-extension",
+        "scss-use-import-only-exclusion",
+        "scss-use-partial-index",
+        "scss-forward-config",
+        "scss-meta-load-css",
+        "scss-import-import-only"
+      ]
+    },
+    "conformancePackage": "NSASS-012"
+  },
   "foundations": [
     {
       "id": "shared-lossless-lexer",

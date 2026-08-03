@@ -63,6 +63,65 @@ const expectedReferenceOracles = Object.freeze([
   }),
 ])
 
+const expectedSassEvaluatorClosure = Object.freeze({
+  ownerPackage: 'NSASS-011',
+  releaseGapFamily: 'native-sass-evaluation',
+  state: 'closed',
+  packageState: 'in-progress',
+  oracle: Object.freeze({
+    id: 'dart-sass',
+    package: 'sass',
+    version: '1.101.0',
+    selection: 'tests/preprocessors/sass/corpus/selection.json',
+    caseCount: 80,
+  }),
+  terminalContract: Object.freeze({
+    syntaxes: Object.freeze(['scss', 'sass']),
+    callableKinds: Object.freeze(['function', 'mixin']),
+    argumentOwnerClasses: Object.freeze(['caller', 'earlier-peer', 'later-peer']),
+    reflectedContentOwnerClasses: Object.freeze([
+      'receiver',
+      'configured',
+      'reexported',
+      'caller',
+      'peer',
+    ]),
+    maxArgumentTransportEdges: 1,
+    reflectedContentOutcome: 'reject-with-exact-syntax-diagnostic',
+    reflectedContentDiagnostic: "Mixin doesn't accept a content block.",
+  }),
+  evidenceTests: Object.freeze([
+    'native Sass owns caller callables across one-hop local module calls',
+    'native Sass caller callable arguments handle every allocation failure',
+    'native Sass owns peer callables across one-hop local module calls',
+    'native Sass peer callable arguments handle every allocation failure',
+    'native Sass re-exported peer callable arguments fail without partial CSS',
+    'native Sass rejects caller and peer callable content transport through meta.apply',
+    'native Sass rejects same-engine mixin content through meta.apply',
+    'native Sass meta.apply mixin content rejection handles every allocation failure',
+  ]),
+  remainingPlanDomain: Object.freeze({
+    releaseGapFamily: 'native-sass-module-system',
+    features: Object.freeze([
+      'use-resolution',
+      'transitive-use',
+      'forward',
+      'legacy-import',
+      'meta-load-css',
+    ]),
+    referenceCases: Object.freeze([
+      'scss-use-sass-extension',
+      'scss-use-scss-extension',
+      'scss-use-import-only-exclusion',
+      'scss-use-partial-index',
+      'scss-forward-config',
+      'scss-meta-load-css',
+      'scss-import-import-only',
+    ]),
+  }),
+  conformancePackage: 'NSASS-012',
+})
+
 const expectedCurrentDependencies = Object.freeze({
   'image-size': '0.5.5',
   less: '4.6.7',
@@ -575,6 +634,60 @@ function validateImplementation(implementation, index, contract, plan) {
   for (const source of implementation.testSources) repositoryFile(source)
 }
 
+function validateSassEvaluatorClosure(
+  closure,
+  contract,
+  plan,
+  sassSelection,
+  sassEvaluatorSource,
+  sassEvaluatorTests,
+) {
+  if (!same(closure, expectedSassEvaluatorClosure)) {
+    fail('native Sass evaluator closure drifted')
+  }
+  if (closure.releaseGapFamily === closure.remainingPlanDomain.releaseGapFamily) {
+    fail('native Sass evaluator closure drifted into a renamed family')
+  }
+  const oracle = contract.referenceOracles.find(candidate => candidate.id === closure.oracle.id)
+  if (oracle === undefined || oracle.package !== closure.oracle.package ||
+      oracle.version !== closure.oracle.version) {
+    fail('native Sass evaluator oracle drifted')
+  }
+  if (sassSelection.upstream?.dartSassVersion !== closure.oracle.version ||
+      !Array.isArray(sassSelection.cases) ||
+      sassSelection.cases.length !== closure.oracle.caseCount) {
+    fail('native Sass evaluator oracle drifted')
+  }
+  const selectedCases = new Set(sassSelection.cases.map(specCase => specCase.id))
+  for (const referenceCase of closure.remainingPlanDomain.referenceCases) {
+    if (!selectedCases.has(referenceCase)) {
+      fail(`native Sass evaluator oracle is missing ${referenceCase}`)
+    }
+  }
+  requireText(
+    plan,
+    '`NSASS-011` | Implement Sass evaluation, mixins/functions, control flow, lists/maps, calculations/colors, `@use`/`@forward`/legacy imports, built-in modules, diagnostics, dependencies, and maps',
+    'DEVELOPMENT_PLAN.md native Sass evaluator package',
+  )
+  requireText(
+    sassEvaluatorSource,
+    'pub const max_callable_argument_transport_edges: u8 = 1;',
+    'native Sass evaluator terminal boundary',
+  )
+  requireText(
+    sassEvaluatorSource,
+    closure.terminalContract.reflectedContentDiagnostic,
+    'native Sass reflected content diagnostic',
+  )
+  for (const evidenceTest of closure.evidenceTests) {
+    requireText(
+      sassEvaluatorTests,
+      `test "${evidenceTest}"`,
+      'native Sass evaluator evidence',
+    )
+  }
+}
+
 function validateInternalReachability(implementations, buildFile, productionSources) {
   requireText(buildFile, 'root_source_file = b.path("src/preprocessor.zig")', 'build.zig')
   for (const implementation of implementations) {
@@ -653,6 +766,15 @@ export function validateContract(
     buildWorkflow = fs.readFileSync(repositoryFile('.github/workflows/build.yml'), 'utf8'),
     releaseWorkflow = fs.readFileSync(repositoryFile('.github/workflows/release.yml'), 'utf8'),
     buildFile = fs.readFileSync(repositoryFile('build.zig'), 'utf8'),
+    sassSelection = loadJson('tests/preprocessors/sass/corpus/selection.json'),
+    sassEvaluatorSource = fs.readFileSync(
+      repositoryFile('src/preprocessor/sass_evaluator.zig'),
+      'utf8',
+    ),
+    sassEvaluatorTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/sass_evaluator.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -669,6 +791,7 @@ export function validateContract(
       'decision',
       'productionBoundary',
       'referenceOracles',
+      'sassEvaluatorClosure',
       'foundations',
       'implementations',
       'adapters',
@@ -687,6 +810,14 @@ export function validateContract(
   if (contract.decision !== 'ADR-013') fail('decision must be ADR-013')
   if (!same(contract.productionBoundary, expectedBoundary)) fail('production boundary drifted')
   if (!same(contract.referenceOracles, expectedReferenceOracles)) fail('reference oracle inventory drifted')
+  validateSassEvaluatorClosure(
+    contract.sassEvaluatorClosure,
+    contract,
+    plan,
+    sassSelection,
+    sassEvaluatorSource,
+    sassEvaluatorTests,
+  )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
   }

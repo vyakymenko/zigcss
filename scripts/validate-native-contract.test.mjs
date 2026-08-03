@@ -48,6 +48,64 @@ test('accepts the closed native Sass implementation contract', () => {
     'native-sass-parser',
     'native-sass-semantic-core',
   ])
+  assert.deepEqual(contract.sassEvaluatorClosure, {
+    ownerPackage: 'NSASS-011',
+    releaseGapFamily: 'native-sass-evaluation',
+    state: 'closed',
+    packageState: 'in-progress',
+    oracle: {
+      id: 'dart-sass',
+      package: 'sass',
+      version: '1.101.0',
+      selection: 'tests/preprocessors/sass/corpus/selection.json',
+      caseCount: 80,
+    },
+    terminalContract: {
+      syntaxes: ['scss', 'sass'],
+      callableKinds: ['function', 'mixin'],
+      argumentOwnerClasses: ['caller', 'earlier-peer', 'later-peer'],
+      reflectedContentOwnerClasses: [
+        'receiver',
+        'configured',
+        'reexported',
+        'caller',
+        'peer',
+      ],
+      maxArgumentTransportEdges: 1,
+      reflectedContentOutcome: 'reject-with-exact-syntax-diagnostic',
+      reflectedContentDiagnostic: "Mixin doesn't accept a content block.",
+    },
+    evidenceTests: [
+      'native Sass owns caller callables across one-hop local module calls',
+      'native Sass caller callable arguments handle every allocation failure',
+      'native Sass owns peer callables across one-hop local module calls',
+      'native Sass peer callable arguments handle every allocation failure',
+      'native Sass re-exported peer callable arguments fail without partial CSS',
+      'native Sass rejects caller and peer callable content transport through meta.apply',
+      'native Sass rejects same-engine mixin content through meta.apply',
+      'native Sass meta.apply mixin content rejection handles every allocation failure',
+    ],
+    remainingPlanDomain: {
+      releaseGapFamily: 'native-sass-module-system',
+      features: [
+        'use-resolution',
+        'transitive-use',
+        'forward',
+        'legacy-import',
+        'meta-load-css',
+      ],
+      referenceCases: [
+        'scss-use-sass-extension',
+        'scss-use-scss-extension',
+        'scss-use-import-only-exclusion',
+        'scss-use-partial-index',
+        'scss-forward-config',
+        'scss-meta-load-css',
+        'scss-import-import-only',
+      ],
+    },
+    conformancePackage: 'NSASS-012',
+  })
   const sassCore = contract.implementations[1]
   assert.equal(sassCore.capabilities.includes('legacy-color-core'), true)
   assert.equal(sassCore.capabilities.includes('closed-named-colors'), true)
@@ -316,6 +374,44 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.testSources.includes('tests/native-preprocessor/sass_arguments.zig'), true)
   assert.equal(sassCore.testSources.includes('tests/native-preprocessor/sass_string.zig'), true)
   assert.equal(fs.realpathSync(contractPath).startsWith(`${repositoryRoot}${path.sep}`), true)
+})
+
+test('rejects an open ended or renamed native Sass evaluator closure', () => {
+  for (const mutate of [
+    contract => { contract.sassEvaluatorClosure.state = 'reduced' },
+    contract => { contract.sassEvaluatorClosure.packageState = 'verified' },
+    contract => { contract.sassEvaluatorClosure.terminalContract.maxArgumentTransportEdges = 2 },
+    contract => { contract.sassEvaluatorClosure.terminalContract.argumentOwnerClasses.push('second-peer-hop') },
+    contract => {
+      contract.sassEvaluatorClosure.remainingPlanDomain.releaseGapFamily =
+        contract.sassEvaluatorClosure.releaseGapFamily
+    },
+    contract => { contract.sassEvaluatorClosure.remainingPlanDomain.referenceCases.pop() },
+  ]) {
+    const changed = clone(loadContract())
+    mutate(changed)
+    assert.throws(() => validateContract(changed), /Sass evaluator closure drifted/)
+  }
+})
+
+test('binds the native Sass evaluator closure to executable and pinned reference evidence', () => {
+  const missingSemanticEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/sass_evaluator.zig'), 'utf8')
+    .replace('test "native Sass owns caller callables across one-hop local module calls"', 'test "removed"')
+  assert.throws(
+    () => validateContract(loadContract(), { sassEvaluatorTests: missingSemanticEvidence }),
+    /native Sass evaluator evidence.*missing/,
+  )
+
+  const changedSelection = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'tests/preprocessors/sass/corpus/selection.json'),
+    'utf8',
+  ))
+  changedSelection.upstream.dartSassVersion = '1.101.1'
+  assert.throws(
+    () => validateContract(loadContract(), { sassSelection: changedSelection }),
+    /native Sass evaluator oracle drifted/,
+  )
 })
 
 test('rejects any widened production runtime boundary', () => {

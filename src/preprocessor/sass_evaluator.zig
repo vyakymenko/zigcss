@@ -779,6 +779,10 @@ const LocalCallableTarget = struct {
 const local_callable_component_bits = 16;
 const local_callable_component_mask: u32 = (1 << local_callable_component_bits) - 1;
 
+/// A callable argument may cross exactly one caller-to-module or peer-to-module
+/// edge. A second transport is rejected before evaluation or CSS emission.
+pub const max_callable_argument_transport_edges: u8 = 1;
+
 /// Fixed resource boundary for transporting a retained sibling's callable
 /// through module configuration. Depth zero is the original owning module;
 /// depth 60 may configure the terminal sixty-second module, while the next
@@ -817,11 +821,11 @@ fn remapLocalModuleOwnedCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
-        .parent_function => if (callable.reexport_depth == 0 and callable.id < hard_callables)
+        .parent_function => if (callable.reexport_depth < max_callable_argument_transport_edges and callable.id < hard_callables)
             .{ .kind = .user_function, .id = callable.id }
         else
             null,
-        .parent_mixin => if (callable.reexport_depth == 0 and callable.id < hard_callables)
+        .parent_mixin => if (callable.reexport_depth < max_callable_argument_transport_edges and callable.id < hard_callables)
             .{ .kind = .mixin, .id = callable.id }
         else
             null,
@@ -911,16 +915,16 @@ fn remapLocalModuleArgumentCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
-        .user_function => if (callable.reexport_depth == 0 and callable.id < hard_callables)
+        .user_function => if (callable.reexport_depth < max_callable_argument_transport_edges and callable.id < hard_callables)
             .{ .kind = .parent_function, .id = callable.id }
         else
             null,
-        .mixin => if (callable.reexport_depth == 0 and callable.id < hard_callables)
+        .mixin => if (callable.reexport_depth < max_callable_argument_transport_edges and callable.id < hard_callables)
             .{ .kind = .parent_mixin, .id = callable.id }
         else
             null,
         .local_module_function => if (callable.peer_argument_transport or
-            callable.reexport_depth != 0)
+            callable.reexport_depth >= max_callable_argument_transport_edges)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index == context and target.callable_id < hard_callables)
@@ -936,7 +940,7 @@ fn remapLocalModuleArgumentCallable(
         else
             null,
         .local_module_mixin => if (callable.peer_argument_transport or
-            callable.reexport_depth != 0)
+            callable.reexport_depth >= max_callable_argument_transport_edges)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index == context and target.callable_id < hard_callables)
