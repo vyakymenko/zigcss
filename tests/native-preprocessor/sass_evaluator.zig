@@ -36669,6 +36669,284 @@ test "native Sass resolves the pinned one-hop use selection matrix" {
     }
 }
 
+test "native Sass evaluates the pinned transitive use graph once" {
+    const ExpectedEdge = struct {
+        parent_suffix: []const u8,
+        child_suffix: []const u8,
+    };
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        files: []const LocalUseFile,
+        expected_css: []const u8,
+        dependency_suffixes: []const []const u8,
+        edges: []const ExpectedEdge,
+        mapped_source_ids: []const u32,
+    }{
+        .{
+            .root_name = "chain.scss",
+            .root_input = "@use \"first\"; .root { order: root; }",
+            .mode = .scss,
+            .files = &.{
+                .{ .name = "_first.scss", .contents = "@use \"second\"; .first { order: first; seen: second.$value; called: second.token(); }" },
+                .{ .name = "_second.scss", .contents = "$value: second; @function token() { @return second; } .second { order: second; }" },
+            },
+            .expected_css = ".second{order:second}.first{order:first;seen:second;called:second}.root{order:root}",
+            .dependency_suffixes = &.{ "/_first.scss", "/_second.scss" },
+            .edges = &.{
+                .{ .parent_suffix = "/chain.scss", .child_suffix = "/_first.scss" },
+                .{ .parent_suffix = "/_first.scss", .child_suffix = "/_second.scss" },
+            },
+            .mapped_source_ids = &.{ 2, 1, 0 },
+        },
+        .{
+            .root_name = "diamond.scss",
+            .root_input = "@use \"left\"; @use \"right\"; .root { order: root; }",
+            .mode = .scss,
+            .files = &.{
+                .{ .name = "_left.scss", .contents = "@use \"shared\"; .left { order: left; seen: shared.$value; called: shared.token(); }" },
+                .{ .name = "_right.scss", .contents = "@use \"shared\"; .right { order: right; seen: shared.$value; called: shared.token(); }" },
+                .{ .name = "_shared.scss", .contents = "$value: shared; @function token() { @return shared; } .shared { order: shared; }" },
+            },
+            .expected_css = ".shared{order:shared}.left{order:left;seen:shared;called:shared}.right{order:right;seen:shared;called:shared}.root{order:root}",
+            .dependency_suffixes = &.{ "/_left.scss", "/_shared.scss", "/_right.scss" },
+            .edges = &.{
+                .{ .parent_suffix = "/diamond.scss", .child_suffix = "/_left.scss" },
+                .{ .parent_suffix = "/_left.scss", .child_suffix = "/_shared.scss" },
+                .{ .parent_suffix = "/diamond.scss", .child_suffix = "/_right.scss" },
+                .{ .parent_suffix = "/_right.scss", .child_suffix = "/_shared.scss" },
+            },
+            .mapped_source_ids = &.{ 2, 1, 3, 0 },
+        },
+        .{
+            .root_name = "chain.sass",
+            .root_input = "@use \"first\"\n.root\n  order: root",
+            .mode = .sass,
+            .files = &.{
+                .{ .name = "_first.sass", .contents = "@use \"second\"\n.first\n  order: first\n  seen: second.$value\n  called: second.token()" },
+                .{ .name = "_second.sass", .contents = "$value: second\n@function token()\n  @return second\n.second\n  order: second" },
+            },
+            .expected_css = ".second{order:second}.first{order:first;seen:second;called:second}.root{order:root}",
+            .dependency_suffixes = &.{ "/_first.sass", "/_second.sass" },
+            .edges = &.{
+                .{ .parent_suffix = "/chain.sass", .child_suffix = "/_first.sass" },
+                .{ .parent_suffix = "/_first.sass", .child_suffix = "/_second.sass" },
+            },
+            .mapped_source_ids = &.{ 2, 1, 0 },
+        },
+        .{
+            .root_name = "diamond.sass",
+            .root_input = "@use \"left\"\n@use \"right\"\n.root\n  order: root",
+            .mode = .sass,
+            .files = &.{
+                .{ .name = "_left.sass", .contents = "@use \"shared\"\n.left\n  order: left\n  seen: shared.$value\n  called: shared.token()" },
+                .{ .name = "_right.sass", .contents = "@use \"shared\"\n.right\n  order: right\n  seen: shared.$value\n  called: shared.token()" },
+                .{ .name = "_shared.sass", .contents = "$value: shared\n@function token()\n  @return shared\n.shared\n  order: shared" },
+            },
+            .expected_css = ".shared{order:shared}.left{order:left;seen:shared;called:shared}.right{order:right;seen:shared;called:shared}.root{order:root}",
+            .dependency_suffixes = &.{ "/_left.sass", "/_shared.sass", "/_right.sass" },
+            .edges = &.{
+                .{ .parent_suffix = "/diamond.sass", .child_suffix = "/_left.sass" },
+                .{ .parent_suffix = "/_left.sass", .child_suffix = "/_shared.sass" },
+                .{ .parent_suffix = "/diamond.sass", .child_suffix = "/_right.sass" },
+                .{ .parent_suffix = "/_right.sass", .child_suffix = "/_shared.sass" },
+            },
+            .mapped_source_ids = &.{ 2, 1, 3, 0 },
+        },
+    };
+
+    for (cases) |case| {
+        var first = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer first.deinit();
+        var second = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer second.deinit();
+
+        try std.testing.expectEqualStrings(case.expected_css, first.css());
+        try std.testing.expectEqualStrings(first.css(), second.css());
+        try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+        try std.testing.expectEqual(case.dependency_suffixes.len, first.dependencies().len);
+        for (case.dependency_suffixes, first.dependencies()) |suffix, dependency| {
+            try std.testing.expectEqual(resolver.DependencyKind.use, dependency.kind);
+            try std.testing.expect(std.mem.endsWith(u8, dependency.url, suffix));
+        }
+        try std.testing.expectEqual(case.edges.len, first.edges().len);
+        for (case.edges, first.edges()) |expected, edge| {
+            try std.testing.expect(std.mem.endsWith(u8, edge.parent_url.?, expected.parent_suffix));
+            try std.testing.expect(std.mem.endsWith(u8, edge.child_url, expected.child_suffix));
+        }
+        try std.testing.expectEqualSlices(
+            preprocessor.sourcemap.Segment,
+            first.map().?.segments(),
+            second.map().?.segments(),
+        );
+        try std.testing.expectEqual(case.mapped_source_ids.len, first.map().?.segments().len);
+        for (case.mapped_source_ids, first.map().?.segments()) |expected, segment| {
+            try std.testing.expectEqual(expected, segment.source_id.?.value);
+        }
+    }
+}
+
+test "native Sass transitive use preserves parent callable ownership" {
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        files: []const LocalUseFile,
+    }{
+        .{
+            .root_name = "transitive-callable-owner.scss",
+            .root_input = "@use \"owner\"; @use \"receiver\" with ($callback: owner.$callback);",
+            .mode = .scss,
+            .files = &.{
+                .{
+                    .name = "_owner.scss",
+                    .contents = "@use \"sass:meta\"; @function token() { @return owner; } $callback: meta.get-function(\"token\");",
+                },
+                .{
+                    .name = "_receiver.scss",
+                    .contents = "@use \"sass:meta\"; @use \"child\"; $callback: null !default; .result { owner: meta.call($callback); child: child.token(); }",
+                },
+                .{
+                    .name = "_child.scss",
+                    .contents = "@function token() { @return child; }",
+                },
+            },
+        },
+        .{
+            .root_name = "transitive-callable-owner.sass",
+            .root_input = "@use \"owner\"\n@use \"receiver\" with ($callback: owner.$callback)",
+            .mode = .sass,
+            .files = &.{
+                .{
+                    .name = "_owner.sass",
+                    .contents = "@use \"sass:meta\" as meta\n@function token()\n  @return owner\n$callback: meta.get-function(\"token\")",
+                },
+                .{
+                    .name = "_receiver.sass",
+                    .contents = "@use \"sass:meta\" as meta\n@use \"child\"\n$callback: null !default\n.result\n  owner: meta.call($callback)\n  child: child.token()",
+                },
+                .{
+                    .name = "_child.sass",
+                    .contents = "@function token()\n  @return child",
+                },
+            },
+        },
+    };
+
+    for (cases) |case| {
+        var result = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer result.deinit();
+        try std.testing.expectEqualStrings(".result{owner:owner;child:child}", result.css());
+        try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 3), result.dependencies().len);
+        try std.testing.expectEqual(@as(usize, 3), result.edges().len);
+        try std.testing.expect(result.sourceMap() != null);
+    }
+}
+
+const TransitiveUseAllocationContext = struct {
+    root: []const u8,
+    root_url: []const u8,
+};
+
+fn exerciseTransitiveUseAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const TransitiveUseAllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input = "@use \"left\"; @use \"right\"; .root { order: root; }";
+    const source_id = try sources.add(context.root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".shared{order:shared}.left{order:left;seen:shared;called:shared}.right{order:right;seen:shared;called:shared}.root{order:root}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 4), result.edges().len);
+    try std.testing.expectEqual(@as(usize, 4), result.map().?.segments().len);
+}
+
+test "native Sass transitive use graph handles every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_shared.scss",
+        .data = "$value: shared; @function token() { @return shared; } .shared { order: shared; }",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_left.scss",
+        .data = "@use \"shared\"; .left { order: left; seen: shared.$value; called: shared.token(); }",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_right.scss",
+        .data = "@use \"shared\"; .right { order: right; seen: shared.$value; called: shared.token(); }",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/input.scss",
+        .data = "@use \"left\"; @use \"right\"; .root { order: root; }",
+    });
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const root_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root, "input.scss" },
+    );
+    defer std.testing.allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(std.testing.allocator, root_path);
+    defer std.testing.allocator.free(root_url);
+    const context = TransitiveUseAllocationContext{ .root = root, .root_url = root_url };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseTransitiveUseAllocationFailures,
+        .{&context},
+    );
+}
+
 fn compileWithLocalUseFiles(
     allocator: std.mem.Allocator,
     root_name: []const u8,
@@ -36761,6 +37039,34 @@ fn expectLocalUseFailure(
     expected_message: []const u8,
     expected_span: []const u8,
 ) !void {
+    return expectLocalUseFailureWithLimits(
+        allocator,
+        root_name,
+        root_input,
+        mode,
+        files,
+        expected_error,
+        expected_code,
+        expected_message,
+        expected_span,
+        .{},
+        .{},
+    );
+}
+
+fn expectLocalUseFailureWithLimits(
+    allocator: std.mem.Allocator,
+    root_name: []const u8,
+    root_input: []const u8,
+    mode: sass.Mode,
+    files: []const LocalUseFile,
+    expected_error: anyerror,
+    expected_code: preprocessor.diagnostics.Code,
+    expected_message: []const u8,
+    expected_span: []const u8,
+    semantic_limits: sass_evaluator.Limits,
+    resolver_limits: resolver.Limits,
+) !void {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.makeDir("root");
@@ -36785,7 +37091,7 @@ fn expectLocalUseFailure(
     const root_url = try resolver.pathToFileUrl(allocator, root_path);
     defer allocator.free(root_url);
 
-    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    var authority = try resolver.Resolver.init(allocator, &.{root}, resolver_limits);
     defer authority.deinit();
     var session = authority.createSession(allocator, .{});
     defer session.deinit();
@@ -36807,7 +37113,7 @@ fn expectLocalUseFailure(
 
     try std.testing.expectError(
         expected_error,
-        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, semantic_limits),
     );
     const diagnostics = transaction.diagnostics();
     try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
@@ -42375,7 +42681,7 @@ test "native Sass local module callable failures own diagnostics without partial
     );
 }
 
-test "native Sass local use fails closed for private ambiguous missing cyclic and transitive modules" {
+test "native Sass local use fails closed for private ambiguous missing and cyclic modules" {
     const invalid = [_]struct {
         root_name: []const u8,
         input: []const u8,
@@ -42420,15 +42726,6 @@ test "native Sass local use fails closed for private ambiguous missing cyclic an
             .input = "@use \"cycle\";",
             .files = &.{},
             .expected = error.InvalidSassSyntax,
-        },
-        .{
-            .root_name = "transitive.scss",
-            .input = "@use \"first\";",
-            .files = &.{
-                .{ .name = "_first.scss", .contents = "@use \"second\"; $value: 1;" },
-                .{ .name = "_second.scss", .contents = "$value: 2;" },
-            },
-            .expected = error.UnsupportedFeature,
         },
     };
     for (invalid) |case| {
@@ -42475,6 +42772,57 @@ test "native Sass local use fails closed for private ambiguous missing cyclic an
             },
             limits,
         ),
+    );
+}
+
+test "native Sass transitive local use enforces graph limits without partial CSS" {
+    try expectLocalUseFailure(
+        std.testing.allocator,
+        "cycle-root.scss",
+        "@use \"first\"; .unreachable { value: root; }",
+        .scss,
+        &.{
+            .{ .name = "_first.scss", .contents = "@use \"second\"; .unreachable { value: first; }" },
+            .{ .name = "_second.scss", .contents = "@use \"first\"; .unreachable { value: second; }" },
+        },
+        error.InvalidSassSyntax,
+        .invalid_import,
+        "native Sass module cycle detected",
+        "@use \"first\";",
+    );
+
+    const chain_files = [_]LocalUseFile{
+        .{ .name = "_first.scss", .contents = "@use \"second\"; .unreachable { value: first; }" },
+        .{ .name = "_second.scss", .contents = ".unreachable { value: second; }" },
+    };
+    try expectLocalUseFailureWithLimits(
+        std.testing.allocator,
+        "depth-root.scss",
+        "@use \"first\"; .unreachable { value: root; }",
+        .scss,
+        &chain_files,
+        error.DepthLimitExceeded,
+        .resource_limit,
+        "native Sass local module limit exceeded",
+        "@use \"second\";",
+        .{},
+        .{ .max_depth = 2 },
+    );
+
+    var module_limits = sass_evaluator.Limits{};
+    module_limits.max_modules = 1;
+    try expectLocalUseFailureWithLimits(
+        std.testing.allocator,
+        "module-root.scss",
+        "@use \"first\"; .unreachable { value: root; }",
+        .scss,
+        &chain_files,
+        error.ModuleLimitExceeded,
+        .resource_limit,
+        "native Sass module limit exceeded",
+        "@use \"second\";",
+        module_limits,
+        .{},
     );
 }
 

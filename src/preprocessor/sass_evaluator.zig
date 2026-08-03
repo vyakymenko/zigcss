@@ -1075,7 +1075,9 @@ const Engine = struct {
     user_functions: std.ArrayList(UserFunction) = .empty,
     user_mixins: std.ArrayList(UserMixin) = .empty,
     modules: std.ArrayList(ModuleBinding) = .empty,
-    local_modules: std.ArrayList(LocalModule) = .empty,
+    local_modules: std.ArrayList(usize) = .empty,
+    local_module_pool: std.ArrayList(LocalModule) = .empty,
+    local_module_count: usize = 0,
     module_depth: u16 = 0,
     parent_engine: ?*Engine = null,
     parent_module_index: ?usize = null,
@@ -1125,7 +1127,8 @@ const Engine = struct {
         self.user_functions.deinit(self.allocator);
         for (self.user_mixins.items) |*mixin| mixin.deinit();
         self.user_mixins.deinit(self.allocator);
-        for (self.local_modules.items) |*module| module.deinit(self.allocator);
+        for (self.local_module_pool.items) |*module| module.deinit(self.allocator);
+        self.local_module_pool.deinit(self.allocator);
         self.local_modules.deinit(self.allocator);
         self.modules.deinit(self.allocator);
         self.deprecations.deinit(self.allocator);
@@ -1430,14 +1433,6 @@ const Engine = struct {
             .string
         else
             null;
-        if (self.module_depth != 0 and builtin_kind == null) {
-            try self.report(
-                .unsupported_feature,
-                node.span,
-                "transitive native Sass modules are not implemented yet",
-            );
-            return error.UnsupportedFeature;
-        }
         if (builtin_kind == null and std.mem.startsWith(u8, parsed.url, "sass:")) {
             try self.report(
                 .unsupported_feature,
@@ -1716,7 +1711,7 @@ const Engine = struct {
                 }
             },
             .local => |module_index| {
-                const module = &self.local_modules.items[module_index];
+                const module = self.localModule(module_index);
                 for (module.variables) |variable| {
                     if (try self.environment.lookup(self.global_scope, variable.name) != null or
                         self.unprefixedMathConstant(variable.name) != null or
@@ -1737,7 +1732,7 @@ const Engine = struct {
     fn selectLocalModuleCandidate(
         self: *Engine,
         session: *native_resolver.Session,
-        parent_url: []const u8,
+        ancestry: []const []const u8,
         candidate_urls: []const []const u8,
         span: native_source.Span,
     ) Error!?native_resolver.Loaded {
@@ -1746,7 +1741,7 @@ const Engine = struct {
         for (candidate_urls) |candidate_url| {
             var loaded = session.load(candidate_url, .{
                 .kind = .use,
-                .ancestry = &.{parent_url},
+                .ancestry = ancestry,
             }) catch |failure| switch (failure) {
                 error.Missing => continue,
                 else => {
@@ -1770,6 +1765,52 @@ const Engine = struct {
         return selected;
     }
 
+    fn localModulePoolOwner(self: *Engine) *Engine {
+        var owner = self;
+        while (owner.parent_engine) |parent| owner = parent;
+        return owner;
+    }
+
+    fn localModulePoolOwnerConst(self: *const Engine) *const Engine {
+        var owner = self;
+        while (owner.parent_engine) |parent| owner = parent;
+        return owner;
+    }
+
+    fn localModule(self: *const Engine, module_index: usize) *const LocalModule {
+        std.debug.assert(module_index < self.local_modules.items.len);
+        const pool_index = self.local_modules.items[module_index];
+        const pool_owner = self.localModulePoolOwnerConst();
+        std.debug.assert(pool_index < pool_owner.local_module_pool.items.len);
+        return &pool_owner.local_module_pool.items[pool_index];
+    }
+
+    fn localModuleAncestry(
+        self: *Engine,
+        parent_source_id: native_source.SourceId,
+    ) Error![][]const u8 {
+        const count = @as(usize, self.module_depth) + 1;
+        const ancestry = try self.allocator.alloc([]const u8, count);
+        errdefer self.allocator.free(ancestry);
+
+        var current: ?*Engine = self;
+        var index = count;
+        while (current) |engine| {
+            if (index == 0) return error.InvalidSassSyntax;
+            index -= 1;
+            const root = engine.document.get(engine.document.root) catch
+                return error.InvalidSassSyntax;
+            ancestry[index] = (try self.sources.get(root.span.source)).name;
+            current = engine.parent_engine;
+        }
+        if (index != 0 or
+            !std.mem.eql(u8, ancestry[ancestry.len - 1], (try self.sources.get(parent_source_id)).name))
+        {
+            return error.InvalidSassSyntax;
+        }
+        return ancestry;
+    }
+
     fn loadLocalModule(
         self: *Engine,
         parent_source_id: native_source.SourceId,
@@ -1779,6 +1820,8 @@ const Engine = struct {
     ) Error!usize {
         const parent = try self.sources.get(parent_source_id);
         const session = try self.transaction.resolverSession();
+        const ancestry = try self.localModuleAncestry(parent_source_id);
+        defer self.allocator.free(ancestry);
         var selected = direct: {
             const candidates = localModuleCandidateUrls(
                 self.allocator,
@@ -1790,7 +1833,7 @@ const Engine = struct {
             defer freeOwnedStrings(self.allocator, candidates);
             break :direct try self.selectLocalModuleCandidate(
                 session,
-                parent.name,
+                ancestry,
                 candidates,
                 span,
             );
@@ -1807,7 +1850,7 @@ const Engine = struct {
             defer freeOwnedStrings(self.allocator, candidates);
             selected = try self.selectLocalModuleCandidate(
                 session,
-                parent.name,
+                ancestry,
                 candidates,
                 span,
             );
@@ -1820,7 +1863,9 @@ const Engine = struct {
         selected = null;
         defer loaded.deinit();
 
-        for (self.local_modules.items, 0..) |module, index| {
+        const pool_owner = self.localModulePoolOwner();
+        for (self.local_modules.items, 0..) |pool_index, index| {
+            const module = &pool_owner.local_module_pool.items[pool_index];
             if (!std.mem.eql(u8, module.url, loaded.url)) continue;
             if (configuration.items.items.len != 0) {
                 try self.report(
@@ -1832,6 +1877,26 @@ const Engine = struct {
             }
             return index;
         }
+
+        for (pool_owner.local_module_pool.items, 0..) |*module, pool_index| {
+            if (!std.mem.eql(u8, module.url, loaded.url)) continue;
+            if (configuration.items.items.len != 0) {
+                try self.report(
+                    .invalid_operation,
+                    span,
+                    "native Sass local module was already loaded and cannot be configured again",
+                );
+                return error.InvalidExpression;
+            }
+            try self.local_modules.append(self.allocator, pool_index);
+            return self.local_modules.items.len - 1;
+        }
+        if (pool_owner.local_module_count >= self.limits.max_modules) {
+            try self.report(.resource_limit, span, "native Sass module limit exceeded");
+            return error.ModuleLimitExceeded;
+        }
+        pool_owner.local_module_count += 1;
+        errdefer pool_owner.local_module_count -= 1;
 
         const source_id = self.sources.add(loaded.url, loaded.contents) catch |failure| {
             if (failure == error.OutOfMemory) return error.OutOfMemory;
@@ -1890,12 +1955,16 @@ const Engine = struct {
         }
 
         const file = try self.sources.get(source_id);
-        try self.local_modules.append(self.allocator, .{
+        try pool_owner.local_module_pool.ensureUnusedCapacity(self.allocator, 1);
+        try self.local_modules.ensureUnusedCapacity(self.allocator, 1);
+        const pool_index = pool_owner.local_module_pool.items.len;
+        pool_owner.local_module_pool.appendAssumeCapacity(.{
             .url = file.name,
             .variables = variables,
             .document = module_document,
             .engine = module_engine,
         });
+        self.local_modules.appendAssumeCapacity(pool_index);
         return self.local_modules.items.len - 1;
     }
 
@@ -2099,7 +2168,7 @@ const Engine = struct {
                 .local => |index| index,
                 .builtin => continue,
             };
-            for (self.local_modules.items[module_index].variables) |variable| {
+            for (self.localModule(module_index).variables) |variable| {
                 if (sassNameEql(variable.name, name)) return true;
             }
         }
@@ -2117,7 +2186,7 @@ const Engine = struct {
                 .local => |index| index,
                 .builtin => continue,
             };
-            const module = &self.local_modules.items[module_index];
+            const module = self.localModule(module_index);
             for (module.variables) |variable| {
                 if (!sassNameEql(variable.name, name)) continue;
                 const value = try module.engine.environment.lookup(
@@ -2192,7 +2261,7 @@ const Engine = struct {
         module_index: usize,
         name: []const u8,
     ) ?u32 {
-        const module_engine = self.local_modules.items[module_index].engine;
+        const module_engine = self.localModule(module_index).engine;
         var index = module_engine.user_functions.items.len;
         while (index > 0) {
             index -= 1;
@@ -2213,7 +2282,7 @@ const Engine = struct {
         module_index: usize,
         name: []const u8,
     ) ?u32 {
-        const module_engine = self.local_modules.items[module_index].engine;
+        const module_engine = self.localModule(module_index).engine;
         var index = module_engine.user_mixins.items.len;
         while (index > 0) {
             index -= 1;
@@ -2235,7 +2304,7 @@ const Engine = struct {
         kind: native_value.CallableKind,
     ) bool {
         if (target.module_index >= self.local_modules.items.len) return false;
-        const module_engine = self.local_modules.items[target.module_index].engine;
+        const module_engine = self.localModule(target.module_index).engine;
         return switch (kind) {
             .local_module_function => target.callable_id < module_engine.user_functions.items.len,
             .local_module_mixin => target.callable_id < module_engine.user_mixins.items.len,
@@ -2478,7 +2547,7 @@ const Engine = struct {
         input: *const EvaluatedCallArguments,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        const module_engine = self.local_modules.items[target.module_index].engine;
+        const module_engine = self.localModule(target.module_index).engine;
         var cloned = try self.cloneEvaluatedArgumentsInto(
             module_engine,
             input,
@@ -3712,9 +3781,10 @@ const Engine = struct {
             span,
         );
         defer evaluated.deinit();
-        try self.invokeLocalModuleMixin(
+        try self.invokeOwnedLocalModuleMixin(
             target,
             &evaluated,
+            self,
             caller_scope,
             content_block,
             content_parameters,
@@ -3764,7 +3834,7 @@ const Engine = struct {
         depth: u16,
         context: LoopBodyContext,
     ) Error!void {
-        const module_engine = self.local_modules.items[target.module_index].engine;
+        const module_engine = self.localModule(target.module_index).engine;
         var cloned = try self.cloneEvaluatedArgumentsInto(
             module_engine,
             evaluated,
@@ -4200,7 +4270,7 @@ const Engine = struct {
             span,
         );
         defer evaluated.deinit();
-        return try self.invokeLocalModuleFunction(target, &evaluated, span);
+        return try self.invokeOwnedLocalModuleFunction(target, &evaluated, span);
     }
 
     fn lookupUserFunction(
@@ -6845,7 +6915,7 @@ const Engine = struct {
                 } });
             },
             .local => |module_index| {
-                const module = &self.local_modules.items[module_index];
+                const module = self.localModule(module_index);
                 for (module.variables) |variable| {
                     if (!sassNameEql(variable.name, qualified.member)) continue;
                     const value = try module.engine.environment.lookup(
@@ -11389,7 +11459,7 @@ const Engine = struct {
                     target,
                     .local_module_mixin,
                 ) orelse return self.metaAcceptsContentTypeFailure(span);
-                const module_engine = owner.local_modules.items[target.module_index].engine;
+                const module_engine = owner.localModule(target.module_index).engine;
                 break :blk module_engine.user_mixins.items[target.callable_id].accepts_content;
             },
             .parent_mixin => blk: {
@@ -11561,7 +11631,7 @@ const Engine = struct {
         module_index: usize,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        const module_engine = self.local_modules.items[module_index].engine;
+        const module_engine = self.localModule(module_index).engine;
         const temporary_bytes = std.math.mul(
             usize,
             module_engine.user_mixins.items.len,
@@ -11683,7 +11753,7 @@ const Engine = struct {
         module_index: usize,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        const module = &self.local_modules.items[module_index];
+        const module = self.localModule(module_index);
         const temporary_bytes = std.math.mul(
             usize,
             module.variables.len,
@@ -11784,7 +11854,7 @@ const Engine = struct {
         module_index: usize,
         span: native_source.Span,
     ) Error!*const native_value.Value {
-        const module_engine = self.local_modules.items[module_index].engine;
+        const module_engine = self.localModule(module_index).engine;
         const temporary_bytes = std.math.mul(
             usize,
             module_engine.user_functions.items.len,
@@ -20523,7 +20593,7 @@ const Engine = struct {
                     target,
                     .local_module_function,
                 ) orelse return error.InvalidExpression;
-                const module_engine = owner.local_modules.items[target.module_index].engine;
+                const module_engine = owner.localModule(target.module_index).engine;
                 break :blk module_engine.user_functions.items[target.callable_id].name;
             },
             .local_module_mixin => blk: {
@@ -20533,7 +20603,7 @@ const Engine = struct {
                     target,
                     .local_module_mixin,
                 ) orelse return error.InvalidExpression;
-                const module_engine = owner.local_modules.items[target.module_index].engine;
+                const module_engine = owner.localModule(target.module_index).engine;
                 break :blk module_engine.user_mixins.items[target.callable_id].name;
             },
         };

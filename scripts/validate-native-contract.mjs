@@ -103,7 +103,6 @@ const expectedSassEvaluatorClosure = Object.freeze({
   remainingPlanDomain: Object.freeze({
     releaseGapFamily: 'native-sass-module-system',
     features: Object.freeze([
-      'transitive-use',
       'forward',
       'legacy-import',
       'meta-load-css',
@@ -126,6 +125,17 @@ const expectedSassEvaluatorClosure = Object.freeze({
         evidenceTests: Object.freeze([
           'native Sass resolves the pinned one-hop use selection matrix',
           'native Sass local use handles every allocation failure',
+        ]),
+      }),
+      Object.freeze({
+        feature: 'transitive-use',
+        state: 'native-foundation',
+        referenceCases: Object.freeze([]),
+        evidenceTests: Object.freeze([
+          'native Sass evaluates the pinned transitive use graph once',
+          'native Sass transitive use preserves parent callable ownership',
+          'native Sass transitive local use enforces graph limits without partial CSS',
+          'native Sass transitive use graph handles every allocation failure',
         ]),
       }),
     ]),
@@ -209,6 +219,7 @@ const expectedImplementations = Object.freeze([
       'variable-modifiers',
       'local-use-single-module-loading-foundation',
       'local-use-pinned-resolution-foundation',
+      'local-use-transitive-graph-foundation',
       'local-use-callable-member-foundation',
       'local-use-callable-existence-foundation',
       'local-use-callable-reference-foundation',

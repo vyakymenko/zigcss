@@ -88,7 +88,6 @@ test('accepts the closed native Sass implementation contract', () => {
     remainingPlanDomain: {
       releaseGapFamily: 'native-sass-module-system',
       features: [
-        'transitive-use',
         'forward',
         'legacy-import',
         'meta-load-css',
@@ -111,12 +110,23 @@ test('accepts the closed native Sass implementation contract', () => {
           'native Sass resolves the pinned one-hop use selection matrix',
           'native Sass local use handles every allocation failure',
         ],
+      }, {
+        feature: 'transitive-use',
+        state: 'native-foundation',
+        referenceCases: [],
+        evidenceTests: [
+          'native Sass evaluates the pinned transitive use graph once',
+          'native Sass transitive use preserves parent callable ownership',
+          'native Sass transitive local use enforces graph limits without partial CSS',
+          'native Sass transitive use graph handles every allocation failure',
+        ],
       }],
     },
     conformancePackage: 'NSASS-012',
   })
   const sassCore = contract.implementations[1]
   assert.equal(sassCore.capabilities.includes('local-use-pinned-resolution-foundation'), true)
+  assert.equal(sassCore.capabilities.includes('local-use-transitive-graph-foundation'), true)
   assert.equal(sassCore.capabilities.includes('legacy-color-core'), true)
   assert.equal(sassCore.capabilities.includes('closed-named-colors'), true)
   assert.equal(sassCore.capabilities.includes('color-space-equality'), true)
