@@ -608,6 +608,24 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-less-parser',
+    current: 'native-internal',
+    ownerPackage: 'NLESS-010',
+    adapters: Object.freeze(['less']),
+    capabilities: Object.freeze([
+      'parsing',
+      'pinned-success-syntax',
+      'pinned-parse-negatives',
+      'resource-cancellation',
+      'allocation-failure',
+    ]),
+    nativeSources: Object.freeze(['src/preprocessor/less.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/less_parser.zig']),
+    testStep: 'test-native-less-parser',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -890,6 +908,33 @@ function validateSassConformance(
   )
 }
 
+function validateLessParser(selection, tests, plan) {
+  if (selection.upstream?.packageVersion !== '4.6.7' || !Array.isArray(selection.cases) ||
+      selection.cases.length !== 88) {
+    fail('native Less parser selection drifted')
+  }
+  const successCases = selection.cases.filter(specCase => specCase.outcome === 'success')
+  const parseErrors = selection.cases.filter(specCase =>
+    specCase.outcome === 'error' && specCase.suite === 'tests-error/parse')
+  if (successCases.length !== 68 || parseErrors.length !== 10) {
+    fail('native Less parser selection drifted')
+  }
+  for (const evidenceTest of [
+    'native parser accepts every pinned Less success entry',
+    'native parser rejects every pinned Less parse error',
+    'invalid UTF-8 and parser resource ceilings fail closed',
+    'Less tokenization and parsing cancellation expose no partial document',
+    'native Less parser handles every allocation failure',
+  ]) {
+    requireText(tests, `test "${evidenceTest}"`, 'native Less parser evidence')
+  }
+  requireText(
+    plan,
+    '`NLESS-010` | Implement native Less parsing for variables, nesting, mixins, guards, detached rulesets, extends, interpolation, operations, and CSS-preserving syntax behind an unavailable experimental gate',
+    'DEVELOPMENT_PLAN.md native Less parser package',
+  )
+}
+
 function validateInternalReachability(implementations, buildFile, productionSources) {
   requireText(buildFile, 'root_source_file = b.path("src/preprocessor.zig")', 'build.zig')
   for (const implementation of implementations) {
@@ -982,6 +1027,11 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/sass_conformance.zig'),
       'utf8',
     ),
+    lessSelection = loadJson('tests/preprocessors/less/corpus/selection.json'),
+    lessParserTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/less_parser.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -1034,6 +1084,7 @@ export function validateContract(
     sassManifest,
     sassConformanceTests,
   )
+  validateLessParser(lessSelection, lessParserTests, plan)
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
   }

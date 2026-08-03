@@ -578,6 +578,24 @@
       "testStep": "test-native-sass-conformance",
       "publicAvailable": false,
       "productionReachable": false
+    },
+    {
+      "id": "native-less-parser",
+      "current": "native-internal",
+      "ownerPackage": "NLESS-010",
+      "adapters": ["less"],
+      "capabilities": [
+        "parsing",
+        "pinned-success-syntax",
+        "pinned-parse-negatives",
+        "resource-cancellation",
+        "allocation-failure"
+      ],
+      "nativeSources": ["src/preprocessor/less.zig"],
+      "testSources": ["tests/native-preprocessor/less_parser.zig"],
+      "testStep": "test-native-less-parser",
+      "publicAvailable": false,
+      "productionReachable": false
     }
   ],
   "adapters": [

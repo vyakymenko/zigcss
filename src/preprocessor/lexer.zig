@@ -168,7 +168,9 @@ pub const Lexer = struct {
         const start = self.cursor;
         if (self.startsInterpolation()) return self.startInterpolation(null);
         if (self.startsWith("/*")) return self.consumeBlockComment();
-        if (supportsLineComments(self.syntax) and self.startsWith("//")) {
+        if (supportsLineComments(self.syntax) and self.startsWith("//") and
+            !self.insideUnquotedUrl())
+        {
             return self.consumeLineComment();
         }
 
@@ -509,12 +511,73 @@ pub const Lexer = struct {
     }
 
     fn startsInterpolation(self: *const Lexer) bool {
+        if (self.syntax == .less) {
+            const starts = self.startsWith("@{") or self.startsWith("${");
+            if (!starts) return false;
+            return self.state != .string or self.hasStringInterpolationEnd();
+        }
         const prefix: []const u8 = switch (self.syntax) {
             .scss, .sass => "#{",
-            .less => "@{",
-            .css, .stylus => return false,
+            .css, .less, .stylus => return false,
         };
         return self.startsWith(prefix);
+    }
+
+    fn hasStringInterpolationEnd(self: *const Lexer) bool {
+        var index = self.cursor + 2;
+        var depth: usize = 1;
+        while (index < self.source.len) {
+            const byte = self.source[index];
+            if (byte == '\\') {
+                index += @min(@as(usize, 2), self.source.len - index);
+                continue;
+            }
+            if (byte == self.quote or isNewlineByte(byte)) return false;
+            if (index + 1 < self.source.len and
+                ((self.source[index] == '@' or self.source[index] == '$') and
+                    self.source[index + 1] == '{'))
+            {
+                depth += 1;
+                index += 2;
+                continue;
+            }
+            if (byte == '}') {
+                depth -= 1;
+                if (depth == 0) return true;
+            }
+            index += 1;
+        }
+        return false;
+    }
+
+    fn insideUnquotedUrl(self: *const Lexer) bool {
+        if (self.syntax != .less or self.cursor == 0) return false;
+        var index = self.cursor;
+        var depth: usize = 0;
+        while (index > 0) {
+            index -= 1;
+            switch (self.source[index]) {
+                ')' => depth += 1,
+                '(' => {
+                    if (depth != 0) {
+                        depth -= 1;
+                        continue;
+                    }
+                    var name_end = index;
+                    while (name_end > 0 and isHorizontalWhitespace(self.source[name_end - 1])) {
+                        name_end -= 1;
+                    }
+                    var name_start = name_end;
+                    while (name_start > 0 and isNameContinue(self.source[name_start - 1])) {
+                        name_start -= 1;
+                    }
+                    return std.ascii.eqlIgnoreCase(self.source[name_start..name_end], "url");
+                },
+                '\n', '\r', ';', '{', '}' => if (depth == 0) return false,
+                else => {},
+            }
+        }
+        return false;
     }
 
     fn operatorLength(self: *const Lexer) ?usize {

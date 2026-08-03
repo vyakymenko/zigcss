@@ -48,6 +48,7 @@ test('accepts the bounded native Sass implementation contract', () => {
     'native-sass-parser',
     'native-sass-semantic-core',
     'native-sass-conformance',
+    'native-less-parser',
   ])
   assert.deepEqual(contract.sassConformance, {
     ownerPackage: 'NSASS-012',
@@ -534,6 +535,26 @@ test('rejects an open ended or renamed native Sass evaluator closure', () => {
   }
 })
 
+test('binds the finite native Less parser selection and executable evidence', () => {
+  const changedSelection = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'tests/preprocessors/less/corpus/selection.json'),
+    'utf8',
+  ))
+  changedSelection.cases.pop()
+  assert.throws(
+    () => validateContract(loadContract(), { lessSelection: changedSelection }),
+    /native Less parser selection drifted/,
+  )
+
+  const missingEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_parser.zig'), 'utf8')
+    .replace('test "native parser accepts every pinned Less success entry"', 'test "removed"')
+  assert.throws(
+    () => validateContract(loadContract(), { lessParserTests: missingEvidence }),
+    /native Less parser evidence.*missing/,
+  )
+})
+
 test('binds the native Sass evaluator closure to executable and pinned reference evidence', () => {
   const missingSemanticEvidence = fs
     .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/sass_evaluator.zig'), 'utf8')
@@ -633,8 +654,8 @@ test('binds implemented native foundation sources and focused test inventories',
   assert.throws(() => validateContract(ownerChanged), /foundation.*inventory drifted/)
 })
 
-test('binds unavailable native Sass internals without admitting product reachability', () => {
-  for (const index of [0, 1]) {
+test('binds unavailable native frontend internals without admitting product reachability', () => {
+  for (const index of [0, 1, 2, 3]) {
     for (const field of ['publicAvailable', 'productionReachable']) {
       const changed = clone(loadContract())
       changed.implementations[index][field] = true
@@ -649,6 +670,10 @@ test('binds unavailable native Sass internals without admitting product reachabi
   const evaluatorSourceChanged = clone(loadContract())
   evaluatorSourceChanged.implementations[1].nativeSources = ['src/preprocessor/evaluator.zig']
   assert.throws(() => validateContract(evaluatorSourceChanged), /implementation.*inventory drifted/)
+
+  const lessSourceChanged = clone(loadContract())
+  lessSourceChanged.implementations[3].nativeSources = ['src/preprocessor/lexer.zig']
+  assert.throws(() => validateContract(lessSourceChanged), /implementation.*inventory drifted/)
 
   assert.throws(
     () => validateContract(loadContract(), {

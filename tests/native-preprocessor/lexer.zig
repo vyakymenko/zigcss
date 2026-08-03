@@ -141,6 +141,21 @@ test "Sass and Less interpolation nest without leaking from comments" {
     try expectLossless(less, less_tokens);
 }
 
+test "Less property interpolation strings and unquoted URLs retain their lexical context" {
+    const source =
+        "${property}: \"@{value}\"; escaped: ~\"@{literal\"; " ++
+        "background: url(data://image.png); // comment\n";
+    const tokens = try tokenize(source, .less);
+    defer std.testing.allocator.free(tokens);
+
+    try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .interpolation_start));
+    try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .interpolation_end));
+    try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .string_start));
+    try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .string_end));
+    try std.testing.expectEqual(@as(usize, 1), countKind(tokens, .comment));
+    try expectLossless(source, tokens);
+}
+
 test "strings retain escapes continuations and explicit unterminated state" {
     const source = "\"a\\\"b\" 'c\\\r\nd' \"unterminated\nx";
     const tokens = try tokenize(source, .scss);
