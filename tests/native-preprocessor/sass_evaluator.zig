@@ -29018,7 +29018,7 @@ test "native Sass meta apply rejects unavailable or invalid mixin application" {
         ),
     );
     try std.testing.expectError(
-        error.UnsupportedFeature,
+        error.InvalidSassSyntax,
         compile(
             std.testing.allocator,
             "meta-apply-load-css-target-unavailable.scss",
@@ -36849,6 +36849,183 @@ test "native Sass legacy import handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         backing.allocator(),
         exerciseLegacyImportAllocationFailures,
+        .{&context},
+    );
+}
+
+test "native Sass executes the pinned meta load css terminal contract" {
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+    }{
+        .{
+            .root_name = "direct.scss",
+            .root_input =
+            \\@use "sass:meta";
+            \\a { @include meta.load-css("other"); }
+            ,
+            .mode = .scss,
+        },
+        .{
+            .root_name = "direct.sass",
+            .root_input =
+            \\@use "sass:meta"
+            \\a
+            \\  @include meta.load-css("other")
+            ,
+            .mode = .sass,
+        },
+        .{
+            .root_name = "reflected.scss",
+            .root_input =
+            \\@use "sass:meta";
+            \\$load: meta.get-mixin("load-css", $module: "meta");
+            \\a { @include meta.apply($load, "other"); }
+            ,
+            .mode = .scss,
+        },
+        .{
+            .root_name = "reflected.sass",
+            .root_input =
+            \\@use "sass:meta"
+            \\$load: meta.get-mixin("load-css", $module: "meta")
+            \\a
+            \\  @include meta.apply($load, "other")
+            ,
+            .mode = .sass,
+        },
+    };
+    const files = [_]LocalUseFile{.{
+        .name = "_other.scss",
+        .contents = "@at-root { b { c: d; } }",
+    }};
+
+    for (cases) |case| {
+        var result = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            &files,
+            .{},
+        );
+        defer result.deinit();
+
+        try std.testing.expectEqualStrings("a b{c:d}", result.css());
+        try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+        try std.testing.expectEqual(
+            resolver.DependencyKind.reference,
+            result.dependencies()[0].kind,
+        );
+        try std.testing.expect(std.mem.endsWith(
+            u8,
+            result.dependencies()[0].url,
+            "/_other.scss",
+        ));
+        try std.testing.expectEqual(@as(usize, 1), result.edges().len);
+        try std.testing.expectEqual(resolver.DependencyKind.reference, result.edges()[0].kind);
+        try std.testing.expect(std.mem.endsWith(
+            u8,
+            result.edges()[0].parent_url.?,
+            case.root_name,
+        ));
+        try std.testing.expectEqualStrings(
+            result.dependencies()[0].url,
+            result.edges()[0].child_url,
+        );
+        try std.testing.expectEqual(@as(usize, 1), result.map().?.segments().len);
+        try std.testing.expectEqual(
+            @as(u32, 1),
+            result.map().?.segments()[0].source_id.?.value,
+        );
+        try std.testing.expect(result.sourceMap() != null);
+    }
+}
+
+test "native Sass meta load css rejects unavailable modules without partial CSS" {
+    try expectLocalUseFailure(
+        std.testing.allocator,
+        "missing-load-css.scss",
+        "@use \"sass:meta\"; a { @include meta.load-css(\"missing\"); } .unreachable { color: red; }",
+        .scss,
+        &.{},
+        error.InvalidSassSyntax,
+        .invalid_import,
+        "native Sass meta.load-css module was not found",
+        "meta.load-css(\"missing\")",
+    );
+}
+
+const MetaLoadCssAllocationContext = struct {
+    root: []const u8,
+    root_url: []const u8,
+};
+
+fn exerciseMetaLoadCssAllocationFailures(
+    allocator: std.mem.Allocator,
+    context: *const MetaLoadCssAllocationContext,
+) !void {
+    var authority = try resolver.Resolver.init(allocator, &.{context.root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const input = "@use \"sass:meta\"; a { @include meta.load-css(\"other\"); }";
+    const source_id = try sources.add(context.root_url, input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
+    var result = try transaction.finish(.{ .format = .minified, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings("a b{c:d}", result.css());
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+    try std.testing.expectEqual(resolver.DependencyKind.reference, result.dependencies()[0].kind);
+    try std.testing.expectEqual(@as(usize, 1), result.edges().len);
+    try std.testing.expectEqual(@as(usize, 1), result.map().?.segments().len);
+}
+
+test "native Sass meta load css handles every allocation failure" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/_other.scss",
+        .data = "@at-root { b { c: d; } }",
+    });
+    try tmp.dir.writeFile(.{
+        .sub_path = "root/input.scss",
+        .data = "@use \"sass:meta\"; a { @include meta.load-css(\"other\"); }",
+    });
+    const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const root_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root, "input.scss" },
+    );
+    defer std.testing.allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(std.testing.allocator, root_path);
+    defer std.testing.allocator.free(root_url);
+    const context = MetaLoadCssAllocationContext{ .root = root, .root_url = root_url };
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseMetaLoadCssAllocationFailures,
         .{&context},
     );
 }

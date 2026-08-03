@@ -52,7 +52,7 @@ test('accepts the closed native Sass implementation contract', () => {
     ownerPackage: 'NSASS-011',
     releaseGapFamily: 'native-sass-evaluation',
     state: 'closed',
-    packageState: 'in-progress',
+    packageState: 'verified',
     oracle: {
       id: 'dart-sass',
       package: 'sass',
@@ -87,8 +87,8 @@ test('accepts the closed native Sass implementation contract', () => {
     ],
     remainingPlanDomain: {
       releaseGapFamily: 'native-sass-dynamic-loading',
-      features: ['meta-load-css'],
-      referenceCases: ['scss-meta-load-css'],
+      features: [],
+      referenceCases: [],
       completedSlices: [{
         feature: 'use-resolution',
         state: 'native-foundation',
@@ -153,6 +153,15 @@ test('accepts the closed native Sass implementation contract', () => {
           'native Sass legacy import rejects malformed directives without partial CSS',
           'native Sass legacy import handles every allocation failure',
         ],
+      }, {
+        feature: 'meta-load-css',
+        state: 'native-foundation',
+        referenceCases: ['scss-meta-load-css'],
+        evidenceTests: [
+          'native Sass executes the pinned meta load css terminal contract',
+          'native Sass meta load css rejects unavailable modules without partial CSS',
+          'native Sass meta load css handles every allocation failure',
+        ],
       }],
     },
     conformancePackage: 'NSASS-012',
@@ -165,6 +174,10 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('local-forward-terminal-contract-foundation'), true)
   assert.equal(
     sassCore.capabilities.includes('local-legacy-import-only-precedence-foundation'),
+    true,
+  )
+  assert.equal(
+    sassCore.capabilities.includes('local-meta-load-css-terminal-foundation'),
     true,
   )
   assert.equal(sassCore.capabilities.includes('legacy-color-core'), true)
@@ -439,14 +452,14 @@ test('accepts the closed native Sass implementation contract', () => {
 test('rejects an open ended or renamed native Sass evaluator closure', () => {
   for (const mutate of [
     contract => { contract.sassEvaluatorClosure.state = 'reduced' },
-    contract => { contract.sassEvaluatorClosure.packageState = 'verified' },
+    contract => { contract.sassEvaluatorClosure.packageState = 'in-progress' },
     contract => { contract.sassEvaluatorClosure.terminalContract.maxArgumentTransportEdges = 2 },
     contract => { contract.sassEvaluatorClosure.terminalContract.argumentOwnerClasses.push('second-peer-hop') },
     contract => {
       contract.sassEvaluatorClosure.remainingPlanDomain.releaseGapFamily =
         contract.sassEvaluatorClosure.releaseGapFamily
     },
-    contract => { contract.sassEvaluatorClosure.remainingPlanDomain.referenceCases.pop() },
+    contract => { contract.sassEvaluatorClosure.remainingPlanDomain.referenceCases.push('scss-meta-load-css') },
     contract => { contract.sassEvaluatorClosure.remainingPlanDomain.completedSlices[0].referenceCases.pop() },
   ]) {
     const changed = clone(loadContract())

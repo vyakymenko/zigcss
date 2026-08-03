@@ -1233,6 +1233,26 @@ const Engine = struct {
         self.global_scope = self.root_scope.cursor;
     }
 
+    fn runDynamicCss(
+        self: *Engine,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        const root = self.document.get(self.document.root) catch return error.InvalidSassSyntax;
+        if (root.kind != .stylesheet) {
+            try self.report(.syntax, root.span, "native Sass document root is not a stylesheet");
+            return error.InvalidSassSyntax;
+        }
+        const children = self.document.children(self.document.root) catch
+            return error.InvalidSassSyntax;
+        try self.validateModulePlacement(children);
+        try self.validateCallableStructure(self.document.root, .{});
+        self.root_scope.cursor = self.global_scope;
+        try self.executeDynamicCssChildren(children, &self.root_scope, depth, context);
+        try self.reportLegacyIfDeprecationSummary(root.span);
+        self.global_scope = self.root_scope.cursor;
+    }
+
     fn validateModulePlacement(
         self: *Engine,
         children: []const native_syntax.NodeId,
@@ -1454,6 +1474,98 @@ const Engine = struct {
                 },
             }
             index += 1;
+        }
+    }
+
+    fn executeDynamicCssChildren(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+        scope: *ScopeFrame,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        if (depth > self.limits.max_evaluation_depth) {
+            const span = if (children.len > 0)
+                (self.document.get(children[0]) catch return error.InvalidSassSyntax).span
+            else
+                (self.document.get(self.document.root) catch return error.InvalidSassSyntax).span;
+            try self.report(.resource_limit, span, "native Sass evaluation depth exceeded");
+            return error.EvaluationDepthExceeded;
+        }
+        for (children) |child_id| {
+            try self.transaction.consumeOperations(1);
+            const child = self.document.get(child_id) catch return error.InvalidSassSyntax;
+            switch (child.kind) {
+                .declaration => {
+                    if (try self.isVariableDeclaration(child_id)) {
+                        try self.assignVariable(child_id, scope);
+                    } else switch (context) {
+                        .rule => |rule| try self.appendDeclaration(
+                            child_id,
+                            "",
+                            scope,
+                            rule.declarations,
+                            depth,
+                        ),
+                        .root => {
+                            try self.report(.syntax, child.span, "top-level Sass declaration is not a variable");
+                            return error.InvalidSassSyntax;
+                        },
+                        .callable => return error.InvalidSassSyntax,
+                    }
+                },
+                .rule => switch (context) {
+                    .root => try self.evaluateRule(child_id, null, scope, depth),
+                    .rule => |rule| {
+                        try self.emitRuleChunk(rule.owner_span, rule.selectors, rule.declarations);
+                        try self.evaluateRule(child_id, rule.selectors, scope, depth + 1);
+                    },
+                    .callable => return error.InvalidSassSyntax,
+                },
+                .comment => switch (context) {
+                    .root => try self.emitRootComment(child),
+                    .rule => |rule| try self.appendBlockComment(child, rule.declarations),
+                    .callable => return error.InvalidSassSyntax,
+                },
+                .at_rule => {
+                    const keyword_span = child.text orelse return error.InvalidSassSyntax;
+                    const keyword = try self.sources.slice(keyword_span);
+                    const at_rule_children = self.document.children(child_id) catch
+                        return error.InvalidSassSyntax;
+                    if (!std.ascii.eqlIgnoreCase(keyword, "@at-root") or
+                        at_rule_children.len != 1)
+                    {
+                        try self.report(
+                            .unsupported_feature,
+                            child.span,
+                            "dynamic native Sass directive is not implemented yet",
+                        );
+                        return error.UnsupportedFeature;
+                    }
+                    const block = self.document.get(at_rule_children[0]) catch
+                        return error.InvalidSassSyntax;
+                    if (block.kind != .block) {
+                        try self.report(.syntax, child.span, "malformed native Sass @at-root directive");
+                        return error.InvalidSassSyntax;
+                    }
+                    const block_children = self.document.children(at_rule_children[0]) catch
+                        return error.InvalidSassSyntax;
+                    try self.executeDynamicCssChildren(
+                        block_children,
+                        scope,
+                        depth + 1,
+                        context,
+                    );
+                },
+                else => {
+                    try self.report(
+                        .unsupported_feature,
+                        child.span,
+                        "dynamic native Sass statement is not implemented yet",
+                    );
+                    return error.UnsupportedFeature;
+                },
+            }
         }
     }
 
@@ -2087,6 +2199,148 @@ const Engine = struct {
         import_engine.module_depth = self.module_depth + 1;
         import_engine.parent_engine = self;
         try import_engine.run();
+    }
+
+    fn loadDynamicCss(
+        self: *Engine,
+        parent_source_id: native_source.SourceId,
+        module_url: []const u8,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        const parent = try self.sources.get(parent_source_id);
+        const session = try self.transaction.resolverSession();
+        const ancestry = try self.localModuleAncestry(parent_source_id);
+        defer self.allocator.free(ancestry);
+        var selected = direct: {
+            const candidates = localModuleCandidateUrls(
+                self.allocator,
+                parent.name,
+                module_url,
+                self.limits.max_temporary_bytes,
+                .direct,
+            ) catch |failure| {
+                return self.failDynamicCssLoad(failure, span);
+            };
+            defer freeOwnedStrings(self.allocator, candidates);
+            break :direct try self.selectLocalModuleCandidate(
+                session,
+                ancestry,
+                candidates,
+                .reference,
+                "native Sass meta.load-css URL is ambiguous",
+                span,
+            );
+        };
+        errdefer if (selected) |*loaded| loaded.deinit();
+        if (selected == null and std.fs.path.extension(module_url).len == 0) {
+            const candidates = localModuleCandidateUrls(
+                self.allocator,
+                parent.name,
+                module_url,
+                self.limits.max_temporary_bytes,
+                .index,
+            ) catch |failure| {
+                return self.failDynamicCssLoad(failure, span);
+            };
+            defer freeOwnedStrings(self.allocator, candidates);
+            selected = try self.selectLocalModuleCandidate(
+                session,
+                ancestry,
+                candidates,
+                .reference,
+                "native Sass meta.load-css URL is ambiguous",
+                span,
+            );
+        }
+
+        var loaded = selected orelse {
+            try self.report(.invalid_import, span, "native Sass meta.load-css module was not found");
+            return error.InvalidSassSyntax;
+        };
+        selected = null;
+        defer loaded.deinit();
+
+        const pool_owner = self.localModulePoolOwner();
+        if (pool_owner.local_module_count >= self.limits.max_modules) {
+            try self.report(.resource_limit, span, "native Sass module limit exceeded");
+            return error.ModuleLimitExceeded;
+        }
+        pool_owner.local_module_count += 1;
+        errdefer pool_owner.local_module_count -= 1;
+
+        const source_id = self.sources.add(loaded.url, loaded.contents) catch |failure| {
+            if (failure == error.OutOfMemory) return error.OutOfMemory;
+            try self.report(.resource_limit, span, "native Sass source limit exceeded");
+            return failure;
+        };
+        const mode: native_sass.Mode = if (std.mem.endsWith(u8, loaded.url, ".sass"))
+            .sass
+        else
+            .scss;
+        var parser = native_sass.Parser.init(
+            self.allocator,
+            self.sources,
+            source_id,
+            mode,
+            .{},
+            .{},
+        ) catch |failure| {
+            if (failure == error.OutOfMemory) return error.OutOfMemory;
+            try self.report(.syntax, span, "native Sass meta.load-css module could not be parsed");
+            return failure;
+        };
+        defer parser.deinit();
+        var document = parser.parse() catch |failure| {
+            try self.copyParserDiagnostics(parser.diagnostics());
+            return failure;
+        };
+        defer document.deinit();
+        var dynamic_engine = try Engine.init(
+            self.allocator,
+            self.sources,
+            &document,
+            self.transaction,
+            self.limits,
+        );
+        defer dynamic_engine.deinit();
+        dynamic_engine.module_depth = self.module_depth + 1;
+        dynamic_engine.parent_engine = self;
+        try dynamic_engine.runDynamicCss(depth + 1, context);
+    }
+
+    fn failDynamicCssLoad(
+        self: *Engine,
+        failure: native_resolver.Error,
+        span: native_source.Span,
+    ) Error {
+        switch (failure) {
+            error.OutOfMemory, error.Cancelled => return failure,
+            error.AttemptLimitExceeded,
+            error.DepthLimitExceeded,
+            error.FileCountExceeded,
+            error.FileLimitExceeded,
+            error.TotalLimitExceeded,
+            => {
+                self.report(.resource_limit, span, "native Sass meta.load-css limit exceeded") catch |err|
+                    return err;
+                return failure;
+            },
+            error.Cycle => {
+                self.report(.invalid_import, span, "native Sass module cycle detected") catch |err|
+                    return err;
+                return error.InvalidSassSyntax;
+            },
+            else => {
+                self.report(
+                    .invalid_import,
+                    span,
+                    "native Sass meta.load-css module load was rejected",
+                ) catch |err| return err;
+                return error.InvalidSassSyntax;
+            },
+        }
     }
 
     fn loadLocalModule(
@@ -3931,14 +4185,16 @@ const Engine = struct {
                     depth,
                     context,
                 ),
-                .meta_load_css => {
-                    try self.report(
-                        .unsupported_feature,
-                        prelude_node.span,
-                        "native Sass meta.load-css() is not implemented yet",
-                    );
-                    return error.UnsupportedFeature;
-                },
+                .meta_load_css => try self.callMetaLoadCss(
+                    body,
+                    ranges.items,
+                    scope,
+                    content_block,
+                    content_parameters,
+                    prelude_node.span,
+                    depth,
+                    context,
+                ),
             }
             return;
         }
@@ -4534,6 +4790,90 @@ const Engine = struct {
         );
     }
 
+    fn callMetaLoadCss(
+        self: *Engine,
+        body: []const u8,
+        ranges: []const ExpressionRange,
+        caller_scope: *ScopeFrame,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        var evaluated = try self.evaluateCallArguments(
+            body,
+            ranges,
+            caller_scope.cursor,
+            span,
+        );
+        defer evaluated.deinit();
+
+        try self.invokeMetaLoadCss(
+            &evaluated,
+            content_block,
+            content_parameters,
+            span,
+            depth,
+            context,
+        );
+    }
+
+    fn invokeMetaLoadCss(
+        self: *Engine,
+        evaluated: *const EvaluatedCallArguments,
+        content_block: ?native_syntax.NodeId,
+        content_parameters: []const CallableParameter,
+        span: native_source.Span,
+        depth: u16,
+        context: LoopBodyContext,
+    ) Error!void {
+        if (content_block != null or content_parameters.len != 0) {
+            return self.metaApplyMixinContentFailure(span);
+        }
+        const parameters = [_]native_arguments.Parameter{
+            .{ .name = "url" },
+            .{ .name = "with", .required = false },
+        };
+        var bound = try self.bindEvaluatedArguments(
+            &parameters,
+            parameters.len,
+            evaluated,
+            span,
+        );
+        defer bound.deinit();
+
+        if (bound.values[1]) |configuration| {
+            if (configuration.* != .null_value) {
+                try self.report(
+                    .unsupported_feature,
+                    span,
+                    "native Sass meta.load-css() configuration is not implemented yet",
+                );
+                return error.UnsupportedFeature;
+            }
+        }
+        const string = switch (bound.values[0].?.*) {
+            .string => |value| value,
+            else => {
+                try self.report(
+                    .type_mismatch,
+                    span,
+                    "native Sass meta.load-css() URL must be a string",
+                );
+                return error.InvalidExpression;
+            },
+        };
+        const module_url = native_string.decodeAlloc(
+            self.allocator,
+            string.bytes,
+            string.quoted,
+            self.limits.max_temporary_bytes,
+        ) catch |failure| return self.stringFailure(failure, span);
+        defer self.allocator.free(module_url);
+        try self.loadDynamicCss(span.source, module_url, span, depth, context);
+    }
+
     fn invokeMetaApply(
         self: *Engine,
         evaluated: *const EvaluatedCallArguments,
@@ -4641,12 +4981,24 @@ const Engine = struct {
                             continue;
                         },
                         .meta_load_css => {
-                            try self.report(
-                                .unsupported_feature,
+                            var forwarded = EvaluatedCallArguments{ .allocator = self.allocator };
+                            defer forwarded.deinit();
+                            for (evaluated.positional.items[positional_start..]) |item| {
+                                try self.appendEvaluatedPositional(&forwarded, item, span);
+                            }
+                            for (evaluated.keywords.items, 0..) |keyword, index| {
+                                if (mixin_keyword_consumed and index == mixin_keyword_index.?) continue;
+                                try self.appendEvaluatedKeyword(&forwarded, keyword, span);
+                            }
+                            try self.invokeMetaLoadCss(
+                                &forwarded,
+                                content_block,
+                                content_parameters,
                                 span,
-                                "native Sass meta.load-css() is not implemented yet",
+                                depth,
+                                context,
                             );
-                            return error.UnsupportedFeature;
+                            return;
                         },
                     }
                 },

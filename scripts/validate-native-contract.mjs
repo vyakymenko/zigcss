@@ -67,7 +67,7 @@ const expectedSassEvaluatorClosure = Object.freeze({
   ownerPackage: 'NSASS-011',
   releaseGapFamily: 'native-sass-evaluation',
   state: 'closed',
-  packageState: 'in-progress',
+  packageState: 'verified',
   oracle: Object.freeze({
     id: 'dart-sass',
     package: 'sass',
@@ -102,8 +102,8 @@ const expectedSassEvaluatorClosure = Object.freeze({
   ]),
   remainingPlanDomain: Object.freeze({
     releaseGapFamily: 'native-sass-dynamic-loading',
-    features: Object.freeze(['meta-load-css']),
-    referenceCases: Object.freeze(['scss-meta-load-css']),
+    features: Object.freeze([]),
+    referenceCases: Object.freeze([]),
     completedSlices: Object.freeze([
       Object.freeze({
         feature: 'use-resolution',
@@ -173,6 +173,16 @@ const expectedSassEvaluatorClosure = Object.freeze({
           'native Sass resolves the pinned legacy import-only precedence',
           'native Sass legacy import rejects malformed directives without partial CSS',
           'native Sass legacy import handles every allocation failure',
+        ]),
+      }),
+      Object.freeze({
+        feature: 'meta-load-css',
+        state: 'native-foundation',
+        referenceCases: Object.freeze(['scss-meta-load-css']),
+        evidenceTests: Object.freeze([
+          'native Sass executes the pinned meta load css terminal contract',
+          'native Sass meta load css rejects unavailable modules without partial CSS',
+          'native Sass meta load css handles every allocation failure',
         ]),
       }),
     ]),
@@ -261,6 +271,7 @@ const expectedImplementations = Object.freeze([
       'local-forward-callable-foundation',
       'local-forward-terminal-contract-foundation',
       'local-legacy-import-only-precedence-foundation',
+      'local-meta-load-css-terminal-foundation',
       'local-use-callable-member-foundation',
       'local-use-callable-existence-foundation',
       'local-use-callable-reference-foundation',

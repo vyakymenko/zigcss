@@ -57,7 +57,7 @@
     "ownerPackage": "NSASS-011",
     "releaseGapFamily": "native-sass-evaluation",
     "state": "closed",
-    "packageState": "in-progress",
+    "packageState": "verified",
     "oracle": {
       "id": "dart-sass",
       "package": "sass",
@@ -86,8 +86,8 @@
     ],
     "remainingPlanDomain": {
       "releaseGapFamily": "native-sass-dynamic-loading",
-      "features": ["meta-load-css"],
-      "referenceCases": ["scss-meta-load-css"],
+      "features": [],
+      "referenceCases": [],
       "completedSlices": [
         {
           "feature": "use-resolution",
@@ -157,6 +157,16 @@
             "native Sass resolves the pinned legacy import-only precedence",
             "native Sass legacy import rejects malformed directives without partial CSS",
             "native Sass legacy import handles every allocation failure"
+          ]
+        },
+        {
+          "feature": "meta-load-css",
+          "state": "native-foundation",
+          "referenceCases": ["scss-meta-load-css"],
+          "evidenceTests": [
+            "native Sass executes the pinned meta load css terminal contract",
+            "native Sass meta load css rejects unavailable modules without partial CSS",
+            "native Sass meta load css handles every allocation failure"
           ]
         }
       ]
@@ -233,6 +243,7 @@
         "local-forward-callable-foundation",
         "local-forward-terminal-contract-foundation",
         "local-legacy-import-only-precedence-foundation",
+        "local-meta-load-css-terminal-foundation",
         "local-use-callable-member-foundation",
         "local-use-callable-existence-foundation",
         "local-use-callable-reference-foundation",
