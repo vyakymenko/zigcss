@@ -775,6 +775,13 @@ const LocalModule = struct {
 const LocalCallableTarget = struct {
     module_index: usize,
     callable_id: u32,
+    identity: u64 = 0,
+    forwarded_member: bool = false,
+};
+
+const ModuleCallable = struct {
+    name: []u8,
+    target: LocalCallableTarget,
 };
 
 const local_callable_component_bits = 16;
@@ -801,6 +808,8 @@ fn localModuleCallable(
     return .{
         .kind = kind,
         .id = (module_index << local_callable_component_bits) | target.callable_id,
+        .identity = target.identity,
+        .forwarded_member = target.forwarded_member,
     };
 }
 
@@ -812,6 +821,8 @@ fn decodeLocalModuleCallable(callable: native_value.Callable) ?LocalCallableTarg
     return .{
         .module_index = @intCast(callable.id >> local_callable_component_bits),
         .callable_id = callable.id & local_callable_component_mask,
+        .identity = callable.identity,
+        .forwarded_member = callable.forwarded_member,
     };
 }
 
@@ -865,7 +876,9 @@ fn remapLocalModuleExportCallable(
                 .{
                     .kind = callable.kind,
                     .id = callable.id,
+                    .identity = callable.identity,
                     .reexport_depth = 1,
+                    .forwarded_member = callable.forwarded_member,
                 }
             else if (target.module_index != context and
                 target.module_index < hard_modules and
@@ -874,7 +887,9 @@ fn remapLocalModuleExportCallable(
                 .{
                     .kind = callable.kind,
                     .id = callable.id,
+                    .identity = callable.identity,
                     .reexport_depth = callable.reexport_depth + 1,
+                    .forwarded_member = callable.forwarded_member,
                 }
             else
                 null
@@ -928,13 +943,17 @@ fn remapLocalModuleArgumentCallable(
             callable.reexport_depth >= max_callable_argument_transport_edges)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
-            if (target.module_index == context and target.callable_id < hard_callables)
+            if (!target.forwarded_member and
+                target.module_index == context and
+                target.callable_id < hard_callables)
                 .{ .kind = .user_function, .id = target.callable_id }
             else if (target.module_index < hard_modules and target.callable_id < hard_callables)
                 .{
                     .kind = callable.kind,
                     .id = callable.id,
+                    .identity = callable.identity,
                     .peer_argument_transport = true,
+                    .forwarded_member = callable.forwarded_member,
                 }
             else
                 null
@@ -944,13 +963,17 @@ fn remapLocalModuleArgumentCallable(
             callable.reexport_depth >= max_callable_argument_transport_edges)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
-            if (target.module_index == context and target.callable_id < hard_callables)
+            if (!target.forwarded_member and
+                target.module_index == context and
+                target.callable_id < hard_callables)
                 .{ .kind = .mixin, .id = target.callable_id }
             else if (target.module_index < hard_modules and target.callable_id < hard_callables)
                 .{
                     .kind = callable.kind,
                     .id = callable.id,
+                    .identity = callable.identity,
                     .peer_argument_transport = true,
+                    .forwarded_member = callable.forwarded_member,
                 }
             else
                 null
@@ -1079,6 +1102,8 @@ const Engine = struct {
     local_modules: std.ArrayList(usize) = .empty,
     local_module_pool: std.ArrayList(LocalModule) = .empty,
     forwarded_variables: std.ArrayList(ModuleVariable) = .empty,
+    forwarded_functions: std.ArrayList(ModuleCallable) = .empty,
+    forwarded_mixins: std.ArrayList(ModuleCallable) = .empty,
     local_module_count: usize = 0,
     module_depth: u16 = 0,
     parent_engine: ?*Engine = null,
@@ -1134,6 +1159,10 @@ const Engine = struct {
         self.local_modules.deinit(self.allocator);
         for (self.forwarded_variables.items) |variable| self.allocator.free(variable.name);
         self.forwarded_variables.deinit(self.allocator);
+        for (self.forwarded_functions.items) |function| self.allocator.free(function.name);
+        self.forwarded_functions.deinit(self.allocator);
+        for (self.forwarded_mixins.items) |mixin| self.allocator.free(mixin.name);
+        self.forwarded_mixins.deinit(self.allocator);
         self.modules.deinit(self.allocator);
         self.deprecations.deinit(self.allocator);
         self.environment.deinit();
@@ -1533,6 +1562,7 @@ const Engine = struct {
             node.span,
         );
         try self.forwardLocalModuleVariables(module_index, node.span);
+        try self.forwardLocalModuleCallables(module_index, node.span);
     }
 
     fn evaluateModuleConfiguration(
@@ -2213,6 +2243,157 @@ const Engine = struct {
         }
     }
 
+    fn forwardLocalModuleCallables(
+        self: *Engine,
+        module_index: usize,
+        span: native_source.Span,
+    ) Error!void {
+        const module_engine = self.localModule(module_index).engine;
+        const original_function_len = self.forwarded_functions.items.len;
+        const original_mixin_len = self.forwarded_mixins.items.len;
+        errdefer {
+            for (self.forwarded_functions.items[original_function_len..]) |function| {
+                self.allocator.free(function.name);
+            }
+            self.forwarded_functions.items.len = original_function_len;
+            for (self.forwarded_mixins.items[original_mixin_len..]) |mixin| {
+                self.allocator.free(mixin.name);
+            }
+            self.forwarded_mixins.items.len = original_mixin_len;
+        }
+
+        for (module_engine.forwarded_functions.items) |function| {
+            try self.appendForwardedModuleFunction(
+                module_index,
+                function.name,
+                original_function_len,
+                span,
+            );
+        }
+        for (module_engine.user_functions.items) |function| {
+            if (function.owner != &module_engine.root_scope or
+                isPrivateModuleMember(function.name))
+            {
+                continue;
+            }
+            try self.appendForwardedModuleFunction(
+                module_index,
+                function.name,
+                original_function_len,
+                span,
+            );
+        }
+
+        for (module_engine.forwarded_mixins.items) |mixin| {
+            try self.appendForwardedModuleMixin(
+                module_index,
+                mixin.name,
+                original_mixin_len,
+                span,
+            );
+        }
+        for (module_engine.user_mixins.items) |mixin| {
+            if (mixin.owner != &module_engine.root_scope or
+                isPrivateModuleMember(mixin.name))
+            {
+                continue;
+            }
+            try self.appendForwardedModuleMixin(
+                module_index,
+                mixin.name,
+                original_mixin_len,
+                span,
+            );
+        }
+    }
+
+    fn appendForwardedModuleFunction(
+        self: *Engine,
+        module_index: usize,
+        name: []const u8,
+        original_len: usize,
+        span: native_source.Span,
+    ) Error!void {
+        if (moduleCallableNamed(self.forwarded_functions.items[0..original_len], name)) {
+            try self.report(
+                .duplicate_binding,
+                span,
+                "forwarded native Sass module function conflicts with an existing function",
+            );
+            return error.InvalidExpression;
+        }
+        if (moduleCallableNamed(self.forwarded_functions.items[original_len..], name)) return;
+        if (self.forwardedCallableLimitReached() or
+            self.forwarded_functions.items.len >= std.math.maxInt(u32))
+        {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass forwarded module callable limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        }
+        const target = self.publicLocalModuleFunction(module_index, name) orelse
+            return error.InvalidSassSyntax;
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+        try self.forwarded_functions.append(self.allocator, .{
+            .name = owned_name,
+            .target = target,
+        });
+    }
+
+    fn appendForwardedModuleMixin(
+        self: *Engine,
+        module_index: usize,
+        name: []const u8,
+        original_len: usize,
+        span: native_source.Span,
+    ) Error!void {
+        if (moduleCallableNamed(self.forwarded_mixins.items[0..original_len], name)) {
+            try self.report(
+                .duplicate_binding,
+                span,
+                "forwarded native Sass module mixin conflicts with an existing mixin",
+            );
+            return error.InvalidExpression;
+        }
+        if (moduleCallableNamed(self.forwarded_mixins.items[original_len..], name)) return;
+        if (self.forwardedCallableLimitReached() or
+            self.forwarded_mixins.items.len >= std.math.maxInt(u32))
+        {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass forwarded module callable limit exceeded",
+            );
+            return error.CallableLimitExceeded;
+        }
+        const target = self.publicLocalModuleMixin(module_index, name) orelse
+            return error.InvalidSassSyntax;
+        const owned_name = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_name);
+        try self.forwarded_mixins.append(self.allocator, .{
+            .name = owned_name,
+            .target = target,
+        });
+    }
+
+    fn forwardedCallableLimitReached(self: *const Engine) bool {
+        const local_count = std.math.add(
+            usize,
+            self.user_functions.items.len,
+            self.user_mixins.items.len,
+        ) catch return true;
+        const forwarded_count = std.math.add(
+            usize,
+            self.forwarded_functions.items.len,
+            self.forwarded_mixins.items.len,
+        ) catch return true;
+        const total = std.math.add(usize, local_count, forwarded_count) catch return true;
+        return total >= self.limits.max_callables;
+    }
+
     fn clonePublicModuleVariables(
         self: *Engine,
         module_engine: *Engine,
@@ -2365,7 +2546,7 @@ const Engine = struct {
         self: *const Engine,
         module_index: usize,
         name: []const u8,
-    ) ?u32 {
+    ) ?LocalCallableTarget {
         const module_engine = self.localModule(module_index).engine;
         var index = module_engine.user_functions.items.len;
         while (index > 0) {
@@ -2377,7 +2558,20 @@ const Engine = struct {
             {
                 continue;
             }
-            return @intCast(index);
+            return .{
+                .module_index = module_index,
+                .callable_id = @intCast(index),
+                .identity = self.localModuleCallableIdentity(module_index, @intCast(index)),
+            };
+        }
+        for (module_engine.forwarded_functions.items, 0..) |function, forwarded_index| {
+            if (!sassNameEql(function.name, name)) continue;
+            return .{
+                .module_index = module_index,
+                .callable_id = @intCast(forwarded_index),
+                .identity = function.target.identity,
+                .forwarded_member = true,
+            };
         }
         return null;
     }
@@ -2386,7 +2580,7 @@ const Engine = struct {
         self: *const Engine,
         module_index: usize,
         name: []const u8,
-    ) ?u32 {
+    ) ?LocalCallableTarget {
         const module_engine = self.localModule(module_index).engine;
         var index = module_engine.user_mixins.items.len;
         while (index > 0) {
@@ -2398,9 +2592,65 @@ const Engine = struct {
             {
                 continue;
             }
-            return @intCast(index);
+            return .{
+                .module_index = module_index,
+                .callable_id = @intCast(index),
+                .identity = self.localModuleCallableIdentity(module_index, @intCast(index)),
+            };
+        }
+        for (module_engine.forwarded_mixins.items, 0..) |mixin, forwarded_index| {
+            if (!sassNameEql(mixin.name, name)) continue;
+            return .{
+                .module_index = module_index,
+                .callable_id = @intCast(forwarded_index),
+                .identity = mixin.target.identity,
+                .forwarded_member = true,
+            };
         }
         return null;
+    }
+
+    fn localModuleCallableIdentity(
+        self: *const Engine,
+        module_index: usize,
+        callable_id: u32,
+    ) u64 {
+        std.debug.assert(module_index < self.local_modules.items.len);
+        const pool_index = self.local_modules.items[module_index];
+        std.debug.assert(pool_index < hard_modules);
+        return (@as(u64, pool_index) + 1) << 32 | callable_id;
+    }
+
+    fn localModuleFunctionDefinition(
+        self: *const Engine,
+        target: LocalCallableTarget,
+    ) ?*const UserFunction {
+        if (target.module_index >= self.local_modules.items.len) return null;
+        const module_engine = self.localModule(target.module_index).engine;
+        if (target.forwarded_member) {
+            if (target.callable_id >= module_engine.forwarded_functions.items.len) return null;
+            return module_engine.localModuleFunctionDefinition(
+                module_engine.forwarded_functions.items[target.callable_id].target,
+            );
+        }
+        if (target.callable_id >= module_engine.user_functions.items.len) return null;
+        return &module_engine.user_functions.items[target.callable_id];
+    }
+
+    fn localModuleMixinDefinition(
+        self: *const Engine,
+        target: LocalCallableTarget,
+    ) ?*const UserMixin {
+        if (target.module_index >= self.local_modules.items.len) return null;
+        const module_engine = self.localModule(target.module_index).engine;
+        if (target.forwarded_member) {
+            if (target.callable_id >= module_engine.forwarded_mixins.items.len) return null;
+            return module_engine.localModuleMixinDefinition(
+                module_engine.forwarded_mixins.items[target.callable_id].target,
+            );
+        }
+        if (target.callable_id >= module_engine.user_mixins.items.len) return null;
+        return &module_engine.user_mixins.items[target.callable_id];
     }
 
     fn localModuleCallableExists(
@@ -2408,11 +2658,9 @@ const Engine = struct {
         target: LocalCallableTarget,
         kind: native_value.CallableKind,
     ) bool {
-        if (target.module_index >= self.local_modules.items.len) return false;
-        const module_engine = self.localModule(target.module_index).engine;
         return switch (kind) {
-            .local_module_function => target.callable_id < module_engine.user_functions.items.len,
-            .local_module_mixin => target.callable_id < module_engine.user_mixins.items.len,
+            .local_module_function => self.localModuleFunctionDefinition(target) != null,
+            .local_module_mixin => self.localModuleMixinDefinition(target) != null,
             .builtin_function,
             .builtin_mixin,
             .user_function,
@@ -2459,7 +2707,7 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             }
-            const callable_id = self.publicLocalModuleFunction(
+            return self.publicLocalModuleFunction(
                 module_index,
                 qualified.member,
             ) orelse {
@@ -2470,7 +2718,6 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             };
-            return .{ .module_index = module_index, .callable_id = callable_id };
         }
         if (!isSimpleIdentifier(raw_name)) return null;
 
@@ -2481,7 +2728,7 @@ const Engine = struct {
                 .local => |index| index,
                 .builtin => continue,
             };
-            const callable_id = self.publicLocalModuleFunction(
+            const target = self.publicLocalModuleFunction(
                 module_index,
                 raw_name,
             ) orelse continue;
@@ -2494,7 +2741,7 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             }
-            matched = .{ .module_index = module_index, .callable_id = callable_id };
+            matched = target;
         }
         return matched;
     }
@@ -2518,7 +2765,7 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             }
-            const callable_id = self.publicLocalModuleMixin(
+            return self.publicLocalModuleMixin(
                 module_index,
                 qualified.member,
             ) orelse {
@@ -2529,7 +2776,6 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             };
-            return .{ .module_index = module_index, .callable_id = callable_id };
         }
         if (!isSimpleIdentifier(raw_name)) return null;
 
@@ -2540,7 +2786,7 @@ const Engine = struct {
                 .local => |index| index,
                 .builtin => continue,
             };
-            const callable_id = self.publicLocalModuleMixin(
+            const target = self.publicLocalModuleMixin(
                 module_index,
                 raw_name,
             ) orelse continue;
@@ -2553,7 +2799,7 @@ const Engine = struct {
                 );
                 return error.InvalidExpression;
             }
-            matched = .{ .module_index = module_index, .callable_id = callable_id };
+            matched = target;
         }
         return matched;
     }
@@ -2653,6 +2899,17 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         const module_engine = self.localModule(target.module_index).engine;
+        if (target.forwarded_member) {
+            if (target.callable_id >= module_engine.forwarded_functions.items.len) {
+                return self.metaCallFunctionFailure(span);
+            }
+            const result = try module_engine.invokeOwnedLocalModuleFunction(
+                module_engine.forwarded_functions.items[target.callable_id].target,
+                input,
+                span,
+            );
+            return self.ownLocalModuleResultValue(target.module_index, result.*, span);
+        }
         var cloned = try self.cloneEvaluatedArgumentsInto(
             module_engine,
             input,
@@ -3940,6 +4197,22 @@ const Engine = struct {
         context: LoopBodyContext,
     ) Error!void {
         const module_engine = self.localModule(target.module_index).engine;
+        if (target.forwarded_member) {
+            if (target.callable_id >= module_engine.forwarded_mixins.items.len) {
+                return self.metaApplyMixinFailure(span);
+            }
+            return module_engine.invokeOwnedLocalModuleMixin(
+                module_engine.forwarded_mixins.items[target.callable_id].target,
+                evaluated,
+                caller_engine,
+                caller_scope,
+                content_block,
+                content_parameters,
+                span,
+                depth,
+                context,
+            );
+        }
         var cloned = try self.cloneEvaluatedArgumentsInto(
             module_engine,
             evaluated,
@@ -11569,8 +11842,9 @@ const Engine = struct {
                     target,
                     .local_module_mixin,
                 ) orelse return self.metaAcceptsContentTypeFailure(span);
-                const module_engine = owner.localModule(target.module_index).engine;
-                break :blk module_engine.user_mixins.items[target.callable_id].accepts_content;
+                const mixin = owner.localModuleMixinDefinition(target) orelse
+                    return self.metaAcceptsContentTypeFailure(span);
+                break :blk mixin.accepts_content;
             },
             .parent_mixin => blk: {
                 const parent = self.parent_engine orelse
@@ -11651,11 +11925,8 @@ const Engine = struct {
                 .local => |module_index| if (self.publicLocalModuleMixin(
                     module_index,
                     normalized,
-                )) |mixin_id|
-                    localModuleCallable(.local_module_mixin, .{
-                        .module_index = module_index,
-                        .callable_id = mixin_id,
-                    })
+                )) |callable_target|
+                    localModuleCallable(.local_module_mixin, callable_target)
                 else {
                     try self.report(
                         .invalid_operation,
@@ -11742,9 +12013,21 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         const module_engine = self.localModule(module_index).engine;
+        const callable_count = std.math.add(
+            usize,
+            module_engine.forwarded_mixins.items.len,
+            module_engine.user_mixins.items.len,
+        ) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module mixin enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        };
         const temporary_bytes = std.math.mul(
             usize,
-            module_engine.user_mixins.items.len,
+            callable_count,
             @sizeOf(native_value.Entry),
         ) catch {
             try self.report(
@@ -11767,8 +12050,22 @@ const Engine = struct {
         defer entries.deinit(self.allocator);
         try entries.ensureTotalCapacity(
             self.allocator,
-            module_engine.user_mixins.items.len,
+            callable_count,
         );
+        for (module_engine.forwarded_mixins.items) |mixin| {
+            try self.transaction.consumeOperations(1);
+            const target = self.publicLocalModuleMixin(
+                module_index,
+                mixin.name,
+            ) orelse continue;
+            entries.appendAssumeCapacity(.{
+                .key = .{ .string = .{
+                    .bytes = mixin.name,
+                    .quoted = true,
+                } },
+                .value = .{ .callable = localModuleCallable(.local_module_mixin, target) },
+            });
+        }
         for (module_engine.user_mixins.items) |mixin| {
             try self.transaction.consumeOperations(1);
             if (mixin.owner != &module_engine.root_scope or
@@ -11784,7 +12081,7 @@ const Engine = struct {
                 }
             }
             if (already_enumerated) continue;
-            const callable_id = self.publicLocalModuleMixin(
+            const target = self.publicLocalModuleMixin(
                 module_index,
                 mixin.name,
             ) orelse continue;
@@ -11793,13 +12090,7 @@ const Engine = struct {
                     .bytes = mixin.name,
                     .quoted = true,
                 } },
-                .value = .{ .callable = localModuleCallable(
-                    .local_module_mixin,
-                    .{
-                        .module_index = module_index,
-                        .callable_id = callable_id,
-                    },
-                ) },
+                .value = .{ .callable = localModuleCallable(.local_module_mixin, target) },
             });
         }
         return self.values.own(.{ .map = .{ .entries = entries.items } });
@@ -11962,9 +12253,21 @@ const Engine = struct {
         span: native_source.Span,
     ) Error!*const native_value.Value {
         const module_engine = self.localModule(module_index).engine;
+        const callable_count = std.math.add(
+            usize,
+            module_engine.forwarded_functions.items.len,
+            module_engine.user_functions.items.len,
+        ) catch {
+            try self.report(
+                .resource_limit,
+                span,
+                "native Sass local module function enumeration temporary limit exceeded",
+            );
+            return error.TemporaryLimitExceeded;
+        };
         const temporary_bytes = std.math.mul(
             usize,
-            module_engine.user_functions.items.len,
+            callable_count,
             @sizeOf(native_value.Entry),
         ) catch {
             try self.report(
@@ -11987,8 +12290,22 @@ const Engine = struct {
         defer entries.deinit(self.allocator);
         try entries.ensureTotalCapacity(
             self.allocator,
-            module_engine.user_functions.items.len,
+            callable_count,
         );
+        for (module_engine.forwarded_functions.items) |function| {
+            try self.transaction.consumeOperations(1);
+            const target = self.publicLocalModuleFunction(
+                module_index,
+                function.name,
+            ) orelse continue;
+            entries.appendAssumeCapacity(.{
+                .key = .{ .string = .{
+                    .bytes = function.name,
+                    .quoted = true,
+                } },
+                .value = .{ .callable = localModuleCallable(.local_module_function, target) },
+            });
+        }
         for (module_engine.user_functions.items) |function| {
             try self.transaction.consumeOperations(1);
             if (function.owner != &module_engine.root_scope or
@@ -12004,7 +12321,7 @@ const Engine = struct {
                 }
             }
             if (already_enumerated) continue;
-            const callable_id = self.publicLocalModuleFunction(
+            const target = self.publicLocalModuleFunction(
                 module_index,
                 function.name,
             ) orelse continue;
@@ -12013,13 +12330,7 @@ const Engine = struct {
                     .bytes = function.name,
                     .quoted = true,
                 } },
-                .value = .{ .callable = localModuleCallable(
-                    .local_module_function,
-                    .{
-                        .module_index = module_index,
-                        .callable_id = callable_id,
-                    },
-                ) },
+                .value = .{ .callable = localModuleCallable(.local_module_function, target) },
             });
         }
         return self.values.own(.{ .map = .{ .entries = entries.items } });
@@ -12083,11 +12394,8 @@ const Engine = struct {
                 .local => |module_index| if (self.publicLocalModuleFunction(
                     module_index,
                     normalized,
-                )) |function_id|
-                    localModuleCallable(.local_module_function, .{
-                        .module_index = module_index,
-                        .callable_id = function_id,
-                    })
+                )) |callable_target|
+                    localModuleCallable(.local_module_function, callable_target)
                 else {
                     try self.report(
                         .invalid_operation,
@@ -17732,11 +18040,8 @@ const Engine = struct {
                 .local => |module_index| if (self.publicLocalModuleFunction(
                     module_index,
                     name,
-                )) |callable_id|
-                    localModuleCallable(.local_module_function, .{
-                        .module_index = module_index,
-                        .callable_id = callable_id,
-                    })
+                )) |target|
+                    localModuleCallable(.local_module_function, target)
                 else
                     continue,
             };
@@ -17787,11 +18092,8 @@ const Engine = struct {
                 .local => |module_index| if (self.publicLocalModuleMixin(
                     module_index,
                     name,
-                )) |callable_id|
-                    localModuleCallable(.local_module_mixin, .{
-                        .module_index = module_index,
-                        .callable_id = callable_id,
-                    })
+                )) |target|
+                    localModuleCallable(.local_module_mixin, target)
                 else
                     continue,
             };
@@ -20700,8 +21002,8 @@ const Engine = struct {
                     target,
                     .local_module_function,
                 ) orelse return error.InvalidExpression;
-                const module_engine = owner.localModule(target.module_index).engine;
-                break :blk module_engine.user_functions.items[target.callable_id].name;
+                break :blk (owner.localModuleFunctionDefinition(target) orelse
+                    return error.InvalidExpression).name;
             },
             .local_module_mixin => blk: {
                 const target = decodeLocalModuleCallable(callable) orelse
@@ -20710,8 +21012,8 @@ const Engine = struct {
                     target,
                     .local_module_mixin,
                 ) orelse return error.InvalidExpression;
-                const module_engine = owner.localModule(target.module_index).engine;
-                break :blk module_engine.user_mixins.items[target.callable_id].name;
+                break :blk (owner.localModuleMixinDefinition(target) orelse
+                    return error.InvalidExpression).name;
             },
         };
 
@@ -23419,6 +23721,13 @@ fn freeOwnedStrings(allocator: std.mem.Allocator, items: [][]u8) void {
 fn moduleVariableNamed(variables: []const ModuleVariable, name: []const u8) bool {
     for (variables) |variable| {
         if (sassNameEql(variable.name, name)) return true;
+    }
+    return false;
+}
+
+fn moduleCallableNamed(callables: []const ModuleCallable, name: []const u8) bool {
+    for (callables) |callable| {
+        if (sassNameEql(callable.name, name)) return true;
     }
     return false;
 }

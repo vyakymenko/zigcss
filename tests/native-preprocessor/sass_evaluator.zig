@@ -36970,6 +36970,274 @@ test "native Sass exposes forwarded public variables without duplicate evaluatio
     }
 }
 
+test "native Sass exposes forwarded public callables without duplicate evaluation" {
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        files: []const LocalUseFile,
+    }{
+        .{
+            .root_name = "forwarded-callables.scss",
+            .root_input =
+            \\@use "sass:map";
+            \\@use "sass:meta";
+            \\@use "midstream";
+            \\@use "upstream";
+            \\$function: meta.get-function("token", $module: "midstream");
+            \\$mixin: meta.get-mixin("emit", "midstream");
+            \\$direct-function: meta.get-function("token", $module: "upstream");
+            \\$direct-mixin: meta.get-mixin("emit", "upstream");
+            \\$functions: meta.module-functions("midstream");
+            \\$mixins: meta.module-mixins("midstream");
+            \\.root {
+            \\  direct: midstream.token(1);
+            \\  reflected: meta.call($function, 2);
+            \\  enumerated: meta.call(map.get($functions, "token"), 3);
+            \\  function-keys: meta.inspect(map.keys($functions));
+            \\  mixin-keys: meta.inspect(map.keys($mixins));
+            \\  accepts: meta.accepts-content($mixin);
+            \\  function-same: $function == $direct-function;
+            \\  mixin-same: $mixin == $direct-mixin;
+            \\  private-function: map.has-key($functions, "_hidden");
+            \\  private-mixin: map.has-key($mixins, "_hidden-mixin");
+            \\}
+            \\@include midstream.emit(direct) using ($value) {
+            \\  .content { value: $value; }
+            \\}
+            \\@include meta.apply($mixin, reflected);
+            \\@include meta.apply(map.get($mixins, "emit"), enumerated);
+            ,
+            .mode = .scss,
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"upstream\";" },
+                .{
+                    .name = "_upstream.scss",
+                    .contents =
+                    \\@function token($value) { @return upstream-#{$value}; }
+                    \\@function _hidden() { @return hidden; }
+                    \\@mixin emit($value) {
+                    \\  .emitted { value: $value; }
+                    \\  @content($value);
+                    \\}
+                    \\@mixin _hidden-mixin() { .hidden { value: hidden; } }
+                    ,
+                },
+            },
+        },
+        .{
+            .root_name = "forwarded-callables.sass",
+            .root_input =
+            \\@use "sass:map" as map
+            \\@use "sass:meta" as meta
+            \\@use "midstream"
+            \\@use "upstream"
+            \\$function: meta.get-function("token", $module: "midstream")
+            \\$mixin: meta.get-mixin("emit", "midstream")
+            \\$direct-function: meta.get-function("token", $module: "upstream")
+            \\$direct-mixin: meta.get-mixin("emit", "upstream")
+            \\$functions: meta.module-functions("midstream")
+            \\$mixins: meta.module-mixins("midstream")
+            \\.root
+            \\  direct: midstream.token(1)
+            \\  reflected: meta.call($function, 2)
+            \\  enumerated: meta.call(map.get($functions, "token"), 3)
+            \\  function-keys: meta.inspect(map.keys($functions))
+            \\  mixin-keys: meta.inspect(map.keys($mixins))
+            \\  accepts: meta.accepts-content($mixin)
+            \\  function-same: $function == $direct-function
+            \\  mixin-same: $mixin == $direct-mixin
+            \\  private-function: map.has-key($functions, "_hidden")
+            \\  private-mixin: map.has-key($mixins, "_hidden-mixin")
+            \\@include midstream.emit(direct) using ($value)
+            \\  .content
+            \\    value: $value
+            \\@include meta.apply($mixin, reflected)
+            \\@include meta.apply(map.get($mixins, "emit"), enumerated)
+            ,
+            .mode = .sass,
+            .files = &.{
+                .{ .name = "_midstream.sass", .contents = "@forward \"upstream\"" },
+                .{
+                    .name = "_upstream.sass",
+                    .contents =
+                    \\@function token($value)
+                    \\  @return upstream-#{$value}
+                    \\@function _hidden()
+                    \\  @return hidden
+                    \\@mixin emit($value)
+                    \\  .emitted
+                    \\    value: $value
+                    \\  @content($value)
+                    \\@mixin _hidden-mixin()
+                    \\  .hidden
+                    \\    value: hidden
+                    ,
+                },
+            },
+        },
+    };
+
+    for (cases) |case| {
+        var first = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer first.deinit();
+        var second = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer second.deinit();
+
+        try std.testing.expectEqualStrings(
+            ".root{direct:upstream-1;reflected:upstream-2;enumerated:upstream-3;function-keys:(\"token\",);mixin-keys:(\"emit\",);accepts:true;function-same:true;mixin-same:true;private-function:false;private-mixin:false}.emitted{value:direct}.content{value:direct}.emitted{value:reflected}.emitted{value:enumerated}",
+            first.css(),
+        );
+        try std.testing.expectEqualStrings(first.css(), second.css());
+        try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 2), first.dependencies().len);
+        try std.testing.expectEqual(@as(usize, 3), first.edges().len);
+        try std.testing.expectEqualSlices(
+            preprocessor.sourcemap.Segment,
+            first.map().?.segments(),
+            second.map().?.segments(),
+        );
+        var saw_root = false;
+        var saw_upstream = false;
+        for (first.map().?.segments()) |segment| {
+            const source_id = segment.source_id orelse continue;
+            saw_root = saw_root or source_id.value == 0;
+            saw_upstream = saw_upstream or source_id.value == 2;
+        }
+        try std.testing.expect(saw_root);
+        try std.testing.expect(saw_upstream);
+    }
+}
+
+test "native Sass local callables override forwarded members" {
+    const cases = [_]struct {
+        root_name: []const u8,
+        root_input: []const u8,
+        mode: sass.Mode,
+        files: []const LocalUseFile,
+    }{
+        .{
+            .root_name = "forwarded-callable-precedence.scss",
+            .root_input =
+            \\@use "sass:map";
+            \\@use "sass:meta";
+            \\@use "midstream";
+            \\$functions: meta.module-functions("midstream");
+            \\$mixins: meta.module-mixins("midstream");
+            \\.root {
+            \\  direct: midstream.shared();
+            \\  reflected: meta.call(map.get($functions, "shared"));
+            \\  function-keys: meta.inspect(map.keys($functions));
+            \\  mixin-keys: meta.inspect(map.keys($mixins));
+            \\}
+            \\@include meta.apply(map.get($mixins, "shared-mixin"));
+            ,
+            .mode = .scss,
+            .files = &.{
+                .{
+                    .name = "_midstream.scss",
+                    .contents =
+                    \\@forward "upstream";
+                    \\@function local() { @return local; }
+                    \\@function shared() { @return local; }
+                    \\@mixin local-mixin() { $unused: true; }
+                    \\@mixin shared-mixin() { .local { value: yes; } }
+                    ,
+                },
+                .{
+                    .name = "_upstream.scss",
+                    .contents =
+                    \\@function upstream() { @return upstream; }
+                    \\@function shared() { @return upstream; }
+                    \\@mixin upstream-mixin() { $unused: true; }
+                    \\@mixin shared-mixin() { .upstream { value: yes; } }
+                    ,
+                },
+            },
+        },
+        .{
+            .root_name = "forwarded-callable-precedence.sass",
+            .root_input =
+            \\@use "sass:map" as map
+            \\@use "sass:meta" as meta
+            \\@use "midstream"
+            \\$functions: meta.module-functions("midstream")
+            \\$mixins: meta.module-mixins("midstream")
+            \\.root
+            \\  direct: midstream.shared()
+            \\  reflected: meta.call(map.get($functions, "shared"))
+            \\  function-keys: meta.inspect(map.keys($functions))
+            \\  mixin-keys: meta.inspect(map.keys($mixins))
+            \\@include meta.apply(map.get($mixins, "shared-mixin"))
+            ,
+            .mode = .sass,
+            .files = &.{
+                .{
+                    .name = "_midstream.sass",
+                    .contents =
+                    \\@forward "upstream"
+                    \\@function local()
+                    \\  @return local
+                    \\@function shared()
+                    \\  @return local
+                    \\@mixin local-mixin()
+                    \\  $unused: true
+                    \\@mixin shared-mixin()
+                    \\  .local
+                    \\    value: yes
+                    ,
+                },
+                .{
+                    .name = "_upstream.sass",
+                    .contents =
+                    \\@function upstream()
+                    \\  @return upstream
+                    \\@function shared()
+                    \\  @return upstream
+                    \\@mixin upstream-mixin()
+                    \\  $unused: true
+                    \\@mixin shared-mixin()
+                    \\  .upstream
+                    \\    value: yes
+                    ,
+                },
+            },
+        },
+    };
+
+    for (cases) |case| {
+        var result = try compileWithLocalUseFiles(
+            std.testing.allocator,
+            case.root_name,
+            case.root_input,
+            case.mode,
+            case.files,
+            .{},
+        );
+        defer result.deinit();
+        try std.testing.expectEqualStrings(
+            ".root{direct:local;reflected:local;function-keys:\"upstream\", \"shared\", \"local\";mixin-keys:\"upstream-mixin\", \"shared-mixin\", \"local-mixin\"}.local{value:yes}",
+            result.css(),
+        );
+        try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 2), result.dependencies().len);
+    }
+}
+
 test "native Sass forward configuration failures own exact diagnostics" {
     const invalid = [_]struct {
         root_name: []const u8,
@@ -37032,6 +37300,24 @@ test "native Sass forward configuration failures own exact diagnostics" {
             .expected_span = "@forward \"upstream\" as token-*;",
         },
         .{
+            .root_name = "shown-forward.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" show token, emit;" }},
+            .expected_error = error.InvalidSassSyntax,
+            .expected_code = .syntax,
+            .expected_message = "malformed native Sass @forward directive",
+            .expected_span = "@forward \"upstream\" show token, emit;",
+        },
+        .{
+            .root_name = "hidden-forward.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{.{ .name = "_midstream.scss", .contents = "@forward \"upstream\" hide token, emit;" }},
+            .expected_error = error.InvalidSassSyntax,
+            .expected_code = .syntax,
+            .expected_message = "malformed native Sass @forward directive",
+            .expected_span = "@forward \"upstream\" hide token, emit;",
+        },
+        .{
             .root_name = "duplicate-forward-member.scss",
             .root_input = "@use \"midstream\";",
             .files = &.{
@@ -37042,6 +37328,32 @@ test "native Sass forward configuration failures own exact diagnostics" {
             .expected_error = error.InvalidExpression,
             .expected_code = .duplicate_binding,
             .expected_message = "forwarded native Sass module variable conflicts with an existing variable",
+            .expected_span = "@forward \"second\";",
+        },
+        .{
+            .root_name = "duplicate-forward-function.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"first\"; @forward \"second\";" },
+                .{ .name = "_first.scss", .contents = "@function shared() { @return first; }" },
+                .{ .name = "_second.scss", .contents = "@function shared() { @return second; }" },
+            },
+            .expected_error = error.InvalidExpression,
+            .expected_code = .duplicate_binding,
+            .expected_message = "forwarded native Sass module function conflicts with an existing function",
+            .expected_span = "@forward \"second\";",
+        },
+        .{
+            .root_name = "duplicate-forward-mixin.scss",
+            .root_input = "@use \"midstream\";",
+            .files = &.{
+                .{ .name = "_midstream.scss", .contents = "@forward \"first\"; @forward \"second\";" },
+                .{ .name = "_first.scss", .contents = "@mixin shared() {}" },
+                .{ .name = "_second.scss", .contents = "@mixin shared() {}" },
+            },
+            .expected_error = error.InvalidExpression,
+            .expected_code = .duplicate_binding,
+            .expected_message = "forwarded native Sass module mixin conflicts with an existing mixin",
             .expected_span = "@forward \"second\";",
         },
         .{
@@ -37120,6 +37432,26 @@ test "native Sass forward resolution enforces confinement and graph limits" {
         "native Sass module limit exceeded",
         "@forward \"upstream\";",
         module_limits,
+        .{},
+    );
+
+    var callable_limits = sass_evaluator.Limits{};
+    callable_limits.max_callables = 1;
+    try expectLocalUseFailureWithLimits(
+        std.testing.allocator,
+        "forward-callable-limit.scss",
+        "@use \"midstream\";",
+        .scss,
+        &.{
+            .{ .name = "_midstream.scss", .contents = "@forward \"first\"; @forward \"second\";" },
+            .{ .name = "_first.scss", .contents = "@function first() { @return first; }" },
+            .{ .name = "_second.scss", .contents = "@function second() { @return second; }" },
+        },
+        error.CallableLimitExceeded,
+        .resource_limit,
+        "native Sass forwarded module callable limit exceeded",
+        "@forward \"second\";",
+        callable_limits,
         .{},
     );
 }
@@ -37285,7 +37617,20 @@ fn exerciseForwardAllocationFailures(
     defer session.deinit();
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
-    const input = "@use \"midstream\"; .root { value: midstream.$a; }";
+    const input =
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\@use "midstream";
+        \\$function: meta.get-function("token", $module: "midstream");
+        \\$mixins: meta.module-mixins("midstream");
+        \\.root {
+        \\  value: midstream.$a;
+        \\  direct: midstream.token(1);
+        \\  reflected: meta.call($function, 2);
+        \\}
+        \\@include midstream.emit(direct);
+        \\@include meta.apply(map.get($mixins, "emit"), reflected);
+    ;
     const source_id = try sources.add(context.root_url, input);
     var parser = try sass.Parser.init(allocator, &sources, source_id, .scss, .{}, .{});
     defer parser.deinit();
@@ -37302,10 +37647,13 @@ fn exerciseForwardAllocationFailures(
     try sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{});
     var result = try transaction.finish(.{ .format = .minified, .source_map = true });
     defer result.deinit();
-    try std.testing.expectEqualStrings("b{c:configured}.root{value:configured}", result.css());
+    try std.testing.expectEqualStrings(
+        "b{c:configured}.root{value:configured;direct:upstream-1;reflected:upstream-2}.emitted{value:direct}.emitted{value:reflected}",
+        result.css(),
+    );
     try std.testing.expectEqual(@as(usize, 2), result.dependencies().len);
     try std.testing.expectEqual(@as(usize, 2), result.edges().len);
-    try std.testing.expectEqual(@as(usize, 2), result.map().?.segments().len);
+    try std.testing.expect(result.map().?.segments().len >= 4);
 }
 
 test "native Sass configured forward handles every allocation failure" {
@@ -37318,11 +37666,29 @@ test "native Sass configured forward handles every allocation failure" {
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/_upstream.scss",
-        .data = "$a: original !default; b { c: $a; }",
+        .data =
+        \\$a: original !default;
+        \\@function token($value) { @return upstream-#{$value}; }
+        \\@mixin emit($value) { .emitted { value: $value; } }
+        \\b { c: $a; }
+        ,
     });
     try tmp.dir.writeFile(.{
         .sub_path = "root/input.scss",
-        .data = "@use \"midstream\"; .root { value: midstream.$a; }",
+        .data =
+        \\@use "sass:map";
+        \\@use "sass:meta";
+        \\@use "midstream";
+        \\$function: meta.get-function("token", $module: "midstream");
+        \\$mixins: meta.module-mixins("midstream");
+        \\.root {
+        \\  value: midstream.$a;
+        \\  direct: midstream.token(1);
+        \\  reflected: meta.call($function, 2);
+        \\}
+        \\@include midstream.emit(direct);
+        \\@include meta.apply(map.get($mixins, "emit"), reflected);
+        ,
     });
     const base = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
     defer std.testing.allocator.free(base);

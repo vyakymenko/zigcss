@@ -90,8 +90,10 @@ pub const ArgumentList = struct {
 pub const Callable = struct {
     kind: CallableKind,
     id: u32,
+    identity: u64 = 0,
     reexport_depth: u16 = 0,
     peer_argument_transport: bool = false,
+    forwarded_member: bool = false,
 };
 
 pub const CallableRemapper = struct {
@@ -450,7 +452,11 @@ fn eqlDepth(left: Value, right: Value, depth: u16) bool {
 }
 
 pub fn callableEql(left: Callable, right: Callable) bool {
-    return left.kind == right.kind and left.id == right.id;
+    if (left.kind != right.kind) return false;
+    if (left.identity != 0 and right.identity != 0) {
+        return left.identity == right.identity;
+    }
+    return left.id == right.id;
 }
 
 fn eqlString(left: String, right: String) bool {

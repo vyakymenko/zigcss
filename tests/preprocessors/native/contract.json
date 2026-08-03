@@ -128,6 +128,18 @@
             "native Sass forward resolution enforces confinement and graph limits",
             "native Sass configured forward handles every allocation failure"
           ]
+        },
+        {
+          "feature": "forward-callables",
+          "state": "native-foundation",
+          "referenceCases": [],
+          "evidenceTests": [
+            "native Sass exposes forwarded public callables without duplicate evaluation",
+            "native Sass local callables override forwarded members",
+            "native Sass forward configuration failures own exact diagnostics",
+            "native Sass forward resolution enforces confinement and graph limits",
+            "native Sass configured forward handles every allocation failure"
+          ]
         }
       ]
     },
@@ -200,6 +212,7 @@
         "local-use-pinned-resolution-foundation",
         "local-use-transitive-graph-foundation",
         "local-forward-config-foundation",
+        "local-forward-callable-foundation",
         "local-use-callable-member-foundation",
         "local-use-callable-existence-foundation",
         "local-use-callable-reference-foundation",

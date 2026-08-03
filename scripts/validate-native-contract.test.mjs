@@ -130,6 +130,17 @@ test('accepts the closed native Sass implementation contract', () => {
           'native Sass forward resolution enforces confinement and graph limits',
           'native Sass configured forward handles every allocation failure',
         ],
+      }, {
+        feature: 'forward-callables',
+        state: 'native-foundation',
+        referenceCases: [],
+        evidenceTests: [
+          'native Sass exposes forwarded public callables without duplicate evaluation',
+          'native Sass local callables override forwarded members',
+          'native Sass forward configuration failures own exact diagnostics',
+          'native Sass forward resolution enforces confinement and graph limits',
+          'native Sass configured forward handles every allocation failure',
+        ],
       }],
     },
     conformancePackage: 'NSASS-012',
@@ -138,6 +149,7 @@ test('accepts the closed native Sass implementation contract', () => {
   assert.equal(sassCore.capabilities.includes('local-use-pinned-resolution-foundation'), true)
   assert.equal(sassCore.capabilities.includes('local-use-transitive-graph-foundation'), true)
   assert.equal(sassCore.capabilities.includes('local-forward-config-foundation'), true)
+  assert.equal(sassCore.capabilities.includes('local-forward-callable-foundation'), true)
   assert.equal(sassCore.capabilities.includes('legacy-color-core'), true)
   assert.equal(sassCore.capabilities.includes('closed-named-colors'), true)
   assert.equal(sassCore.capabilities.includes('color-space-equality'), true)
