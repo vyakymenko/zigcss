@@ -856,6 +856,15 @@ fn remapLocalModuleExportCallable(
             if (target.module_index != context and
                 target.module_index < hard_modules and
                 target.callable_id < hard_callables and
+                callable.peer_argument_transport)
+                .{
+                    .kind = callable.kind,
+                    .id = callable.id,
+                    .reexport_depth = 1,
+                }
+            else if (target.module_index != context and
+                target.module_index < hard_modules and
+                target.callable_id < hard_callables and
                 callable.reexport_depth < std.math.maxInt(u16))
                 .{
                     .kind = callable.kind,
@@ -883,8 +892,9 @@ fn remapLocalModuleConfigurationCallable(
     if (context >= hard_modules) return null;
     return switch (callable.kind) {
         .builtin_function, .builtin_mixin => callable,
-        .local_module_function, .local_module_mixin => if (callable.reexport_depth >
-            max_configurable_callable_reexport_depth)
+        .local_module_function, .local_module_mixin => if (callable.peer_argument_transport or
+            callable.reexport_depth >
+                max_configurable_callable_reexport_depth)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index < context) callable else null
@@ -909,24 +919,34 @@ fn remapLocalModuleArgumentCallable(
             .{ .kind = .parent_mixin, .id = callable.id }
         else
             null,
-        .local_module_function => if (callable.reexport_depth != 0)
+        .local_module_function => if (callable.peer_argument_transport or
+            callable.reexport_depth != 0)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index == context and target.callable_id < hard_callables)
                 .{ .kind = .user_function, .id = target.callable_id }
             else if (target.module_index < hard_modules and target.callable_id < hard_callables)
-                callable
+                .{
+                    .kind = callable.kind,
+                    .id = callable.id,
+                    .peer_argument_transport = true,
+                }
             else
                 null
         else
             null,
-        .local_module_mixin => if (callable.reexport_depth != 0)
+        .local_module_mixin => if (callable.peer_argument_transport or
+            callable.reexport_depth != 0)
             null
         else if (decodeLocalModuleCallable(callable)) |target|
             if (target.module_index == context and target.callable_id < hard_callables)
                 .{ .kind = .mixin, .id = target.callable_id }
             else if (target.module_index < hard_modules and target.callable_id < hard_callables)
-                callable
+                .{
+                    .kind = callable.kind,
+                    .id = callable.id,
+                    .peer_argument_transport = true,
+                }
             else
                 null
         else
@@ -3530,6 +3550,11 @@ const Engine = struct {
                         .local_module_mixin => {
                             const target = decodeLocalModuleCallable(callable) orelse
                                 return self.metaApplyMixinFailure(span);
+                            if (callable.peer_argument_transport and
+                                (content_block != null or content_parameters.len != 0))
+                            {
+                                return self.crossEngineMixinContentFailure(span);
+                            }
                             try self.invokeLocalModuleMixin(
                                 target,
                                 &forwarded,
@@ -3743,12 +3768,7 @@ const Engine = struct {
             return self.metaApplyMixinFailure(span);
         }
         if (content_block != null or content_parameters.len != 0) {
-            try self.report(
-                .unsupported_feature,
-                span,
-                "native Sass caller mixin content transport is not implemented yet",
-            );
-            return error.UnsupportedFeature;
+            return self.crossEngineMixinContentFailure(span);
         }
         var cloned = try self.cloneEvaluatedArgumentsInto(
             parent,
@@ -3771,6 +3791,18 @@ const Engine = struct {
             depth,
             context,
         );
+    }
+
+    fn crossEngineMixinContentFailure(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.report(
+            .syntax,
+            span,
+            "Mixin doesn't accept a content block.",
+        ) catch |err| return err;
+        return error.InvalidSassSyntax;
     }
 
     fn invokeUserMixin(

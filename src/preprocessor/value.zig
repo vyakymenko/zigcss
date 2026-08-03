@@ -91,6 +91,7 @@ pub const Callable = struct {
     kind: CallableKind,
     id: u32,
     reexport_depth: u16 = 0,
+    peer_argument_transport: bool = false,
 };
 
 pub const CallableRemapper = struct {

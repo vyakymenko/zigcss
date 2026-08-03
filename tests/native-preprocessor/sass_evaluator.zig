@@ -36681,6 +36681,81 @@ fn compileWithLocalUseFilesAndTransactionLimits(
     return transaction.finish(.{ .format = .minified, .source_map = true });
 }
 
+fn expectLocalUseFailure(
+    allocator: std.mem.Allocator,
+    root_name: []const u8,
+    root_input: []const u8,
+    mode: sass.Mode,
+    files: []const LocalUseFile,
+    expected_error: anyerror,
+    expected_code: preprocessor.diagnostics.Code,
+    expected_message: []const u8,
+    expected_span: []const u8,
+) !void {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makeDir("root");
+    for (files) |file| {
+        const relative = try std.fs.path.join(allocator, &.{ "root", file.name });
+        defer allocator.free(relative);
+        if (std.fs.path.dirname(relative)) |directory| {
+            try tmp.dir.makePath(directory);
+        }
+        try tmp.dir.writeFile(.{ .sub_path = relative, .data = file.contents });
+    }
+    const root_relative = try std.fs.path.join(allocator, &.{ "root", root_name });
+    defer allocator.free(root_relative);
+    try tmp.dir.writeFile(.{ .sub_path = root_relative, .data = root_input });
+
+    const base = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, root_name });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, root_input);
+    var parser = try sass.Parser.init(allocator, &sources, source_id, mode, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        expected_error,
+        sass_evaluator.evaluate(allocator, &sources, &document, &transaction, .{}),
+    );
+    const diagnostics = transaction.diagnostics();
+    try std.testing.expectEqual(@as(usize, 1), diagnostics.len);
+    try std.testing.expectEqual(preprocessor.diagnostics.Severity.err, diagnostics[0].severity);
+    try std.testing.expectEqual(expected_code, diagnostics[0].code);
+    try std.testing.expectEqualStrings(expected_message, diagnostics[0].message);
+    try std.testing.expectEqualStrings(expected_span, try sources.slice(diagnostics[0].span));
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified, .source_map = true }),
+    );
+}
+
 test "native Sass re-exports configured callables to the retained parent" {
     const expected =
         ".owner{order:first}.middle{direct:4px}.root{direct:6px;enumerated:8px;returned:10px;nested:12px;alias:14px;function-identity:true;owner-identity:true;mixin-content:true}.direct-mixin{value:16px;content:root}.module-mixin{value:18px;content:middle}.alias-mixin{value:20px;content:alias}.state{calls:9}";
@@ -39895,18 +39970,6 @@ test "native Sass owns caller callables across one-hop local module calls" {
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
     try std.testing.expect(result.sourceMap() != null);
-    try std.testing.expectError(
-        error.UnsupportedFeature,
-        compileWithLocalUseFiles(
-            std.testing.allocator,
-            "local-caller-mixin-content-transport.scss",
-            "@use \"sass:meta\"; @use \"tools\"; @mixin caller() { @content; } $mixin: meta.get-mixin(\"caller\"); @include tools.apply-content($mixin) { .never { value: yes; } }",
-            .scss,
-            &files,
-            .{},
-        ),
-    );
-
     const indented_root =
         \\@use "sass:map" as map
         \\@use "sass:meta" as meta
@@ -39954,6 +40017,203 @@ test "native Sass owns caller callables across one-hop local module calls" {
     try std.testing.expectEqual(@as(usize, 0), sass_result.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 1), sass_result.dependencies().len);
     try std.testing.expect(sass_result.sourceMap() != null);
+}
+
+test "native Sass rejects caller and peer callable content transport through meta.apply" {
+    const cases = [_]struct {
+        name: []const u8,
+        input: []const u8,
+        mode: sass.Mode,
+        files: []const LocalUseFile,
+    }{
+        .{
+            .name = "local-caller-mixin-content-transport.scss",
+            .input =
+            \\@use "sass:meta";
+            \\@use "receiver";
+            \\@mixin caller($label) { .caller { @content($label); } }
+            \\$callable: meta.get-mixin("caller");
+            \\@include receiver.forward($callable, caller) { .never { value: caller; } }
+            ,
+            .mode = .scss,
+            .files = &.{.{
+                .name = "_receiver.scss",
+                .contents =
+                \\@use "sass:meta";
+                \\@mixin forward($callable, $label) {
+                \\  @include meta.apply($callable, $label) { @content; }
+                \\}
+                ,
+            }},
+        },
+        .{
+            .name = "local-peer-mixin-content-transport.scss",
+            .input =
+            \\@use "early";
+            \\@use "receiver";
+            \\@include receiver.forward(early.$callable, peer) { .never { value: peer; } }
+            ,
+            .mode = .scss,
+            .files = &.{
+                .{
+                    .name = "_early.scss",
+                    .contents =
+                    \\@use "sass:meta";
+                    \\@mixin callback($label) { .early { @content($label); } }
+                    \\$callable: meta.get-mixin("callback");
+                    ,
+                },
+                .{
+                    .name = "_receiver.scss",
+                    .contents =
+                    \\@use "sass:meta";
+                    \\@mixin forward($callable, $label) {
+                    \\  @include meta.apply($callable, $label) { @content; }
+                    \\}
+                    ,
+                },
+            },
+        },
+        .{
+            .name = "local-caller-mixin-content-transport.sass",
+            .input =
+            \\@use "sass:meta" as meta
+            \\@use "receiver"
+            \\@mixin caller($label)
+            \\  .caller
+            \\    @content($label)
+            \\$callable: meta.get-mixin("caller")
+            \\@include receiver.forward($callable, caller)
+            \\  .never
+            \\    value: caller
+            ,
+            .mode = .sass,
+            .files = &.{.{
+                .name = "_receiver.sass",
+                .contents =
+                \\@use "sass:meta" as meta
+                \\@mixin forward($callable, $label)
+                \\  @include meta.apply($callable, $label)
+                \\    @content
+                ,
+            }},
+        },
+        .{
+            .name = "local-peer-mixin-content-transport.sass",
+            .input =
+            \\@use "early"
+            \\@use "receiver"
+            \\@include receiver.forward(early.$callable, peer)
+            \\  .never
+            \\    value: peer
+            ,
+            .mode = .sass,
+            .files = &.{
+                .{
+                    .name = "_early.sass",
+                    .contents =
+                    \\@use "sass:meta" as meta
+                    \\@mixin callback($label)
+                    \\  .early
+                    \\    @content($label)
+                    \\$callable: meta.get-mixin("callback")
+                    ,
+                },
+                .{
+                    .name = "_receiver.sass",
+                    .contents =
+                    \\@use "sass:meta" as meta
+                    \\@mixin forward($callable, $label)
+                    \\  @include meta.apply($callable, $label)
+                    \\    @content
+                    ,
+                },
+            },
+        },
+    };
+    for (cases) |case| {
+        try std.testing.expectError(
+            error.InvalidSassSyntax,
+            compileWithLocalUseFiles(
+                std.testing.allocator,
+                case.name,
+                case.input,
+                case.mode,
+                case.files,
+                .{},
+            ),
+        );
+    }
+    for (cases[0..2]) |case| {
+        try expectLocalUseFailure(
+            std.testing.allocator,
+            case.name,
+            case.input,
+            case.mode,
+            case.files,
+            error.InvalidSassSyntax,
+            .syntax,
+            "Mixin doesn't accept a content block.",
+            "meta.apply($callable, $label)",
+        );
+    }
+}
+
+fn exerciseCrossEngineMixinContentFailureAllocations(allocator: std.mem.Allocator) !void {
+    const receiver = LocalUseFile{
+        .name = "_receiver.scss",
+        .contents =
+        \\@use "sass:meta";
+        \\@mixin forward($callable) {
+        \\  @include meta.apply($callable) { @content; }
+        \\}
+        ,
+    };
+    if (compileWithLocalUseFiles(
+        allocator,
+        "local-caller-mixin-content-transport-allocation.scss",
+        "@use \"sass:meta\"; @use \"receiver\"; @mixin caller() { @content; } $callable: meta.get-mixin(\"caller\"); @include receiver.forward($callable) { .never { value: caller; } }",
+        .scss,
+        &.{receiver},
+        .{},
+    )) |result_value| {
+        var result = result_value;
+        defer result.deinit();
+        return error.TestUnexpectedResult;
+    } else |err| switch (err) {
+        error.InvalidSassSyntax => {},
+        else => return err,
+    }
+    if (compileWithLocalUseFiles(
+        allocator,
+        "local-peer-mixin-content-transport-allocation.scss",
+        "@use \"early\"; @use \"receiver\"; @include receiver.forward(early.$callable) { .never { value: peer; } }",
+        .scss,
+        &.{
+            .{
+                .name = "_early.scss",
+                .contents = "@use \"sass:meta\"; @mixin callback() { @content; } $callable: meta.get-mixin(\"callback\");",
+            },
+            receiver,
+        },
+        .{},
+    )) |result_value| {
+        var result = result_value;
+        defer result.deinit();
+        return error.TestUnexpectedResult;
+    } else |err| switch (err) {
+        error.InvalidSassSyntax => {},
+        else => return err,
+    }
+}
+
+test "native Sass cross-engine mixin content rejection handles every allocation failure" {
+    var backing = DeterministicAllocationBacking{ .child = std.testing.allocator };
+    try std.testing.checkAllAllocationFailures(
+        backing.allocator(),
+        exerciseCrossEngineMixinContentFailureAllocations,
+        .{},
+    );
 }
 
 fn exerciseCallerCallableArgumentAllocationFailures(allocator: std.mem.Allocator) !void {
