@@ -668,6 +668,17 @@ test('binds the native Stylus evaluator and permanent execution boundary', () =>
     /native Stylus evaluator evidence.*missing/,
   )
 
+  const missingSemanticEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/stylus_evaluator.zig'), 'utf8')
+    .replace(
+      'test "native Stylus evaluates the fixed callable control operator builtin slice"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { stylusEvaluatorTests: missingSemanticEvidence }),
+    /native Stylus evaluator evidence.*missing/,
+  )
+
   const weakenedBoundary = fs
     .readFileSync(path.join(repositoryRoot, 'src/preprocessor/stylus_evaluator.zig'), 'utf8')
     .replace(
@@ -684,7 +695,7 @@ test('binds the native Stylus evaluator and permanent execution boundary', () =>
     row => row.id === 'native-stylus-semantic-core',
   )
   implementation.capabilities = implementation.capabilities.filter(
-    capability => capability !== 'permanent-use-plugin-hook-rejection',
+    capability => capability !== 'mixins-functions-control-operators-builtins',
   )
   assert.throws(
     () => validateContract(weakenedContract),

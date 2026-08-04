@@ -1,11 +1,11 @@
 //! Private bounded semantic evaluator for native Stylus syntax.
 //!
-//! The evaluator owns a fixed four-slice implementation plan. This second
-//! slice adds lexical variables, ordinary and interpolated properties,
-//! interpolated/nested selectors, and bounded numeric expressions. Mixins,
-//! functions, control flow, the broader operator/built-in surface, and imports
-//! remain explicit later slices. Project plugins and custom evaluator hooks are
-//! permanently outside this module's execution boundary.
+//! The evaluator owns a fixed four-slice implementation plan. This third
+//! slice adds bounded user functions and mixins, conditional and finite-loop
+//! control flow, comparison and remainder operators, and the deterministic
+//! `length()` and `type()` built-ins. Imports remain the terminal evaluator
+//! slice. Project plugins and custom evaluator hooks are permanently outside
+//! this module's execution boundary.
 //! In particular, external custom evaluator hooks are permanently disabled.
 
 const std = @import("std");
@@ -21,6 +21,8 @@ const native_value = @import("value.zig");
 const hard_source_bytes = 10 * 1024 * 1024;
 const hard_nodes = 1_000_000;
 const hard_expression_depth: u16 = 64;
+const hard_call_depth: u16 = 1_024;
+const hard_loop_iterations: usize = 10_000_000;
 const hard_selectors = 1_000_000;
 const hard_temporary_bytes = 20 * 1024 * 1024;
 
@@ -30,6 +32,8 @@ pub const Limits = struct {
     environment: native_environment.Limits = .{},
     values: native_value.Limits = .{},
     max_expression_depth: u16 = 32,
+    max_call_depth: u16 = 128,
+    max_loop_iterations: usize = 1_000_000,
     max_selectors: usize = 200_000,
     max_temporary_bytes: usize = 10 * 1024 * 1024,
 };
@@ -43,6 +47,7 @@ pub const Error = native_environment.Error ||
     native_value.Error || error{
     ExpressionDepthExceeded,
     InvalidDocument,
+    InvalidArguments,
     InvalidLimits,
     InvalidOperation,
     NodeLimitExceeded,
@@ -50,6 +55,7 @@ pub const Error = native_environment.Error ||
     SelectorLimitExceeded,
     SourceLimitExceeded,
     TemporaryLimitExceeded,
+    UndefinedCallable,
     UndefinedVariable,
     UnsupportedFeature,
 };
@@ -132,6 +138,9 @@ fn validateLimits(limits: Limits) Error!void {
         limits.values.max_owned_bytes > 64 * 1024 * 1024 or
         limits.max_expression_depth == 0 or
         limits.max_expression_depth > hard_expression_depth or
+        limits.max_call_depth == 0 or limits.max_call_depth > hard_call_depth or
+        limits.max_loop_iterations == 0 or
+        limits.max_loop_iterations > hard_loop_iterations or
         limits.max_selectors == 0 or limits.max_selectors > hard_selectors or
         limits.max_temporary_bytes == 0 or
         limits.max_temporary_bytes > hard_temporary_bytes)
@@ -184,13 +193,40 @@ fn requiresSemanticEvaluation(
     document: *const native_syntax.Document,
     input: []const u8,
 ) Error!bool {
-    for (document.nodes()) |node| {
-        if (node.kind == .variable) return true;
-    }
+    if (try containsSemanticStatement(document, try document.children(document.root))) return true;
     if (std.mem.indexOfScalar(u8, input, '{') != null) return false;
     for (document.nodes(), 0..) |node, index| {
         if (node.kind != .rule) continue;
         if ((try document.children(.{ .value = @intCast(index) })).len > 1) return true;
+    }
+    return false;
+}
+
+fn containsSemanticStatement(
+    document: *const native_syntax.Document,
+    statements: []const native_syntax.NodeId,
+) Error!bool {
+    for (statements) |statement_id| {
+        const statement = try document.get(statement_id);
+        switch (statement.kind) {
+            .variable,
+            .function,
+            .mixin,
+            .conditional,
+            .loop,
+            .return_statement,
+            .expression,
+            => return true,
+            else => {},
+        }
+        for (try document.children(statement_id)) |child_id| {
+            const child = try document.get(child_id);
+            if (child.kind == .block and
+                try containsSemanticStatement(document, try document.children(child_id)))
+            {
+                return true;
+            }
+        }
     }
     return false;
 }
@@ -210,22 +246,6 @@ fn preflightStatements(
                     .unsupported_feature,
                     statement.span,
                     "native Stylus imports are not implemented in this evaluator slice",
-                    &.{},
-                );
-                return error.UnsupportedFeature;
-            },
-            .mixin,
-            .function,
-            .conditional,
-            .loop,
-            .return_statement,
-            .expression,
-            => {
-                try transaction.report(
-                    .err,
-                    .unsupported_feature,
-                    statement.span,
-                    "native Stylus construct is not implemented in this evaluator slice",
                     &.{},
                 );
                 return error.UnsupportedFeature;
@@ -306,7 +326,6 @@ fn isDeferredBuiltin(name: []const u8) bool {
         "hue",
         "image-size",
         "json",
-        "length",
         "lightness",
         "list-separator",
         "lookup",
@@ -337,7 +356,6 @@ fn isDeferredBuiltin(name: []const u8) bool {
         "tan",
         "trace",
         "transparentify",
-        "type",
         "type-of",
         "typeof",
         "unit",
@@ -368,6 +386,22 @@ const Assignment = struct {
     conditional: bool,
 };
 
+const Call = struct {
+    name: ByteRange,
+    arguments: ByteRange,
+};
+
+const Definition = struct {
+    name: ByteRange,
+    parameters: ByteRange,
+};
+
+const Callable = struct {
+    name: []const u8,
+    node_id: native_syntax.NodeId,
+    scope: native_environment.ScopeId,
+};
+
 const RenderedDeclaration = struct {
     span: native_source.Span,
     property: []u8,
@@ -385,6 +419,11 @@ const NestedRule = struct {
     scope: native_environment.ScopeId,
 };
 
+const RuleOutput = struct {
+    declarations: *std.ArrayList(RenderedDeclaration),
+    nested: *std.ArrayList(NestedRule),
+};
+
 const Engine = struct {
     allocator: std.mem.Allocator,
     sources: *const native_source.Table,
@@ -393,6 +432,9 @@ const Engine = struct {
     limits: Limits,
     values: native_value.Store,
     environment: native_environment.Environment,
+    callables: std.ArrayList(Callable) = .empty,
+    call_depth: u16 = 0,
+    loop_iterations: usize = 0,
     selector_count: usize = 0,
     temporary_bytes: usize = 0,
 
@@ -421,6 +463,7 @@ const Engine = struct {
     }
 
     fn deinit(self: *Engine) void {
+        self.callables.deinit(self.allocator);
         self.environment.deinit();
         self.values.deinit();
         self.* = undefined;
@@ -435,11 +478,54 @@ const Engine = struct {
             const child = try self.document.get(child_id);
             switch (child.kind) {
                 .variable => try self.assign(child_id, &scope),
+                .function, .mixin => try self.registerCallable(child_id, scope),
                 .rule => try self.emitRule(child_id, scope, null),
                 .comment => {},
+                .return_statement => {
+                    try self.transaction.report(
+                        .err,
+                        .invalid_operation,
+                        child.span,
+                        "native Stylus return is only valid inside a function",
+                        &.{},
+                    );
+                    return error.InvalidOperation;
+                },
                 else => return error.InvalidDocument,
             }
         }
+    }
+
+    fn registerCallable(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+        scope: native_environment.ScopeId,
+    ) Error!void {
+        const node = try self.document.get(node_id);
+        const text = node.text orelse return error.InvalidDocument;
+        const raw = try self.sources.slice(text);
+        const definition = parseDefinition(raw) orelse {
+            try self.reportInvalidArguments(text);
+            return error.InvalidArguments;
+        };
+        const name = raw[definition.name.start..definition.name.end];
+        for (self.callables.items) |item| {
+            if (std.mem.eql(u8, item.name, name)) {
+                try self.transaction.report(
+                    .err,
+                    .duplicate_binding,
+                    text,
+                    "native Stylus callable is already defined",
+                    &.{},
+                );
+                return error.InvalidArguments;
+            }
+        }
+        try self.callables.append(self.allocator, .{
+            .name = name,
+            .node_id = node_id,
+            .scope = scope,
+        });
     }
 
     fn assign(
@@ -466,7 +552,7 @@ const Engine = struct {
             return;
         }
         const evaluated = try self.evaluateValue(text, assignment.value, scope.*, 0);
-        scope.* = try self.environment.set(scope.*, assignment.name, evaluated);
+        scope.* = try self.setBinding(scope.*, assignment.name, evaluated, text);
     }
 
     fn emitRule(
@@ -512,20 +598,13 @@ const Engine = struct {
         var nested: std.ArrayList(NestedRule) = .empty;
         defer nested.deinit(self.allocator);
 
-        for (try self.document.children(children[1])) |child_id| {
-            const child = try self.document.get(child_id);
-            switch (child.kind) {
-                .variable => try self.assign(child_id, &scope),
-                .declaration => {
-                    var rendered_declaration = try self.renderDeclaration(child_id, scope);
-                    errdefer rendered_declaration.deinit(self.allocator);
-                    try declarations.append(self.allocator, rendered_declaration);
-                },
-                .rule => try nested.append(self.allocator, .{ .id = child_id, .scope = scope }),
-                .comment => {},
-                else => return error.InvalidDocument,
-            }
-        }
+        const returned = try self.executeStatements(
+            try self.document.children(children[1]),
+            &scope,
+            .{ .declarations = &declarations, .nested = &nested },
+            false,
+        );
+        if (returned != null) return error.InvalidDocument;
 
         if (declarations.items.len > 0) {
             try self.transaction.emitMapped(selector_node.text.?, null, selector);
@@ -541,6 +620,294 @@ const Engine = struct {
         for (nested.items) |child| {
             try self.emitRule(child.id, child.scope, selector);
         }
+    }
+
+    fn executeStatements(
+        self: *Engine,
+        statements: []const native_syntax.NodeId,
+        scope: *native_environment.ScopeId,
+        output: ?RuleOutput,
+        allow_return: bool,
+    ) Error!?*const native_value.Value {
+        var previous_condition: ?bool = null;
+        for (statements) |statement_id| {
+            const statement = try self.document.get(statement_id);
+            switch (statement.kind) {
+                .variable => {
+                    previous_condition = null;
+                    try self.assign(statement_id, scope);
+                },
+                .function, .mixin => {
+                    previous_condition = null;
+                    try self.registerCallable(statement_id, scope.*);
+                },
+                .declaration => {
+                    previous_condition = null;
+                    const destination = output orelse return error.InvalidDocument;
+                    var declaration = try self.renderDeclaration(statement_id, scope.*);
+                    errdefer declaration.deinit(self.allocator);
+                    try destination.declarations.append(self.allocator, declaration);
+                },
+                .rule => {
+                    previous_condition = null;
+                    const destination = output orelse return error.InvalidDocument;
+                    try destination.nested.append(
+                        self.allocator,
+                        .{ .id = statement_id, .scope = scope.* },
+                    );
+                },
+                .expression => {
+                    previous_condition = null;
+                    const destination = output orelse return error.InvalidDocument;
+                    try self.invokeMixinStatement(statement_id, scope, destination);
+                },
+                .conditional => {
+                    const text = statement.text orelse return error.InvalidDocument;
+                    const raw = std.mem.trim(
+                        u8,
+                        try self.sources.slice(text),
+                        " \t\r\n\x0c;",
+                    );
+                    var selected = false;
+                    if (startsWordAscii(raw, "else")) {
+                        selected = !(previous_condition orelse {
+                            try self.reportInvalidOperation(text);
+                            return error.InvalidOperation;
+                        });
+                    } else {
+                        const condition = parseConditionHeader(raw) orelse {
+                            try self.reportInvalidOperation(text);
+                            return error.InvalidOperation;
+                        };
+                        selected = try self.evaluateCondition(
+                            text,
+                            condition.expression,
+                            scope.*,
+                        );
+                        if (condition.negated) selected = !selected;
+                        previous_condition = selected;
+                    }
+                    if (startsWordAscii(raw, "else")) previous_condition = null;
+                    if (!selected) continue;
+                    const block = try self.statementBlock(statement_id);
+                    var child_scope = self.environment.push(scope.*) catch |failure| {
+                        try self.reportResource(
+                            statement.span,
+                            "native Stylus lexical scope limit exceeded",
+                        );
+                        return failure;
+                    };
+                    if (try self.executeStatements(
+                        try self.document.children(block),
+                        &child_scope,
+                        output,
+                        allow_return,
+                    )) |returned| return returned;
+                },
+                .loop => {
+                    previous_condition = null;
+                    if (try self.executeLoop(statement_id, scope.*, output, allow_return)) |returned| {
+                        return returned;
+                    }
+                },
+                .return_statement => {
+                    previous_condition = null;
+                    if (!allow_return) {
+                        try self.reportInvalidOperation(statement.span);
+                        return error.InvalidOperation;
+                    }
+                    const text = statement.text orelse return error.InvalidDocument;
+                    const raw = std.mem.trim(
+                        u8,
+                        try self.sources.slice(text),
+                        " \t\r\n\x0c;",
+                    );
+                    if (!startsWordAscii(raw, "return")) return error.InvalidDocument;
+                    const expression = std.mem.trim(u8, raw["return".len..], " \t\r\n\x0c");
+                    if (expression.len == 0) return self.ownValue(text, .{ .null_value = {} });
+                    return try self.evaluateValue(text, expression, scope.*, 0);
+                },
+                .comment => previous_condition = null,
+                else => return error.InvalidDocument,
+            }
+        }
+        return null;
+    }
+
+    fn statementBlock(
+        self: *const Engine,
+        statement_id: native_syntax.NodeId,
+    ) Error!native_syntax.NodeId {
+        const children = try self.document.children(statement_id);
+        if (children.len == 0) return error.InvalidDocument;
+        const block_id = children[children.len - 1];
+        if ((try self.document.get(block_id)).kind != .block) return error.InvalidDocument;
+        return block_id;
+    }
+
+    fn invokeMixinStatement(
+        self: *Engine,
+        statement_id: native_syntax.NodeId,
+        scope: *native_environment.ScopeId,
+        output: RuleOutput,
+    ) Error!void {
+        const statement = try self.document.get(statement_id);
+        const text = statement.text orelse return error.InvalidDocument;
+        const raw = std.mem.trim(u8, try self.sources.slice(text), " \t\r\n\x0c;");
+        const call = parseCall(raw) orelse {
+            try self.reportUndefinedCallable(text);
+            return error.UndefinedCallable;
+        };
+        const returned = try self.invokeUserCallable(text, raw, call, scope.*, output, false);
+        if (returned != null) return error.InvalidDocument;
+    }
+
+    fn invokeUserCallable(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        caller_scope: native_environment.ScopeId,
+        output: ?RuleOutput,
+        require_return: bool,
+    ) Error!?*const native_value.Value {
+        const name = raw[call.name.start..call.name.end];
+        const callable = self.findCallable(name) orelse {
+            try self.reportUndefinedCallable(span);
+            return error.UndefinedCallable;
+        };
+        if (self.call_depth >= self.limits.max_call_depth) {
+            try self.transaction.report(
+                .err,
+                .call_limit,
+                span,
+                "native Stylus call depth exceeded",
+                &.{},
+            );
+            return error.CallDepthExceeded;
+        }
+        self.call_depth += 1;
+        self.transaction.enterCall() catch |failure| {
+            self.call_depth -= 1;
+            return failure;
+        };
+        defer {
+            self.call_depth -= 1;
+            self.transaction.leaveCall() catch {};
+        }
+
+        const definition_node = try self.document.get(callable.node_id);
+        const definition_span = definition_node.text orelse return error.InvalidDocument;
+        const definition_raw = try self.sources.slice(definition_span);
+        const definition = parseDefinition(definition_raw) orelse return error.InvalidDocument;
+        var parameters = try splitTopLevel(
+            self.allocator,
+            definition_raw[definition.parameters.start..definition.parameters.end],
+            ',',
+        );
+        defer parameters.deinit(self.allocator);
+        var arguments = try splitTopLevel(
+            self.allocator,
+            raw[call.arguments.start..call.arguments.end],
+            ',',
+        );
+        defer arguments.deinit(self.allocator);
+        if (definition.parameters.start == definition.parameters.end) parameters.clearRetainingCapacity();
+        if (call.arguments.start == call.arguments.end) arguments.clearRetainingCapacity();
+        if (parameters.items.len != arguments.items.len) {
+            try self.reportInvalidArguments(span);
+            return error.InvalidArguments;
+        }
+
+        var call_scope = self.environment.push(callable.scope) catch |failure| {
+            try self.reportResource(span, "native Stylus lexical scope limit exceeded");
+            return failure;
+        };
+        for (parameters.items, arguments.items) |parameter_range, argument_range| {
+            const parameter = std.mem.trim(
+                u8,
+                definition_raw[definition.parameters.start + parameter_range.start .. definition.parameters.start + parameter_range.end],
+                " \t\r\n\x0c",
+            );
+            if (!validVariableName(parameter)) {
+                try self.reportInvalidArguments(definition_span);
+                return error.InvalidArguments;
+            }
+            const argument_raw = raw[call.arguments.start + argument_range.start .. call.arguments.start + argument_range.end];
+            const argument = try self.evaluateValue(span, argument_raw, caller_scope, 0);
+            call_scope = try self.setBinding(call_scope, parameter, argument, span);
+        }
+
+        const block = try self.statementBlock(callable.node_id);
+        const returned = try self.executeStatements(
+            try self.document.children(block),
+            &call_scope,
+            output,
+            true,
+        );
+        if (require_return and returned == null) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        return returned;
+    }
+
+    fn findCallable(self: *const Engine, name: []const u8) ?Callable {
+        var index = self.callables.items.len;
+        while (index > 0) {
+            index -= 1;
+            if (std.mem.eql(u8, self.callables.items[index].name, name)) {
+                return self.callables.items[index];
+            }
+        }
+        return null;
+    }
+
+    fn executeLoop(
+        self: *Engine,
+        statement_id: native_syntax.NodeId,
+        parent_scope: native_environment.ScopeId,
+        output: ?RuleOutput,
+        allow_return: bool,
+    ) Error!?*const native_value.Value {
+        const statement = try self.document.get(statement_id);
+        const text = statement.text orelse return error.InvalidDocument;
+        const raw = std.mem.trim(u8, try self.sources.slice(text), " \t\r\n\x0c;");
+        const loop = parseLoop(raw) orelse {
+            try self.reportInvalidOperation(text);
+            return error.InvalidOperation;
+        };
+        var items = try splitTopLevelWhitespace(self.allocator, loop.items);
+        defer items.deinit(self.allocator);
+        const block = try self.statementBlock(statement_id);
+        for (items.items) |item_range| {
+            if (self.loop_iterations >= self.limits.max_loop_iterations) {
+                try self.transaction.report(
+                    .err,
+                    .loop_limit,
+                    text,
+                    "native Stylus loop iteration limit exceeded",
+                    &.{},
+                );
+                return error.LoopLimitExceeded;
+            }
+            self.loop_iterations += 1;
+            try self.transaction.consumeLoopIterations(1);
+            var loop_scope = self.environment.push(parent_scope) catch |failure| {
+                try self.reportResource(text, "native Stylus lexical scope limit exceeded");
+                return failure;
+            };
+            const item_raw = loop.items[item_range.start..item_range.end];
+            const value = try self.evaluateValue(text, item_raw, parent_scope, 0);
+            loop_scope = try self.setBinding(loop_scope, loop.name, value, text);
+            if (try self.executeStatements(
+                try self.document.children(block),
+                &loop_scope,
+                output,
+                allow_return,
+            )) |returned| return returned;
+        }
+        return null;
     }
 
     fn renderDeclaration(
@@ -600,6 +967,24 @@ const Engine = struct {
             return self.ownValue(span, .{ .boolean = false });
         }
 
+        if (parseCall(input)) |call| {
+            const name = input[call.name.start..call.name.end];
+            if (native_lexer.identifierEqlIgnoreCaseAscii(name, "length")) {
+                return self.evaluateLengthBuiltin(span, input, call, scope);
+            }
+            if (native_lexer.identifierEqlIgnoreCaseAscii(name, "type")) {
+                return self.evaluateTypeBuiltin(span, input, call, scope);
+            }
+            return (try self.invokeUserCallable(
+                span,
+                input,
+                call,
+                scope,
+                null,
+                true,
+            )).?;
+        }
+
         if (looksNumeric(input)) {
             var parser = NumericParser{
                 .input = input,
@@ -626,6 +1011,128 @@ const Engine = struct {
             }
         }
         return self.ownValue(span, .{ .string = .{ .bytes = input } });
+    }
+
+    fn evaluateLengthBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        _ = scope;
+        var arguments = try splitTopLevel(
+            self.allocator,
+            raw[call.arguments.start..call.arguments.end],
+            ',',
+        );
+        defer arguments.deinit(self.allocator);
+        if (call.arguments.start == call.arguments.end) arguments.clearRetainingCapacity();
+        if (arguments.items.len != 1) {
+            try self.reportInvalidArguments(span);
+            return error.InvalidArguments;
+        }
+        const argument = std.mem.trim(
+            u8,
+            raw[call.arguments.start + arguments.items[0].start .. call.arguments.start + arguments.items[0].end],
+            " \t\r\n\x0c",
+        );
+        var items = try splitTopLevelWhitespace(self.allocator, argument);
+        defer items.deinit(self.allocator);
+        const count = if (argument.len == 0) 0 else items.items.len;
+        const numeric = native_numeric.Numeric.init(@floatFromInt(count), null) catch unreachable;
+        var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+        var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+        return self.ownValue(span, .{
+            .number = numeric.toNumber(&numerator, &denominator) catch unreachable,
+        });
+    }
+
+    fn evaluateTypeBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        var arguments = try splitTopLevel(
+            self.allocator,
+            raw[call.arguments.start..call.arguments.end],
+            ',',
+        );
+        defer arguments.deinit(self.allocator);
+        if (call.arguments.start == call.arguments.end) arguments.clearRetainingCapacity();
+        if (arguments.items.len != 1) {
+            try self.reportInvalidArguments(span);
+            return error.InvalidArguments;
+        }
+        const argument = raw[call.arguments.start + arguments.items[0].start .. call.arguments.start + arguments.items[0].end];
+        const value = try self.evaluateValue(span, argument, scope, 0);
+        const label: []const u8 = switch (value.*) {
+            .number => "unit",
+            .string, .selector => "string",
+            .boolean => "boolean",
+            .list => "expression",
+            .map => "object",
+            .null_value => "null",
+            .color => "rgba",
+            .callable => "function",
+            .argument_list => "arguments",
+        };
+        return self.ownValue(span, .{ .string = .{ .bytes = label, .quoted = true } });
+    }
+
+    fn evaluateCondition(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!bool {
+        const rendered = try self.renderRawOwned(span, raw, scope, .value, 0);
+        defer self.allocator.free(rendered);
+        const input = std.mem.trim(u8, rendered, " \t\r\n\x0c;");
+        if (findComparison(input)) |comparison| {
+            const left = try self.evaluateValue(
+                span,
+                input[0..comparison.start],
+                scope,
+                0,
+            );
+            const right = try self.evaluateValue(
+                span,
+                input[comparison.end..],
+                scope,
+                0,
+            );
+            return self.compareValues(span, left, right, comparison.operator);
+        }
+        return isTruthy(try self.evaluateValue(span, input, scope, 0));
+    }
+
+    fn compareValues(
+        self: *Engine,
+        span: native_source.Span,
+        left: *const native_value.Value,
+        right: *const native_value.Value,
+        operator: ComparisonOperator,
+    ) Error!bool {
+        if (operator == .equal or operator == .not_equal) {
+            const equal = native_value.eql(left.*, right.*);
+            return if (operator == .equal) equal else !equal;
+        }
+        if (left.* != .number or right.* != .number or
+            !numberUnitsEqual(left.number, right.number))
+        {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        return switch (operator) {
+            .greater => left.number.value > right.number.value,
+            .greater_equal => left.number.value >= right.number.value,
+            .less => left.number.value < right.number.value,
+            .less_equal => left.number.value <= right.number.value,
+            else => unreachable,
+        };
     }
 
     fn ownValue(
@@ -941,6 +1448,22 @@ const Engine = struct {
         try self.transaction.report(.err, .resource_limit, span, message, &.{});
     }
 
+    fn setBinding(
+        self: *Engine,
+        scope: native_environment.ScopeId,
+        name: []const u8,
+        value: *const native_value.Value,
+        span: native_source.Span,
+    ) Error!native_environment.ScopeId {
+        return self.environment.set(scope, name, value) catch |failure| {
+            switch (failure) {
+                error.BindingLimitExceeded, error.NameLimitExceeded, error.ScopeLimitExceeded => try self.reportResource(span, "native Stylus lexical environment limit exceeded"),
+                else => {},
+            }
+            return failure;
+        };
+    }
+
     fn reportSelectorLimit(self: *Engine, span: native_source.Span) Error!void {
         try self.reportResource(span, "native Stylus selector limit exceeded");
     }
@@ -954,11 +1477,279 @@ const Engine = struct {
             .err,
             .invalid_operation,
             span,
-            "native Stylus numeric expression is invalid",
+            "native Stylus expression is invalid",
+            &.{},
+        );
+    }
+
+    fn reportInvalidArguments(self: *Engine, span: native_source.Span) Error!void {
+        try self.transaction.report(
+            .err,
+            .type_mismatch,
+            span,
+            "native Stylus callable arguments are invalid",
+            &.{},
+        );
+    }
+
+    fn reportUndefinedCallable(self: *Engine, span: native_source.Span) Error!void {
+        try self.transaction.report(
+            .err,
+            .invalid_operation,
+            span,
+            "native Stylus callable is undefined",
             &.{},
         );
     }
 };
+
+const ConditionHeader = struct {
+    expression: []const u8,
+    negated: bool,
+};
+
+const LoopHeader = struct {
+    name: []const u8,
+    items: []const u8,
+};
+
+const ComparisonOperator = enum {
+    equal,
+    not_equal,
+    greater,
+    greater_equal,
+    less,
+    less_equal,
+};
+
+const Comparison = struct {
+    start: usize,
+    end: usize,
+    operator: ComparisonOperator,
+};
+
+fn parseCall(raw_input: []const u8) ?Call {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    if (raw.len < 3 or !isNameStart(raw, 0)) return null;
+    const name_end = nameEnd(raw, 0);
+    var opening = name_end;
+    while (opening < raw.len and std.ascii.isWhitespace(raw[opening])) opening += 1;
+    if (opening >= raw.len or raw[opening] != '(') return null;
+    const closing = matchingParen(raw, opening) orelse return null;
+    if (std.mem.trim(u8, raw[closing + 1 ..], " \t\r\n\x0c;").len != 0) return null;
+    return .{
+        .name = .{ .start = 0, .end = name_end },
+        .arguments = .{ .start = opening + 1, .end = closing },
+    };
+}
+
+fn parseDefinition(raw: []const u8) ?Definition {
+    const call = parseCall(raw) orelse return null;
+    return .{ .name = call.name, .parameters = call.arguments };
+}
+
+fn parseConditionHeader(raw: []const u8) ?ConditionHeader {
+    const keyword: []const u8 = if (startsWordAscii(raw, "if"))
+        "if"
+    else if (startsWordAscii(raw, "unless"))
+        "unless"
+    else
+        return null;
+    const expression = std.mem.trim(u8, raw[keyword.len..], " \t\r\n\x0c;");
+    if (expression.len == 0) return null;
+    return .{
+        .expression = expression,
+        .negated = std.mem.eql(u8, keyword, "unless"),
+    };
+}
+
+fn parseLoop(raw: []const u8) ?LoopHeader {
+    const keyword: []const u8 = if (startsWordAscii(raw, "for"))
+        "for"
+    else if (startsWordAscii(raw, "each"))
+        "each"
+    else
+        return null;
+    const body = std.mem.trim(u8, raw[keyword.len..], " \t\r\n\x0c;");
+    var cursor: usize = 0;
+    while (cursor < body.len and !std.ascii.isWhitespace(body[cursor])) cursor += 1;
+    const name = body[0..cursor];
+    if (!validVariableName(name)) return null;
+    while (cursor < body.len and std.ascii.isWhitespace(body[cursor])) cursor += 1;
+    if (cursor + 2 > body.len or !std.ascii.eqlIgnoreCase(body[cursor .. cursor + 2], "in")) {
+        return null;
+    }
+    cursor += 2;
+    if (cursor < body.len and !std.ascii.isWhitespace(body[cursor])) return null;
+    const items = std.mem.trim(u8, body[cursor..], " \t\r\n\x0c;");
+    if (items.len == 0) return null;
+    return .{ .name = name, .items = items };
+}
+
+fn startsWordAscii(raw: []const u8, expected: []const u8) bool {
+    if (raw.len < expected.len or !std.ascii.eqlIgnoreCase(raw[0..expected.len], expected)) {
+        return false;
+    }
+    return raw.len == expected.len or std.ascii.isWhitespace(raw[expected.len]) or
+        raw[expected.len] == '(' or raw[expected.len] == ';';
+}
+
+fn matchingParen(raw: []const u8, opening: usize) ?usize {
+    if (opening >= raw.len or raw[opening] != '(') return null;
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    var index = opening;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '(') depth += 1;
+        if (byte == ')') {
+            depth -= 1;
+            if (depth == 0) return index;
+        }
+    }
+    return null;
+}
+
+fn splitTopLevelWhitespace(
+    allocator: std.mem.Allocator,
+    raw: []const u8,
+) std.mem.Allocator.Error!std.ArrayList(ByteRange) {
+    var output: std.ArrayList(ByteRange) = .empty;
+    errdefer output.deinit(allocator);
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    var start: ?usize = null;
+    for (raw, 0..) |byte, index| {
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            if (start == null) start = index;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            if (start == null) start = index;
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (std.ascii.isWhitespace(byte) and depth == 0) {
+            if (start) |item_start| {
+                try output.append(allocator, .{ .start = item_start, .end = index });
+                start = null;
+            }
+            continue;
+        }
+        if (start == null) start = index;
+    }
+    if (start) |item_start| {
+        try output.append(allocator, .{ .start = item_start, .end = raw.len });
+    }
+    return output;
+}
+
+fn findComparison(raw: []const u8) ?Comparison {
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    var index: usize = 0;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (depth != 0) continue;
+        if (index + 1 < raw.len) {
+            const pair = raw[index .. index + 2];
+            if (std.mem.eql(u8, pair, "==")) return .{
+                .start = index,
+                .end = index + 2,
+                .operator = .equal,
+            };
+            if (std.mem.eql(u8, pair, "!=")) return .{
+                .start = index,
+                .end = index + 2,
+                .operator = .not_equal,
+            };
+            if (std.mem.eql(u8, pair, ">=")) return .{
+                .start = index,
+                .end = index + 2,
+                .operator = .greater_equal,
+            };
+            if (std.mem.eql(u8, pair, "<=")) return .{
+                .start = index,
+                .end = index + 2,
+                .operator = .less_equal,
+            };
+        }
+        if (byte == '>') return .{ .start = index, .end = index + 1, .operator = .greater };
+        if (byte == '<') return .{ .start = index, .end = index + 1, .operator = .less };
+    }
+    return null;
+}
+
+fn isTruthy(value: *const native_value.Value) bool {
+    return switch (value.*) {
+        .null_value => false,
+        .boolean => |item| item,
+        else => true,
+    };
+}
+
+fn numberUnitsEqual(left: native_value.Number, right: native_value.Number) bool {
+    if (left.numerator_units.len != right.numerator_units.len or
+        left.denominator_units.len != right.denominator_units.len)
+    {
+        return false;
+    }
+    for (left.numerator_units, right.numerator_units) |unit, other| {
+        if (!std.mem.eql(u8, unit, other)) return false;
+    }
+    for (left.denominator_units, right.denominator_units) |unit, other| {
+        if (!std.mem.eql(u8, unit, other)) return false;
+    }
+    return true;
+}
 
 fn parseAssignment(raw_input: []const u8) ?Assignment {
     const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
@@ -1216,11 +2007,18 @@ const NumericParser = struct {
         while (true) {
             self.skipWhitespace();
             const operation = self.peek();
-            if (operation != '*' and operation != '/') return result;
+            if (operation != '*' and operation != '/' and operation != '%') return result;
             if (operation == '/' and depth == 0) return result;
             self.cursor += 1;
             const right = try self.parsePrimary(depth);
-            result = try native_numeric.multiply(result, right, operation);
+            if (operation == '%') {
+                if (!right.isDimensionless() or right.value == 0) {
+                    return error.InvalidExpression;
+                }
+                result.value = @mod(result.value, right.value);
+            } else {
+                result = try native_numeric.multiply(result, right, operation);
+            }
         }
     }
 

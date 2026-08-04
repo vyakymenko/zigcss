@@ -701,6 +701,7 @@
         "plain-css-transaction",
         "permanent-use-plugin-hook-rejection",
         "variables-properties-selectors-expressions",
+        "mixins-functions-control-operators-builtins",
         "resource-cancellation",
         "allocation-failure"
       ],

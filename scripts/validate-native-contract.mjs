@@ -731,6 +731,7 @@ const expectedImplementations = Object.freeze([
       'plain-css-transaction',
       'permanent-use-plugin-hook-rejection',
       'variables-properties-selectors-expressions',
+      'mixins-functions-control-operators-builtins',
       'resource-cancellation',
       'allocation-failure',
     ]),
@@ -1161,6 +1162,9 @@ function validateStylusEvaluator(selection, source, tests, plan) {
     'native Stylus imports remain explicit before their evaluator slice',
     'native Stylus evaluates the fixed variable property selector expression slice',
     'native Stylus semantic failures own diagnostics without partial CSS',
+    'native Stylus evaluates the fixed callable control operator builtin slice',
+    'native Stylus callable control slice fails closed with exact diagnostics',
+    'native Stylus semantic values and bindings retain finite ceilings',
     'native Stylus plain CSS foundation owns resource and cancellation boundaries',
     'native Stylus transaction handles every allocation failure',
   ]) {

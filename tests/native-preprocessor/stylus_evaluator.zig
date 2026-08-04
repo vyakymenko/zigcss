@@ -50,6 +50,24 @@ fn expectSemanticRejection(
     expected_message: []const u8,
     expected_start: u32,
 ) !void {
+    return expectSemanticRejectionWithLimits(
+        input,
+        .{},
+        expected_error,
+        expected_code,
+        expected_message,
+        expected_start,
+    );
+}
+
+fn expectSemanticRejectionWithLimits(
+    input: []const u8,
+    limits: stylus_evaluator.Limits,
+    expected_error: anyerror,
+    expected_code: diagnostics.Code,
+    expected_message: []const u8,
+    expected_start: u32,
+) !void {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
@@ -86,7 +104,7 @@ fn expectSemanticRejection(
 
     try std.testing.expectError(
         expected_error,
-        stylus_evaluator.evaluate(&sources, &document, &transaction, .{}),
+        stylus_evaluator.evaluate(&sources, &document, &transaction, limits),
     );
     try std.testing.expectEqual(
         evaluator.GeneratedPosition{ .line = 0, .column = 0 },
@@ -209,12 +227,154 @@ test "native Stylus semantic failures own diagnostics without partial CSS" {
     try expectSemanticRejection(
         \\base = 1px
         \\.a
-        \\  width length(base)
+        \\  width push(base)
     ,
         error.UnsupportedFeature,
         .unsupported_feature,
         "native Stylus built-in functions are not implemented in this evaluator slice",
         22,
+    );
+}
+
+test "native Stylus evaluates the fixed callable control operator builtin slice" {
+    const input =
+        \\factor = 2
+        \\bump(value)
+        \\  return value * factor
+        \\box(value)
+        \\  padding value
+        \\  if value > 2px
+        \\    margin value + 1px
+        \\  else
+        \\    margin 0
+        \\  for side in top right
+        \\    border-{side}-width value % 3
+        \\.card
+        \\  box(bump(2px))
+        \\  count length(1 2 3)
+        \\  kind type(4px)
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".card{padding:4px;margin:5px;border-top-width:1px;" ++
+            "border-right-width:1px;count:3;kind:'unit'}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+    try std.testing.expect(first.map() != null);
+    try std.testing.expect(first.map().?.segments().len >= 7);
+}
+
+test "native Stylus callable control slice fails closed with exact diagnostics" {
+    const missing =
+        \\.a
+        \\  missing(1)
+    ;
+    try expectSemanticRejection(
+        missing,
+        error.UndefinedCallable,
+        .invalid_operation,
+        "native Stylus callable is undefined",
+        @intCast(std.mem.indexOf(u8, missing, "missing").?),
+    );
+
+    const recursive =
+        \\countdown(value)
+        \\  if value > 0
+        \\    return countdown(value - 1)
+        \\  return 0
+        \\.a
+        \\  width countdown(2)
+    ;
+    var terminal_calls = stylus_evaluator.Limits{};
+    terminal_calls.max_call_depth = 3;
+    var result = try compile(std.testing.allocator, recursive, terminal_calls);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".a{width:0}", result.css());
+
+    var over_calls = terminal_calls;
+    over_calls.max_call_depth = 2;
+    try expectSemanticRejectionWithLimits(
+        recursive,
+        over_calls,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.indexOf(u8, recursive, "return countdown").?),
+    );
+
+    const finite_loop =
+        \\box()
+        \\  for side in top right
+        \\    border-{side}-width 1px
+        \\.a
+        \\  box()
+    ;
+    var terminal_loop = stylus_evaluator.Limits{};
+    terminal_loop.max_loop_iterations = 2;
+    var loop_result = try compile(std.testing.allocator, finite_loop, terminal_loop);
+    defer loop_result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{border-top-width:1px;border-right-width:1px}",
+        loop_result.css(),
+    );
+
+    var over_loop = terminal_loop;
+    over_loop.max_loop_iterations = 1;
+    try expectSemanticRejectionWithLimits(
+        finite_loop,
+        over_loop,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(u8, finite_loop, "for side").?),
+    );
+}
+
+test "native Stylus semantic values and bindings retain finite ceilings" {
+    const value_input =
+        \\base = 1px
+        \\.a
+        \\  width base
+    ;
+    var terminal_values = stylus_evaluator.Limits{};
+    terminal_values.values.max_values = 2;
+    var value_result = try compile(std.testing.allocator, value_input, terminal_values);
+    defer value_result.deinit();
+    try std.testing.expectEqualStrings(".a{width:1px}", value_result.css());
+
+    var over_values = terminal_values;
+    over_values.values.max_values = 1;
+    try expectSemanticRejectionWithLimits(
+        value_input,
+        over_values,
+        error.ValueLimitExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.lastIndexOf(u8, value_input, "base").?),
+    );
+
+    const binding_input =
+        \\base = 1px
+        \\.a
+        \\  local = base
+        \\  width local
+    ;
+    var over_bindings = stylus_evaluator.Limits{};
+    over_bindings.environment.max_bindings = 1;
+    try expectSemanticRejectionWithLimits(
+        binding_input,
+        over_bindings,
+        error.BindingLimitExceeded,
+        .resource_limit,
+        "native Stylus lexical environment limit exceeded",
+        @intCast(std.mem.indexOf(u8, binding_input, "local =").?),
     );
 }
 
@@ -371,20 +531,27 @@ test "native Stylus plain CSS foundation owns resource and cancellation boundari
 fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
-        "base = 8px\n" ++
-            "name = 'card'\n" ++
-            ".{name}, .panel\n" ++
-            "  local = base + 2px\n" ++
-            "  width local * 2\n" ++
-            "  border-{name} 1px + 1px\n" ++
-            "  &:hover\n" ++
-            "    width local\n",
+        "factor = 2\n" ++
+            "bump(value)\n" ++
+            "  return value * factor\n" ++
+            "box(value)\n" ++
+            "  padding value\n" ++
+            "  if value > 2px\n" ++
+            "    margin value + 1px\n" ++
+            "  else\n" ++
+            "    margin 0\n" ++
+            "  for side in top right\n" ++
+            "    border-{side}-width value % 3\n" ++
+            ".card\n" ++
+            "  box(bump(2px))\n" ++
+            "  count length(1 2 3)\n" ++
+            "  kind type(4px)\n",
         .{},
     );
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card,.panel{width:20px;border-card:2px}" ++
-            ".card:hover,.panel:hover{width:10px}",
+        ".card{padding:4px;margin:5px;border-top-width:1px;" ++
+            "border-right-width:1px;count:3;kind:'unit'}",
         result.css(),
     );
 }
