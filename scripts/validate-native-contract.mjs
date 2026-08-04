@@ -732,6 +732,7 @@ const expectedImplementations = Object.freeze([
       'permanent-use-plugin-hook-rejection',
       'variables-properties-selectors-expressions',
       'mixins-functions-control-operators-builtins',
+      'confined-imports-require-globs-diagnostics-dependencies-maps',
       'resource-cancellation',
       'allocation-failure',
     ]),
@@ -1159,7 +1160,10 @@ function validateStylusEvaluator(selection, source, tests, plan) {
   for (const evidenceTest of [
     'native Stylus transaction preserves the finite plain CSS foundation',
     'native Stylus permanently rejects use plugins without partial CSS',
-    'native Stylus imports remain explicit before their evaluator slice',
+    'native Stylus imports require a confined source identity',
+    'native Stylus closes confined import require glob dependency and map semantics',
+    'native Stylus import failures own source diagnostics without partial CSS',
+    'native Stylus imports own terminal depth count byte and cancellation boundaries',
     'native Stylus evaluates the fixed variable property selector expression slice',
     'native Stylus semantic failures own diagnostics without partial CSS',
     'native Stylus evaluates the fixed callable control operator builtin slice',
@@ -1167,6 +1171,7 @@ function validateStylusEvaluator(selection, source, tests, plan) {
     'native Stylus semantic values and bindings retain finite ceilings',
     'native Stylus plain CSS foundation owns resource and cancellation boundaries',
     'native Stylus transaction handles every allocation failure',
+    'native Stylus import transaction handles every allocation failure',
   ]) {
     requireText(tests, `test "${evidenceTest}"`, 'native Stylus evaluator evidence')
   }

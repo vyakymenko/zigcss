@@ -1,11 +1,10 @@
 //! Private bounded semantic evaluator for native Stylus syntax.
 //!
-//! The evaluator owns a fixed four-slice implementation plan. This third
-//! slice adds bounded user functions and mixins, conditional and finite-loop
-//! control flow, comparison and remainder operators, and the deterministic
-//! `length()` and `type()` built-ins. Imports remain the terminal evaluator
-//! slice. Project plugins and custom evaluator hooks are permanently outside
-//! this module's execution boundary.
+//! The evaluator owns a fixed four-slice implementation plan. Its terminal
+//! slice adds confined deterministic imports, require-once expansion, sorted
+//! local globs, source-owned diagnostics, dependency edges, and imported
+//! mappings. Project plugins and custom evaluator hooks are permanently
+//! outside this module's execution boundary.
 //! In particular, external custom evaluator hooks are permanently disabled.
 
 const std = @import("std");
@@ -13,6 +12,7 @@ const native_environment = @import("environment.zig");
 const native_evaluator = @import("evaluator.zig");
 const native_lexer = @import("lexer.zig");
 const native_numeric = @import("sass_numeric.zig");
+const native_resolver = @import("resolver.zig");
 const native_source = @import("source.zig");
 const native_stylus = @import("stylus.zig");
 const native_syntax = @import("syntax.zig");
@@ -25,6 +25,7 @@ const hard_call_depth: u16 = 1_024;
 const hard_loop_iterations: usize = 10_000_000;
 const hard_selectors = 1_000_000;
 const hard_temporary_bytes = 20 * 1024 * 1024;
+const hard_import_statements = 200_000;
 
 pub const Limits = struct {
     max_source_bytes: usize = hard_source_bytes,
@@ -41,6 +42,7 @@ pub const Limits = struct {
 pub const Error = native_environment.Error ||
     native_evaluator.Error ||
     native_lexer.Error ||
+    native_resolver.Error ||
     native_source.Error ||
     native_stylus.Error ||
     native_syntax.Error ||
@@ -48,6 +50,7 @@ pub const Error = native_environment.Error ||
     ExpressionDepthExceeded,
     InvalidDocument,
     InvalidArguments,
+    InvalidImport,
     InvalidLimits,
     InvalidOperation,
     NodeLimitExceeded,
@@ -61,7 +64,7 @@ pub const Error = native_environment.Error ||
 };
 
 pub fn evaluate(
-    sources: *const native_source.Table,
+    sources: *native_source.Table,
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
     limits: Limits,
@@ -82,7 +85,35 @@ pub fn evaluate(
         );
         return error.SourceLimitExceeded;
     }
-    if (document.nodes().len > limits.max_nodes) {
+    var expanded_document: ?native_syntax.Document = null;
+    defer if (expanded_document) |*expanded| expanded.deinit();
+    if (containsImports(document)) {
+        var expander = ImportExpander.init(
+            transaction.allocator,
+            sources,
+            transaction,
+            limits,
+        );
+        defer expander.deinit();
+        expanded_document = expander.expand(document) catch |failure| switch (failure) {
+            error.SyntaxDepthExceeded,
+            error.SyntaxEdgeLimitExceeded,
+            error.SyntaxNodeLimitExceeded,
+            => {
+                try transaction.report(
+                    .err,
+                    .resource_limit,
+                    root.span,
+                    "native Stylus imported syntax limit exceeded",
+                    &.{},
+                );
+                return failure;
+            },
+            else => return failure,
+        };
+    }
+    const active_document = if (expanded_document) |*expanded| expanded else document;
+    if (active_document.nodes().len > limits.max_nodes) {
         try transaction.report(
             .err,
             .resource_limit,
@@ -93,16 +124,17 @@ pub fn evaluate(
         return error.NodeLimitExceeded;
     }
 
-    try transaction.consumeOperations(@intCast(document.nodes().len));
+    try transaction.consumeOperations(@intCast(active_document.nodes().len));
     try rejectUsePlugins(sources, root.span, input, transaction);
-    const semantic = try requiresSemanticEvaluation(document, input);
+    const semantic = expanded_document != null or
+        try requiresSemanticEvaluation(active_document, input);
     try preflightStatements(
-        document,
-        try document.children(document.root),
+        active_document,
+        try active_document.children(active_document.root),
         transaction,
         semantic,
     );
-    if (semantic) try rejectDeferredBuiltins(sources, document, transaction);
+    if (semantic) try rejectDeferredBuiltins(sources, active_document, transaction);
     if (!semantic) {
         try transaction.emitMapped(root.span, null, input);
         return;
@@ -111,12 +143,19 @@ pub fn evaluate(
     var engine = try Engine.init(
         transaction.allocator,
         sources,
-        document,
+        active_document,
         transaction,
         limits,
     );
     defer engine.deinit();
     try engine.run();
+}
+
+fn containsImports(document: *const native_syntax.Document) bool {
+    for (document.nodes()) |node| {
+        if (node.kind == .import) return true;
+    }
+    return false;
 }
 
 fn validateLimits(limits: Limits) Error!void {
@@ -366,6 +405,436 @@ fn isDeferredBuiltin(name: []const u8) bool {
         if (native_lexer.identifierEqlIgnoreCaseAscii(name, builtin)) return true;
     }
     return false;
+}
+
+const ParsedImport = struct {
+    target: []const u8,
+    require_once: bool,
+};
+
+const ImportExpander = struct {
+    allocator: std.mem.Allocator,
+    sources: *native_source.Table,
+    transaction: *native_evaluator.Transaction,
+    limits: Limits,
+    builder: native_syntax.Builder,
+    source_ids: std.StringHashMapUnmanaged(native_source.SourceId) = .empty,
+    required_urls: std.StringHashMapUnmanaged(void) = .empty,
+    ancestry: std.ArrayList([]const u8) = .empty,
+
+    fn init(
+        allocator: std.mem.Allocator,
+        sources: *native_source.Table,
+        transaction: *native_evaluator.Transaction,
+        limits: Limits,
+    ) ImportExpander {
+        return .{
+            .allocator = allocator,
+            .sources = sources,
+            .transaction = transaction,
+            .limits = limits,
+            .builder = native_syntax.Builder.init(allocator, sources, .{
+                .max_nodes = limits.max_nodes,
+            }),
+        };
+    }
+
+    fn deinit(self: *ImportExpander) void {
+        self.ancestry.deinit(self.allocator);
+        self.required_urls.deinit(self.allocator);
+        self.source_ids.deinit(self.allocator);
+        self.builder.deinit();
+        self.* = undefined;
+    }
+
+    fn expand(
+        self: *ImportExpander,
+        document: *const native_syntax.Document,
+    ) Error!native_syntax.Document {
+        const root = document.get(document.root) catch return error.InvalidDocument;
+        if (root.kind != .stylesheet) return error.InvalidDocument;
+        const file = try self.sources.get(root.span.source);
+        const root_path = native_resolver.fileUrlToPath(self.allocator, file.name) catch |failure| {
+            return self.failLoad(failure, root.span);
+        };
+        self.allocator.free(root_path);
+        try self.ancestry.append(self.allocator, file.name);
+        try self.source_ids.put(self.allocator, file.name, root.span.source);
+
+        var children: std.ArrayList(native_syntax.NodeId) = .empty;
+        defer children.deinit(self.allocator);
+        try self.appendStatements(
+            document,
+            try document.children(document.root),
+            &children,
+        );
+        const expanded_root = try self.builder.add(
+            .stylesheet,
+            root.span,
+            root.text,
+            children.items,
+        );
+        return self.builder.finish(expanded_root);
+    }
+
+    fn appendStatements(
+        self: *ImportExpander,
+        document: *const native_syntax.Document,
+        statements: []const native_syntax.NodeId,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!void {
+        for (statements) |statement_id| {
+            const statement = document.get(statement_id) catch return error.InvalidDocument;
+            if (statement.kind == .import) {
+                try self.expandImport(document, statement_id, output);
+            } else {
+                try output.append(
+                    self.allocator,
+                    try self.cloneNode(document, statement_id),
+                );
+            }
+        }
+    }
+
+    fn cloneNode(
+        self: *ImportExpander,
+        document: *const native_syntax.Document,
+        node_id: native_syntax.NodeId,
+    ) Error!native_syntax.NodeId {
+        const node = document.get(node_id) catch return error.InvalidDocument;
+        var children: std.ArrayList(native_syntax.NodeId) = .empty;
+        defer children.deinit(self.allocator);
+        const source_children = document.children(node_id) catch return error.InvalidDocument;
+        if (node.kind == .block) {
+            try self.appendStatements(document, source_children, &children);
+        } else {
+            for (source_children) |child_id| {
+                try children.append(
+                    self.allocator,
+                    try self.cloneNode(document, child_id),
+                );
+            }
+        }
+        return self.builder.add(node.kind, node.span, node.text, children.items);
+    }
+
+    fn expandImport(
+        self: *ImportExpander,
+        document: *const native_syntax.Document,
+        import_id: native_syntax.NodeId,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!void {
+        const import_node = document.get(import_id) catch return error.InvalidDocument;
+        const text = import_node.text orelse return error.InvalidDocument;
+        const parsed = parseImportDirective(try self.sources.slice(text)) orelse {
+            try self.reportImport(text, "native Stylus import syntax is unsupported");
+            return error.InvalidImport;
+        };
+        const parent_url = self.ancestry.items[self.ancestry.items.len - 1];
+        if (std.mem.indexOfAny(u8, parsed.target, "*?") != null) {
+            const pattern_url = importCandidateUrl(
+                self.allocator,
+                parent_url,
+                parsed.target,
+            ) catch |failure| return self.failLoad(failure, text);
+            defer self.allocator.free(pattern_url);
+            const session = try self.transaction.resolverSession();
+            var matches = session.glob(pattern_url, self.ancestry.items) catch |failure| switch (failure) {
+                error.Missing => {
+                    try self.reportImport(text, "native Stylus import was not found");
+                    return error.InvalidImport;
+                },
+                else => return self.failLoad(failure, text),
+            };
+            defer matches.deinit();
+            if (matches.urls.len == 0) {
+                try self.reportImport(text, "native Stylus import was not found");
+                return error.InvalidImport;
+            }
+            for (matches.urls) |candidate_url| {
+                const loaded = try self.loadAndAppend(
+                    candidate_url,
+                    parsed.require_once,
+                    text,
+                    output,
+                );
+                if (!loaded) return error.InvalidImport;
+            }
+            return;
+        }
+
+        var candidates: std.ArrayList([]u8) = .empty;
+        defer {
+            for (candidates.items) |candidate| self.allocator.free(candidate);
+            candidates.deinit(self.allocator);
+        }
+        const extension = std.fs.path.extension(parsed.target);
+        if (extension.len > 0) {
+            try self.appendCandidate(
+                &candidates,
+                try importCandidateUrl(self.allocator, parent_url, parsed.target),
+            );
+        } else {
+            const direct = try importCandidateUrl(self.allocator, parent_url, parsed.target);
+            try self.appendCandidate(&candidates, direct);
+            const with_extension = try std.fmt.allocPrint(
+                self.allocator,
+                "{s}.styl",
+                .{parsed.target},
+            );
+            defer self.allocator.free(with_extension);
+            try self.appendCandidate(
+                &candidates,
+                try importCandidateUrl(self.allocator, parent_url, with_extension),
+            );
+            const basename = std.fs.path.basename(parsed.target);
+            const index_target = try std.fs.path.join(
+                self.allocator,
+                &.{ parsed.target, "index.styl" },
+            );
+            defer self.allocator.free(index_target);
+            try self.appendCandidate(
+                &candidates,
+                try importCandidateUrl(self.allocator, parent_url, index_target),
+            );
+            if (basename.len > 0) {
+                const named_file = try std.fmt.allocPrint(
+                    self.allocator,
+                    "{s}.styl",
+                    .{basename},
+                );
+                defer self.allocator.free(named_file);
+                const named_target = try std.fs.path.join(
+                    self.allocator,
+                    &.{ parsed.target, named_file },
+                );
+                defer self.allocator.free(named_target);
+                try self.appendCandidate(
+                    &candidates,
+                    try importCandidateUrl(self.allocator, parent_url, named_target),
+                );
+            }
+        }
+        for (candidates.items) |candidate_url| {
+            if (try self.loadAndAppend(
+                candidate_url,
+                parsed.require_once,
+                text,
+                output,
+            )) return;
+        }
+        try self.reportImport(text, "native Stylus import was not found");
+        return error.InvalidImport;
+    }
+
+    fn appendCandidate(
+        self: *ImportExpander,
+        candidates: *std.ArrayList([]u8),
+        candidate: []u8,
+    ) Error!void {
+        errdefer self.allocator.free(candidate);
+        try candidates.append(self.allocator, candidate);
+    }
+
+    fn loadAndAppend(
+        self: *ImportExpander,
+        candidate_url: []const u8,
+        require_once: bool,
+        import_span: native_source.Span,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!bool {
+        const session = try self.transaction.resolverSession();
+        var loaded = session.load(candidate_url, .{
+            .kind = .import,
+            .ancestry = self.ancestry.items,
+        }) catch |failure| switch (failure) {
+            error.IsDirectory, error.Missing => return false,
+            else => return self.failLoad(failure, import_span),
+        };
+        defer loaded.deinit();
+        if (require_once and self.required_urls.contains(loaded.url)) return true;
+
+        const source_id = self.source_ids.get(loaded.url) orelse source: {
+            const added = self.sources.add(loaded.url, loaded.contents) catch |failure| {
+                if (failure == error.OutOfMemory) return error.OutOfMemory;
+                try self.transaction.report(
+                    .err,
+                    .resource_limit,
+                    import_span,
+                    "native Stylus imported source limit exceeded",
+                    &.{},
+                );
+                return failure;
+            };
+            const source_file = try self.sources.get(added);
+            try self.source_ids.put(self.allocator, source_file.name, added);
+            break :source added;
+        };
+        const source_file = try self.sources.get(source_id);
+        if (require_once) try self.required_urls.put(self.allocator, source_file.name, {});
+        const full_span = try self.sources.span(source_id, 0, @intCast(source_file.bytes.len));
+        try rejectUsePlugins(self.sources, full_span, source_file.bytes, self.transaction);
+
+        var parser = native_stylus.Parser.init(
+            self.allocator,
+            self.sources,
+            source_id,
+            .{ .max_statements = @min(self.limits.max_nodes, hard_import_statements) },
+            .{},
+        ) catch |failure| {
+            if (failure == error.OutOfMemory) return error.OutOfMemory;
+            try self.transaction.report(
+                .err,
+                .resource_limit,
+                import_span,
+                "native Stylus imported parser limit exceeded",
+                &.{},
+            );
+            return failure;
+        };
+        defer parser.deinit();
+        var imported = parser.parse() catch |failure| {
+            try self.copyParserDiagnostics(parser.diagnostics());
+            return failure;
+        };
+        defer imported.deinit();
+        const imported_root = imported.get(imported.root) catch return error.InvalidDocument;
+        if (imported_root.kind != .stylesheet) return error.InvalidDocument;
+
+        try self.ancestry.append(self.allocator, source_file.name);
+        defer _ = self.ancestry.pop();
+        try self.appendStatements(
+            &imported,
+            try imported.children(imported.root),
+            output,
+        );
+        return true;
+    }
+
+    fn reportImport(
+        self: *ImportExpander,
+        span: native_source.Span,
+        message: []const u8,
+    ) Error!void {
+        try self.transaction.report(.err, .invalid_import, span, message, &.{});
+    }
+
+    fn failLoad(
+        self: *ImportExpander,
+        failure: native_resolver.Error,
+        span: native_source.Span,
+    ) Error {
+        switch (failure) {
+            error.OutOfMemory, error.Cancelled => return failure,
+            error.AttemptLimitExceeded,
+            error.DepthLimitExceeded,
+            error.FileCountExceeded,
+            error.FileLimitExceeded,
+            error.TotalLimitExceeded,
+            => {
+                self.transaction.report(
+                    .err,
+                    .resource_limit,
+                    span,
+                    "native Stylus import resource limit exceeded",
+                    &.{},
+                ) catch |err| return err;
+                return failure;
+            },
+            error.Cycle => {
+                self.reportImport(span, "native Stylus import cycle detected") catch |err|
+                    return err;
+                return error.InvalidImport;
+            },
+            else => {
+                self.reportImport(span, "native Stylus import load was rejected") catch |err|
+                    return err;
+                return error.InvalidImport;
+            },
+        }
+    }
+
+    fn copyParserDiagnostics(
+        self: *ImportExpander,
+        diagnostics: []const @import("diagnostics.zig").Diagnostic,
+    ) Error!void {
+        for (diagnostics) |diagnostic| {
+            var related: std.ArrayList(@import("diagnostics.zig").RelatedInput) = .empty;
+            defer related.deinit(self.allocator);
+            try related.ensureTotalCapacity(self.allocator, diagnostic.related.len);
+            for (diagnostic.related) |item| {
+                related.appendAssumeCapacity(.{ .span = item.span, .label = item.label });
+            }
+            try self.transaction.report(
+                diagnostic.severity,
+                diagnostic.code,
+                diagnostic.span,
+                diagnostic.message,
+                related.items,
+            );
+        }
+    }
+};
+
+fn parseImportDirective(raw_input: []const u8) ?ParsedImport {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    const keyword: []const u8 = if (startsWordAscii(raw, "@import"))
+        "@import"
+    else if (startsWordAscii(raw, "@require"))
+        "@require"
+    else
+        return null;
+    const require_once = std.ascii.eqlIgnoreCase(keyword, "@require");
+    const argument = std.mem.trim(u8, raw[keyword.len..], " \t\r\n\x0c;");
+    if (argument.len < 2 or (argument[0] != '\'' and argument[0] != '"')) return null;
+    const quote = argument[0];
+    var escaped = false;
+    var closing: ?usize = null;
+    var index: usize = 1;
+    while (index < argument.len) : (index += 1) {
+        if (escaped) {
+            escaped = false;
+        } else if (argument[index] == '\\') {
+            escaped = true;
+        } else if (argument[index] == quote) {
+            closing = index;
+            break;
+        }
+    }
+    const end = closing orelse return null;
+    if (std.mem.trim(u8, argument[end + 1 ..], " \t\r\n\x0c;").len != 0) return null;
+    const target = argument[1..end];
+    if (target.len == 0 or std.mem.indexOfAny(u8, target, "\x00\r\n") != null or
+        hasNonLocalScheme(target))
+    {
+        return null;
+    }
+    return .{ .target = target, .require_once = require_once };
+}
+
+fn importCandidateUrl(
+    allocator: std.mem.Allocator,
+    parent_url: []const u8,
+    target: []const u8,
+) native_resolver.Error![]u8 {
+    if (hasNonLocalScheme(target) or std.mem.indexOfAny(u8, target, "?#") != null) {
+        return error.SchemeNotAllowed;
+    }
+    const parent_path = try native_resolver.fileUrlToPath(allocator, parent_url);
+    defer allocator.free(parent_path);
+    const parent_directory = std.fs.path.dirname(parent_path) orelse return error.InvalidUrl;
+    const absolute = if (std.fs.path.isAbsolute(target))
+        try std.fs.path.resolve(allocator, &.{target})
+    else
+        try std.fs.path.resolve(allocator, &.{ parent_directory, target });
+    defer allocator.free(absolute);
+    return native_resolver.pathToFileUrl(allocator, absolute);
+}
+
+fn hasNonLocalScheme(target: []const u8) bool {
+    return std.mem.indexOf(u8, target, "://") != null or
+        std.mem.startsWith(u8, target, "//") or
+        std.mem.startsWith(u8, target, "#");
 }
 
 const RenderContext = enum {

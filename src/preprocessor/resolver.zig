@@ -35,6 +35,7 @@ pub const Error = std.mem.Allocator.Error || error{
     FileCountExceeded,
     FileLimitExceeded,
     InvalidAncestry,
+    InvalidGlob,
     InvalidLimits,
     InvalidRoot,
     InvalidUrl,
@@ -109,6 +110,17 @@ pub const Loaded = struct {
     pub fn deinit(self: *Loaded) void {
         self.allocator.free(self.url);
         self.allocator.free(self.contents);
+        self.* = undefined;
+    }
+};
+
+pub const Globbed = struct {
+    urls: []const []const u8,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *Globbed) void {
+        for (self.urls) |url| self.allocator.free(url);
+        if (self.urls.len > 0) self.allocator.free(self.urls);
         self.* = undefined;
     }
 };
@@ -262,6 +274,7 @@ pub const Session = struct {
     dependency_items: std.ArrayList(Dependency) = .empty,
     edge_items: std.ArrayList(Edge) = .empty,
     attempts: u64 = 0,
+    glob_entries: usize = 0,
     bytes: u64 = 0,
     closed: bool = false,
 
@@ -403,6 +416,184 @@ pub const Session = struct {
             .contents = contents,
             .allocator = self.allocator,
         };
+    }
+
+    /// Enumerates one confined local `*`, `?`, or `**` pattern. Enumeration
+    /// grants no file bytes and records no dependency; every returned candidate
+    /// must still pass through `load`, which owns stable reads and graph facts.
+    pub fn glob(
+        self: *Session,
+        pattern_url: []const u8,
+        ancestry: []const []const u8,
+    ) Error!Globbed {
+        if (self.closed) return error.SessionClosed;
+        try self.cancellation.check(.resolve);
+        try self.validateAncestry(ancestry);
+        const pattern_path = try fileUrlToPath(self.allocator, pattern_url);
+        defer self.allocator.free(pattern_path);
+        const match = lexicalRoot(self.resolver, pattern_path) orelse return error.PathEscape;
+        try verifyRootPath(match.root);
+        const relative = relativePath(match.base, pattern_path);
+        if (relative.len == 0) return error.InvalidGlob;
+
+        var components: std.ArrayList([]const u8) = .empty;
+        defer components.deinit(self.allocator);
+        var iterator = std.mem.tokenizeAny(u8, relative, nativeSeparators());
+        var has_pattern = false;
+        while (iterator.next()) |component| {
+            if (component.len == 0 or std.mem.eql(u8, component, ".") or
+                std.mem.eql(u8, component, "..") or
+                std.mem.indexOfAny(u8, component, "[]{}\x00\r\n") != null)
+            {
+                return error.InvalidGlob;
+            }
+            has_pattern = has_pattern or std.mem.indexOfAny(u8, component, "*?") != null;
+            try components.append(self.allocator, component);
+        }
+        if (!has_pattern or components.items.len == 0) return error.InvalidGlob;
+
+        var root_dir = std.fs.openDirAbsolute(match.root.canonical, .{
+            .iterate = true,
+            .no_follow = true,
+        }) catch return error.Unreadable;
+        defer root_dir.close();
+        const root_identity = ObjectIdentity.read(.{ .handle = root_dir.fd }) catch
+            return error.Unreadable;
+        if (!match.root.identity.sameObject(root_identity) or
+            root_identity.kind != .directory)
+        {
+            return error.FileChanged;
+        }
+
+        var urls: std.ArrayList([]const u8) = .empty;
+        errdefer {
+            for (urls.items) |url| self.allocator.free(url);
+            urls.deinit(self.allocator);
+        }
+        try self.walkGlob(
+            root_dir,
+            match.root.canonical,
+            components.items,
+            0,
+            ancestry.len,
+            &urls,
+        );
+        std.mem.sort([]const u8, urls.items, {}, stringLessThan);
+        return .{ .urls = try urls.toOwnedSlice(self.allocator), .allocator = self.allocator };
+    }
+
+    fn walkGlob(
+        self: *Session,
+        directory: std.fs.Dir,
+        absolute_directory: []const u8,
+        components: []const []const u8,
+        component_index: usize,
+        depth: usize,
+        urls: *std.ArrayList([]const u8),
+    ) Error!void {
+        try self.cancellation.check(.path_component);
+        if (component_index >= components.len) return;
+        if (depth >= self.resolver.limits.max_depth) return error.DepthLimitExceeded;
+        const component = components[component_index];
+        const recursive = std.mem.eql(u8, component, "**");
+        const patterned = std.mem.indexOfAny(u8, component, "*?") != null;
+        const terminal = component_index + 1 == components.len;
+
+        if (!patterned) {
+            const child_absolute = try std.fs.path.join(
+                self.allocator,
+                &.{ absolute_directory, component },
+            );
+            defer self.allocator.free(child_absolute);
+            if (terminal) {
+                try self.appendGlobUrl(urls, child_absolute);
+                return;
+            }
+            var child = directory.openDir(component, .{
+                .iterate = true,
+                .no_follow = true,
+            }) catch |failure| return mapParentOpenError(failure);
+            defer child.close();
+            try self.walkGlob(
+                child,
+                child_absolute,
+                components,
+                component_index + 1,
+                depth + 1,
+                urls,
+            );
+            return;
+        }
+
+        const directory_before = try ObjectIdentity.read(.{ .handle = directory.fd });
+        var entries = try readGlobEntries(
+            self.allocator,
+            directory,
+            &self.glob_entries,
+            self.resolver.limits.max_attempts,
+        );
+        defer entries.deinit(self.allocator);
+        if (recursive) {
+            if (terminal) return error.InvalidGlob;
+            var zero_directory = std.fs.openDirAbsolute(absolute_directory, .{
+                .iterate = true,
+                .no_follow = true,
+            }) catch return error.FileChanged;
+            defer zero_directory.close();
+            const zero_identity = ObjectIdentity.read(.{ .handle = zero_directory.fd }) catch
+                return error.FileChanged;
+            if (!directory_before.sameStable(zero_identity)) return error.FileChanged;
+            try self.walkGlob(
+                zero_directory,
+                absolute_directory,
+                components,
+                component_index + 1,
+                depth,
+                urls,
+            );
+        }
+        for (entries.items) |entry| {
+            if (!recursive and !globComponentMatches(component, entry.name)) continue;
+            if (entry.kind == .sym_link) return error.Symlink;
+            const child_absolute = try std.fs.path.join(
+                self.allocator,
+                &.{ absolute_directory, entry.name },
+            );
+            defer self.allocator.free(child_absolute);
+            if (!recursive and terminal) {
+                if (entry.kind != .directory) try self.appendGlobUrl(urls, child_absolute);
+                continue;
+            }
+            if (entry.kind != .directory) continue;
+            var child = directory.openDir(entry.name, .{
+                .iterate = true,
+                .no_follow = true,
+            }) catch |failure| return mapParentOpenError(failure);
+            defer child.close();
+            try self.walkGlob(
+                child,
+                child_absolute,
+                components,
+                if (recursive) component_index else component_index + 1,
+                depth + 1,
+                urls,
+            );
+        }
+        const directory_after = try ObjectIdentity.read(.{ .handle = directory.fd });
+        if (!directory_before.sameStable(directory_after)) return error.FileChanged;
+    }
+
+    fn appendGlobUrl(
+        self: *Session,
+        urls: *std.ArrayList([]const u8),
+        absolute: []const u8,
+    ) Error!void {
+        if (urls.items.len >= self.resolver.limits.max_files) {
+            return error.FileCountExceeded;
+        }
+        const url = try pathToFileUrl(self.allocator, absolute);
+        errdefer self.allocator.free(url);
+        try urls.append(self.allocator, url);
     }
 
     fn validateAncestry(self: *Session, ancestry: []const []const u8) Error!void {
@@ -614,6 +805,85 @@ pub const Session = struct {
         return false;
     }
 };
+
+const GlobEntry = struct {
+    name: []u8,
+    kind: std.fs.File.Kind,
+};
+
+const GlobEntries = struct {
+    items: []GlobEntry,
+
+    fn deinit(self: *GlobEntries, allocator: std.mem.Allocator) void {
+        for (self.items) |entry| allocator.free(entry.name);
+        if (self.items.len > 0) allocator.free(self.items);
+        self.* = undefined;
+    }
+};
+
+fn readGlobEntries(
+    allocator: std.mem.Allocator,
+    directory: std.fs.Dir,
+    consumed: *usize,
+    limit: usize,
+) Error!GlobEntries {
+    var entries: std.ArrayList(GlobEntry) = .empty;
+    errdefer {
+        for (entries.items) |entry| allocator.free(entry.name);
+        entries.deinit(allocator);
+    }
+    var iterator = directory.iterate();
+    while (iterator.next() catch return error.Unreadable) |entry| {
+        if (consumed.* >= limit) return error.AttemptLimitExceeded;
+        consumed.* += 1;
+        const name = try allocator.dupe(u8, entry.name);
+        errdefer allocator.free(name);
+        try entries.append(allocator, .{ .name = name, .kind = entry.kind });
+    }
+    std.mem.sort(GlobEntry, entries.items, {}, globEntryLessThan);
+    return .{ .items = try entries.toOwnedSlice(allocator) };
+}
+
+fn globEntryLessThan(_: void, left: GlobEntry, right: GlobEntry) bool {
+    return std.mem.order(u8, left.name, right.name) == .lt;
+}
+
+fn stringLessThan(_: void, left: []const u8, right: []const u8) bool {
+    return std.mem.order(u8, left, right) == .lt;
+}
+
+fn globComponentMatches(pattern: []const u8, candidate: []const u8) bool {
+    var pattern_index: usize = 0;
+    var candidate_index: usize = 0;
+    var star_index: ?usize = null;
+    var star_candidate: usize = 0;
+    while (candidate_index < candidate.len) {
+        if (pattern_index < pattern.len and
+            (pattern[pattern_index] == '?' or pattern[pattern_index] == candidate[candidate_index]))
+        {
+            pattern_index += 1;
+            candidate_index += 1;
+            continue;
+        }
+        if (pattern_index < pattern.len and pattern[pattern_index] == '*') {
+            star_index = pattern_index;
+            pattern_index += 1;
+            star_candidate = candidate_index;
+            continue;
+        }
+        if (star_index) |star| {
+            pattern_index = star + 1;
+            star_candidate += 1;
+            candidate_index = star_candidate;
+            continue;
+        }
+        return false;
+    }
+    while (pattern_index < pattern.len and pattern[pattern_index] == '*') {
+        pattern_index += 1;
+    }
+    return pattern_index == pattern.len;
+}
 
 const RootMatch = struct {
     root: *const Root,

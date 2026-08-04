@@ -553,6 +553,84 @@ const CancelContext = struct {
     }
 };
 
+test "confined glob enumeration is sorted bounded and grants no file bytes" {
+    var fixture = try Fixture.init();
+    defer fixture.deinit();
+    try fixture.tmp.dir.makePath("root/parts/nested");
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/parts/b.styl", .data = "b" });
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/parts/a.styl", .data = "a" });
+    try fixture.tmp.dir.writeFile(.{ .sub_path = "root/parts/nested/c.styl", .data = "c" });
+    const pattern_path = try fixture.path("parts/**/*");
+    defer std.testing.allocator.free(pattern_path);
+    const pattern_url = try fileUrl(pattern_path);
+    defer std.testing.allocator.free(pattern_url);
+    const outside_pattern_path = try fixture.outsidePath("**/*");
+    defer std.testing.allocator.free(outside_pattern_path);
+    const outside_pattern_url = try fileUrl(outside_pattern_path);
+    defer std.testing.allocator.free(outside_pattern_url);
+
+    var confined = try resolver.Resolver.init(std.testing.allocator, &.{fixture.root}, .{});
+    defer confined.deinit();
+    var session = confined.createSession(std.testing.allocator, .{});
+    defer session.deinit();
+    var matches = try session.glob(pattern_url, &.{});
+    defer matches.deinit();
+    try std.testing.expectEqual(@as(usize, 3), matches.urls.len);
+    try std.testing.expect(std.mem.endsWith(u8, matches.urls[0], "/parts/a.styl"));
+    try std.testing.expect(std.mem.endsWith(u8, matches.urls[1], "/parts/b.styl"));
+    try std.testing.expect(std.mem.endsWith(u8, matches.urls[2], "/parts/nested/c.styl"));
+    try std.testing.expectEqual(@as(usize, 0), session.dependencies().len);
+    try std.testing.expectEqual(resolver.Stats{ .attempts = 0, .files = 0, .bytes = 0 }, session.stats());
+    try std.testing.expectError(error.PathEscape, session.glob(outside_pattern_url, &.{}));
+
+    var bounded = try resolver.Resolver.init(
+        std.testing.allocator,
+        &.{fixture.root},
+        .{ .max_files = 2 },
+    );
+    defer bounded.deinit();
+    var bounded_session = bounded.createSession(std.testing.allocator, .{});
+    defer bounded_session.deinit();
+    try std.testing.expectError(
+        error.FileCountExceeded,
+        bounded_session.glob(pattern_url, &.{}),
+    );
+
+    var terminal_scan = try resolver.Resolver.init(
+        std.testing.allocator,
+        &.{fixture.root},
+        .{ .max_attempts = 8 },
+    );
+    defer terminal_scan.deinit();
+    var terminal_scan_session = terminal_scan.createSession(std.testing.allocator, .{});
+    defer terminal_scan_session.deinit();
+    var terminal_matches = try terminal_scan_session.glob(pattern_url, &.{});
+    defer terminal_matches.deinit();
+    try std.testing.expectEqual(@as(usize, 3), terminal_matches.urls.len);
+
+    var over_scan = try resolver.Resolver.init(
+        std.testing.allocator,
+        &.{fixture.root},
+        .{ .max_attempts = 7 },
+    );
+    defer over_scan.deinit();
+    var over_scan_session = over_scan.createSession(std.testing.allocator, .{});
+    defer over_scan_session.deinit();
+    try std.testing.expectError(
+        error.AttemptLimitExceeded,
+        over_scan_session.glob(pattern_url, &.{}),
+    );
+
+    if (builtin.os.tag != .windows) {
+        try fixture.tmp.dir.symLink(
+            "../../outside",
+            "root/parts/link",
+            .{ .is_directory = true },
+        );
+        try std.testing.expectError(error.Symlink, session.glob(pattern_url, &.{}));
+    }
+}
+
 const MutationContext = struct {
     dir: *std.fs.Dir,
     fired: bool = false,

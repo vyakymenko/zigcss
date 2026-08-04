@@ -679,6 +679,17 @@ test('binds the native Stylus evaluator and permanent execution boundary', () =>
     /native Stylus evaluator evidence.*missing/,
   )
 
+  const missingImportEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/stylus_evaluator.zig'), 'utf8')
+    .replace(
+      'test "native Stylus closes confined import require glob dependency and map semantics"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { stylusEvaluatorTests: missingImportEvidence }),
+    /native Stylus evaluator evidence.*missing/,
+  )
+
   const weakenedBoundary = fs
     .readFileSync(path.join(repositoryRoot, 'src/preprocessor/stylus_evaluator.zig'), 'utf8')
     .replace(

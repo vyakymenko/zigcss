@@ -43,6 +43,161 @@ fn compile(
     return transaction.finish(.{ .format = .minified, .source_map = true });
 }
 
+const FixtureFile = struct {
+    path: []const u8,
+    contents: []const u8,
+};
+
+fn compileFixture(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    files: []const FixtureFile,
+    resolver_limits: resolver.Limits,
+    evaluator_limits: stylus_evaluator.Limits,
+) !evaluator.ValidatedCss {
+    return compileFixtureWithCancellation(
+        allocator,
+        input,
+        files,
+        resolver_limits,
+        evaluator_limits,
+        .{},
+        .{},
+    );
+}
+
+fn compileFixtureWithCancellation(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    files: []const FixtureFile,
+    resolver_limits: resolver.Limits,
+    evaluator_limits: stylus_evaluator.Limits,
+    resolver_cancellation: resolver.Cancellation,
+    evaluator_cancellation: evaluator.Cancellation,
+) !evaluator.ValidatedCss {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.makeDir("root");
+    var root_dir = try temporary.dir.openDir("root", .{});
+    defer root_dir.close();
+    try root_dir.writeFile(.{ .sub_path = "input.styl", .data = input });
+    for (files) |file| {
+        if (std.fs.path.dirname(file.path)) |parent| try root_dir.makePath(parent);
+        try root_dir.writeFile(.{ .sub_path = file.path, .data = file.contents });
+    }
+
+    const base = try temporary.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const entry_path = try std.fs.path.join(allocator, &.{ root, "input.styl" });
+    defer allocator.free(entry_path);
+    const entry_url = try resolver.pathToFileUrl(allocator, entry_path);
+    defer allocator.free(entry_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, resolver_limits);
+    defer authority.deinit();
+    var session = authority.createSession(allocator, resolver_cancellation);
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(entry_url, input);
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        evaluator_cancellation,
+    );
+    defer transaction.deinit();
+    try stylus_evaluator.evaluate(&sources, &document, &transaction, evaluator_limits);
+    return transaction.finish(.{ .format = .minified, .source_map = true });
+}
+
+fn expectFixtureRejection(
+    input: []const u8,
+    files: []const FixtureFile,
+    expected_error: anyerror,
+    expected_code: diagnostics.Code,
+    expected_message: []const u8,
+    expected_source: u32,
+    expected_dependencies: usize,
+) !void {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.makeDir("root");
+    var root_dir = try temporary.dir.openDir("root", .{});
+    defer root_dir.close();
+    try root_dir.writeFile(.{ .sub_path = "input.styl", .data = input });
+    for (files) |file| {
+        if (std.fs.path.dirname(file.path)) |parent| try root_dir.makePath(parent);
+        try root_dir.writeFile(.{ .sub_path = file.path, .data = file.contents });
+    }
+
+    const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const entry_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root, "input.styl" },
+    );
+    defer std.testing.allocator.free(entry_path);
+    const entry_url = try resolver.pathToFileUrl(std.testing.allocator, entry_path);
+    defer std.testing.allocator.free(entry_url);
+
+    var authority = try resolver.Resolver.init(std.testing.allocator, &.{root}, .{});
+    defer authority.deinit();
+    var session = authority.createSession(std.testing.allocator, .{});
+    defer session.deinit();
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(entry_url, input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        std.testing.allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        expected_error,
+        stylus_evaluator.evaluate(&sources, &document, &transaction, .{}),
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectEqual(expected_dependencies, session.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 1), transaction.diagnostics().len);
+    try std.testing.expectEqual(expected_code, transaction.diagnostics()[0].code);
+    try std.testing.expectEqualStrings(expected_message, transaction.diagnostics()[0].message);
+    try std.testing.expectEqual(
+        expected_source,
+        transaction.diagnostics()[0].span.source.value,
+    );
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified, .source_map = true }),
+    );
+}
+
 fn expectSemanticRejection(
     input: []const u8,
     expected_error: anyerror,
@@ -168,14 +323,229 @@ test "native Stylus permanently rejects use plugins without partial CSS" {
     );
 }
 
-test "native Stylus imports remain explicit before their evaluator slice" {
+test "native Stylus imports require a confined source identity" {
     try expectSemanticRejection(
         "@require 'theme'\n.safe { color: red; }\n",
-        error.UnsupportedFeature,
-        .unsupported_feature,
-        "native Stylus imports are not implemented in this evaluator slice",
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus import load was rejected",
         0,
     );
+}
+
+test "native Stylus closes confined import require glob dependency and map semantics" {
+    const input =
+        \\@import "tokens"
+        \\@import "parts/**/*"
+        \\@require "once"
+        \\@require "once"
+        \\@import "bundle"
+        \\.card
+        \\  width spacing
+    ;
+    const files = [_]FixtureFile{
+        .{ .path = "tokens.styl", .contents = "spacing = 4px\n.tokens\n  order 0\n" },
+        .{ .path = "parts/b.styl", .contents = ".glob-b\n  order 2\n" },
+        .{ .path = "parts/a.styl", .contents = ".glob-a\n  order 1\n" },
+        .{ .path = "parts/nested/c.styl", .contents = ".glob-c\n  order 3\n" },
+        .{ .path = "once.styl", .contents = ".once\n  order 4\n" },
+        .{ .path = "bundle/index.styl", .contents = ".indexed\n  order 5\n" },
+    };
+    var first = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        .{},
+        .{},
+    );
+    defer first.deinit();
+    var second = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        .{},
+        .{},
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".tokens{order:0}.glob-a{order:1}.glob-b{order:2}.glob-c{order:3}" ++
+            ".once{order:4}.indexed{order:5}.card{width:4px}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqual(@as(usize, 6), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 6), first.edges().len);
+    for (first.dependencies()) |dependency| {
+        try std.testing.expectEqual(resolver.DependencyKind.import, dependency.kind);
+        try std.testing.expect(std.mem.endsWith(u8, dependency.url, ".styl"));
+    }
+    try std.testing.expect(first.map() != null);
+    var imported_segments: usize = 0;
+    for (first.map().?.segments()) |segment| {
+        if (segment.source_id) |source_id| {
+            imported_segments += @intFromBool(source_id.value != 0);
+        }
+    }
+    try std.testing.expect(imported_segments >= 6);
+}
+
+test "native Stylus import failures own source diagnostics without partial CSS" {
+    try expectFixtureRejection(
+        "@import \"missing\"\n.safe\n  color red\n",
+        &.{},
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus import was not found",
+        0,
+        0,
+    );
+    try expectFixtureRejection(
+        "@import \"bad\"\n.safe\n  color red\n",
+        &.{.{ .path = "bad.styl", .contents = ".bad\n  width (\n" }},
+        error.InvalidSyntax,
+        .syntax,
+        "expected a closing delimiter before EOF",
+        1,
+        1,
+    );
+    try expectFixtureRejection(
+        "@import \"a\"\n.safe\n  color red\n",
+        &.{.{ .path = "a.styl", .contents = "@import \"input\"\n.a\n  color blue\n" }},
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus import cycle detected",
+        1,
+        1,
+    );
+    try expectFixtureRejection(
+        "@require \"https://example.invalid/theme.styl\"\n",
+        &.{},
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus import syntax is unsupported",
+        0,
+        0,
+    );
+    try expectFixtureRejection(
+        "@import \"../outside/escape\"\n",
+        &.{},
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus import load was rejected",
+        0,
+        0,
+    );
+}
+
+const ResolverCancelContext = struct {
+    target: resolver.Checkpoint,
+    calls: usize = 0,
+
+    fn check(context: *anyopaque, checkpoint: resolver.Checkpoint) bool {
+        const self: *ResolverCancelContext = @ptrCast(@alignCast(context));
+        self.calls += 1;
+        return checkpoint == self.target;
+    }
+};
+
+test "native Stylus imports own terminal depth count byte and cancellation boundaries" {
+    const chain_files = [_]FixtureFile{
+        .{ .path = "a.styl", .contents = "@import \"b\"\n.a\n  order 1\n" },
+        .{ .path = "b.styl", .contents = ".b\n  order 2\n" },
+    };
+    var terminal_depth = resolver.Limits{};
+    terminal_depth.max_depth = 3;
+    var depth_result = try compileFixture(
+        std.testing.allocator,
+        "@import \"a\"\n",
+        &chain_files,
+        terminal_depth,
+        .{},
+    );
+    defer depth_result.deinit();
+    try std.testing.expectEqualStrings(".b{order:2}.a{order:1}", depth_result.css());
+
+    var over_depth = terminal_depth;
+    over_depth.max_depth = 2;
+    try std.testing.expectError(
+        error.DepthLimitExceeded,
+        compileFixture(
+            std.testing.allocator,
+            "@import \"a\"\n",
+            &chain_files,
+            over_depth,
+            .{},
+        ),
+    );
+
+    const input =
+        \\@import "tokens"
+        \\@import "parts/**/*"
+        \\@require "once"
+        \\@require "once"
+    ;
+    const files = [_]FixtureFile{
+        .{ .path = "tokens.styl", .contents = ".tokens\n  order 0\n" },
+        .{ .path = "parts/b.styl", .contents = ".b\n  order 2\n" },
+        .{ .path = "parts/a.styl", .contents = ".a\n  order 1\n" },
+        .{ .path = "parts/nested/c.styl", .contents = ".c\n  order 3\n" },
+        .{ .path = "once.styl", .contents = ".once\n  order 4\n" },
+    };
+    var terminal_count = resolver.Limits{};
+    terminal_count.max_files = files.len;
+    var count_result = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        terminal_count,
+        .{},
+    );
+    defer count_result.deinit();
+    try std.testing.expectEqual(files.len, count_result.dependencies().len);
+
+    var over_count = terminal_count;
+    over_count.max_files = files.len - 1;
+    try std.testing.expectError(
+        error.FileCountExceeded,
+        compileFixture(std.testing.allocator, input, &files, over_count, .{}),
+    );
+
+    var total_bytes: usize = files[files.len - 1].contents.len;
+    for (files) |file| total_bytes += file.contents.len;
+    var terminal_bytes = resolver.Limits{};
+    terminal_bytes.max_total_bytes = total_bytes;
+    var byte_result = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        terminal_bytes,
+        .{},
+    );
+    defer byte_result.deinit();
+    try std.testing.expectEqual(@as(u64, @intCast(total_bytes)), byte_result.stats().bytes);
+
+    var over_bytes = terminal_bytes;
+    over_bytes.max_total_bytes -= 1;
+    try std.testing.expectError(
+        error.TotalLimitExceeded,
+        compileFixture(std.testing.allocator, input, &files, over_bytes, .{}),
+    );
+
+    var cancel_context = ResolverCancelContext{ .target = .read };
+    try std.testing.expectError(
+        error.Cancelled,
+        compileFixtureWithCancellation(
+            std.testing.allocator,
+            input,
+            &files,
+            .{},
+            .{},
+            .{ .context = &cancel_context, .check_fn = ResolverCancelContext.check },
+            .{},
+        ),
+    );
+    try std.testing.expect(cancel_context.calls > 0);
 }
 
 test "native Stylus evaluates the fixed variable property selector expression slice" {
@@ -556,10 +926,42 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     );
 }
 
+fn exerciseImportAllocationFailures(allocator: std.mem.Allocator) !void {
+    const files = [_]FixtureFile{
+        .{ .path = "parts/a.styl", .contents = "spacing = 4px\n.a\n  order 1\n" },
+        .{ .path = "parts/b.styl", .contents = ".b\n  order 2\n" },
+        .{ .path = "once.styl", .contents = ".once\n  order 3\n" },
+    };
+    var result = try compileFixture(
+        allocator,
+        "@import \"parts/*\"\n" ++
+            "@require \"once\"\n" ++
+            "@require \"once\"\n" ++
+            ".card\n" ++
+            "  width spacing\n",
+        &files,
+        .{},
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{order:1}.b{order:2}.once{order:3}.card{width:4px}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus import transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseImportAllocationFailures,
         .{},
     );
 }

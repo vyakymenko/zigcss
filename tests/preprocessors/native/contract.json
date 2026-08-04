@@ -702,6 +702,7 @@
         "permanent-use-plugin-hook-rejection",
         "variables-properties-selectors-expressions",
         "mixins-functions-control-operators-builtins",
+        "confined-imports-require-globs-diagnostics-dependencies-maps",
         "resource-cancellation",
         "allocation-failure"
       ],
