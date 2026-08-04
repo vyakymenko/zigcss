@@ -123,6 +123,16 @@ test "inconsistent indentation is rejected instead of guessed" {
     );
 }
 
+test "Stylus arbitrary brace indentation is represented without byte loss" {
+    const source = "body {\n     color: red;\n  width: 1px;\n}\n";
+    const tokens = try tokenize(source, .stylus);
+    defer std.testing.allocator.free(tokens);
+
+    try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .indent));
+    try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .dedent));
+    try expectLossless(source, tokens);
+}
+
 test "Sass and Less interpolation nest without leaking from comments" {
     const scss = "#{{a: {b: 1}}} \"x #{fn({a: 1})} y\" /* #{ignored} */";
     const scss_tokens = try tokenize(scss, .scss);
@@ -153,6 +163,20 @@ test "Less property interpolation strings and unquoted URLs retain their lexical
     try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .string_start));
     try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .string_end));
     try std.testing.expectEqual(@as(usize, 1), countKind(tokens, .comment));
+    try expectLossless(source, tokens);
+}
+
+test "Stylus unquoted protocol URLs do not become line comments" {
+    const source =
+        "body\n" ++
+        "  background url(http://example.test/a.png)\n" ++
+        "  mask url(//example.test/a.svg)\n" ++
+        "  color red // retained comment\n";
+    const tokens = try tokenize(source, .stylus);
+    defer std.testing.allocator.free(tokens);
+
+    try std.testing.expectEqual(@as(usize, 1), countKind(tokens, .comment));
+    try std.testing.expectEqual(@as(usize, 2), countKind(tokens, .close_paren));
     try expectLossless(source, tokens);
 }
 

@@ -703,6 +703,25 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-stylus-parser',
+    current: 'native-internal',
+    ownerPackage: 'NSTYLUS-010',
+    adapters: Object.freeze(['stylus']),
+    capabilities: Object.freeze([
+      'parsing',
+      'indentation-optional-punctuation',
+      'pinned-success-syntax',
+      'pinned-parser-negatives',
+      'resource-cancellation',
+      'allocation-failure',
+    ]),
+    nativeSources: Object.freeze(['src/preprocessor/stylus.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/stylus_parser.zig']),
+    testStep: 'test-native-stylus-parser',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -1056,6 +1075,63 @@ function validateLessParser(selection, tests, plan) {
   )
 }
 
+function validateStylusParser(manifest, selection, source, tests, plan) {
+  if (manifest.upstream?.packageVersion !== '0.64.0' ||
+      manifest.officialCandidateCount !== 355 ||
+      manifest.officialSuccessCount !== 326 ||
+      manifest.integrationErrorCount !== 20 ||
+      manifest.caseCount !== 346 ||
+      !Array.isArray(manifest.cases) ||
+      manifest.cases.length !== 346) {
+    fail('native Stylus parser corpus drifted')
+  }
+  if (selection.upstream?.packageVersion !== '0.64.0' ||
+      !Array.isArray(selection.negativeCases) ||
+      selection.negativeCases.length !== 20) {
+    fail('native Stylus parser selection drifted')
+  }
+  const parserNegativeIds = [
+    'unclosed-expression',
+    'unexpected-brace',
+    'unclosed-media',
+    'unclosed-function',
+    'dangling-selector',
+    'empty-import',
+    'root-break',
+    'bad-charset',
+    'unclosed-object',
+    'unterminated-string',
+    'bad-ternary',
+    'bad-atblock',
+    'bad-property',
+  ]
+  const selectedNegatives = new Set(selection.negativeCases.map(specCase => specCase.id))
+  for (const id of parserNegativeIds) {
+    if (!selectedNegatives.has(id)) fail(`native Stylus parser selection is missing ${id}`)
+    requireText(tests, `"${id}"`, 'native Stylus parser negative evidence')
+  }
+  for (const evidenceTest of [
+    'native Stylus parser preserves indentation optional punctuation and syntax kinds',
+    'native parser accepts every pinned Stylus success entry',
+    'native parser rejects every pinned Stylus parser error',
+    'invalid UTF-8 and Stylus parser resource ceilings fail closed',
+    'Stylus tokenization and parsing cancellation expose no partial document',
+    'native Stylus parser handles every allocation failure',
+  ]) {
+    requireText(tests, `test "${evidenceTest}"`, 'native Stylus parser evidence')
+  }
+  requireText(
+    source,
+    'execute project plugins or',
+    'native Stylus permanent execution boundary',
+  )
+  requireText(
+    plan,
+    '`NSTYLUS-010` | Implement native Stylus lexical indentation and optional punctuation, variables, properties, selectors, expressions, and CSS-preserving syntax behind an unavailable experimental gate',
+    'DEVELOPMENT_PLAN.md native Stylus parser package',
+  )
+}
+
 function validateLessEvaluator(source, tests, plan) {
   for (const evidenceTest of [
     'native Less transaction preserves the finite plain CSS foundation',
@@ -1219,6 +1295,16 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/less_conformance.zig'),
       'utf8',
     ),
+    stylusManifest = loadJson('tests/preprocessors/stylus/corpus/manifest.json'),
+    stylusSelection = loadJson('tests/preprocessors/stylus/corpus/selection.json'),
+    stylusParserSource = fs.readFileSync(
+      repositoryFile('src/preprocessor/stylus.zig'),
+      'utf8',
+    ),
+    stylusParserTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/stylus_parser.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -1280,6 +1366,13 @@ export function validateContract(
     plan,
     lessSelection,
     lessConformanceTests,
+  )
+  validateStylusParser(
+    stylusManifest,
+    stylusSelection,
+    stylusParserSource,
+    stylusParserTests,
+    plan,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)

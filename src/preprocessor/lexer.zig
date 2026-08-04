@@ -278,7 +278,18 @@ pub const Lexer = struct {
         while (target_len > 1 and self.indentation[target_len - 1] > column) {
             target_len -= 1;
         }
-        if (self.indentation[target_len - 1] != column) return error.InconsistentIndentation;
+        if (self.indentation[target_len - 1] != column) {
+            if (self.syntax != .stylus) return error.InconsistentIndentation;
+            if (target_len - 1 >= self.options.max_indentation_depth) {
+                return error.IndentationDepthExceeded;
+            }
+            self.pending_dedents = @intCast(self.indentation_len - target_len);
+            self.indentation_len = target_len;
+            self.indentation[self.indentation_len] = column;
+            self.indentation_len += 1;
+            self.pending_indent = true;
+            return;
+        }
         self.pending_dedents = @intCast(self.indentation_len - target_len);
         self.indentation_len = target_len;
     }
@@ -551,7 +562,7 @@ pub const Lexer = struct {
     }
 
     fn insideUnquotedUrl(self: *const Lexer) bool {
-        if (self.syntax != .less or self.cursor == 0) return false;
+        if ((self.syntax != .less and self.syntax != .stylus) or self.cursor == 0) return false;
         var index = self.cursor;
         var depth: usize = 0;
         while (index > 0) {

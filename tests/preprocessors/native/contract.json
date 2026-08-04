@@ -672,6 +672,25 @@
       "testStep": "test-native-less-conformance",
       "publicAvailable": false,
       "productionReachable": false
+    },
+    {
+      "id": "native-stylus-parser",
+      "current": "native-internal",
+      "ownerPackage": "NSTYLUS-010",
+      "adapters": ["stylus"],
+      "capabilities": [
+        "parsing",
+        "indentation-optional-punctuation",
+        "pinned-success-syntax",
+        "pinned-parser-negatives",
+        "resource-cancellation",
+        "allocation-failure"
+      ],
+      "nativeSources": ["src/preprocessor/stylus.zig"],
+      "testSources": ["tests/native-preprocessor/stylus_parser.zig"],
+      "testStep": "test-native-stylus-parser",
+      "publicAvailable": false,
+      "productionReachable": false
     }
   ],
   "adapters": [

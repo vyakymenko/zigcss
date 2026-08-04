@@ -51,6 +51,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     'native-less-parser',
     'native-less-semantic-core',
     'native-less-conformance',
+    'native-stylus-parser',
   ])
   assert.deepEqual(contract.sassConformance, {
     ownerPackage: 'NSASS-012',
@@ -622,6 +623,38 @@ test('binds the finite native Less parser selection and executable evidence', ()
   )
 })
 
+test('binds the finite native Stylus parser corpus and executable evidence', () => {
+  const changedManifest = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'tests/preprocessors/stylus/corpus/manifest.json'),
+    'utf8',
+  ))
+  changedManifest.cases.pop()
+  assert.throws(
+    () => validateContract(loadContract(), { stylusManifest: changedManifest }),
+    /native Stylus parser corpus drifted/,
+  )
+
+  const changedSelection = JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, 'tests/preprocessors/stylus/corpus/selection.json'),
+    'utf8',
+  ))
+  changedSelection.negativeCases = changedSelection.negativeCases.filter(
+    specCase => specCase.id !== 'unclosed-expression',
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { stylusSelection: changedSelection }),
+    /native Stylus parser selection drifted/,
+  )
+
+  const missingEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/stylus_parser.zig'), 'utf8')
+    .replace('test "native parser accepts every pinned Stylus success entry"', 'test "removed"')
+  assert.throws(
+    () => validateContract(loadContract(), { stylusParserTests: missingEvidence }),
+    /native Stylus parser evidence.*missing/,
+  )
+})
+
 test('binds the native Less evaluator and permanent execution boundary', () => {
   const missingEvidence = fs
     .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
@@ -824,7 +857,7 @@ test('binds implemented native foundation sources and focused test inventories',
 })
 
 test('binds unavailable native frontend internals without admitting product reachability', () => {
-  for (const index of [0, 1, 2, 3]) {
+  for (const index of [0, 1, 2, 3, 4, 5, 6]) {
     for (const field of ['publicAvailable', 'productionReachable']) {
       const changed = clone(loadContract())
       changed.implementations[index][field] = true
@@ -843,6 +876,10 @@ test('binds unavailable native frontend internals without admitting product reac
   const lessSourceChanged = clone(loadContract())
   lessSourceChanged.implementations[3].nativeSources = ['src/preprocessor/lexer.zig']
   assert.throws(() => validateContract(lessSourceChanged), /implementation.*inventory drifted/)
+
+  const stylusSourceChanged = clone(loadContract())
+  stylusSourceChanged.implementations[6].nativeSources = ['src/preprocessor/lexer.zig']
+  assert.throws(() => validateContract(stylusSourceChanged), /implementation.*inventory drifted/)
 
   assert.throws(
     () => validateContract(loadContract(), {
