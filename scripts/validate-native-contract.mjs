@@ -269,6 +269,47 @@ const expectedLessConformance = Object.freeze({
   }),
 })
 
+const expectedStylusConformance = Object.freeze({
+  ownerPackage: 'NSTYLUS-012',
+  releaseGapFamily: 'native-stylus-conformance',
+  state: 'in-progress',
+  packageState: 'in-progress',
+  oracle: Object.freeze({
+    id: 'stylus',
+    package: 'stylus',
+    version: '0.64.0',
+    selection: 'tests/preprocessors/stylus/corpus/selection.json',
+    manifest: 'tests/preprocessors/stylus/corpus/manifest.json',
+    caseCount: 346,
+  }),
+  completedCaseCount: 1,
+  remainingCaseCount: 345,
+  terminalContract: Object.freeze({
+    selectionDerived: true,
+    successCaseCount: 326,
+    errorCaseCount: 20,
+    deterministicRunsPerSuccessCase: 2,
+    fuzzMutationsPerCase: 3,
+    maxConcurrentCompilations: 4,
+  }),
+  completedCohorts: Object.freeze([
+    Object.freeze({
+      feature: 'variable',
+      caseIds: Object.freeze(['stylus-official-variable']),
+      evidenceTests: Object.freeze([
+        'native Stylus matches the pinned variable conformance cohort deterministically',
+      ]),
+    }),
+  ]),
+  gates: Object.freeze({
+    corpusDifferential: 'in-progress',
+    negativeAndResource: 'not-started',
+    deterministicConcurrency: 'not-started',
+    fuzz: 'not-started',
+    allocationFailure: 'not-started',
+  }),
+})
+
 const expectedCurrentDependencies = Object.freeze({
   'image-size': '0.5.5',
   less: '4.6.7',
@@ -742,6 +783,18 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-stylus-conformance',
+    current: 'native-internal',
+    ownerPackage: 'NSTYLUS-012',
+    adapters: Object.freeze(['stylus']),
+    capabilities: Object.freeze(['pinned-corpus-differential']),
+    nativeSources: Object.freeze([]),
+    testSources: Object.freeze(['tests/native-preprocessor/stylus_conformance.zig']),
+    testStep: 'test-native-stylus-conformance',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -1193,6 +1246,67 @@ function validateStylusEvaluator(selection, source, tests, plan) {
   )
 }
 
+function validateStylusConformance(
+  conformance,
+  contract,
+  plan,
+  selection,
+  manifest,
+  conformanceTests,
+) {
+  if (!same(conformance, expectedStylusConformance)) {
+    fail('native Stylus conformance contract drifted')
+  }
+  const oracle = contract.referenceOracles.find(candidate => candidate.id === conformance.oracle.id)
+  if (oracle === undefined || oracle.package !== conformance.oracle.package ||
+      oracle.version !== conformance.oracle.version) {
+    fail('native Stylus conformance oracle drifted')
+  }
+  if (selection.upstream?.packageVersion !== conformance.oracle.version ||
+      manifest.upstream?.packageVersion !== conformance.oracle.version ||
+      !Array.isArray(manifest.cases) ||
+      manifest.caseCount !== conformance.oracle.caseCount ||
+      manifest.cases.length !== conformance.oracle.caseCount) {
+    fail('native Stylus conformance terminal corpus drifted')
+  }
+  const successCaseCount = manifest.cases.filter(specCase => specCase.outcome === 'success').length
+  const errorCaseCount = manifest.cases.filter(specCase => specCase.outcome === 'error').length
+  if (!conformance.terminalContract.selectionDerived ||
+      successCaseCount !== conformance.terminalContract.successCaseCount ||
+      errorCaseCount !== conformance.terminalContract.errorCaseCount ||
+      successCaseCount + errorCaseCount !== conformance.oracle.caseCount) {
+    fail('native Stylus conformance terminal accounting drifted')
+  }
+  const selectedById = new Map(manifest.cases.map(specCase => [specCase.id, specCase]))
+  const completed = new Set()
+  for (const cohort of conformance.completedCohorts) {
+    for (const caseId of cohort.caseIds) {
+      const specCase = selectedById.get(caseId)
+      if (specCase === undefined || specCase.feature !== cohort.feature ||
+          specCase.outcome !== 'success' || completed.has(caseId)) {
+        fail('native Stylus conformance completed cohort drifted')
+      }
+      completed.add(caseId)
+    }
+    for (const evidenceTest of cohort.evidenceTests) {
+      requireText(
+        conformanceTests,
+        `test "${evidenceTest}"`,
+        'native Stylus conformance evidence',
+      )
+    }
+  }
+  if (completed.size !== conformance.completedCaseCount ||
+      conformance.completedCaseCount + conformance.remainingCaseCount !== conformance.oracle.caseCount) {
+    fail('native Stylus conformance case accounting drifted')
+  }
+  requireText(
+    plan,
+    '`NSTYLUS-012` | Pass the pinned Stylus 0.64.0 corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates',
+    'DEVELOPMENT_PLAN.md native Stylus conformance package',
+  )
+}
+
 function validateLessEvaluator(source, tests, plan) {
   for (const evidenceTest of [
     'native Less transaction preserves the finite plain CSS foundation',
@@ -1374,6 +1488,10 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/stylus_evaluator.zig'),
       'utf8',
     ),
+    stylusConformanceTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/stylus_conformance.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -1393,6 +1511,7 @@ export function validateContract(
       'sassEvaluatorClosure',
       'sassConformance',
       'lessConformance',
+      'stylusConformance',
       'foundations',
       'implementations',
       'adapters',
@@ -1448,6 +1567,14 @@ export function validateContract(
     stylusEvaluatorSource,
     stylusEvaluatorTests,
     plan,
+  )
+  validateStylusConformance(
+    contract.stylusConformance,
+    contract,
+    plan,
+    stylusSelection,
+    stylusManifest,
+    stylusConformanceTests,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)

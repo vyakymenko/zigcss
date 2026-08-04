@@ -250,6 +250,46 @@
       "allocationFailure": "verified"
     }
   },
+  "stylusConformance": {
+    "ownerPackage": "NSTYLUS-012",
+    "releaseGapFamily": "native-stylus-conformance",
+    "state": "in-progress",
+    "packageState": "in-progress",
+    "oracle": {
+      "id": "stylus",
+      "package": "stylus",
+      "version": "0.64.0",
+      "selection": "tests/preprocessors/stylus/corpus/selection.json",
+      "manifest": "tests/preprocessors/stylus/corpus/manifest.json",
+      "caseCount": 346
+    },
+    "completedCaseCount": 1,
+    "remainingCaseCount": 345,
+    "terminalContract": {
+      "selectionDerived": true,
+      "successCaseCount": 326,
+      "errorCaseCount": 20,
+      "deterministicRunsPerSuccessCase": 2,
+      "fuzzMutationsPerCase": 3,
+      "maxConcurrentCompilations": 4
+    },
+    "completedCohorts": [
+      {
+        "feature": "variable",
+        "caseIds": ["stylus-official-variable"],
+        "evidenceTests": [
+          "native Stylus matches the pinned variable conformance cohort deterministically"
+        ]
+      }
+    ],
+    "gates": {
+      "corpusDifferential": "in-progress",
+      "negativeAndResource": "not-started",
+      "deterministicConcurrency": "not-started",
+      "fuzz": "not-started",
+      "allocationFailure": "not-started"
+    }
+  },
   "foundations": [
     {
       "id": "shared-lossless-lexer",
@@ -709,6 +749,18 @@
       "nativeSources": ["src/preprocessor/stylus_evaluator.zig"],
       "testSources": ["tests/native-preprocessor/stylus_evaluator.zig"],
       "testStep": "test-native-stylus-evaluator",
+      "publicAvailable": false,
+      "productionReachable": false
+    },
+    {
+      "id": "native-stylus-conformance",
+      "current": "native-internal",
+      "ownerPackage": "NSTYLUS-012",
+      "adapters": ["stylus"],
+      "capabilities": ["pinned-corpus-differential"],
+      "nativeSources": [],
+      "testSources": ["tests/native-preprocessor/stylus_conformance.zig"],
+      "testStep": "test-native-stylus-conformance",
       "publicAvailable": false,
       "productionReachable": false
     }

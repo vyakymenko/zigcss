@@ -53,6 +53,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     'native-less-conformance',
     'native-stylus-parser',
     'native-stylus-semantic-core',
+    'native-stylus-conformance',
   ])
   assert.deepEqual(contract.sassConformance, {
     ownerPackage: 'NSASS-012',
@@ -247,6 +248,44 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       deterministicConcurrency: 'verified',
       fuzz: 'verified',
       allocationFailure: 'verified',
+    },
+  })
+  assert.deepEqual(contract.stylusConformance, {
+    ownerPackage: 'NSTYLUS-012',
+    releaseGapFamily: 'native-stylus-conformance',
+    state: 'in-progress',
+    packageState: 'in-progress',
+    oracle: {
+      id: 'stylus',
+      package: 'stylus',
+      version: '0.64.0',
+      selection: 'tests/preprocessors/stylus/corpus/selection.json',
+      manifest: 'tests/preprocessors/stylus/corpus/manifest.json',
+      caseCount: 346,
+    },
+    completedCaseCount: 1,
+    remainingCaseCount: 345,
+    terminalContract: {
+      selectionDerived: true,
+      successCaseCount: 326,
+      errorCaseCount: 20,
+      deterministicRunsPerSuccessCase: 2,
+      fuzzMutationsPerCase: 3,
+      maxConcurrentCompilations: 4,
+    },
+    completedCohorts: [{
+      feature: 'variable',
+      caseIds: ['stylus-official-variable'],
+      evidenceTests: [
+        'native Stylus matches the pinned variable conformance cohort deterministically',
+      ],
+    }],
+    gates: {
+      corpusDifferential: 'in-progress',
+      negativeAndResource: 'not-started',
+      deterministicConcurrency: 'not-started',
+      fuzz: 'not-started',
+      allocationFailure: 'not-started',
     },
   })
   const sassCore = contract.implementations[1]
@@ -582,6 +621,33 @@ test('rejects widened, unpinned, or unevidenced native Less conformance progress
   assert.throws(
     () => validateContract(loadContract(), { lessConformanceTests: missingEvidence }),
     /native Less conformance evidence.*missing/,
+  )
+})
+
+test('rejects widened, unpinned, or unevidenced native Stylus conformance progress', () => {
+  for (const mutate of [
+    contract => { contract.stylusConformance.releaseGapFamily = 'renamed-conformance' },
+    contract => { contract.stylusConformance.completedCaseCount = 2 },
+    contract => { contract.stylusConformance.remainingCaseCount = 344 },
+    contract => { contract.stylusConformance.terminalContract.successCaseCount = 325 },
+    contract => { contract.stylusConformance.terminalContract.selectionDerived = false },
+    contract => { contract.stylusConformance.completedCohorts[0].caseIds[0] = 'unknown' },
+    contract => { contract.stylusConformance.gates.corpusDifferential = 'verified' },
+  ]) {
+    const changed = clone(loadContract())
+    mutate(changed)
+    assert.throws(() => validateContract(changed), /native Stylus conformance/)
+  }
+
+  const missingEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/stylus_conformance.zig'), 'utf8')
+    .replace(
+      'test "native Stylus matches the pinned variable conformance cohort deterministically"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { stylusConformanceTests: missingEvidence }),
+    /native Stylus conformance evidence.*missing/,
   )
 })
 
