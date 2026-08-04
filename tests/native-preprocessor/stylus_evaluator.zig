@@ -160,6 +160,64 @@ test "native Stylus imports remain explicit before their evaluator slice" {
     );
 }
 
+test "native Stylus evaluates the fixed variable property selector expression slice" {
+    const input =
+        \\base = 8px
+        \\name = 'card'
+        \\tone = #123456
+        \\.{name}, .panel
+        \\  local = base + 2px
+        \\  width local * 2
+        \\  margin (base / 2)
+        \\  color tone
+        \\  border-{name} 1px + 1px
+        \\  &:hover
+        \\    width local
+        \\  > span
+        \\    padding base
+        \\.other
+        \\  width base
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".card,.panel{width:20px;margin:4px;color:#123456;border-card:2px}" ++
+            ".card:hover,.panel:hover{width:10px}" ++
+            ".card>span,.panel>span{padding:8px}.other{width:8px}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+    try std.testing.expect(first.map() != null);
+    try std.testing.expect(first.map().?.segments().len >= 9);
+}
+
+test "native Stylus semantic failures own diagnostics without partial CSS" {
+    try expectSemanticRejection(
+        \\.a
+        \\  width $missing
+    ,
+        error.UndefinedVariable,
+        .undefined_variable,
+        "native Stylus variable is undefined",
+        11,
+    );
+    try expectSemanticRejection(
+        \\base = 1px
+        \\.a
+        \\  width length(base)
+    ,
+        error.UnsupportedFeature,
+        .unsupported_feature,
+        "native Stylus built-in functions are not implemented in this evaluator slice",
+        22,
+    );
+}
+
 const CancelContext = struct {
     target: evaluator.Checkpoint,
     calls: usize = 0,
@@ -266,17 +324,67 @@ test "native Stylus plain CSS foundation owns resource and cancellation boundari
             compile(std.testing.allocator, input, invalid),
         );
     }
+    {
+        var terminal = stylus_evaluator.Limits{};
+        terminal.max_selectors = 2;
+        var result = try compile(
+            std.testing.allocator,
+            ".a, .b\n  width 1px + 1px\n",
+            terminal,
+        );
+        defer result.deinit();
+        try std.testing.expectEqualStrings(".a,.b{width:2px}", result.css());
+
+        var over_limit = terminal;
+        over_limit.max_selectors = 1;
+        try std.testing.expectError(
+            error.SelectorLimitExceeded,
+            compile(
+                std.testing.allocator,
+                ".a, .b\n  width 1px + 1px\n",
+                over_limit,
+            ),
+        );
+    }
+    {
+        var terminal = stylus_evaluator.Limits{};
+        terminal.max_expression_depth = 2;
+        var result = try compile(
+            std.testing.allocator,
+            ".a\n  width (1px + 1px)\n",
+            terminal,
+        );
+        defer result.deinit();
+        try std.testing.expectEqualStrings(".a{width:2px}", result.css());
+
+        try std.testing.expectError(
+            error.ExpressionDepthExceeded,
+            compile(
+                std.testing.allocator,
+                ".a\n  width ((1px + 1px))\n",
+                terminal,
+            ),
+        );
+    }
 }
 
 fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
-        ".card { color: rgba(1, 2, 3, .5); width: calc(1px + 2%); }\n",
+        "base = 8px\n" ++
+            "name = 'card'\n" ++
+            ".{name}, .panel\n" ++
+            "  local = base + 2px\n" ++
+            "  width local * 2\n" ++
+            "  border-{name} 1px + 1px\n" ++
+            "  &:hover\n" ++
+            "    width local\n",
         .{},
     );
     defer result.deinit();
     try std.testing.expectEqualStrings(
-        ".card{color:rgba(1, 2, 3, .5);width:calc(1px + 2%)}",
+        ".card,.panel{width:20px;border-card:2px}" ++
+            ".card:hover,.panel:hover{width:10px}",
         result.css(),
     );
 }

@@ -700,6 +700,7 @@
       "capabilities": [
         "plain-css-transaction",
         "permanent-use-plugin-hook-rejection",
+        "variables-properties-selectors-expressions",
         "resource-cancellation",
         "allocation-failure"
       ],
