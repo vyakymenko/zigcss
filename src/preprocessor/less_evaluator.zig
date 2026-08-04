@@ -1550,11 +1550,13 @@ const Engine = struct {
             return;
         }
 
+        const block_children = self.document.children(block_id.?) catch
+            return error.InvalidDocument;
+        if (block_children.len == 0) return;
+
         if (prelude.len > 0) try self.appendTemporary(&header, " ");
         try self.appendTemporary(&header, "{");
         try self.transaction.emitMapped(at_rule.span, null, header.items);
-        const block_children = self.document.children(block_id.?) catch
-            return error.InvalidDocument;
         const block_scope = try self.prepareScope(block_children, scope);
         try self.emitAtRuleStatements(block_children, block_scope, parent_selector);
         try self.transaction.emit("}");

@@ -104,8 +104,11 @@ fn compileExpectedCss(
     return transaction.finish(.{ .format = .pretty });
 }
 
-test "native Less matches the pinned at-rules declarations conformance cohort deterministically" {
-    const allocator = std.testing.allocator;
+fn expectSuccessCase(
+    allocator: std.mem.Allocator,
+    case_id: []const u8,
+    feature: []const u8,
+) !void {
     const selection_bytes = try std.fs.cwd().readFileAlloc(
         allocator,
         "tests/preprocessors/less/corpus/selection.json",
@@ -122,11 +125,8 @@ test "native Less matches the pinned at-rules declarations conformance cohort de
 
     try std.testing.expectEqual(@as(u8, 1), parsed.value.schemaVersion);
     try std.testing.expectEqual(@as(usize, 88), parsed.value.cases.len);
-    const case = try findCase(
-        parsed.value.cases,
-        "less-at-rules-declarations-at-rules-declarations",
-    );
-    try std.testing.expectEqualStrings("at-rules-declarations", case.feature);
+    const case = try findCase(parsed.value.cases, case_id);
+    try std.testing.expectEqualStrings(feature, case.feature);
     try std.testing.expectEqualStrings("tests-unit", case.suite);
     try std.testing.expectEqualStrings("success", case.outcome);
 
@@ -152,4 +152,20 @@ test "native Less matches the pinned at-rules declarations conformance cohort de
     try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
+test "native Less matches the pinned at-rules declarations conformance cohort deterministically" {
+    try expectSuccessCase(
+        std.testing.allocator,
+        "less-at-rules-declarations-at-rules-declarations",
+        "at-rules-declarations",
+    );
+}
+
+test "native Less matches the pinned at-rules empty block conformance cohort deterministically" {
+    try expectSuccessCase(
+        std.testing.allocator,
+        "less-at-rules-empty-block-at-rules-empty-block",
+        "at-rules-empty-block",
+    );
 }

@@ -221,8 +221,8 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       selection: 'tests/preprocessors/less/corpus/selection.json',
       caseCount: 88,
     },
-    completedCaseCount: 1,
-    remainingCaseCount: 87,
+    completedCaseCount: 2,
+    remainingCaseCount: 86,
     terminalContract: {
       selectionDerived: true,
       successCaseCount: 68,
@@ -236,6 +236,12 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       caseIds: ['less-at-rules-declarations-at-rules-declarations'],
       evidenceTests: [
         'native Less matches the pinned at-rules declarations conformance cohort deterministically',
+      ],
+    }, {
+      feature: 'at-rules-empty-block',
+      caseIds: ['less-at-rules-empty-block-at-rules-empty-block'],
+      evidenceTests: [
+        'native Less matches the pinned at-rules empty block conformance cohort deterministically',
       ],
     }],
     gates: {
@@ -558,11 +564,12 @@ test('rejects widened, unpinned, or unevidenced native Sass conformance progress
 test('rejects widened, unpinned, or unevidenced native Less conformance progress', () => {
   for (const mutate of [
     contract => { contract.lessConformance.releaseGapFamily = 'renamed-conformance' },
-    contract => { contract.lessConformance.completedCaseCount = 2 },
-    contract => { contract.lessConformance.remainingCaseCount = 86 },
+    contract => { contract.lessConformance.completedCaseCount = 3 },
+    contract => { contract.lessConformance.remainingCaseCount = 85 },
     contract => { contract.lessConformance.terminalContract.successCaseCount = 67 },
     contract => { contract.lessConformance.terminalContract.selectionDerived = false },
     contract => { contract.lessConformance.completedCohorts[0].feature = 'at-rules' },
+    contract => { contract.lessConformance.completedCohorts[1].caseIds[0] = 'missing-case' },
     contract => { contract.lessConformance.gates.corpusDifferential = 'verified' },
   ]) {
     const changed = clone(loadContract())
