@@ -230,6 +230,46 @@ const expectedSassConformance = Object.freeze({
   }),
 })
 
+const expectedLessConformance = Object.freeze({
+  ownerPackage: 'NLESS-012',
+  releaseGapFamily: 'native-less-conformance',
+  state: 'in-progress',
+  packageState: 'in-progress',
+  oracle: Object.freeze({
+    id: 'less',
+    package: 'less',
+    version: '4.6.7',
+    selection: 'tests/preprocessors/less/corpus/selection.json',
+    caseCount: 88,
+  }),
+  completedCaseCount: 1,
+  remainingCaseCount: 87,
+  terminalContract: Object.freeze({
+    selectionDerived: true,
+    successCaseCount: 68,
+    errorCaseCount: 20,
+    deterministicRunsPerSuccessCase: 2,
+    fuzzMutationsPerCase: 3,
+    maxConcurrentCompilations: 4,
+  }),
+  completedCohorts: Object.freeze([
+    Object.freeze({
+      feature: 'at-rules-declarations',
+      caseIds: Object.freeze(['less-at-rules-declarations-at-rules-declarations']),
+      evidenceTests: Object.freeze([
+        'native Less matches the pinned at-rules declarations conformance cohort deterministically',
+      ]),
+    }),
+  ]),
+  gates: Object.freeze({
+    corpusDifferential: 'in-progress',
+    negativeAndResource: 'not-started',
+    deterministicConcurrency: 'not-started',
+    fuzz: 'not-started',
+    allocationFailure: 'not-started',
+  }),
+})
+
 const expectedCurrentDependencies = Object.freeze({
   'image-size': '0.5.5',
   less: '4.6.7',
@@ -646,6 +686,18 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-less-conformance',
+    current: 'native-internal',
+    ownerPackage: 'NLESS-012',
+    adapters: Object.freeze(['less']),
+    capabilities: Object.freeze(['pinned-corpus-differential']),
+    nativeSources: Object.freeze([]),
+    testSources: Object.freeze(['tests/native-preprocessor/less_conformance.zig']),
+    testStep: 'test-native-less-conformance',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -928,6 +980,61 @@ function validateSassConformance(
   )
 }
 
+function validateLessConformance(
+  conformance,
+  contract,
+  plan,
+  selection,
+  conformanceTests,
+) {
+  if (!same(conformance, expectedLessConformance)) {
+    fail('native Less conformance contract drifted')
+  }
+  const oracle = contract.referenceOracles.find(candidate => candidate.id === conformance.oracle.id)
+  if (oracle === undefined || oracle.package !== conformance.oracle.package ||
+      oracle.version !== conformance.oracle.version) {
+    fail('native Less conformance oracle drifted')
+  }
+  if (!Array.isArray(selection.cases) || selection.cases.length !== conformance.oracle.caseCount) {
+    fail('native Less conformance terminal corpus drifted')
+  }
+  const successCaseCount = selection.cases.filter(specCase => specCase.outcome === 'success').length
+  const errorCaseCount = selection.cases.filter(specCase => specCase.outcome === 'error').length
+  if (!conformance.terminalContract.selectionDerived ||
+      successCaseCount !== conformance.terminalContract.successCaseCount ||
+      errorCaseCount !== conformance.terminalContract.errorCaseCount ||
+      successCaseCount + errorCaseCount !== conformance.oracle.caseCount) {
+    fail('native Less conformance terminal accounting drifted')
+  }
+  const selectedById = new Map(selection.cases.map(specCase => [specCase.id, specCase]))
+  const completed = new Set()
+  for (const cohort of conformance.completedCohorts) {
+    for (const caseId of cohort.caseIds) {
+      const specCase = selectedById.get(caseId)
+      if (specCase === undefined || specCase.feature !== cohort.feature || completed.has(caseId)) {
+        fail('native Less conformance completed cohort drifted')
+      }
+      completed.add(caseId)
+    }
+    for (const evidenceTest of cohort.evidenceTests) {
+      requireText(
+        conformanceTests,
+        `test "${evidenceTest}"`,
+        'native Less conformance evidence',
+      )
+    }
+  }
+  if (completed.size !== conformance.completedCaseCount ||
+      conformance.completedCaseCount + conformance.remainingCaseCount !== conformance.oracle.caseCount) {
+    fail('native Less conformance case accounting drifted')
+  }
+  requireText(
+    plan,
+    '`NLESS-012` | Pass the pinned Less 4.6.7 corpus, strict negative/resource fixtures, exact differential output, deterministic concurrency, fuzzing, and allocation-failure gates',
+    'DEVELOPMENT_PLAN.md native Less conformance package',
+  )
+}
+
 function validateLessParser(selection, tests, plan) {
   if (selection.upstream?.packageVersion !== '4.6.7' || !Array.isArray(selection.cases) ||
       selection.cases.length !== 88) {
@@ -1114,6 +1221,10 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/less_evaluator.zig'),
       'utf8',
     ),
+    lessConformanceTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/less_conformance.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -1132,6 +1243,7 @@ export function validateContract(
       'referenceOracles',
       'sassEvaluatorClosure',
       'sassConformance',
+      'lessConformance',
       'foundations',
       'implementations',
       'adapters',
@@ -1168,6 +1280,13 @@ export function validateContract(
   )
   validateLessParser(lessSelection, lessParserTests, plan)
   validateLessEvaluator(lessEvaluatorSource, lessEvaluatorTests, plan)
+  validateLessConformance(
+    contract.lessConformance,
+    contract,
+    plan,
+    lessSelection,
+    lessConformanceTests,
+  )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
   }

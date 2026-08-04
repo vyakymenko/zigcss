@@ -18,7 +18,7 @@ function clone(value) {
   return structuredClone(value)
 }
 
-test('accepts the bounded native Sass implementation contract', () => {
+test('accepts the bounded native stylesheet implementation contract', () => {
   const contract = validateContract(loadContract())
   assert.equal(contract.schemaVersion, 5)
   assert.equal(contract.state, 'native-foundation')
@@ -50,6 +50,7 @@ test('accepts the bounded native Sass implementation contract', () => {
     'native-sass-conformance',
     'native-less-parser',
     'native-less-semantic-core',
+    'native-less-conformance',
   ])
   assert.deepEqual(contract.sassConformance, {
     ownerPackage: 'NSASS-012',
@@ -207,6 +208,43 @@ test('accepts the bounded native Sass implementation contract', () => {
       }],
     },
     conformancePackage: 'NSASS-012',
+  })
+  assert.deepEqual(contract.lessConformance, {
+    ownerPackage: 'NLESS-012',
+    releaseGapFamily: 'native-less-conformance',
+    state: 'in-progress',
+    packageState: 'in-progress',
+    oracle: {
+      id: 'less',
+      package: 'less',
+      version: '4.6.7',
+      selection: 'tests/preprocessors/less/corpus/selection.json',
+      caseCount: 88,
+    },
+    completedCaseCount: 1,
+    remainingCaseCount: 87,
+    terminalContract: {
+      selectionDerived: true,
+      successCaseCount: 68,
+      errorCaseCount: 20,
+      deterministicRunsPerSuccessCase: 2,
+      fuzzMutationsPerCase: 3,
+      maxConcurrentCompilations: 4,
+    },
+    completedCohorts: [{
+      feature: 'at-rules-declarations',
+      caseIds: ['less-at-rules-declarations-at-rules-declarations'],
+      evidenceTests: [
+        'native Less matches the pinned at-rules declarations conformance cohort deterministically',
+      ],
+    }],
+    gates: {
+      corpusDifferential: 'in-progress',
+      negativeAndResource: 'not-started',
+      deterministicConcurrency: 'not-started',
+      fuzz: 'not-started',
+      allocationFailure: 'not-started',
+    },
   })
   const sassCore = contract.implementations[1]
   assert.equal(sassCore.capabilities.includes('local-use-pinned-resolution-foundation'), true)
@@ -514,6 +552,33 @@ test('rejects widened, unpinned, or unevidenced native Sass conformance progress
   assert.throws(
     () => validateContract(loadContract(), { sassConformanceTests: missingEvidence }),
     /native Sass conformance evidence.*missing/,
+  )
+})
+
+test('rejects widened, unpinned, or unevidenced native Less conformance progress', () => {
+  for (const mutate of [
+    contract => { contract.lessConformance.releaseGapFamily = 'renamed-conformance' },
+    contract => { contract.lessConformance.completedCaseCount = 2 },
+    contract => { contract.lessConformance.remainingCaseCount = 86 },
+    contract => { contract.lessConformance.terminalContract.successCaseCount = 67 },
+    contract => { contract.lessConformance.terminalContract.selectionDerived = false },
+    contract => { contract.lessConformance.completedCohorts[0].feature = 'at-rules' },
+    contract => { contract.lessConformance.gates.corpusDifferential = 'verified' },
+  ]) {
+    const changed = clone(loadContract())
+    mutate(changed)
+    assert.throws(() => validateContract(changed), /native Less conformance/)
+  }
+
+  const missingEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_conformance.zig'), 'utf8')
+    .replace(
+      'test "native Less matches the pinned at-rules declarations conformance cohort deterministically"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { lessConformanceTests: missingEvidence }),
+    /native Less conformance evidence.*missing/,
   )
 })
 
@@ -868,5 +933,12 @@ test('requires one complete build graph with every native frontend runner in CI'
       '    // removed native Sass conformance coverage',
     ) }),
     /missing native runner run_native_sass_conformance_tests/,
+  )
+  assert.throws(
+    () => validateContract(loadContract(), { buildFile: buildFile.replace(
+      '    test_step.dependOn(&run_native_less_conformance_tests.step);',
+      '    // removed native Less conformance coverage',
+    ) }),
+    /missing native runner run_native_less_conformance_tests/,
   )
 })

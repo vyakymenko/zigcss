@@ -212,6 +212,45 @@
       "allocationFailure": "verified"
     }
   },
+  "lessConformance": {
+    "ownerPackage": "NLESS-012",
+    "releaseGapFamily": "native-less-conformance",
+    "state": "in-progress",
+    "packageState": "in-progress",
+    "oracle": {
+      "id": "less",
+      "package": "less",
+      "version": "4.6.7",
+      "selection": "tests/preprocessors/less/corpus/selection.json",
+      "caseCount": 88
+    },
+    "completedCaseCount": 1,
+    "remainingCaseCount": 87,
+    "terminalContract": {
+      "selectionDerived": true,
+      "successCaseCount": 68,
+      "errorCaseCount": 20,
+      "deterministicRunsPerSuccessCase": 2,
+      "fuzzMutationsPerCase": 3,
+      "maxConcurrentCompilations": 4
+    },
+    "completedCohorts": [
+      {
+        "feature": "at-rules-declarations",
+        "caseIds": ["less-at-rules-declarations-at-rules-declarations"],
+        "evidenceTests": [
+          "native Less matches the pinned at-rules declarations conformance cohort deterministically"
+        ]
+      }
+    ],
+    "gates": {
+      "corpusDifferential": "in-progress",
+      "negativeAndResource": "not-started",
+      "deterministicConcurrency": "not-started",
+      "fuzz": "not-started",
+      "allocationFailure": "not-started"
+    }
+  },
   "foundations": [
     {
       "id": "shared-lossless-lexer",
@@ -614,6 +653,18 @@
       "nativeSources": ["src/preprocessor/less_evaluator.zig"],
       "testSources": ["tests/native-preprocessor/less_evaluator.zig"],
       "testStep": "test-native-less-evaluator",
+      "publicAvailable": false,
+      "productionReachable": false
+    },
+    {
+      "id": "native-less-conformance",
+      "current": "native-internal",
+      "ownerPackage": "NLESS-012",
+      "adapters": ["less"],
+      "capabilities": ["pinned-corpus-differential"],
+      "nativeSources": [],
+      "testSources": ["tests/native-preprocessor/less_conformance.zig"],
+      "testStep": "test-native-less-conformance",
       "publicAvailable": false,
       "productionReachable": false
     }

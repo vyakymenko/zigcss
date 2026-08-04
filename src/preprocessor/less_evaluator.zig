@@ -1550,13 +1550,40 @@ const Engine = struct {
             return;
         }
 
+        if (prelude.len > 0) try self.appendTemporary(&header, " ");
         try self.appendTemporary(&header, "{");
         try self.transaction.emitMapped(at_rule.span, null, header.items);
         const block_children = self.document.children(block_id.?) catch
             return error.InvalidDocument;
         const block_scope = try self.prepareScope(block_children, scope);
-        try self.emitStatements(block_children, block_scope, parent_selector);
+        try self.emitAtRuleStatements(block_children, block_scope, parent_selector);
         try self.transaction.emit("}");
+    }
+
+    fn emitAtRuleStatements(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+        scope: Scope,
+        parent_selector: ?[]const u8,
+    ) Error!void {
+        for (children) |child_id| {
+            const child = self.document.get(child_id) catch return error.InvalidDocument;
+            switch (child.kind) {
+                .declaration => if (!try self.isVariableDeclaration(child_id)) {
+                    var rendered: std.ArrayList(u8) = .empty;
+                    defer rendered.deinit(self.allocator);
+                    try self.appendDeclaration(&rendered, child_id, scope);
+                    try self.transaction.emitMapped(child.span, null, rendered.items);
+                },
+                .rule => try self.emitRule(child_id, scope, parent_selector),
+                .at_rule => try self.emitAtRule(child_id, scope, parent_selector),
+                .mixin => if (!try self.isMixinDefinition(child_id)) {
+                    if (parent_selector == null) return error.InvalidDocument;
+                },
+                .detached_ruleset, .extend, .comment => {},
+                else => return error.InvalidDocument,
+            }
+        }
     }
 
     fn combineSelector(

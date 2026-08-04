@@ -182,6 +182,22 @@ pub fn build(b: *std.Build) void {
         "Test the private native Less semantic evaluator",
     );
     native_less_evaluator_test_step.dependOn(&run_native_less_evaluator_tests.step);
+    const native_less_conformance_test_module = b.createModule(.{
+        .root_source_file = b.path("tests/native-preprocessor/less_conformance.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    native_less_conformance_test_module.addImport("native_preprocessor", native_preprocessor_module);
+    const native_less_conformance_tests = b.addTest(.{
+        .root_module = native_less_conformance_test_module,
+    });
+    const run_native_less_conformance_tests = b.addRunArtifact(native_less_conformance_tests);
+    run_native_less_conformance_tests.setCwd(b.path("."));
+    const native_less_conformance_test_step = b.step(
+        "test-native-less-conformance",
+        "Test the pinned native Less conformance evidence",
+    );
+    native_less_conformance_test_step.dependOn(&run_native_less_conformance_tests.step);
     const native_sass_arguments_test_module = b.createModule(.{
         .root_source_file = b.path("tests/native-preprocessor/sass_arguments.zig"),
         .target = target,
@@ -270,6 +286,7 @@ pub fn build(b: *std.Build) void {
     native_preprocessor_test_step.dependOn(&run_native_sass_parser_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_less_parser_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_less_evaluator_tests.step);
+    native_preprocessor_test_step.dependOn(&run_native_less_conformance_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_arguments_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_numeric_tests.step);
     native_preprocessor_test_step.dependOn(&run_native_sass_color_tests.step);
@@ -385,6 +402,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_native_sass_parser_tests.step);
     test_step.dependOn(&run_native_less_parser_tests.step);
     test_step.dependOn(&run_native_less_evaluator_tests.step);
+    test_step.dependOn(&run_native_less_conformance_tests.step);
     test_step.dependOn(&run_native_sass_arguments_tests.step);
     test_step.dependOn(&run_native_sass_numeric_tests.step);
     test_step.dependOn(&run_native_sass_color_tests.step);
