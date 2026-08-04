@@ -596,6 +596,23 @@
       "testStep": "test-native-less-parser",
       "publicAvailable": false,
       "productionReachable": false
+    },
+    {
+      "id": "native-less-semantic-core",
+      "current": "native-internal",
+      "ownerPackage": "NLESS-011",
+      "adapters": ["less"],
+      "capabilities": [
+        "plain-css-transaction",
+        "permanent-javascript-plugin-rejection",
+        "resource-cancellation",
+        "allocation-failure"
+      ],
+      "nativeSources": ["src/preprocessor/less_evaluator.zig"],
+      "testSources": ["tests/native-preprocessor/less_evaluator.zig"],
+      "testStep": "test-native-less-evaluator",
+      "publicAvailable": false,
+      "productionReachable": false
     }
   ],
   "adapters": [

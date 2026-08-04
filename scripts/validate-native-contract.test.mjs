@@ -49,6 +49,7 @@ test('accepts the bounded native Sass implementation contract', () => {
     'native-sass-semantic-core',
     'native-sass-conformance',
     'native-less-parser',
+    'native-less-semantic-core',
   ])
   assert.deepEqual(contract.sassConformance, {
     ownerPackage: 'NSASS-012',
@@ -552,6 +553,27 @@ test('binds the finite native Less parser selection and executable evidence', ()
   assert.throws(
     () => validateContract(loadContract(), { lessParserTests: missingEvidence }),
     /native Less parser evidence.*missing/,
+  )
+})
+
+test('binds the native Less evaluator and permanent execution boundary', () => {
+  const missingEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
+    .replace(
+      'test "native Less permanently rejects JavaScript and plugins without partial CSS"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { lessEvaluatorTests: missingEvidence }),
+    /native Less evaluator evidence.*missing/,
+  )
+
+  const weakenedBoundary = fs
+    .readFileSync(path.join(repositoryRoot, 'src/preprocessor/less_evaluator.zig'), 'utf8')
+    .replace('native Less plugins are permanently disabled', 'native Less plugins are unavailable')
+  assert.throws(
+    () => validateContract(loadContract(), { lessEvaluatorSource: weakenedBoundary }),
+    /native Less permanent execution boundary.*missing/,
   )
 })
 

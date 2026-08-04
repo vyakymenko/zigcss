@@ -626,6 +626,23 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-less-semantic-core',
+    current: 'native-internal',
+    ownerPackage: 'NLESS-011',
+    adapters: Object.freeze(['less']),
+    capabilities: Object.freeze([
+      'plain-css-transaction',
+      'permanent-javascript-plugin-rejection',
+      'resource-cancellation',
+      'allocation-failure',
+    ]),
+    nativeSources: Object.freeze(['src/preprocessor/less_evaluator.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/less_evaluator.zig']),
+    testStep: 'test-native-less-evaluator',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -935,6 +952,28 @@ function validateLessParser(selection, tests, plan) {
   )
 }
 
+function validateLessEvaluator(source, tests, plan) {
+  for (const evidenceTest of [
+    'native Less transaction preserves the finite plain CSS foundation',
+    'native Less permanently rejects JavaScript and plugins without partial CSS',
+    'native Less plain CSS foundation owns resource and cancellation boundaries',
+    'native Less plain CSS transaction handles every allocation failure',
+  ]) {
+    requireText(tests, `test "${evidenceTest}"`, 'native Less evaluator evidence')
+  }
+  for (const permanentBoundary of [
+    'native Less JavaScript evaluation is permanently disabled',
+    'native Less plugins are permanently disabled',
+  ]) {
+    requireText(source, permanentBoundary, 'native Less permanent execution boundary')
+  }
+  requireText(
+    plan,
+    '`NLESS-011` | Implement Less lazy evaluation, imports/options, functions/colors/units, URL behavior, diagnostics, dependencies, and maps while permanently rejecting JavaScript and plugins',
+    'DEVELOPMENT_PLAN.md native Less evaluator package',
+  )
+}
+
 function validateInternalReachability(implementations, buildFile, productionSources) {
   requireText(buildFile, 'root_source_file = b.path("src/preprocessor.zig")', 'build.zig')
   for (const implementation of implementations) {
@@ -1032,6 +1071,14 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/less_parser.zig'),
       'utf8',
     ),
+    lessEvaluatorSource = fs.readFileSync(
+      repositoryFile('src/preprocessor/less_evaluator.zig'),
+      'utf8',
+    ),
+    lessEvaluatorTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/less_evaluator.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -1085,6 +1132,7 @@ export function validateContract(
     sassConformanceTests,
   )
   validateLessParser(lessSelection, lessParserTests, plan)
+  validateLessEvaluator(lessEvaluatorSource, lessEvaluatorTests, plan)
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {
     fail(`foundation inventory must contain ${expectedFoundations.length} rows`)
   }

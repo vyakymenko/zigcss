@@ -15,6 +15,7 @@ pub const resolver = @import("preprocessor/resolver.zig");
 pub const evaluator = @import("preprocessor/evaluator.zig");
 pub const sass = @import("preprocessor/sass.zig");
 pub const less = @import("preprocessor/less.zig");
+pub const less_evaluator = @import("preprocessor/less_evaluator.zig");
 pub const sass_arguments = @import("preprocessor/sass_arguments.zig");
 pub const sass_numeric = @import("preprocessor/sass_numeric.zig");
 pub const sass_color = @import("preprocessor/sass_color.zig");
@@ -35,6 +36,7 @@ test {
     _ = evaluator;
     _ = sass;
     _ = less;
+    _ = less_evaluator;
     _ = sass_arguments;
     _ = sass_numeric;
     _ = sass_color;
