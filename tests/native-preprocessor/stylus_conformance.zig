@@ -170,3 +170,12 @@ test "native Stylus matches the pinned conditional assignment conformance cohort
         "a.button {\n  font: 14px;\n  background: #fff;\n}",
     );
 }
+
+test "native Stylus matches the pinned self assignment conformance cohort deterministically" {
+    try expectSuccessfulCase(
+        std.testing.allocator,
+        "stylus-official-self-assignment",
+        "self-assignment",
+        "body {\n  background: #fff;\n}",
+    );
+}

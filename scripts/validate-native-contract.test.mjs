@@ -263,8 +263,8 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       manifest: 'tests/preprocessors/stylus/corpus/manifest.json',
       caseCount: 346,
     },
-    completedCaseCount: 2,
-    remainingCaseCount: 344,
+    completedCaseCount: 3,
+    remainingCaseCount: 343,
     terminalContract: {
       selectionDerived: true,
       successCaseCount: 326,
@@ -286,6 +286,13 @@ test('accepts the bounded native stylesheet implementation contract', () => {
         caseIds: ['stylus-official-conditional-assignment'],
         evidenceTests: [
           'native Stylus matches the pinned conditional assignment conformance cohort deterministically',
+        ],
+      },
+      {
+        feature: 'self-assignment',
+        caseIds: ['stylus-official-self-assignment'],
+        evidenceTests: [
+          'native Stylus matches the pinned self assignment conformance cohort deterministically',
         ],
       },
     ],
@@ -636,8 +643,8 @@ test('rejects widened, unpinned, or unevidenced native Less conformance progress
 test('rejects widened, unpinned, or unevidenced native Stylus conformance progress', () => {
   for (const mutate of [
     contract => { contract.stylusConformance.releaseGapFamily = 'renamed-conformance' },
-    contract => { contract.stylusConformance.completedCaseCount = 3 },
-    contract => { contract.stylusConformance.remainingCaseCount = 343 },
+    contract => { contract.stylusConformance.completedCaseCount = 4 },
+    contract => { contract.stylusConformance.remainingCaseCount = 342 },
     contract => { contract.stylusConformance.terminalContract.successCaseCount = 325 },
     contract => { contract.stylusConformance.terminalContract.selectionDerived = false },
     contract => { contract.stylusConformance.completedCohorts[0].caseIds[0] = 'unknown' },
@@ -668,6 +675,19 @@ test('rejects widened, unpinned, or unevidenced native Stylus conformance progre
   assert.throws(
     () => validateContract(loadContract(), {
       stylusConformanceTests: missingConditionalEvidence,
+    }),
+    /native Stylus conformance evidence.*missing/,
+  )
+
+  const missingSelfAssignmentEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/stylus_conformance.zig'), 'utf8')
+    .replace(
+      'test "native Stylus matches the pinned self assignment conformance cohort deterministically"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), {
+      stylusConformanceTests: missingSelfAssignmentEvidence,
     }),
     /native Stylus conformance evidence.*missing/,
   )

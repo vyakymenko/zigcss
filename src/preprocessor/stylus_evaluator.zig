@@ -1418,6 +1418,19 @@ const Engine = struct {
             try self.reportExpressionDepth(span);
             return error.ExpressionDepthExceeded;
         }
+        if (parseDefinedTernary(raw)) |ternary| {
+            const selected = if (try self.environment.lookup(scope, ternary.name) != null)
+                ternary.when_defined
+            else
+                ternary.when_undefined;
+            try self.transaction.consumeOperations(@intCast(raw.len - (selected.end - selected.start)));
+            return self.evaluateValue(
+                try self.relativeSpan(span, selected),
+                raw[selected.start..selected.end],
+                scope,
+                depth + 1,
+            );
+        }
         const rendered = try self.renderRawOwned(span, raw, scope, .value, depth + 1);
         defer self.allocator.free(rendered);
         const input = std.mem.trim(u8, rendered, " \t\r\n\x0c;");
@@ -2009,6 +2022,12 @@ const Comparison = struct {
     operator: ComparisonOperator,
 };
 
+const DefinedTernary = struct {
+    name: []const u8,
+    when_defined: ByteRange,
+    when_undefined: ByteRange,
+};
+
 fn parseCall(raw_input: []const u8) ?Call {
     const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
     if (raw.len < 3 or !isNameStart(raw, 0)) return null;
@@ -2230,6 +2249,83 @@ fn numberUnitsEqual(left: native_value.Number, right: native_value.Number) bool 
         if (!std.mem.eql(u8, unit, other)) return false;
     }
     return true;
+}
+
+fn parseDefinedTernary(raw: []const u8) ?DefinedTernary {
+    const bounds = trimRange(raw, .{ .start = 0, .end = raw.len });
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    var nested_ternaries: usize = 0;
+    var question: ?usize = null;
+    var colon: ?usize = null;
+    var index = bounds.start;
+    while (index < bounds.end) : (index += 1) {
+        const byte = raw[index];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (depth != 0) continue;
+        if (byte == '?' and (index + 1 >= bounds.end or raw[index + 1] != '=')) {
+            if (question == null) {
+                question = index;
+            } else {
+                nested_ternaries += 1;
+            }
+            continue;
+        }
+        if (byte == ':' and question != null) {
+            if (nested_ternaries > 0) {
+                nested_ternaries -= 1;
+            } else {
+                colon = index;
+                break;
+            }
+        }
+    }
+
+    const question_index = question orelse return null;
+    const colon_index = colon orelse return null;
+    const condition = trimRange(raw, .{ .start = bounds.start, .end = question_index });
+    const when_defined = trimRange(raw, .{ .start = question_index + 1, .end = colon_index });
+    const when_undefined = trimRange(raw, .{ .start = colon_index + 1, .end = bounds.end });
+    if (when_defined.start == when_defined.end or when_undefined.start == when_undefined.end) {
+        return null;
+    }
+
+    var cursor = condition.end;
+    const defined_end = cursor;
+    while (cursor > condition.start and !std.ascii.isWhitespace(raw[cursor - 1])) cursor -= 1;
+    if (!std.ascii.eqlIgnoreCase(raw[cursor..defined_end], "defined")) return null;
+    while (cursor > condition.start and std.ascii.isWhitespace(raw[cursor - 1])) cursor -= 1;
+    const is_end = cursor;
+    while (cursor > condition.start and !std.ascii.isWhitespace(raw[cursor - 1])) cursor -= 1;
+    if (!std.ascii.eqlIgnoreCase(raw[cursor..is_end], "is")) return null;
+    const name_range = trimRange(raw, .{ .start = condition.start, .end = cursor });
+    const name = raw[name_range.start..name_range.end];
+    if (!validVariableName(name)) return null;
+
+    return .{
+        .name = name,
+        .when_defined = when_defined,
+        .when_undefined = when_undefined,
+    };
 }
 
 fn parseAssignment(raw_input: []const u8) ?Assignment {
