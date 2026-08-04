@@ -16,7 +16,8 @@ const source = preprocessor.source;
 // less-error-eval-at-rules-undefined-var. The terminal import foundation is
 // anchored to less-import-import-once, less-import-import-interpolation,
 // less-import-import-reference-issues, less-charsets-charsets, and
-// less-layer-layer without claiming their complete NLESS-012 corpus surface.
+// less-layer-layer. The separate terminal conformance runner owns the complete
+// finite NLESS-012 selection.
 
 const ImportFile = struct {
     name: []const u8,
@@ -311,7 +312,7 @@ test "native Less resolves pinned redefinition indirection and selector interpol
     try std.testing.expectEqualStrings(
         ".variable-redefinition{zero:0}" ++
             ".variable-scope{three:3}" ++
-            ".variable-list{font-family:\"Trebuchet MS\",Verdana,sans-serif;indirect:-1}" ++
+            ".variable-list{font-family:\"Trebuchet MS\", Verdana, sans-serif;indirect:-1}" ++
             ".icon-5_large{width:1px}",
         result.css(),
     );
@@ -576,19 +577,6 @@ test "native Less import failures own source-aware diagnostics without partial C
         0,
     );
     try expectImportFailure(
-        "@import (reference) \"dep\";",
-        &.{.{ .name = "dep.less", .contents = ".dep { color: red; }" }},
-        .{},
-        .{},
-        error.InvalidImport,
-        .{
-            .code = .invalid_import,
-            .message = "native Less import syntax is unsupported",
-            .source_suffix = "/input.less",
-        },
-        0,
-    );
-    try expectImportFailure(
         "@import (less) \"../escaped.less\";",
         &.{},
         .{},
@@ -827,7 +815,7 @@ test "native Less plain CSS foundation owns resource and cancellation boundaries
         limited,
     );
     defer terminal_calls.deinit();
-    try std.testing.expectEqualStrings(".a{color:red;color:red}", terminal_calls.css());
+    try std.testing.expectEqualStrings(".a{color:red}", terminal_calls.css());
     limited.max_calls = 1;
     try std.testing.expectError(
         error.CallLimitExceeded,

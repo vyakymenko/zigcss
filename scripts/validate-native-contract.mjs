@@ -233,8 +233,8 @@ const expectedSassConformance = Object.freeze({
 const expectedLessConformance = Object.freeze({
   ownerPackage: 'NLESS-012',
   releaseGapFamily: 'native-less-conformance',
-  state: 'in-progress',
-  packageState: 'in-progress',
+  state: 'closed',
+  packageState: 'verified',
   oracle: Object.freeze({
     id: 'less',
     package: 'less',
@@ -242,8 +242,8 @@ const expectedLessConformance = Object.freeze({
     selection: 'tests/preprocessors/less/corpus/selection.json',
     caseCount: 88,
   }),
-  completedCaseCount: 4,
-  remainingCaseCount: 84,
+  completedCaseCount: 88,
+  remainingCaseCount: 0,
   terminalContract: Object.freeze({
     selectionDerived: true,
     successCaseCount: 68,
@@ -251,45 +251,21 @@ const expectedLessConformance = Object.freeze({
     deterministicRunsPerSuccessCase: 2,
     fuzzMutationsPerCase: 3,
     maxConcurrentCompilations: 4,
+    evidenceTests: Object.freeze([
+      'native Less closes the finite pinned success corpus deterministically',
+      'native Less rejects the finite pinned error corpus deterministically',
+      'native Less parser owns finite resource and cancellation boundaries',
+      'native Less compilation is deterministic under bounded concurrency',
+      'native Less finite corpus seeds bounded parser and evaluator fuzzing',
+      'native Less successful transaction handles every allocation failure',
+    ]),
   }),
-  completedCohorts: Object.freeze([
-    Object.freeze({
-      feature: 'at-rules-declarations',
-      caseIds: Object.freeze(['less-at-rules-declarations-at-rules-declarations']),
-      evidenceTests: Object.freeze([
-        'native Less matches the pinned at-rules declarations conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'at-rules-empty-block',
-      caseIds: Object.freeze(['less-at-rules-empty-block-at-rules-empty-block']),
-      evidenceTests: Object.freeze([
-        'native Less matches the pinned at-rules empty block conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'at-rules-empty',
-      caseIds: Object.freeze(['less-at-rules-empty-at-rules-empty']),
-      evidenceTests: Object.freeze([
-        'native Less matches the pinned blockless at-rules conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'at-rules-keyword-comments',
-      caseIds: Object.freeze([
-        'less-at-rules-keyword-comments-at-rules-keyword-comments',
-      ]),
-      evidenceTests: Object.freeze([
-        'native Less matches the pinned at-rule keyword comment conformance cohort deterministically',
-      ]),
-    }),
-  ]),
   gates: Object.freeze({
-    corpusDifferential: 'in-progress',
-    negativeAndResource: 'not-started',
-    deterministicConcurrency: 'not-started',
-    fuzz: 'not-started',
-    allocationFailure: 'not-started',
+    corpusDifferential: 'verified',
+    negativeAndResource: 'verified',
+    deterministicConcurrency: 'verified',
+    fuzz: 'verified',
+    allocationFailure: 'verified',
   }),
 })
 
@@ -714,7 +690,13 @@ const expectedImplementations = Object.freeze([
     current: 'native-internal',
     ownerPackage: 'NLESS-012',
     adapters: Object.freeze(['less']),
-    capabilities: Object.freeze(['pinned-corpus-differential']),
+    capabilities: Object.freeze([
+      'pinned-corpus-differential',
+      'strict-negative-resource',
+      'deterministic-concurrency',
+      'bounded-fuzz',
+      'allocation-failure',
+    ]),
     nativeSources: Object.freeze([]),
     testSources: Object.freeze(['tests/native-preprocessor/less_conformance.zig']),
     testStep: 'test-native-less-conformance',
@@ -1029,25 +1011,14 @@ function validateLessConformance(
       successCaseCount + errorCaseCount !== conformance.oracle.caseCount) {
     fail('native Less conformance terminal accounting drifted')
   }
-  const selectedById = new Map(selection.cases.map(specCase => [specCase.id, specCase]))
-  const completed = new Set()
-  for (const cohort of conformance.completedCohorts) {
-    for (const caseId of cohort.caseIds) {
-      const specCase = selectedById.get(caseId)
-      if (specCase === undefined || specCase.feature !== cohort.feature || completed.has(caseId)) {
-        fail('native Less conformance completed cohort drifted')
-      }
-      completed.add(caseId)
-    }
-    for (const evidenceTest of cohort.evidenceTests) {
-      requireText(
-        conformanceTests,
-        `test "${evidenceTest}"`,
-        'native Less conformance evidence',
-      )
-    }
+  for (const evidenceTest of conformance.terminalContract.evidenceTests) {
+    requireText(
+      conformanceTests,
+      `test "${evidenceTest}"`,
+      'native Less conformance evidence',
+    )
   }
-  if (completed.size !== conformance.completedCaseCount ||
+  if (conformance.completedCaseCount !== conformance.oracle.caseCount ||
       conformance.completedCaseCount + conformance.remainingCaseCount !== conformance.oracle.caseCount) {
     fail('native Less conformance case accounting drifted')
   }

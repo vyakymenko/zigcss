@@ -557,7 +557,7 @@ pub const Parser = struct {
                     if (depth == 0) return .{ .kind = .open_curly, .index = index, .colon = colon };
                     depth += 1;
                 },
-                .close_paren, .close_square, .interpolation_end => depth -= 1,
+                .close_paren, .close_square, .interpolation_end => depth -|= 1,
                 .close_curly => {
                     if (depth == 0) return .{ .kind = .close_curly, .index = index, .colon = colon };
                     depth -= 1;
@@ -653,6 +653,20 @@ pub const Parser = struct {
                     );
                     const node = try self.builder.add(.interpolation, span, span, child_slice);
                     try children.append(self.allocator, node);
+                    index = closing + 1;
+                },
+                .open_curly => {
+                    const closing = findMatching(
+                        self.tokens,
+                        index,
+                        input_range.end,
+                        .open_curly,
+                        .close_curly,
+                    ) orelse return self.rejectToken(token, "unterminated detached ruleset");
+                    const saved_cursor = self.cursor;
+                    const block = try self.parseBlock(index);
+                    self.cursor = saved_cursor;
+                    try children.append(self.allocator, block.id);
                     index = closing + 1;
                 },
                 else => index += 1,
@@ -854,7 +868,7 @@ fn findTopLevelWhen(
     while (index < input_range.end) : (index += 1) {
         switch (tokens[index].kind) {
             .open_paren, .open_square, .interpolation_start => depth += 1,
-            .close_paren, .close_square, .interpolation_end => depth -= 1,
+            .close_paren, .close_square, .interpolation_end => depth -|= 1,
             .identifier => if (depth == 0 and tokenRawEql(tokens[index], bytes, "when")) return index,
             else => {},
         }

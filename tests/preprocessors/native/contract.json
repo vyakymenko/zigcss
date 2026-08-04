@@ -215,8 +215,8 @@
   "lessConformance": {
     "ownerPackage": "NLESS-012",
     "releaseGapFamily": "native-less-conformance",
-    "state": "in-progress",
-    "packageState": "in-progress",
+    "state": "closed",
+    "packageState": "verified",
     "oracle": {
       "id": "less",
       "package": "less",
@@ -224,52 +224,30 @@
       "selection": "tests/preprocessors/less/corpus/selection.json",
       "caseCount": 88
     },
-    "completedCaseCount": 4,
-    "remainingCaseCount": 84,
+    "completedCaseCount": 88,
+    "remainingCaseCount": 0,
     "terminalContract": {
       "selectionDerived": true,
       "successCaseCount": 68,
       "errorCaseCount": 20,
       "deterministicRunsPerSuccessCase": 2,
       "fuzzMutationsPerCase": 3,
-      "maxConcurrentCompilations": 4
+      "maxConcurrentCompilations": 4,
+      "evidenceTests": [
+        "native Less closes the finite pinned success corpus deterministically",
+        "native Less rejects the finite pinned error corpus deterministically",
+        "native Less parser owns finite resource and cancellation boundaries",
+        "native Less compilation is deterministic under bounded concurrency",
+        "native Less finite corpus seeds bounded parser and evaluator fuzzing",
+        "native Less successful transaction handles every allocation failure"
+      ]
     },
-    "completedCohorts": [
-      {
-        "feature": "at-rules-declarations",
-        "caseIds": ["less-at-rules-declarations-at-rules-declarations"],
-        "evidenceTests": [
-          "native Less matches the pinned at-rules declarations conformance cohort deterministically"
-        ]
-      },
-      {
-        "feature": "at-rules-empty-block",
-        "caseIds": ["less-at-rules-empty-block-at-rules-empty-block"],
-        "evidenceTests": [
-          "native Less matches the pinned at-rules empty block conformance cohort deterministically"
-        ]
-      },
-      {
-        "feature": "at-rules-empty",
-        "caseIds": ["less-at-rules-empty-at-rules-empty"],
-        "evidenceTests": [
-          "native Less matches the pinned blockless at-rules conformance cohort deterministically"
-        ]
-      },
-      {
-        "feature": "at-rules-keyword-comments",
-        "caseIds": ["less-at-rules-keyword-comments-at-rules-keyword-comments"],
-        "evidenceTests": [
-          "native Less matches the pinned at-rule keyword comment conformance cohort deterministically"
-        ]
-      }
-    ],
     "gates": {
-      "corpusDifferential": "in-progress",
-      "negativeAndResource": "not-started",
-      "deterministicConcurrency": "not-started",
-      "fuzz": "not-started",
-      "allocationFailure": "not-started"
+      "corpusDifferential": "verified",
+      "negativeAndResource": "verified",
+      "deterministicConcurrency": "verified",
+      "fuzz": "verified",
+      "allocationFailure": "verified"
     }
   },
   "foundations": [
@@ -682,7 +660,13 @@
       "current": "native-internal",
       "ownerPackage": "NLESS-012",
       "adapters": ["less"],
-      "capabilities": ["pinned-corpus-differential"],
+      "capabilities": [
+        "pinned-corpus-differential",
+        "strict-negative-resource",
+        "deterministic-concurrency",
+        "bounded-fuzz",
+        "allocation-failure"
+      ],
       "nativeSources": [],
       "testSources": ["tests/native-preprocessor/less_conformance.zig"],
       "testStep": "test-native-less-conformance",

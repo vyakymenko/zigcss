@@ -212,8 +212,8 @@ test('accepts the bounded native stylesheet implementation contract', () => {
   assert.deepEqual(contract.lessConformance, {
     ownerPackage: 'NLESS-012',
     releaseGapFamily: 'native-less-conformance',
-    state: 'in-progress',
-    packageState: 'in-progress',
+    state: 'closed',
+    packageState: 'verified',
     oracle: {
       id: 'less',
       package: 'less',
@@ -221,8 +221,8 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       selection: 'tests/preprocessors/less/corpus/selection.json',
       caseCount: 88,
     },
-    completedCaseCount: 4,
-    remainingCaseCount: 84,
+    completedCaseCount: 88,
+    remainingCaseCount: 0,
     terminalContract: {
       selectionDerived: true,
       successCaseCount: 68,
@@ -230,38 +230,21 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       deterministicRunsPerSuccessCase: 2,
       fuzzMutationsPerCase: 3,
       maxConcurrentCompilations: 4,
+      evidenceTests: [
+        'native Less closes the finite pinned success corpus deterministically',
+        'native Less rejects the finite pinned error corpus deterministically',
+        'native Less parser owns finite resource and cancellation boundaries',
+        'native Less compilation is deterministic under bounded concurrency',
+        'native Less finite corpus seeds bounded parser and evaluator fuzzing',
+        'native Less successful transaction handles every allocation failure',
+      ],
     },
-    completedCohorts: [{
-      feature: 'at-rules-declarations',
-      caseIds: ['less-at-rules-declarations-at-rules-declarations'],
-      evidenceTests: [
-        'native Less matches the pinned at-rules declarations conformance cohort deterministically',
-      ],
-    }, {
-      feature: 'at-rules-empty-block',
-      caseIds: ['less-at-rules-empty-block-at-rules-empty-block'],
-      evidenceTests: [
-        'native Less matches the pinned at-rules empty block conformance cohort deterministically',
-      ],
-    }, {
-      feature: 'at-rules-empty',
-      caseIds: ['less-at-rules-empty-at-rules-empty'],
-      evidenceTests: [
-        'native Less matches the pinned blockless at-rules conformance cohort deterministically',
-      ],
-    }, {
-      feature: 'at-rules-keyword-comments',
-      caseIds: ['less-at-rules-keyword-comments-at-rules-keyword-comments'],
-      evidenceTests: [
-        'native Less matches the pinned at-rule keyword comment conformance cohort deterministically',
-      ],
-    }],
     gates: {
-      corpusDifferential: 'in-progress',
-      negativeAndResource: 'not-started',
-      deterministicConcurrency: 'not-started',
-      fuzz: 'not-started',
-      allocationFailure: 'not-started',
+      corpusDifferential: 'verified',
+      negativeAndResource: 'verified',
+      deterministicConcurrency: 'verified',
+      fuzz: 'verified',
+      allocationFailure: 'verified',
     },
   })
   const sassCore = contract.implementations[1]
@@ -576,13 +559,12 @@ test('rejects widened, unpinned, or unevidenced native Sass conformance progress
 test('rejects widened, unpinned, or unevidenced native Less conformance progress', () => {
   for (const mutate of [
     contract => { contract.lessConformance.releaseGapFamily = 'renamed-conformance' },
-    contract => { contract.lessConformance.completedCaseCount = 5 },
-    contract => { contract.lessConformance.remainingCaseCount = 83 },
+    contract => { contract.lessConformance.completedCaseCount = 87 },
+    contract => { contract.lessConformance.remainingCaseCount = 1 },
     contract => { contract.lessConformance.terminalContract.successCaseCount = 67 },
     contract => { contract.lessConformance.terminalContract.selectionDerived = false },
-    contract => { contract.lessConformance.completedCohorts[0].feature = 'at-rules' },
-    contract => { contract.lessConformance.completedCohorts[1].caseIds[0] = 'missing-case' },
-    contract => { contract.lessConformance.gates.corpusDifferential = 'verified' },
+    contract => { contract.lessConformance.terminalContract.evidenceTests.pop() },
+    contract => { contract.lessConformance.gates.corpusDifferential = 'in-progress' },
   ]) {
     const changed = clone(loadContract())
     mutate(changed)
@@ -592,7 +574,7 @@ test('rejects widened, unpinned, or unevidenced native Less conformance progress
   const missingEvidence = fs
     .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_conformance.zig'), 'utf8')
     .replace(
-      'test "native Less matches the pinned at-rule keyword comment conformance cohort deterministically"',
+      'test "native Less closes the finite pinned success corpus deterministically"',
       'test "removed"',
     )
   assert.throws(
