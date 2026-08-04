@@ -767,6 +767,23 @@ const ByteRange = struct {
     end: usize,
 };
 
+const AtRulePrelude = struct {
+    rendered: []u8,
+    cleaned: ?[]u8 = null,
+    comments: std.ArrayList(ByteRange) = .empty,
+
+    fn text(self: *const AtRulePrelude) []const u8 {
+        return self.cleaned orelse self.rendered;
+    }
+
+    fn deinit(self: *AtRulePrelude, allocator: std.mem.Allocator) void {
+        self.comments.deinit(allocator);
+        if (self.cleaned) |cleaned| allocator.free(cleaned);
+        allocator.free(self.rendered);
+        self.* = undefined;
+    }
+};
+
 const RenderContext = enum {
     selector,
     property,
@@ -841,7 +858,62 @@ const Engine = struct {
             return error.InvalidDocument;
         const scope = try self.prepareScope(children, null);
         try self.collectRootExtensions(children, scope);
-        try self.emitStatements(children, scope, null);
+        try self.emitRootStatements(children, scope);
+    }
+
+    fn emitRootStatements(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+        scope: Scope,
+    ) Error!void {
+        for (children) |child_id| {
+            if (try self.isAtRuleKeyword(child_id, "@charset")) {
+                try self.emitAtRule(child_id, scope, null);
+            }
+        }
+        for (children) |child_id| {
+            if (try self.isCssImportAtRule(child_id)) {
+                try self.emitAtRuleInternal(child_id, scope, null, false);
+            }
+        }
+        for (children) |child_id| {
+            if (try self.isAtRuleKeyword(child_id, "@charset")) continue;
+            if (try self.isCssImportAtRule(child_id)) {
+                try self.emitAtRuleKeywordComments(child_id, scope);
+                continue;
+            }
+            const child = self.document.get(child_id) catch return error.InvalidDocument;
+            switch (child.kind) {
+                .declaration => if (!try self.isVariableDeclaration(child_id)) {
+                    return error.InvalidDocument;
+                },
+                .rule => try self.emitRule(child_id, scope, null),
+                .at_rule => try self.emitAtRule(child_id, scope, null),
+                .mixin => if (!try self.isMixinDefinition(child_id)) {
+                    return error.InvalidDocument;
+                },
+                .detached_ruleset, .extend, .comment => {},
+                else => return error.InvalidDocument,
+            }
+        }
+    }
+
+    fn isCssImportAtRule(
+        self: *const Engine,
+        node_id: native_syntax.NodeId,
+    ) Error!bool {
+        return self.isAtRuleKeyword(node_id, "@import");
+    }
+
+    fn isAtRuleKeyword(
+        self: *const Engine,
+        node_id: native_syntax.NodeId,
+        expected: []const u8,
+    ) Error!bool {
+        const node = self.document.get(node_id) catch return error.InvalidDocument;
+        if (node.kind != .at_rule or node.text == null) return false;
+        const keyword = try self.sources.slice(node.text.?);
+        return native_lexer.identifierEqlIgnoreCaseAscii(keyword, expected);
     }
 
     fn prepareScope(
@@ -1517,6 +1589,16 @@ const Engine = struct {
         scope: Scope,
         parent_selector: ?[]const u8,
     ) Error!void {
+        return self.emitAtRuleInternal(at_rule_id, scope, parent_selector, true);
+    }
+
+    fn emitAtRuleInternal(
+        self: *Engine,
+        at_rule_id: native_syntax.NodeId,
+        scope: Scope,
+        parent_selector: ?[]const u8,
+        emit_keyword_comments: bool,
+    ) Error!void {
         const at_rule = self.document.get(at_rule_id) catch return error.InvalidDocument;
         if (at_rule.text == null) return error.InvalidDocument;
         const keyword = try self.sources.slice(at_rule.text.?);
@@ -1531,22 +1613,22 @@ const Engine = struct {
                 else => return error.InvalidDocument,
             }
         }
-        const prelude = if (expression) |node|
-            try self.renderOwned(node.text orelse return error.InvalidDocument, scope.cursor, .at_rule)
-        else
-            try self.allocator.dupe(u8, "");
-        defer self.allocator.free(prelude);
+        var prelude = try self.renderAtRulePrelude(keyword, expression, scope.cursor);
+        defer prelude.deinit(self.allocator);
 
         var header: std.ArrayList(u8) = .empty;
         defer header.deinit(self.allocator);
         try self.appendTemporary(&header, keyword);
-        if (prelude.len > 0) {
+        if (prelude.text().len > 0) {
             try self.appendTemporary(&header, " ");
-            try self.appendTemporary(&header, prelude);
+            try self.appendTemporary(&header, prelude.text());
         }
         if (block_id == null) {
             try self.appendTemporary(&header, ";");
             try self.transaction.emitMapped(at_rule.span, null, header.items);
+            if (emit_keyword_comments) {
+                try self.emitAtRulePreludeComments(expression, &prelude);
+            }
             return;
         }
 
@@ -1554,12 +1636,114 @@ const Engine = struct {
             return error.InvalidDocument;
         if (block_children.len == 0) return;
 
-        if (prelude.len > 0) try self.appendTemporary(&header, " ");
+        if (prelude.text().len > 0) try self.appendTemporary(&header, " ");
         try self.appendTemporary(&header, "{");
         try self.transaction.emitMapped(at_rule.span, null, header.items);
+        if (emit_keyword_comments) {
+            try self.emitAtRulePreludeComments(expression, &prelude);
+        }
         const block_scope = try self.prepareScope(block_children, scope);
         try self.emitAtRuleStatements(block_children, block_scope, parent_selector);
         try self.transaction.emit("}");
+    }
+
+    fn renderAtRulePrelude(
+        self: *Engine,
+        keyword: []const u8,
+        expression: ?*const native_syntax.Node,
+        scope: native_environment.ScopeId,
+    ) Error!AtRulePrelude {
+        var result = AtRulePrelude{
+            .rendered = if (expression) |node|
+                try self.renderOwned(
+                    node.text orelse return error.InvalidDocument,
+                    scope,
+                    .at_rule,
+                )
+            else
+                try self.allocator.dupe(u8, ""),
+        };
+        errdefer result.deinit(self.allocator);
+        if (!usesKeywordCommentList(keyword)) return result;
+
+        const tokens = try native_lexer.tokenizeAlloc(
+            self.allocator,
+            result.rendered,
+            .less,
+            .{},
+        );
+        defer if (tokens.len > 0) self.allocator.free(tokens);
+        try self.transaction.consumeOperations(@intCast(tokens.len));
+
+        var cleaned: std.ArrayList(u8) = .empty;
+        defer cleaned.deinit(self.allocator);
+        var cursor: usize = 0;
+        for (tokens) |token| {
+            if (token.kind == .eof) break;
+            try self.appendTemporary(
+                &cleaned,
+                result.rendered[cursor..token.span.start],
+            );
+            if (token.kind == .comment) {
+                try result.comments.append(self.allocator, .{
+                    .start = token.span.start,
+                    .end = token.span.end,
+                });
+            } else {
+                const raw = token.raw(result.rendered);
+                if (token.kind == .comma) {
+                    while (cleaned.items.len > 0 and
+                        isCssWhitespace(cleaned.items[cleaned.items.len - 1]))
+                    {
+                        _ = cleaned.pop();
+                    }
+                }
+                try self.appendTemporary(&cleaned, raw);
+            }
+            cursor = token.span.end;
+        }
+        if (result.comments.items.len == 0) return result;
+        try self.appendTemporary(&cleaned, result.rendered[cursor..]);
+        result.cleaned = try cleaned.toOwnedSlice(self.allocator);
+        return result;
+    }
+
+    fn emitAtRuleKeywordComments(
+        self: *Engine,
+        at_rule_id: native_syntax.NodeId,
+        scope: Scope,
+    ) Error!void {
+        const at_rule = self.document.get(at_rule_id) catch return error.InvalidDocument;
+        if (at_rule.kind != .at_rule or at_rule.text == null) return error.InvalidDocument;
+        const keyword = try self.sources.slice(at_rule.text.?);
+        const children = self.document.children(at_rule_id) catch return error.InvalidDocument;
+        var expression: ?*const native_syntax.Node = null;
+        for (children) |child_id| {
+            const child = self.document.get(child_id) catch return error.InvalidDocument;
+            switch (child.kind) {
+                .expression => expression = child,
+                .block => {},
+                else => return error.InvalidDocument,
+            }
+        }
+        var prelude = try self.renderAtRulePrelude(keyword, expression, scope.cursor);
+        defer prelude.deinit(self.allocator);
+        try self.emitAtRulePreludeComments(expression, &prelude);
+    }
+
+    fn emitAtRulePreludeComments(
+        self: *Engine,
+        expression: ?*const native_syntax.Node,
+        prelude: *const AtRulePrelude,
+    ) Error!void {
+        const span = if (expression) |node| node.span else return;
+        for (prelude.comments.items) |comment| {
+            try self.transaction.emitMapped(
+                span,
+                null,
+                prelude.rendered[comment.start..comment.end],
+            );
+        }
     }
 
     fn emitAtRuleStatements(
@@ -2446,6 +2630,18 @@ fn stripQuotes(raw: []const u8) []const u8 {
         return raw[1 .. raw.len - 1];
     }
     return raw;
+}
+
+fn usesKeywordCommentList(keyword: []const u8) bool {
+    return native_lexer.identifierEqlIgnoreCaseAscii(keyword, "@import") or
+        native_lexer.identifierEqlIgnoreCaseAscii(keyword, "@media");
+}
+
+fn isCssWhitespace(byte: u8) bool {
+    return switch (byte) {
+        ' ', '\t', '\n', '\r', 0x0c => true,
+        else => false,
+    };
 }
 
 fn findInterpolationEnd(tokens: []const native_lexer.Token, start: usize) ?usize {

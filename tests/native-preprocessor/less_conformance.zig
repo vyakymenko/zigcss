@@ -177,3 +177,11 @@ test "native Less matches the pinned blockless at-rules conformance cohort deter
         "at-rules-empty",
     );
 }
+
+test "native Less matches the pinned at-rule keyword comment conformance cohort deterministically" {
+    try expectSuccessCase(
+        std.testing.allocator,
+        "less-at-rules-keyword-comments-at-rules-keyword-comments",
+        "at-rules-keyword-comments",
+    );
+}

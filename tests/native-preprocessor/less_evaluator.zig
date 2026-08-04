@@ -400,9 +400,10 @@ test "native Less closes the confined import option dependency and map foundatio
     defer second.deinit();
 
     try std.testing.expectEqualStrings(
-        ".dep{image:url(\"./img/a b.png\");color:green}" ++
+        "@import \"plain.css\" layer(foo) screen;" ++
             ".dep{image:url(\"./img/a b.png\");color:green}" ++
-            "@import \"plain.css\" layer(foo) screen;.forced{width:6px}" ++
+            ".dep{image:url(\"./img/a b.png\");color:green}" ++
+            ".forced{width:6px}" ++
             ".root{color:blue;border-color:green;width:3px}",
         first.css(),
     );

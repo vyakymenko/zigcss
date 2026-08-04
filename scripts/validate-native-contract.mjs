@@ -242,8 +242,8 @@ const expectedLessConformance = Object.freeze({
     selection: 'tests/preprocessors/less/corpus/selection.json',
     caseCount: 88,
   }),
-  completedCaseCount: 3,
-  remainingCaseCount: 85,
+  completedCaseCount: 4,
+  remainingCaseCount: 84,
   terminalContract: Object.freeze({
     selectionDerived: true,
     successCaseCount: 68,
@@ -272,6 +272,15 @@ const expectedLessConformance = Object.freeze({
       caseIds: Object.freeze(['less-at-rules-empty-at-rules-empty']),
       evidenceTests: Object.freeze([
         'native Less matches the pinned blockless at-rules conformance cohort deterministically',
+      ]),
+    }),
+    Object.freeze({
+      feature: 'at-rules-keyword-comments',
+      caseIds: Object.freeze([
+        'less-at-rules-keyword-comments-at-rules-keyword-comments',
+      ]),
+      evidenceTests: Object.freeze([
+        'native Less matches the pinned at-rule keyword comment conformance cohort deterministically',
       ]),
     }),
   ]),
