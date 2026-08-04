@@ -169,3 +169,11 @@ test "native Less matches the pinned at-rules empty block conformance cohort det
         "at-rules-empty-block",
     );
 }
+
+test "native Less matches the pinned blockless at-rules conformance cohort deterministically" {
+    try expectSuccessCase(
+        std.testing.allocator,
+        "less-at-rules-empty-at-rules-empty",
+        "at-rules-empty",
+    );
+}

@@ -224,8 +224,8 @@
       "selection": "tests/preprocessors/less/corpus/selection.json",
       "caseCount": 88
     },
-    "completedCaseCount": 2,
-    "remainingCaseCount": 86,
+    "completedCaseCount": 3,
+    "remainingCaseCount": 85,
     "terminalContract": {
       "selectionDerived": true,
       "successCaseCount": 68,
@@ -247,6 +247,13 @@
         "caseIds": ["less-at-rules-empty-block-at-rules-empty-block"],
         "evidenceTests": [
           "native Less matches the pinned at-rules empty block conformance cohort deterministically"
+        ]
+      },
+      {
+        "feature": "at-rules-empty",
+        "caseIds": ["less-at-rules-empty-at-rules-empty"],
+        "evidenceTests": [
+          "native Less matches the pinned blockless at-rules conformance cohort deterministically"
         ]
       }
     ],

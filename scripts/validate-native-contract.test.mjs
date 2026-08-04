@@ -221,8 +221,8 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       selection: 'tests/preprocessors/less/corpus/selection.json',
       caseCount: 88,
     },
-    completedCaseCount: 2,
-    remainingCaseCount: 86,
+    completedCaseCount: 3,
+    remainingCaseCount: 85,
     terminalContract: {
       selectionDerived: true,
       successCaseCount: 68,
@@ -242,6 +242,12 @@ test('accepts the bounded native stylesheet implementation contract', () => {
       caseIds: ['less-at-rules-empty-block-at-rules-empty-block'],
       evidenceTests: [
         'native Less matches the pinned at-rules empty block conformance cohort deterministically',
+      ],
+    }, {
+      feature: 'at-rules-empty',
+      caseIds: ['less-at-rules-empty-at-rules-empty'],
+      evidenceTests: [
+        'native Less matches the pinned blockless at-rules conformance cohort deterministically',
       ],
     }],
     gates: {
@@ -564,8 +570,8 @@ test('rejects widened, unpinned, or unevidenced native Sass conformance progress
 test('rejects widened, unpinned, or unevidenced native Less conformance progress', () => {
   for (const mutate of [
     contract => { contract.lessConformance.releaseGapFamily = 'renamed-conformance' },
-    contract => { contract.lessConformance.completedCaseCount = 3 },
-    contract => { contract.lessConformance.remainingCaseCount = 85 },
+    contract => { contract.lessConformance.completedCaseCount = 4 },
+    contract => { contract.lessConformance.remainingCaseCount = 84 },
     contract => { contract.lessConformance.terminalContract.successCaseCount = 67 },
     contract => { contract.lessConformance.terminalContract.selectionDerived = false },
     contract => { contract.lessConformance.completedCohorts[0].feature = 'at-rules' },
@@ -580,7 +586,7 @@ test('rejects widened, unpinned, or unevidenced native Less conformance progress
   const missingEvidence = fs
     .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_conformance.zig'), 'utf8')
     .replace(
-      'test "native Less matches the pinned at-rules declarations conformance cohort deterministically"',
+      'test "native Less matches the pinned blockless at-rules conformance cohort deterministically"',
       'test "removed"',
     )
   assert.throws(
