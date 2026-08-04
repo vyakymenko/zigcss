@@ -147,6 +147,33 @@ test "native parser accepts every pinned Stylus success entry" {
     try std.testing.expectEqual(@as(usize, 326), parsed_count);
 }
 
+test "native Stylus parser excludes an initial UTF-8 BOM from exact syntax spans" {
+    const input = "\xEF\xBB\xBFbody\n  color red\n";
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("utf8-bom.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const rule = try document.get(root_children[0]);
+    try std.testing.expectEqual(syntax.Kind.rule, rule.kind);
+    try std.testing.expectEqual(@as(u32, 3), rule.text.?.start);
+    try std.testing.expectEqualStrings("body", try sources.slice(rule.text.?));
+    const rule_children = try document.children(root_children[0]);
+    const selector = try document.get(rule_children[0]);
+    try std.testing.expectEqualStrings("body", try sources.slice(selector.text.?));
+}
+
 test "native parser rejects every pinned Stylus parser error" {
     const NegativeCase = struct {
         id: []const u8,

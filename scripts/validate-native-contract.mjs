@@ -282,8 +282,8 @@ const expectedStylusConformance = Object.freeze({
     manifest: 'tests/preprocessors/stylus/corpus/manifest.json',
     caseCount: 346,
   }),
-  completedCaseCount: 3,
-  remainingCaseCount: 343,
+  completedCaseCount: 4,
+  remainingCaseCount: 342,
   terminalContract: Object.freeze({
     selectionDerived: true,
     successCaseCount: 326,
@@ -312,6 +312,13 @@ const expectedStylusConformance = Object.freeze({
       caseIds: Object.freeze(['stylus-official-self-assignment']),
       evidenceTests: Object.freeze([
         'native Stylus matches the pinned self assignment conformance cohort deterministically',
+      ]),
+    }),
+    Object.freeze({
+      feature: 'utf8',
+      caseIds: Object.freeze(['stylus-official-utf8-bom']),
+      evidenceTests: Object.freeze([
+        'native Stylus matches the pinned UTF-8 BOM conformance cohort deterministically',
       ]),
     }),
   ]),

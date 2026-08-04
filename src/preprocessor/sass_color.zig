@@ -1056,6 +1056,21 @@ pub fn serialize(
     return buffer[0..cursor];
 }
 
+pub fn serializePreferHex(
+    input: native_value.Color,
+    buffer: *[max_serialized_bytes]u8,
+    minified: bool,
+) Error![]const u8 {
+    const channels = switch (input.space) {
+        .rgb, .hsl, .hwb => try toRgb(input),
+        else => return serialize(input, buffer, minified),
+    };
+    if (allFinite(channels) and approximatelyEqual(channels[3], 1)) {
+        if (exactRgb(channels)) |exact| return serializeExactHex(exact, buffer);
+    }
+    return serialize(input, buffer, minified);
+}
+
 fn serializeModern(
     input: native_value.Color,
     buffer: *[max_serialized_bytes]u8,
@@ -1841,6 +1856,12 @@ fn serializeExact(channels: [3]u8, buffer: *[max_serialized_bytes]u8) Error![]co
         compressible(channels[1]) and compressible(channels[2]);
     const hex_length: usize = if (compressed) 4 else 7;
     if (shortestName(channels, hex_length)) |name| return name;
+    return serializeExactHex(channels, buffer);
+}
+
+fn serializeExactHex(channels: [3]u8, buffer: *[max_serialized_bytes]u8) []const u8 {
+    const compressed = compressible(channels[0]) and
+        compressible(channels[1]) and compressible(channels[2]);
     buffer[0] = '#';
     if (compressed) {
         buffer[1] = hexDigit(channels[0] & 0x0f);

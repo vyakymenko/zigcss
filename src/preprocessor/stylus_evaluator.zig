@@ -1814,7 +1814,11 @@ const Engine = struct {
             },
             .color => |color| {
                 var color_buffer: [native_color.max_serialized_bytes]u8 = undefined;
-                const serialized = native_color.serialize(color, &color_buffer, false) catch {
+                const serialized = native_color.serializePreferHex(
+                    color,
+                    &color_buffer,
+                    false,
+                ) catch {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 };

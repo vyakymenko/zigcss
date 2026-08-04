@@ -233,6 +233,11 @@ pub const Parser = struct {
             }
 
             var content_start = line_start;
+            if (line_start == 0 and
+                std.mem.startsWith(u8, self.source_bytes, "\xEF\xBB\xBF"))
+            {
+                content_start = 3;
+            }
             var indent: u32 = 0;
             while (content_start < line_end and
                 isHorizontalWhitespace(self.source_bytes[content_start]))

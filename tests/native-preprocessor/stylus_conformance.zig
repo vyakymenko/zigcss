@@ -179,3 +179,12 @@ test "native Stylus matches the pinned self assignment conformance cohort determ
         "body {\n  background: #fff;\n}",
     );
 }
+
+test "native Stylus matches the pinned UTF-8 BOM conformance cohort deterministically" {
+    try expectSuccessfulCase(
+        std.testing.allocator,
+        "stylus-official-utf8-bom",
+        "utf8",
+        "body {\n  color: #f00;\n}\n",
+    );
+}
