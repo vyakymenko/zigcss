@@ -2,17 +2,19 @@
 //!
 //! The internal surface admits already-valid plain CSS plus the closed lazy
 //! variable, lexical-scope, selector, declaration, ruleset, operation, and
-//! built-in foundation derived from the pinned Less 4.6.7 selection. Imports
-//! and options remain unavailable. JavaScript and plugin execution are
-//! permanently rejected before any CSS is staged.
+//! built-in and confined import foundation derived from the pinned Less 4.6.7
+//! selection. JavaScript and plugin execution are permanently rejected before
+//! any CSS is staged.
 
 const std = @import("std");
 const native_diagnostics = @import("diagnostics.zig");
 const native_environment = @import("environment.zig");
 const native_evaluator = @import("evaluator.zig");
 const native_lexer = @import("lexer.zig");
+const native_less = @import("less.zig");
 const native_color = @import("sass_color.zig");
 const native_numeric = @import("sass_numeric.zig");
+const native_resolver = @import("resolver.zig");
 const native_source = @import("source.zig");
 const native_syntax = @import("syntax.zig");
 const native_value = @import("value.zig");
@@ -37,9 +39,29 @@ pub const Limits = struct {
     max_temporary_bytes: usize = 10 * 1024 * 1024,
 };
 
+pub const Math = enum {
+    parens_division,
+};
+
+pub const RewriteUrls = enum {
+    all,
+};
+
+/// The closed Less 4.6.7 render options used by the pinned success corpus.
+/// Strict-unit negative fixtures opt in explicitly without changing the
+/// selection's ordinary permissive arithmetic contract.
+pub const Options = struct {
+    math: Math = .parens_division,
+    quiet_deprecations: bool = false,
+    rewrite_urls: RewriteUrls = .all,
+    strict_units: bool = false,
+};
+
 pub const Error = native_evaluator.Error ||
     native_environment.Error ||
     native_lexer.Error ||
+    native_less.Error ||
+    native_resolver.Error ||
     native_source.Error ||
     native_syntax.Error ||
     native_value.Error || error{
@@ -47,6 +69,7 @@ pub const Error = native_evaluator.Error ||
     CallLimitExceeded,
     ExpressionDepthExceeded,
     IncompatibleUnits,
+    InvalidImport,
     InvalidLimits,
     InvalidOperation,
     JavaScriptDisabled,
@@ -63,9 +86,19 @@ pub const Error = native_evaluator.Error ||
 };
 
 pub fn evaluate(
-    sources: *const native_source.Table,
+    sources: *native_source.Table,
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
+    limits: Limits,
+) Error!void {
+    return evaluateWithOptions(sources, document, transaction, .{}, limits);
+}
+
+pub fn evaluateWithOptions(
+    sources: *native_source.Table,
+    document: *const native_syntax.Document,
+    transaction: *native_evaluator.Transaction,
+    options: Options,
     limits: Limits,
 ) Error!void {
     errdefer transaction.abort();
@@ -84,7 +117,20 @@ pub fn evaluate(
         );
         return error.SourceLimitExceeded;
     }
-    if (document.nodes().len > limits.max_nodes) {
+    var expanded_document: ?native_syntax.Document = null;
+    defer if (expanded_document) |*expanded| expanded.deinit();
+    if (containsImports(document)) {
+        var expander = ImportExpander.init(
+            transaction.allocator,
+            sources,
+            transaction,
+            limits,
+        );
+        defer expander.deinit();
+        expanded_document = try expander.expand(document);
+    }
+    const active_document = if (expanded_document) |*expanded| expanded else document;
+    if (active_document.nodes().len > limits.max_nodes) {
         try transaction.report(
             .err,
             .resource_limit,
@@ -95,11 +141,11 @@ pub fn evaluate(
         return error.NodeLimitExceeded;
     }
 
-    try transaction.consumeOperations(@intCast(document.nodes().len));
+    try transaction.consumeOperations(@intCast(active_document.nodes().len));
     try rejectJavaScript(sources, root.span, input, transaction);
-    for (document.nodes()) |node| try preflightNode(sources, node, transaction);
+    for (active_document.nodes()) |node| try preflightNode(sources, node, transaction);
 
-    if (!requiresSemanticEvaluation(document)) {
+    if (expanded_document == null and !requiresSemanticEvaluation(active_document)) {
         try transaction.emitMapped(root.span, null, input);
         return;
     }
@@ -107,8 +153,9 @@ pub fn evaluate(
     var engine = try Engine.init(
         transaction.allocator,
         sources,
-        document,
+        active_document,
         transaction,
+        options,
         limits,
     );
     defer engine.deinit();
@@ -266,6 +313,412 @@ fn requiresSemanticEvaluation(document: *const native_syntax.Document) bool {
     return false;
 }
 
+fn containsImports(document: *const native_syntax.Document) bool {
+    for (document.nodes()) |node| {
+        if (node.kind == .import) return true;
+    }
+    return false;
+}
+
+const ImportOptions = struct {
+    once: bool = false,
+    multiple: bool = false,
+    optional: bool = false,
+    css: bool = false,
+    less: bool = false,
+};
+
+const ParsedImport = struct {
+    target: []const u8,
+    trailing: []const u8,
+    options: ImportOptions,
+};
+
+const ImportExpander = struct {
+    allocator: std.mem.Allocator,
+    sources: *native_source.Table,
+    transaction: *native_evaluator.Transaction,
+    limits: Limits,
+    builder: native_syntax.Builder,
+    source_ids: std.StringHashMapUnmanaged(native_source.SourceId) = .empty,
+    once_urls: std.StringHashMapUnmanaged(void) = .empty,
+    ancestry: std.ArrayList([]const u8) = .empty,
+
+    fn init(
+        allocator: std.mem.Allocator,
+        sources: *native_source.Table,
+        transaction: *native_evaluator.Transaction,
+        limits: Limits,
+    ) ImportExpander {
+        return .{
+            .allocator = allocator,
+            .sources = sources,
+            .transaction = transaction,
+            .limits = limits,
+            .builder = native_syntax.Builder.init(allocator, sources, .{
+                .max_nodes = limits.max_nodes,
+            }),
+        };
+    }
+
+    fn deinit(self: *ImportExpander) void {
+        self.ancestry.deinit(self.allocator);
+        self.once_urls.deinit(self.allocator);
+        self.source_ids.deinit(self.allocator);
+        self.builder.deinit();
+        self.* = undefined;
+    }
+
+    fn expand(
+        self: *ImportExpander,
+        document: *const native_syntax.Document,
+    ) Error!native_syntax.Document {
+        const root = document.get(document.root) catch return error.InvalidDocument;
+        if (root.kind != .stylesheet) return error.InvalidDocument;
+        const file = try self.sources.get(root.span.source);
+        const root_path = native_resolver.fileUrlToPath(self.allocator, file.name) catch |failure| {
+            return self.failLoad(failure, root.span);
+        };
+        self.allocator.free(root_path);
+        try self.ancestry.append(self.allocator, file.name);
+        try self.source_ids.put(self.allocator, file.name, root.span.source);
+
+        var children: std.ArrayList(native_syntax.NodeId) = .empty;
+        defer children.deinit(self.allocator);
+        try self.appendStatements(document, try document.children(document.root), &children);
+        const expanded_root = try self.builder.add(
+            .stylesheet,
+            root.span,
+            root.text,
+            children.items,
+        );
+        return self.builder.finish(expanded_root);
+    }
+
+    fn appendStatements(
+        self: *ImportExpander,
+        document: *const native_syntax.Document,
+        children: []const native_syntax.NodeId,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!void {
+        for (children) |child_id| {
+            const child = document.get(child_id) catch return error.InvalidDocument;
+            if (child.kind == .import) {
+                try self.expandImport(document, child_id, output);
+            } else {
+                try output.append(self.allocator, try self.cloneNode(document, child_id, null));
+            }
+        }
+    }
+
+    fn cloneNode(
+        self: *ImportExpander,
+        document: *const native_syntax.Document,
+        node_id: native_syntax.NodeId,
+        kind_override: ?native_syntax.Kind,
+    ) Error!native_syntax.NodeId {
+        const node = document.get(node_id) catch return error.InvalidDocument;
+        var children: std.ArrayList(native_syntax.NodeId) = .empty;
+        defer children.deinit(self.allocator);
+        const source_children = document.children(node_id) catch return error.InvalidDocument;
+        if (node.kind == .block) {
+            try self.appendStatements(document, source_children, &children);
+        } else {
+            for (source_children) |child_id| {
+                try children.append(self.allocator, try self.cloneNode(document, child_id, null));
+            }
+        }
+        return self.builder.add(
+            kind_override orelse node.kind,
+            node.span,
+            node.text,
+            children.items,
+        );
+    }
+
+    fn expandImport(
+        self: *ImportExpander,
+        document: *const native_syntax.Document,
+        import_id: native_syntax.NodeId,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!void {
+        const import_node = document.get(import_id) catch return error.InvalidDocument;
+        const import_children = document.children(import_id) catch return error.InvalidDocument;
+        if (import_children.len != 1) return error.InvalidDocument;
+        const expression = document.get(import_children[0]) catch return error.InvalidDocument;
+        if (expression.kind != .expression or expression.text == null) {
+            return error.InvalidDocument;
+        }
+        const raw = try self.sources.slice(expression.text.?);
+        const parsed = parseImportPrelude(raw) catch {
+            try self.reportImport(import_node.span, "native Less import syntax is unsupported");
+            return error.InvalidImport;
+        };
+        if (parsed.options.once and parsed.options.multiple) {
+            try self.reportImport(import_node.span, "native Less import once and multiple options conflict");
+            return error.InvalidImport;
+        }
+        if (parsed.options.css and parsed.options.less) {
+            try self.reportImport(import_node.span, "native Less import css and less options conflict");
+            return error.InvalidImport;
+        }
+
+        const css_import = parsed.options.css or
+            (!parsed.options.less and (hasCssExtension(parsed.target) or hasNonLocalScheme(parsed.target)));
+        if (css_import) {
+            try output.append(
+                self.allocator,
+                try self.cloneNode(document, import_id, .at_rule),
+            );
+            return;
+        }
+        if (parsed.trailing.len != 0) {
+            try self.reportImport(
+                import_node.span,
+                "native Less evaluated import conditions are unsupported",
+            );
+            return error.InvalidImport;
+        }
+
+        const parent_url = self.ancestry.items[self.ancestry.items.len - 1];
+        const candidate_url = candidateUrl(
+            self.allocator,
+            parent_url,
+            parsed.target,
+        ) catch |failure| return self.failLoad(failure, import_node.span);
+        defer self.allocator.free(candidate_url);
+        const session = try self.transaction.resolverSession();
+        var loaded = session.load(candidate_url, .{
+            .kind = .import,
+            .ancestry = self.ancestry.items,
+        }) catch |failure| switch (failure) {
+            error.Missing => {
+                if (parsed.options.optional) return;
+                try self.reportImport(import_node.span, "native Less import was not found");
+                return error.InvalidImport;
+            },
+            else => return self.failLoad(failure, import_node.span),
+        };
+        defer loaded.deinit();
+
+        const source_id = self.source_ids.get(loaded.url) orelse source: {
+            const added = self.sources.add(loaded.url, loaded.contents) catch |failure| {
+                if (failure == error.OutOfMemory) return error.OutOfMemory;
+                try self.transaction.report(
+                    .err,
+                    .resource_limit,
+                    import_node.span,
+                    "native Less imported source limit exceeded",
+                    &.{},
+                );
+                return failure;
+            };
+            const source_file = try self.sources.get(added);
+            try self.source_ids.put(self.allocator, source_file.name, added);
+            break :source added;
+        };
+        const source_file = try self.sources.get(source_id);
+        const seen = self.once_urls.contains(source_file.name);
+        if (!parsed.options.multiple and seen) return;
+        if (!seen) try self.once_urls.put(self.allocator, source_file.name, {});
+
+        const full_span = try self.sources.span(source_id, 0, @intCast(source_file.bytes.len));
+        try rejectJavaScript(self.sources, full_span, source_file.bytes, self.transaction);
+        var parser = native_less.Parser.init(
+            self.allocator,
+            self.sources,
+            source_id,
+            .{},
+            .{},
+        ) catch |failure| {
+            if (failure == error.OutOfMemory) return error.OutOfMemory;
+            try self.transaction.report(
+                .err,
+                .resource_limit,
+                import_node.span,
+                "native Less imported parser limit exceeded",
+                &.{},
+            );
+            return failure;
+        };
+        defer parser.deinit();
+        var imported = parser.parse() catch |failure| {
+            try self.copyParserDiagnostics(parser.diagnostics());
+            return failure;
+        };
+        defer imported.deinit();
+        const imported_root = imported.get(imported.root) catch return error.InvalidDocument;
+        if (imported_root.kind != .stylesheet) return error.InvalidDocument;
+
+        try self.ancestry.append(self.allocator, source_file.name);
+        defer _ = self.ancestry.pop();
+        try self.appendStatements(&imported, try imported.children(imported.root), output);
+    }
+
+    fn reportImport(
+        self: *ImportExpander,
+        span: native_source.Span,
+        message: []const u8,
+    ) Error!void {
+        try self.transaction.report(.err, .invalid_import, span, message, &.{});
+    }
+
+    fn failLoad(
+        self: *ImportExpander,
+        failure: native_resolver.Error,
+        span: native_source.Span,
+    ) Error {
+        switch (failure) {
+            error.OutOfMemory, error.Cancelled => return failure,
+            error.AttemptLimitExceeded,
+            error.DepthLimitExceeded,
+            error.FileCountExceeded,
+            error.FileLimitExceeded,
+            error.TotalLimitExceeded,
+            => {
+                self.transaction.report(
+                    .err,
+                    .resource_limit,
+                    span,
+                    "native Less import resource limit exceeded",
+                    &.{},
+                ) catch |err| return err;
+                return failure;
+            },
+            error.Cycle => {
+                self.reportImport(span, "native Less import cycle detected") catch |err| return err;
+                return error.InvalidImport;
+            },
+            else => {
+                self.reportImport(span, "native Less import load was rejected") catch |err| return err;
+                return error.InvalidImport;
+            },
+        }
+    }
+
+    fn copyParserDiagnostics(
+        self: *ImportExpander,
+        diagnostics: []const native_diagnostics.Diagnostic,
+    ) Error!void {
+        for (diagnostics) |diagnostic| {
+            var related: std.ArrayList(native_diagnostics.RelatedInput) = .empty;
+            defer related.deinit(self.allocator);
+            try related.ensureTotalCapacity(self.allocator, diagnostic.related.len);
+            for (diagnostic.related) |item| {
+                related.appendAssumeCapacity(.{ .span = item.span, .label = item.label });
+            }
+            try self.transaction.report(
+                diagnostic.severity,
+                diagnostic.code,
+                diagnostic.span,
+                diagnostic.message,
+                related.items,
+            );
+        }
+    }
+};
+
+fn parseImportPrelude(raw_input: []const u8) error{InvalidImport}!ParsedImport {
+    var raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c");
+    var options = ImportOptions{};
+    if (raw.len > 0 and raw[0] == '(') {
+        const closing = std.mem.indexOfScalar(u8, raw, ')') orelse return error.InvalidImport;
+        var iterator = std.mem.splitScalar(u8, raw[1..closing], ',');
+        while (iterator.next()) |option_input| {
+            const option = std.mem.trim(u8, option_input, " \t\r\n\x0c");
+            if (std.ascii.eqlIgnoreCase(option, "once")) {
+                options.once = true;
+            } else if (std.ascii.eqlIgnoreCase(option, "multiple")) {
+                options.multiple = true;
+            } else if (std.ascii.eqlIgnoreCase(option, "optional")) {
+                options.optional = true;
+            } else if (std.ascii.eqlIgnoreCase(option, "css")) {
+                options.css = true;
+            } else if (std.ascii.eqlIgnoreCase(option, "less")) {
+                options.less = true;
+            } else {
+                return error.InvalidImport;
+            }
+        }
+        raw = std.mem.trim(u8, raw[closing + 1 ..], " \t\r\n\x0c");
+    }
+    if (raw.len == 0) return error.InvalidImport;
+
+    var target: []const u8 = undefined;
+    var consumed: usize = 0;
+    if (raw[0] == '\'' or raw[0] == '"') {
+        const quote = raw[0];
+        var escaped = false;
+        var index: usize = 1;
+        while (index < raw.len) : (index += 1) {
+            if (escaped) {
+                escaped = false;
+            } else if (raw[index] == '\\') {
+                escaped = true;
+            } else if (raw[index] == quote) {
+                target = raw[1..index];
+                consumed = index + 1;
+                break;
+            }
+        }
+        if (consumed == 0) return error.InvalidImport;
+    } else if (startsWithIgnoreCase(raw, "url(")) {
+        const closing = std.mem.indexOfScalarPos(u8, raw, 4, ')') orelse
+            return error.InvalidImport;
+        target = stripQuotes(std.mem.trim(u8, raw[4..closing], " \t\r\n\x0c"));
+        consumed = closing + 1;
+    } else {
+        consumed = std.mem.indexOfAny(u8, raw, " \t\r\n\x0c") orelse raw.len;
+        target = raw[0..consumed];
+    }
+    if (target.len == 0 or std.mem.indexOfAny(u8, target, "\x00\r\n") != null) {
+        return error.InvalidImport;
+    }
+    return .{
+        .target = target,
+        .trailing = std.mem.trim(u8, raw[consumed..], " \t\r\n\x0c"),
+        .options = options,
+    };
+}
+
+fn startsWithIgnoreCase(input: []const u8, prefix: []const u8) bool {
+    return input.len >= prefix.len and std.ascii.eqlIgnoreCase(input[0..prefix.len], prefix);
+}
+
+fn hasCssExtension(target: []const u8) bool {
+    const end = std.mem.indexOfAny(u8, target, "?#") orelse target.len;
+    return std.ascii.eqlIgnoreCase(std.fs.path.extension(target[0..end]), ".css");
+}
+
+fn hasNonLocalScheme(target: []const u8) bool {
+    return std.mem.indexOf(u8, target, "://") != null or
+        std.mem.startsWith(u8, target, "//");
+}
+
+fn candidateUrl(
+    allocator: std.mem.Allocator,
+    parent_url: []const u8,
+    target: []const u8,
+) native_resolver.Error![]u8 {
+    if (hasNonLocalScheme(target) or std.mem.indexOfAny(u8, target, "?#") != null) {
+        return error.SchemeNotAllowed;
+    }
+    const parent_path = try native_resolver.fileUrlToPath(allocator, parent_url);
+    defer allocator.free(parent_path);
+    const parent_directory = std.fs.path.dirname(parent_path) orelse return error.InvalidUrl;
+    const target_with_extension = if (std.fs.path.extension(target).len == 0)
+        try std.fmt.allocPrint(allocator, "{s}.less", .{target})
+    else
+        try allocator.dupe(u8, target);
+    defer allocator.free(target_with_extension);
+    const absolute = if (std.fs.path.isAbsolute(target_with_extension))
+        try std.fs.path.resolve(allocator, &.{target_with_extension})
+    else
+        try std.fs.path.resolve(allocator, &.{ parent_directory, target_with_extension });
+    defer allocator.free(absolute);
+    return native_resolver.pathToFileUrl(allocator, absolute);
+}
+
 const BindingState = enum {
     unresolved,
     evaluating,
@@ -326,7 +779,9 @@ const Engine = struct {
     sources: *const native_source.Table,
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
+    options: Options,
     limits: Limits,
+    root_source: native_source.SourceId,
     values: native_value.Store,
     environment: native_environment.Environment,
     bindings: std.ArrayList(Binding) = .empty,
@@ -344,6 +799,7 @@ const Engine = struct {
         sources: *const native_source.Table,
         document: *const native_syntax.Document,
         transaction: *native_evaluator.Transaction,
+        options: Options,
         limits: Limits,
     ) Error!Engine {
         var values = native_value.Store.init(allocator, limits.values);
@@ -352,12 +808,15 @@ const Engine = struct {
             allocator,
             limits.environment,
         );
+        const root = document.get(document.root) catch return error.InvalidDocument;
         return .{
             .allocator = allocator,
             .sources = sources,
             .document = document,
             .transaction = transaction,
+            .options = options,
             .limits = limits,
+            .root_source = root.span.source,
             .values = values,
             .environment = environment,
         };
@@ -1265,9 +1724,10 @@ const Engine = struct {
     ) Error![]u8 {
         const value = std.mem.trim(u8, rendered, " \t\r\n\x0c");
         if (value.len == 0) return try self.allocator.dupe(u8, value);
-        if (functionArguments(value, "url") != null or
-            functionArguments(value, "calc") != null)
-        {
+        if (functionArguments(value, "url") != null) {
+            return self.rewriteUrlOwned(span, value);
+        }
+        if (functionArguments(value, "calc") != null) {
             return try self.allocator.dupe(u8, value);
         }
         if (functionArguments(value, "percentage")) |arguments| {
@@ -1341,6 +1801,7 @@ const Engine = struct {
         var parser = NumericParser{
             .input = value,
             .max_depth = self.limits.max_expression_depth,
+            .strict_units = self.options.strict_units,
         };
         const numeric = parser.parse() catch |err| switch (err) {
             error.ExpressionDepthExceeded => {
@@ -1370,6 +1831,7 @@ const Engine = struct {
         var parser = NumericParser{
             .input = std.mem.trim(u8, input, " \t\r\n\x0c"),
             .max_depth = self.limits.max_expression_depth,
+            .strict_units = self.options.strict_units,
         };
         return parser.parse() catch |err| switch (err) {
             error.ExpressionDepthExceeded => {
@@ -1408,6 +1870,83 @@ const Engine = struct {
         const units = native_numeric.serializeUnits(number, &unit_buffer) catch
             return error.InvalidOperation;
         return try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ value, units });
+    }
+
+    fn rewriteUrlOwned(
+        self: *Engine,
+        span: native_source.Span,
+        value: []const u8,
+    ) Error![]u8 {
+        _ = self.options.math;
+        _ = self.options.quiet_deprecations;
+        _ = self.options.rewrite_urls;
+        if (span.source.eql(self.root_source)) return try self.allocator.dupe(u8, value);
+        const arguments = functionArguments(value, "url") orelse
+            return try self.allocator.dupe(u8, value);
+        const raw_argument = std.mem.trim(
+            u8,
+            value[arguments.start..arguments.end],
+            " \t\r\n\x0c",
+        );
+        const target = stripQuotes(raw_argument);
+        if (target.len == 0 or target[0] == '/' or target[0] == '#' or
+            hasNonLocalScheme(target) or std.mem.indexOfAny(u8, target, "?#") != null)
+        {
+            return try self.allocator.dupe(u8, value);
+        }
+
+        const imported_file = try self.sources.get(span.source);
+        const root_file = try self.sources.get(self.root_source);
+        const imported_path = native_resolver.fileUrlToPath(
+            self.allocator,
+            imported_file.name,
+        ) catch return try self.allocator.dupe(u8, value);
+        defer self.allocator.free(imported_path);
+        const root_path = native_resolver.fileUrlToPath(
+            self.allocator,
+            root_file.name,
+        ) catch return try self.allocator.dupe(u8, value);
+        defer self.allocator.free(root_path);
+        const imported_directory = std.fs.path.dirname(imported_path) orelse
+            return try self.allocator.dupe(u8, value);
+        const root_directory = std.fs.path.dirname(root_path) orelse
+            return try self.allocator.dupe(u8, value);
+        const absolute_target = try std.fs.path.resolve(
+            self.allocator,
+            &.{ imported_directory, target },
+        );
+        defer self.allocator.free(absolute_target);
+        const relative = std.fs.path.relative(
+            self.allocator,
+            root_directory,
+            absolute_target,
+        ) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return try self.allocator.dupe(u8, value),
+        };
+        defer self.allocator.free(relative);
+
+        var normalized: std.ArrayList(u8) = .empty;
+        defer normalized.deinit(self.allocator);
+        if (!std.mem.startsWith(u8, relative, ".")) {
+            try self.appendTemporary(&normalized, "./");
+        }
+        for (relative) |byte| {
+            try normalized.append(self.allocator, if (byte == '\\') '/' else byte);
+        }
+        const quote: ?u8 = if (raw_argument.len >= 2 and
+            (raw_argument[0] == '\'' or raw_argument[0] == '"'))
+            raw_argument[0]
+        else
+            null;
+        if (quote) |value_quote| {
+            return try std.fmt.allocPrint(
+                self.allocator,
+                "url({c}{s}{c})",
+                .{ value_quote, normalized.items, value_quote },
+            );
+        }
+        return try std.fmt.allocPrint(self.allocator, "url({s})", .{normalized.items});
     }
 
     fn guardMatches(
@@ -1574,6 +2113,7 @@ const Comparison = struct {
 const NumericParser = struct {
     input: []const u8,
     max_depth: u16,
+    strict_units: bool,
     cursor: usize = 0,
 
     const ParseError = native_numeric.Error || error{
@@ -1596,7 +2136,13 @@ const NumericParser = struct {
             if (operation != '+' and operation != '-') return result;
             self.cursor += 1;
             const right = try self.parseMultiply(depth);
-            result = try native_numeric.add(result, right, operation);
+            result = native_numeric.add(result, right, operation) catch |failure| switch (failure) {
+                error.IncompatibleUnits => if (self.strict_units)
+                    return failure
+                else
+                    try native_numeric.addPermissive(result, right, operation),
+                else => return failure,
+            };
         }
     }
 
@@ -1606,6 +2152,7 @@ const NumericParser = struct {
             self.skipWhitespace();
             const operation = self.peek();
             if (operation != '*' and operation != '/') return result;
+            if (operation == '/' and depth == 0) return result;
             self.cursor += 1;
             const right = try self.parsePrimary(depth);
             result = try native_numeric.multiply(result, right, operation);

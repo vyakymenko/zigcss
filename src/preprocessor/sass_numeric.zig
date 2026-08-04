@@ -190,6 +190,23 @@ pub fn add(left: Numeric, right: Numeric, operation: u8) Error!Numeric {
     return result;
 }
 
+/// Less's `strictUnits: false` arithmetic retains the left operand's unit
+/// spelling when otherwise incompatible dimensions are added or subtracted.
+/// The strict shared algebra remains the default for Sass and every other
+/// caller.
+pub fn addPermissive(left: Numeric, right: Numeric, operation: u8) Error!Numeric {
+    return add(left, right, operation) catch |failure| switch (failure) {
+        error.IncompatibleUnits => {
+            var result = if (left.isDimensionless() and !right.isDimensionless()) right else left;
+            result.value = if (operation == '+') left.value + right.value else left.value - right.value;
+            if (!std.math.isFinite(result.value)) return error.InvalidNumber;
+            result.value = canonicalArithmetic(result.value);
+            return result;
+        },
+        else => return failure,
+    };
+}
+
 pub fn multiply(left: Numeric, right: Numeric, operation: u8) Error!Numeric {
     if (operation == '/' and right.value == 0) return error.DivisionByZero;
     var result = left;

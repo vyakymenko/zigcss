@@ -13,7 +13,15 @@ const source = preprocessor.source;
 // less-extend-extend, less-operations-operations,
 // less-color-functions-basic, less-error-eval-add-mixed-units,
 // less-error-eval-recursive-variable, and
-// less-error-eval-at-rules-undefined-var.
+// less-error-eval-at-rules-undefined-var. The terminal import foundation is
+// anchored to less-import-import-once, less-import-import-interpolation,
+// less-import-import-reference-issues, less-charsets-charsets, and
+// less-layer-layer without claiming their complete NLESS-012 corpus surface.
+
+const ImportFile = struct {
+    name: []const u8,
+    contents: []const u8,
+};
 
 fn compile(
     allocator: std.mem.Allocator,
@@ -49,6 +57,165 @@ fn compile(
     defer transaction.deinit();
     try less_evaluator.evaluate(&sources, &document, &transaction, limits);
     return transaction.finish(.{ .format = .minified, .source_map = true });
+}
+
+fn compileImportFixture(
+    allocator: std.mem.Allocator,
+    root_input: []const u8,
+    files: []const ImportFile,
+    options: less_evaluator.Options,
+    semantic_limits: less_evaluator.Limits,
+    resolver_limits: resolver.Limits,
+    resolver_cancellation: resolver.Cancellation,
+) !evaluator.ValidatedCss {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.makeDir("root");
+    for (files) |file| {
+        const relative = try std.fs.path.join(allocator, &.{ "root", file.name });
+        defer allocator.free(relative);
+        if (std.fs.path.dirname(relative)) |directory| try temporary.dir.makePath(directory);
+        try temporary.dir.writeFile(.{ .sub_path = relative, .data = file.contents });
+    }
+    try temporary.dir.writeFile(.{ .sub_path = "root/input.less", .data = root_input });
+
+    const base = try temporary.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(base);
+    const root = try std.fs.path.join(allocator, &.{ base, "root" });
+    defer allocator.free(root);
+    const root_path = try std.fs.path.join(allocator, &.{ root, "input.less" });
+    defer allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(allocator, root_path);
+    defer allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(allocator, &.{root}, resolver_limits);
+    defer authority.deinit();
+    var session = authority.createSession(allocator, resolver_cancellation);
+    defer session.deinit();
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, root_input);
+    var parser = try less.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+    try less_evaluator.evaluateWithOptions(
+        &sources,
+        &document,
+        &transaction,
+        options,
+        semantic_limits,
+    );
+    return transaction.finish(.{ .format = .minified, .source_map = true });
+}
+
+const ExpectedImportDiagnostic = struct {
+    code: diagnostics.Code,
+    message: []const u8,
+    source_suffix: []const u8,
+};
+
+fn expectImportFailure(
+    root_input: []const u8,
+    files: []const ImportFile,
+    resolver_limits: resolver.Limits,
+    resolver_cancellation: resolver.Cancellation,
+    expected_error: anyerror,
+    expected_diagnostic: ?ExpectedImportDiagnostic,
+    expected_dependencies: usize,
+) !void {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    try temporary.dir.makeDir("root");
+    for (files) |file| {
+        const relative = try std.fs.path.join(
+            std.testing.allocator,
+            &.{ "root", file.name },
+        );
+        defer std.testing.allocator.free(relative);
+        if (std.fs.path.dirname(relative)) |directory| try temporary.dir.makePath(directory);
+        try temporary.dir.writeFile(.{ .sub_path = relative, .data = file.contents });
+    }
+    try temporary.dir.writeFile(.{ .sub_path = "root/input.less", .data = root_input });
+
+    const base = try temporary.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(base);
+    const root = try std.fs.path.join(std.testing.allocator, &.{ base, "root" });
+    defer std.testing.allocator.free(root);
+    const root_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ root, "input.less" },
+    );
+    defer std.testing.allocator.free(root_path);
+    const root_url = try resolver.pathToFileUrl(std.testing.allocator, root_path);
+    defer std.testing.allocator.free(root_url);
+
+    var authority = try resolver.Resolver.init(
+        std.testing.allocator,
+        &.{root},
+        resolver_limits,
+    );
+    defer authority.deinit();
+    var session = authority.createSession(std.testing.allocator, resolver_cancellation);
+    defer session.deinit();
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(root_url, root_input);
+    var parser = try less.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    var transaction = try evaluator.Transaction.init(
+        std.testing.allocator,
+        &sources,
+        &session,
+        .{},
+        .{},
+    );
+    defer transaction.deinit();
+
+    try std.testing.expectError(
+        expected_error,
+        less_evaluator.evaluateWithOptions(&sources, &document, &transaction, .{}, .{}),
+    );
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        transaction.position(),
+    );
+    try std.testing.expectEqual(expected_dependencies, session.dependencies().len);
+    if (expected_diagnostic) |expected| {
+        try std.testing.expectEqual(@as(usize, 1), transaction.diagnostics().len);
+        const diagnostic = transaction.diagnostics()[0];
+        try std.testing.expectEqual(diagnostics.Severity.err, diagnostic.severity);
+        try std.testing.expectEqual(expected.code, diagnostic.code);
+        try std.testing.expectEqualStrings(expected.message, diagnostic.message);
+        const diagnostic_source = try sources.get(diagnostic.span.source);
+        try std.testing.expect(std.mem.endsWith(
+            u8,
+            diagnostic_source.name,
+            expected.source_suffix,
+        ));
+    } else {
+        try std.testing.expectEqual(@as(usize, 0), transaction.diagnostics().len);
+    }
+    try std.testing.expectError(
+        error.SessionFailed,
+        transaction.finish(.{ .format = .minified, .source_map = true }),
+    );
 }
 
 test "native Less transaction preserves the finite plain CSS foundation" {
@@ -185,12 +352,124 @@ test "native Less evaluates the fixed ruleset operation and builtin matrix" {
     try std.testing.expect(first.map().?.segments().len >= 1);
 }
 
+test "native Less closes the confined import option dependency and map foundation" {
+    const input =
+        \\@import (multiple) "sub/dep";
+        \\@import (once) "sub/dep.less";
+        \\@import (multiple) "sub/dep";
+        \\@import (optional) "missing";
+        \\@import "plain.css" layer(foo) screen;
+        \\@import (less) "forced.css";
+        \\.root { color: @tone; border-color: @leaf; width: @size; }
+    ;
+    const files = [_]ImportFile{
+        .{
+            .name = "sub/dep.less",
+            .contents =
+            \\@import "../leaf";
+            \\@tone: blue;
+            \\.dep { image: url("../img/a b.png"); color: @leaf; }
+            ,
+        },
+        .{ .name = "leaf.less", .contents = "@leaf: green;" },
+        .{ .name = "plain.css", .contents = ".plain { ignored: by-css-import; }" },
+        .{
+            .name = "forced.css",
+            .contents = "@size: 3px; .forced { width: @size * 2; }",
+        },
+    };
+    var first = try compileImportFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        .{},
+        .{},
+        .{},
+        .{},
+    );
+    defer first.deinit();
+    var second = try compileImportFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        .{},
+        .{},
+        .{},
+        .{},
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".dep{image:url(\"./img/a b.png\");color:green}" ++
+            ".dep{image:url(\"./img/a b.png\");color:green}" ++
+            "@import \"plain.css\" layer(foo) screen;.forced{width:6px}" ++
+            ".root{color:blue;border-color:green;width:3px}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqual(@as(usize, 3), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 3), first.edges().len);
+    try std.testing.expectEqual(resolver.DependencyKind.import, first.dependencies()[0].kind);
+    try std.testing.expect(std.mem.endsWith(u8, first.dependencies()[0].url, "/sub/dep.less"));
+    try std.testing.expect(std.mem.endsWith(u8, first.dependencies()[1].url, "/leaf.less"));
+    try std.testing.expect(std.mem.endsWith(u8, first.dependencies()[2].url, "/forced.css"));
+    try std.testing.expect(first.edges()[0].parent_url != null);
+    try std.testing.expect(std.mem.endsWith(u8, first.edges()[1].parent_url.?, "/sub/dep.less"));
+    try std.testing.expectEqual(@as(u64, 7), first.stats().attempts);
+    try std.testing.expect(first.map() != null);
+    var mapped_import = false;
+    var mapped_root = false;
+    var mapped_forced = false;
+    for (first.map().?.segments()) |segment| {
+        const source_id = segment.source_id orelse continue;
+        mapped_import = mapped_import or source_id.value == 1;
+        mapped_root = mapped_root or source_id.value == 0;
+        mapped_forced = mapped_forced or source_id.value == 3;
+    }
+    try std.testing.expect(mapped_import and mapped_root and mapped_forced);
+}
+
+test "native Less binds the pinned render options to exact arithmetic" {
+    var result = try compileImportFixture(
+        std.testing.allocator,
+        ".a { loose: 1px + 1s; division: 6px / 2; grouped: (6px / 2); }",
+        &.{},
+        .{},
+        .{},
+        .{},
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".a{loose:2px;division:6px / 2;grouped:3px}",
+        result.css(),
+    );
+}
+
 fn expectSemanticRejection(
     input: []const u8,
     expected_error: anyerror,
     expected_code: diagnostics.Code,
     expected_message: []const u8,
     expected_start: u32,
+) !void {
+    return expectSemanticRejectionWithOptions(
+        input,
+        expected_error,
+        expected_code,
+        expected_message,
+        expected_start,
+        .{},
+    );
+}
+
+fn expectSemanticRejectionWithOptions(
+    input: []const u8,
+    expected_error: anyerror,
+    expected_code: diagnostics.Code,
+    expected_message: []const u8,
+    expected_start: u32,
+    options: less_evaluator.Options,
 ) !void {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
@@ -222,7 +501,7 @@ fn expectSemanticRejection(
 
     try std.testing.expectError(
         expected_error,
-        less_evaluator.evaluate(&sources, &document, &transaction, .{}),
+        less_evaluator.evaluateWithOptions(&sources, &document, &transaction, options, .{}),
     );
     try std.testing.expectEqual(@as(u32, 0), transaction.position().line);
     try std.testing.expectEqual(@as(u32, 0), transaction.position().column);
@@ -271,12 +550,154 @@ test "native Less ruleset matrix failures own exact diagnostics without partial 
         "native Less mixin .missing is undefined",
         8,
     );
-    try expectSemanticRejection(
+    try expectSemanticRejectionWithOptions(
         ".card { width: 1px + 1s; }",
         error.IncompatibleUnits,
         .invalid_operation,
         "native Less operation uses incompatible units",
         15,
+        .{ .strict_units = true },
+    );
+}
+
+test "native Less import failures own source-aware diagnostics without partial CSS" {
+    try expectImportFailure(
+        ".safe { color: red; } @import \"missing\";",
+        &.{},
+        .{},
+        .{},
+        error.InvalidImport,
+        .{
+            .code = .invalid_import,
+            .message = "native Less import was not found",
+            .source_suffix = "/input.less",
+        },
+        0,
+    );
+    try expectImportFailure(
+        "@import (reference) \"dep\";",
+        &.{.{ .name = "dep.less", .contents = ".dep { color: red; }" }},
+        .{},
+        .{},
+        error.InvalidImport,
+        .{
+            .code = .invalid_import,
+            .message = "native Less import syntax is unsupported",
+            .source_suffix = "/input.less",
+        },
+        0,
+    );
+    try expectImportFailure(
+        "@import (less) \"../escaped.less\";",
+        &.{},
+        .{},
+        .{},
+        error.InvalidImport,
+        .{
+            .code = .invalid_import,
+            .message = "native Less import load was rejected",
+            .source_suffix = "/input.less",
+        },
+        0,
+    );
+    try expectImportFailure(
+        "@import \"broken\";",
+        &.{.{ .name = "broken.less", .contents = ".broken { color: red;" }},
+        .{},
+        .{},
+        error.InvalidSyntax,
+        .{
+            .code = .syntax,
+            .message = "expected a closing delimiter before EOF",
+            .source_suffix = "/broken.less",
+        },
+        1,
+    );
+    try expectImportFailure(
+        "@import \"loop\";",
+        &.{.{ .name = "loop.less", .contents = "@import \"input.less\";" }},
+        .{},
+        .{},
+        error.InvalidImport,
+        .{
+            .code = .invalid_import,
+            .message = "native Less import cycle detected",
+            .source_suffix = "/loop.less",
+        },
+        1,
+    );
+    try expectImportFailure(
+        "@import \"script\";",
+        &.{.{ .name = "script.less", .contents = "@value: `1 + 1`;" }},
+        .{},
+        .{},
+        error.JavaScriptDisabled,
+        .{
+            .code = .unsupported_feature,
+            .message = "native Less JavaScript evaluation is permanently disabled",
+            .source_suffix = "/script.less",
+        },
+        1,
+    );
+    try expectImportFailure(
+        "@import \"plugin\";",
+        &.{.{ .name = "plugin.less", .contents = "@plugin \"unsafe.js\";" }},
+        .{},
+        .{},
+        error.PluginDisabled,
+        .{
+            .code = .unsupported_feature,
+            .message = "native Less plugins are permanently disabled",
+            .source_suffix = "/plugin.less",
+        },
+        1,
+    );
+}
+
+test "native Less imports own terminal depth and cancellation boundaries" {
+    const files = [_]ImportFile{
+        .{ .name = "first.less", .contents = "@import \"second\"; .first { a: b; }" },
+        .{ .name = "second.less", .contents = ".second { c: d; }" },
+    };
+    var terminal = try compileImportFixture(
+        std.testing.allocator,
+        "@import \"first\";",
+        &files,
+        .{},
+        .{},
+        .{ .max_depth = 3 },
+        .{},
+    );
+    defer terminal.deinit();
+    try std.testing.expectEqualStrings(".second{c:d}.first{a:b}", terminal.css());
+    try expectImportFailure(
+        "@import \"first\";",
+        &files,
+        .{ .max_depth = 2 },
+        .{},
+        error.DepthLimitExceeded,
+        .{
+            .code = .resource_limit,
+            .message = "native Less import resource limit exceeded",
+            .source_suffix = "/first.less",
+        },
+        1,
+    );
+
+    const CancelImport = struct {
+        fn check(_: *anyopaque, checkpoint: resolver.Checkpoint) bool {
+            return checkpoint == .resolve;
+        }
+    };
+    var context: u8 = 0;
+    try expectImportFailure(
+        "@import \"first\";",
+        &files,
+        .{},
+        .{ .context = &context, .check_fn = CancelImport.check },
+        error.Cancelled,
+        null,
+        0,
     );
 }
 
@@ -487,6 +908,32 @@ test "native Less ruleset transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAllocationFailures,
+        .{},
+    );
+}
+
+fn exerciseImportAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compileImportFixture(
+        allocator,
+        "@import \"dep\"; .root { color: @tone; }",
+        &.{.{
+            .name = "dep.less",
+            .contents = "@tone: blue; .dep { color: @tone; }",
+        }},
+        .{},
+        .{},
+        .{},
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".dep{color:blue}.root{color:blue}", result.css());
+    try std.testing.expectEqual(@as(usize, 1), result.dependencies().len);
+}
+
+test "native Less import transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseImportAllocationFailures,
         .{},
     );
 }

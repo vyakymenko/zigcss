@@ -590,6 +590,17 @@ test('binds the native Less evaluator and permanent execution boundary', () => {
     /native Less evaluator evidence.*missing/,
   )
 
+  const missingImportEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
+    .replace(
+      'test "native Less closes the confined import option dependency and map foundation"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { lessEvaluatorTests: missingImportEvidence }),
+    /native Less evaluator evidence.*missing/,
+  )
+
   const missingReferenceEvidence = fs
     .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
     .replace('less-error-eval-recursive-variable', 'removed-reference-case')
@@ -606,6 +617,14 @@ test('binds the native Less evaluator and permanent execution boundary', () => {
     /native Less evaluator pinned reference evidence.*missing/,
   )
 
+  const missingImportReference = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
+    .replace('less-import-import-once', 'removed-reference-case')
+  assert.throws(
+    () => validateContract(loadContract(), { lessEvaluatorTests: missingImportReference }),
+    /native Less evaluator pinned reference evidence.*missing/,
+  )
+
   const weakenedContract = loadContract()
   const lessImplementation = weakenedContract.implementations.find(
     implementation => implementation.id === 'native-less-semantic-core',
@@ -615,6 +634,18 @@ test('binds the native Less evaluator and permanent execution boundary', () => {
   )
   assert.throws(
     () => validateContract(weakenedContract),
+    /implementations.*inventory drifted/,
+  )
+
+  const weakenedImportContract = loadContract()
+  const importImplementation = weakenedImportContract.implementations.find(
+    implementation => implementation.id === 'native-less-semantic-core',
+  )
+  importImplementation.capabilities = importImplementation.capabilities.filter(
+    capability => capability !== 'confined-import-options-diagnostics-dependencies-maps',
+  )
+  assert.throws(
+    () => validateContract(weakenedImportContract),
     /implementations.*inventory drifted/,
   )
 

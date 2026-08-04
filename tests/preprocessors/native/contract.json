@@ -607,6 +607,7 @@
         "permanent-javascript-plugin-rejection",
         "lazy-variable-scope-selector-declaration-foundation",
         "ruleset-operation-builtin-foundation",
+        "confined-import-options-diagnostics-dependencies-maps",
         "resource-cancellation",
         "allocation-failure"
       ],

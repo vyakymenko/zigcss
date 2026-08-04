@@ -636,6 +636,7 @@ const expectedImplementations = Object.freeze([
       'permanent-javascript-plugin-rejection',
       'lazy-variable-scope-selector-declaration-foundation',
       'ruleset-operation-builtin-foundation',
+      'confined-import-options-diagnostics-dependencies-maps',
       'resource-cancellation',
       'allocation-failure',
     ]),
@@ -964,9 +965,14 @@ function validateLessEvaluator(source, tests, plan) {
     'native Less evaluates the admitted operation boundary',
     'native Less evaluates the fixed ruleset operation and builtin matrix',
     'native Less ruleset matrix failures own exact diagnostics without partial CSS',
+    'native Less closes the confined import option dependency and map foundation',
+    'native Less binds the pinned render options to exact arithmetic',
+    'native Less import failures own source-aware diagnostics without partial CSS',
+    'native Less imports own terminal depth and cancellation boundaries',
     'native Less permanently rejects JavaScript and plugins without partial CSS',
     'native Less plain CSS foundation owns resource and cancellation boundaries',
     'native Less ruleset transaction handles every allocation failure',
+    'native Less import transaction handles every allocation failure',
   ]) {
     requireText(tests, `test "${evidenceTest}"`, 'native Less evaluator evidence')
   }
@@ -982,6 +988,11 @@ function validateLessEvaluator(source, tests, plan) {
     'less-error-eval-add-mixed-units',
     'less-error-eval-recursive-variable',
     'less-error-eval-at-rules-undefined-var',
+    'less-import-import-once',
+    'less-import-import-interpolation',
+    'less-import-import-reference-issues',
+    'less-charsets-charsets',
+    'less-layer-layer',
   ]) {
     requireText(tests, referenceCase, 'native Less evaluator pinned reference evidence')
   }
