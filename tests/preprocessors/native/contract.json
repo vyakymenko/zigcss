@@ -691,6 +691,23 @@
       "testStep": "test-native-stylus-parser",
       "publicAvailable": false,
       "productionReachable": false
+    },
+    {
+      "id": "native-stylus-semantic-core",
+      "current": "native-internal",
+      "ownerPackage": "NSTYLUS-011",
+      "adapters": ["stylus"],
+      "capabilities": [
+        "plain-css-transaction",
+        "permanent-use-plugin-hook-rejection",
+        "resource-cancellation",
+        "allocation-failure"
+      ],
+      "nativeSources": ["src/preprocessor/stylus_evaluator.zig"],
+      "testSources": ["tests/native-preprocessor/stylus_evaluator.zig"],
+      "testStep": "test-native-stylus-evaluator",
+      "publicAvailable": false,
+      "productionReachable": false
     }
   ],
   "adapters": [

@@ -52,6 +52,7 @@ test('accepts the bounded native stylesheet implementation contract', () => {
     'native-less-semantic-core',
     'native-less-conformance',
     'native-stylus-parser',
+    'native-stylus-semantic-core',
   ])
   assert.deepEqual(contract.sassConformance, {
     ownerPackage: 'NSASS-012',
@@ -652,6 +653,42 @@ test('binds the finite native Stylus parser corpus and executable evidence', () 
   assert.throws(
     () => validateContract(loadContract(), { stylusParserTests: missingEvidence }),
     /native Stylus parser evidence.*missing/,
+  )
+})
+
+test('binds the native Stylus evaluator and permanent execution boundary', () => {
+  const missingEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/stylus_evaluator.zig'), 'utf8')
+    .replace(
+      'test "native Stylus permanently rejects use plugins without partial CSS"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { stylusEvaluatorTests: missingEvidence }),
+    /native Stylus evaluator evidence.*missing/,
+  )
+
+  const weakenedBoundary = fs
+    .readFileSync(path.join(repositoryRoot, 'src/preprocessor/stylus_evaluator.zig'), 'utf8')
+    .replace(
+      'native Stylus use() plugins are permanently disabled',
+      'native Stylus use() plugins are unavailable',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { stylusEvaluatorSource: weakenedBoundary }),
+    /native Stylus permanent execution boundary.*missing/,
+  )
+
+  const weakenedContract = loadContract()
+  const implementation = weakenedContract.implementations.find(
+    row => row.id === 'native-stylus-semantic-core',
+  )
+  implementation.capabilities = implementation.capabilities.filter(
+    capability => capability !== 'permanent-use-plugin-hook-rejection',
+  )
+  assert.throws(
+    () => validateContract(weakenedContract),
+    /implementations.*inventory drifted/,
   )
 })
 

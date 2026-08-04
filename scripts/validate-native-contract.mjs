@@ -722,6 +722,23 @@ const expectedImplementations = Object.freeze([
     publicAvailable: false,
     productionReachable: false,
   }),
+  Object.freeze({
+    id: 'native-stylus-semantic-core',
+    current: 'native-internal',
+    ownerPackage: 'NSTYLUS-011',
+    adapters: Object.freeze(['stylus']),
+    capabilities: Object.freeze([
+      'plain-css-transaction',
+      'permanent-use-plugin-hook-rejection',
+      'resource-cancellation',
+      'allocation-failure',
+    ]),
+    nativeSources: Object.freeze(['src/preprocessor/stylus_evaluator.zig']),
+    testSources: Object.freeze(['tests/native-preprocessor/stylus_evaluator.zig']),
+    testStep: 'test-native-stylus-evaluator',
+    publicAvailable: false,
+    productionReachable: false,
+  }),
 ])
 const nativeOwnerPrefixes = Object.freeze([
   'NATIVE-',
@@ -1132,6 +1149,38 @@ function validateStylusParser(manifest, selection, source, tests, plan) {
   )
 }
 
+function validateStylusEvaluator(selection, source, tests, plan) {
+  const useExclusion = selection.exclusions?.find(entry => entry.name === 'bifs.use')
+  if (useExclusion?.category !== 'executable-extension') {
+    fail('native Stylus evaluator use() exclusion drifted')
+  }
+  for (const evidenceTest of [
+    'native Stylus transaction preserves the finite plain CSS foundation',
+    'native Stylus permanently rejects use plugins without partial CSS',
+    'native Stylus imports remain explicit before their evaluator slice',
+    'native Stylus plain CSS foundation owns resource and cancellation boundaries',
+    'native Stylus transaction handles every allocation failure',
+  ]) {
+    requireText(tests, `test "${evidenceTest}"`, 'native Stylus evaluator evidence')
+  }
+  for (const permanentBoundary of [
+    'native Stylus use() plugins are permanently disabled',
+    'external custom evaluator hooks are permanently',
+  ]) {
+    requireText(source, permanentBoundary, 'native Stylus permanent execution boundary')
+  }
+  requireText(
+    tests,
+    'tests/preprocessors/stylus/corpus/files/upstream/cases/bifs.use.styl',
+    'native Stylus evaluator pinned plugin boundary',
+  )
+  requireText(
+    plan,
+    '`NSTYLUS-011` | Implement Stylus mixins/functions, control flow, operators, imports/globs, built-ins, diagnostics, dependencies, and maps while permanently rejecting project plugins and evaluator hooks',
+    'DEVELOPMENT_PLAN.md native Stylus evaluator package',
+  )
+}
+
 function validateLessEvaluator(source, tests, plan) {
   for (const evidenceTest of [
     'native Less transaction preserves the finite plain CSS foundation',
@@ -1305,6 +1354,14 @@ export function validateContract(
       repositoryFile('tests/native-preprocessor/stylus_parser.zig'),
       'utf8',
     ),
+    stylusEvaluatorSource = fs.readFileSync(
+      repositoryFile('src/preprocessor/stylus_evaluator.zig'),
+      'utf8',
+    ),
+    stylusEvaluatorTests = fs.readFileSync(
+      repositoryFile('tests/native-preprocessor/stylus_evaluator.zig'),
+      'utf8',
+    ),
     productionSources = loadProductionSources(),
   } = {},
 ) {
@@ -1372,6 +1429,12 @@ export function validateContract(
     stylusSelection,
     stylusParserSource,
     stylusParserTests,
+    plan,
+  )
+  validateStylusEvaluator(
+    stylusSelection,
+    stylusEvaluatorSource,
+    stylusEvaluatorTests,
     plan,
   )
   if (!Array.isArray(contract.foundations) || contract.foundations.length !== expectedFoundations.length) {

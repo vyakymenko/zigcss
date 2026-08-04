@@ -117,6 +117,7 @@ export const nativeTestRunners = Object.freeze([
   'run_native_sass_parser_tests',
   'run_native_less_parser_tests',
   'run_native_stylus_parser_tests',
+  'run_native_stylus_evaluator_tests',
   'run_native_less_evaluator_tests',
   'run_native_less_conformance_tests',
   'run_native_sass_arguments_tests',

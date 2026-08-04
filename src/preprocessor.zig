@@ -17,6 +17,7 @@ pub const sass = @import("preprocessor/sass.zig");
 pub const less = @import("preprocessor/less.zig");
 pub const stylus = @import("preprocessor/stylus.zig");
 pub const less_evaluator = @import("preprocessor/less_evaluator.zig");
+pub const stylus_evaluator = @import("preprocessor/stylus_evaluator.zig");
 pub const sass_arguments = @import("preprocessor/sass_arguments.zig");
 pub const sass_numeric = @import("preprocessor/sass_numeric.zig");
 pub const sass_color = @import("preprocessor/sass_color.zig");
@@ -39,6 +40,7 @@ test {
     _ = less;
     _ = stylus;
     _ = less_evaluator;
+    _ = stylus_evaluator;
     _ = sass_arguments;
     _ = sass_numeric;
     _ = sass_color;

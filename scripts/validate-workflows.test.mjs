@@ -117,7 +117,7 @@ test('the build workflow preserves one complete aggregate suite within a bounded
 
 test('the complete Zig test graph owns every native frontend runner', () => {
   const source = fs.readFileSync(new URL('../build.zig', import.meta.url), 'utf8')
-  assert.deepEqual(validateBuildTestGraph(source), { nativeRunners: 16 })
+  assert.deepEqual(validateBuildTestGraph(source), { nativeRunners: 17 })
   const weakened = source.replace(
     '    test_step.dependOn(&run_native_sass_evaluator_tests.step);',
     '    // removed native Sass evaluator coverage',
@@ -146,5 +146,13 @@ test('the complete Zig test graph owns every native frontend runner', () => {
   assert.throws(
     () => validateBuildTestGraph(missingStylusParser),
     /missing native runner run_native_stylus_parser_tests/,
+  )
+  const missingStylusEvaluator = source.replace(
+    '    test_step.dependOn(&run_native_stylus_evaluator_tests.step);',
+    '    // removed native Stylus evaluator coverage',
+  )
+  assert.throws(
+    () => validateBuildTestGraph(missingStylusEvaluator),
+    /missing native runner run_native_stylus_evaluator_tests/,
   )
 })
