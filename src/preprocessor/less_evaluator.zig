@@ -1,16 +1,18 @@
 //! Private bounded semantic evaluator for native Less syntax.
 //!
 //! The internal surface admits already-valid plain CSS plus the closed lazy
-//! variable, lexical-scope, selector, and declaration foundation derived from
-//! the pinned Less 4.6.7 selection. Mixins, imports, functions, operations, and
-//! other evaluation semantics remain unavailable. JavaScript and plugin
-//! execution are permanently rejected before any CSS is staged.
+//! variable, lexical-scope, selector, declaration, ruleset, operation, and
+//! built-in foundation derived from the pinned Less 4.6.7 selection. Imports
+//! and options remain unavailable. JavaScript and plugin execution are
+//! permanently rejected before any CSS is staged.
 
 const std = @import("std");
 const native_diagnostics = @import("diagnostics.zig");
 const native_environment = @import("environment.zig");
 const native_evaluator = @import("evaluator.zig");
 const native_lexer = @import("lexer.zig");
+const native_color = @import("sass_color.zig");
+const native_numeric = @import("sass_numeric.zig");
 const native_source = @import("source.zig");
 const native_syntax = @import("syntax.zig");
 const native_value = @import("value.zig");
@@ -18,6 +20,8 @@ const native_value = @import("value.zig");
 const hard_source_bytes = 10 * 1024 * 1024;
 const hard_nodes = 1_000_000;
 const hard_variable_depth: u16 = 256;
+const hard_calls: u32 = 65_536;
+const hard_expression_depth: u16 = 64;
 const hard_selectors = 1_000_000;
 const hard_temporary_bytes = 20 * 1024 * 1024;
 
@@ -27,6 +31,8 @@ pub const Limits = struct {
     environment: native_environment.Limits = .{},
     values: native_value.Limits = .{},
     max_variable_depth: u16 = 128,
+    max_calls: u32 = 16_384,
+    max_expression_depth: u16 = 32,
     max_selectors: usize = 200_000,
     max_temporary_bytes: usize = 10 * 1024 * 1024,
 };
@@ -38,7 +44,11 @@ pub const Error = native_evaluator.Error ||
     native_syntax.Error ||
     native_value.Error || error{
     InvalidDocument,
+    CallLimitExceeded,
+    ExpressionDepthExceeded,
+    IncompatibleUnits,
     InvalidLimits,
+    InvalidOperation,
     JavaScriptDisabled,
     NodeLimitExceeded,
     PluginDisabled,
@@ -47,6 +57,7 @@ pub const Error = native_evaluator.Error ||
     SourceLimitExceeded,
     TemporaryLimitExceeded,
     UndefinedVariable,
+    UndefinedMixin,
     UnsupportedFeature,
     VariableDepthExceeded,
 };
@@ -123,6 +134,9 @@ fn validateLimits(limits: Limits) Error!void {
         limits.values.max_owned_bytes > 64 * 1024 * 1024 or
         limits.max_variable_depth == 0 or
         limits.max_variable_depth > hard_variable_depth or
+        limits.max_calls == 0 or limits.max_calls > hard_calls or
+        limits.max_expression_depth == 0 or
+        limits.max_expression_depth > hard_expression_depth or
         limits.max_selectors == 0 or limits.max_selectors > hard_selectors or
         limits.max_temporary_bytes == 0 or
         limits.max_temporary_bytes > hard_temporary_bytes)
@@ -203,6 +217,11 @@ fn preflightNode(
             );
             return error.UnsupportedFeature;
         },
+        .mixin,
+        .guard,
+        .detached_ruleset,
+        .extend,
+        => {},
         .unary,
         .binary,
         .list,
@@ -213,10 +232,6 @@ fn preflightNode(
         .parameter,
         .conditional,
         .loop,
-        .mixin,
-        .guard,
-        .detached_ruleset,
-        .extend,
         .function,
         .return_statement,
         .content,
@@ -236,7 +251,17 @@ fn preflightNode(
 
 fn requiresSemanticEvaluation(document: *const native_syntax.Document) bool {
     for (document.nodes()) |node| {
-        if (node.kind == .variable or node.kind == .interpolation) return true;
+        switch (node.kind) {
+            .expression,
+            .variable,
+            .interpolation,
+            .mixin,
+            .guard,
+            .detached_ruleset,
+            .extend,
+            => return true,
+            else => {},
+        }
     }
     return false;
 }
@@ -258,6 +283,35 @@ const Binding = struct {
 
 const Scope = struct {
     cursor: native_environment.ScopeId,
+    id: usize,
+};
+
+const ScopeRecord = struct {
+    parent: ?usize,
+};
+
+const MixinDefinition = struct {
+    name: []const u8,
+    signature: native_source.Span,
+    guard: ?native_source.Span,
+    block: native_syntax.NodeId,
+    scope: Scope,
+};
+
+const DetachedDefinition = struct {
+    name: []const u8,
+    block: native_syntax.NodeId,
+    scope: Scope,
+};
+
+const Extension = struct {
+    target: []const u8,
+    extender: []const u8,
+};
+
+const ByteRange = struct {
+    start: usize,
+    end: usize,
 };
 
 const RenderContext = enum {
@@ -277,7 +331,12 @@ const Engine = struct {
     environment: native_environment.Environment,
     bindings: std.ArrayList(Binding) = .empty,
     binding_indices: std.AutoHashMapUnmanaged(*const native_value.Value, usize) = .empty,
+    scopes: std.ArrayList(ScopeRecord) = .empty,
+    mixins: std.ArrayList(MixinDefinition) = .empty,
+    detached: std.ArrayList(DetachedDefinition) = .empty,
+    extensions: std.ArrayList(Extension) = .empty,
     selector_count: usize = 0,
+    call_count: u32 = 0,
     variable_depth: u16 = 0,
 
     fn init(
@@ -305,6 +364,10 @@ const Engine = struct {
     }
 
     fn deinit(self: *Engine) void {
+        self.extensions.deinit(self.allocator);
+        self.detached.deinit(self.allocator);
+        self.mixins.deinit(self.allocator);
+        self.scopes.deinit(self.allocator);
         self.binding_indices.deinit(self.allocator);
         self.bindings.deinit(self.allocator);
         self.environment.deinit();
@@ -318,6 +381,7 @@ const Engine = struct {
         const children = self.document.children(self.document.root) catch
             return error.InvalidDocument;
         const scope = try self.prepareScope(children, null);
+        try self.collectRootExtensions(children, scope);
         try self.emitStatements(children, scope, null);
     }
 
@@ -330,18 +394,40 @@ const Engine = struct {
             try self.environment.push(scope.cursor)
         else
             self.environment.root();
-        var result = Scope{ .cursor = boundary };
+        const scope_id = self.scopes.items.len;
+        try self.scopes.append(self.allocator, .{
+            .parent = if (parent) |scope| scope.id else null,
+        });
+        var result = Scope{ .cursor = boundary, .id = scope_id };
+        try self.populateScope(children, &result);
+        return result;
+    }
+
+    fn populateScope(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+        result: *Scope,
+    ) Error!void {
         const binding_start = self.bindings.items.len;
         for (children) |child_id| {
             if (try self.isVariableDeclaration(child_id)) {
-                try self.addBinding(child_id, &result);
+                try self.addBinding(child_id, result);
             }
         }
         for (self.bindings.items[binding_start..]) |*binding| {
             binding.definition_scope = result.cursor;
         }
         try self.rejectDirectCycles(binding_start);
-        return result;
+        for (children) |child_id| {
+            const child = self.document.get(child_id) catch return error.InvalidDocument;
+            switch (child.kind) {
+                .mixin => if (try self.isMixinDefinition(child_id)) {
+                    try self.registerMixin(child_id, result.*);
+                },
+                .detached_ruleset => try self.registerDetached(child_id, result.*),
+                else => {},
+            }
+        }
     }
 
     fn addBinding(
@@ -429,6 +515,123 @@ const Engine = struct {
         return first.kind == .variable;
     }
 
+    fn isMixinDefinition(
+        self: *const Engine,
+        mixin_id: native_syntax.NodeId,
+    ) Error!bool {
+        const mixin = self.document.get(mixin_id) catch return error.InvalidDocument;
+        if (mixin.kind != .mixin) return false;
+        const children = self.document.children(mixin_id) catch return error.InvalidDocument;
+        return children.len >= 2;
+    }
+
+    fn registerMixin(
+        self: *Engine,
+        mixin_id: native_syntax.NodeId,
+        scope: Scope,
+    ) Error!void {
+        const children = self.document.children(mixin_id) catch return error.InvalidDocument;
+        if (children.len < 2 or children.len > 3) return error.InvalidDocument;
+        const signature = self.document.get(children[0]) catch return error.InvalidDocument;
+        const block = self.document.get(children[children.len - 1]) catch
+            return error.InvalidDocument;
+        if (signature.kind != .selector or signature.text == null or block.kind != .block) {
+            return error.InvalidDocument;
+        }
+        var guard: ?native_source.Span = null;
+        if (children.len == 3) {
+            const guard_node = self.document.get(children[1]) catch return error.InvalidDocument;
+            if (guard_node.kind != .guard or guard_node.text == null) {
+                return error.InvalidDocument;
+            }
+            guard = guard_node.text.?;
+        }
+        const raw = try self.sources.slice(signature.text.?);
+        const name = callableName(raw) orelse return error.InvalidDocument;
+        try self.mixins.append(self.allocator, .{
+            .name = name,
+            .signature = signature.text.?,
+            .guard = guard,
+            .block = children[children.len - 1],
+            .scope = scope,
+        });
+    }
+
+    fn registerDetached(
+        self: *Engine,
+        detached_id: native_syntax.NodeId,
+        scope: Scope,
+    ) Error!void {
+        const children = self.document.children(detached_id) catch return error.InvalidDocument;
+        if (children.len != 2) return error.InvalidDocument;
+        const name_node = self.document.get(children[0]) catch return error.InvalidDocument;
+        const block = self.document.get(children[1]) catch return error.InvalidDocument;
+        if (name_node.kind != .variable or name_node.text == null or block.kind != .block) {
+            return error.InvalidDocument;
+        }
+        const name = try normalizeVariableName(try self.sources.slice(name_node.text.?));
+        try self.detached.append(self.allocator, .{
+            .name = name,
+            .block = children[1],
+            .scope = scope,
+        });
+    }
+
+    fn collectRootExtensions(
+        self: *Engine,
+        children: []const native_syntax.NodeId,
+        scope: Scope,
+    ) Error!void {
+        for (children) |child_id| {
+            const child = self.document.get(child_id) catch return error.InvalidDocument;
+            if (child.kind != .rule) continue;
+            const rule_children = self.document.children(child_id) catch return error.InvalidDocument;
+            if (rule_children.len != 2) return error.InvalidDocument;
+            const selector_node = self.document.get(rule_children[0]) catch
+                return error.InvalidDocument;
+            if (selector_node.kind != .selector or selector_node.text == null) {
+                return error.InvalidDocument;
+            }
+            const extender_owned = try self.renderOwned(
+                selector_node.text.?,
+                scope.cursor,
+                .selector,
+            );
+            defer self.allocator.free(extender_owned);
+            const extender = std.mem.trim(u8, extender_owned, " \t\r\n\x0c");
+            const block_children = self.document.children(rule_children[1]) catch
+                return error.InvalidDocument;
+            for (block_children) |statement_id| {
+                const statement = self.document.get(statement_id) catch
+                    return error.InvalidDocument;
+                if (statement.kind != .extend) continue;
+                const extend_children = self.document.children(statement_id) catch
+                    return error.InvalidDocument;
+                if (extend_children.len != 1) return error.InvalidDocument;
+                const expression = self.document.get(extend_children[0]) catch
+                    return error.InvalidDocument;
+                const raw = try self.sources.slice(expression.text orelse
+                    return error.InvalidDocument);
+                const target = extendTarget(raw) orelse {
+                    try self.transaction.report(
+                        .err,
+                        .invalid_operation,
+                        expression.span,
+                        "native Less extend requires one simple selector target",
+                        &.{},
+                    );
+                    return error.InvalidOperation;
+                };
+                const owned_target = try self.values.own(.{ .string = .{ .bytes = target } });
+                const owned_extender = try self.values.own(.{ .string = .{ .bytes = extender } });
+                try self.extensions.append(self.allocator, .{
+                    .target = owned_target.string.bytes,
+                    .extender = owned_extender.string.bytes,
+                });
+            }
+        }
+    }
+
     fn emitStatements(
         self: *Engine,
         children: []const native_syntax.NodeId,
@@ -443,6 +646,10 @@ const Engine = struct {
                 },
                 .rule => try self.emitRule(child_id, scope, parent_selector),
                 .at_rule => try self.emitAtRule(child_id, scope, parent_selector),
+                .mixin => if (!try self.isMixinDefinition(child_id)) {
+                    if (parent_selector == null) return error.InvalidDocument;
+                },
+                .detached_ruleset, .extend => {},
                 .comment => {},
                 else => return error.InvalidDocument,
             }
@@ -476,19 +683,27 @@ const Engine = struct {
         defer self.allocator.free(rendered_selector);
         const selector = try self.combineSelector(parent_selector, rendered_selector);
         defer self.allocator.free(selector);
+        const emitted_selector = try self.selectorWithExtenders(selector);
+        defer self.allocator.free(emitted_selector);
 
         var declarations: std.ArrayList(u8) = .empty;
         defer declarations.deinit(self.allocator);
         for (block_children) |child_id| {
             const child = self.document.get(child_id) catch return error.InvalidDocument;
-            if (child.kind == .declaration and !try self.isVariableDeclaration(child_id)) {
-                try self.appendDeclaration(&declarations, child_id, scope);
+            switch (child.kind) {
+                .declaration => if (!try self.isVariableDeclaration(child_id)) {
+                    try self.appendDeclaration(&declarations, child_id, scope);
+                },
+                .mixin => if (!try self.isMixinDefinition(child_id)) {
+                    try self.appendCallable(&declarations, child_id, scope, selector);
+                },
+                else => {},
             }
         }
         if (declarations.items.len > 0) {
             var output: std.ArrayList(u8) = .empty;
             defer output.deinit(self.allocator);
-            try self.appendTemporary(&output, selector);
+            try self.appendTemporary(&output, emitted_selector);
             try self.appendTemporary(&output, "{");
             try self.appendTemporary(&output, declarations.items);
             try self.appendTemporary(&output, "}");
@@ -503,6 +718,18 @@ const Engine = struct {
                 else => {},
             }
         }
+    }
+
+    fn selectorWithExtenders(self: *Engine, selector: []const u8) Error![]u8 {
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendTemporary(&output, selector);
+        for (self.extensions.items) |extension| {
+            if (!std.mem.eql(u8, extension.target, selector)) continue;
+            try self.appendTemporary(&output, ",");
+            try self.appendTemporary(&output, extension.extender);
+        }
+        return try output.toOwnedSlice(self.allocator);
     }
 
     fn appendDeclaration(
@@ -535,6 +762,294 @@ const Engine = struct {
         }
         try self.appendTemporary(output, ";");
         _ = declaration;
+    }
+
+    fn appendCallable(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        call_id: native_syntax.NodeId,
+        caller_scope: Scope,
+        parent_selector: []const u8,
+    ) Error!void {
+        const call = self.document.get(call_id) catch return error.InvalidDocument;
+        const children = self.document.children(call_id) catch return error.InvalidDocument;
+        if (call.kind != .mixin or children.len != 1) return error.InvalidDocument;
+        const expression = self.document.get(children[0]) catch return error.InvalidDocument;
+        if (expression.kind != .expression or expression.text == null) {
+            return error.InvalidDocument;
+        }
+        const raw = try self.sources.slice(expression.text.?);
+        const name = callableName(raw) orelse return error.InvalidDocument;
+        if (name[0] == '@') {
+            try self.appendDetached(output, name, expression.text.?, caller_scope, parent_selector);
+        } else {
+            try self.appendMixin(output, name, expression.text.?, caller_scope, parent_selector);
+        }
+    }
+
+    fn appendMixin(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        name: []const u8,
+        call_span: native_source.Span,
+        caller_scope: Scope,
+        parent_selector: []const u8,
+    ) Error!void {
+        const definition = self.lookupMixin(caller_scope, name) orelse {
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "native Less mixin {s} is undefined",
+                .{name},
+            );
+            defer self.allocator.free(message);
+            try self.transaction.report(.err, .undefined_variable, call_span, message, &.{});
+            return error.UndefinedMixin;
+        };
+        try self.enterCallable(call_span);
+        var call_open = true;
+        defer if (call_open) self.transaction.leaveCall() catch {};
+
+        var invocation = try self.createChildScope(definition.scope);
+        try self.bindMixinParameters(definition, call_span, caller_scope, &invocation);
+        const block_children = self.document.children(definition.block) catch
+            return error.InvalidDocument;
+        try self.populateScope(block_children, &invocation);
+        if (definition.guard) |guard| {
+            if (!try self.guardMatches(guard, invocation)) {
+                try self.transaction.report(
+                    .err,
+                    .invalid_operation,
+                    call_span,
+                    "native Less mixin guard did not match",
+                    &.{},
+                );
+                return error.UndefinedMixin;
+            }
+        }
+        try self.appendCallableBody(output, block_children, invocation, parent_selector);
+        try self.transaction.leaveCall();
+        call_open = false;
+    }
+
+    fn appendDetached(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        name: []const u8,
+        call_span: native_source.Span,
+        caller_scope: Scope,
+        parent_selector: []const u8,
+    ) Error!void {
+        const definition = self.lookupDetached(caller_scope, name) orelse {
+            const message = try std.fmt.allocPrint(
+                self.allocator,
+                "native Less detached ruleset {s} is undefined",
+                .{name},
+            );
+            defer self.allocator.free(message);
+            try self.transaction.report(.err, .undefined_variable, call_span, message, &.{});
+            return error.UndefinedMixin;
+        };
+        try self.enterCallable(call_span);
+        var call_open = true;
+        defer if (call_open) self.transaction.leaveCall() catch {};
+        var invocation = try self.createChildScope(definition.scope);
+        const block_children = self.document.children(definition.block) catch
+            return error.InvalidDocument;
+        try self.populateScope(block_children, &invocation);
+        try self.appendCallableBody(output, block_children, invocation, parent_selector);
+        try self.transaction.leaveCall();
+        call_open = false;
+    }
+
+    fn enterCallable(self: *Engine, span: native_source.Span) Error!void {
+        if (self.call_count >= self.limits.max_calls) {
+            try self.transaction.report(
+                .err,
+                .call_limit,
+                span,
+                "native Less callable limit exceeded",
+                &.{},
+            );
+            return error.CallLimitExceeded;
+        }
+        self.call_count += 1;
+        try self.transaction.enterCall();
+    }
+
+    fn createChildScope(self: *Engine, parent: Scope) Error!Scope {
+        const cursor = try self.environment.push(parent.cursor);
+        const id = self.scopes.items.len;
+        try self.scopes.append(self.allocator, .{ .parent = parent.id });
+        return .{ .cursor = cursor, .id = id };
+    }
+
+    fn bindMixinParameters(
+        self: *Engine,
+        definition: MixinDefinition,
+        call_span: native_source.Span,
+        caller_scope: Scope,
+        invocation: *Scope,
+    ) Error!void {
+        const signature_raw = try self.sources.slice(definition.signature);
+        const call_raw = try self.sources.slice(call_span);
+        const signature_arguments = callableArguments(signature_raw) orelse
+            return error.InvalidDocument;
+        const call_arguments = callableArguments(call_raw) orelse return error.InvalidDocument;
+        const delimiter: u8 = if (containsTopLevel(
+            signature_raw[signature_arguments.start..signature_arguments.end],
+            ';',
+        )) ';' else ',';
+        var parameters = try splitTopLevelAlloc(
+            self.allocator,
+            signature_raw,
+            signature_arguments,
+            delimiter,
+        );
+        defer parameters.deinit(self.allocator);
+        var arguments = try splitTopLevelAlloc(
+            self.allocator,
+            call_raw,
+            call_arguments,
+            delimiter,
+        );
+        defer arguments.deinit(self.allocator);
+        if (arguments.items.len > parameters.items.len) {
+            try self.reportInvalidOperation(call_span, "native Less mixin received too many arguments");
+            return error.InvalidOperation;
+        }
+
+        for (parameters.items, 0..) |parameter_range, index| {
+            const parameter = trimByteRange(signature_raw, parameter_range);
+            const colon = findTopLevelByte(signature_raw, parameter, ':');
+            const name_range = trimByteRange(
+                signature_raw,
+                .{ .start = parameter.start, .end = colon orelse parameter.end },
+            );
+            const name = try normalizeVariableName(signature_raw[name_range.start..name_range.end]);
+            const rendered = if (index < arguments.items.len) blk: {
+                const argument = trimByteRange(call_raw, arguments.items[index]);
+                if (argument.start == argument.end) {
+                    try self.reportInvalidOperation(call_span, "native Less mixin argument is empty");
+                    return error.InvalidOperation;
+                }
+                const argument_span = try self.relativeSpan(
+                    call_span,
+                    @intCast(argument.start),
+                    @intCast(argument.end),
+                );
+                break :blk try self.renderOwned(argument_span, caller_scope.cursor, .value);
+            } else blk: {
+                const colon_index = colon orelse {
+                    try self.reportInvalidOperation(call_span, "native Less mixin argument is required");
+                    return error.InvalidOperation;
+                };
+                const default_range = trimByteRange(signature_raw, .{
+                    .start = colon_index + 1,
+                    .end = parameter.end,
+                });
+                const default_span = try self.relativeSpan(
+                    definition.signature,
+                    @intCast(default_range.start),
+                    @intCast(default_range.end),
+                );
+                break :blk try self.renderOwned(default_span, invocation.cursor, .value);
+            };
+            defer self.allocator.free(rendered);
+            try self.addResolvedBinding(name, rendered, invocation);
+        }
+    }
+
+    fn addResolvedBinding(
+        self: *Engine,
+        name: []const u8,
+        rendered: []const u8,
+        scope: *Scope,
+    ) Error!void {
+        const holder = try self.values.own(.{ .string = .{ .bytes = rendered } });
+        const binding_index = self.bindings.items.len;
+        try self.bindings.append(self.allocator, .{
+            .holder = holder,
+            .name = name,
+            .expression = (self.document.get(self.document.root) catch
+                return error.InvalidDocument).span,
+            .definition_scope = scope.cursor,
+            .state = .resolved,
+            .resolved = holder,
+        });
+        try self.binding_indices.put(self.allocator, holder, binding_index);
+        scope.cursor = try self.environment.set(scope.cursor, name, holder);
+        try self.transaction.consumeOperations(1);
+    }
+
+    fn appendCallableBody(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        children: []const native_syntax.NodeId,
+        scope: Scope,
+        parent_selector: []const u8,
+    ) Error!void {
+        for (children) |child_id| {
+            const child = self.document.get(child_id) catch return error.InvalidDocument;
+            switch (child.kind) {
+                .declaration => if (!try self.isVariableDeclaration(child_id)) {
+                    try self.appendDeclaration(output, child_id, scope);
+                },
+                .mixin => if (!try self.isMixinDefinition(child_id)) {
+                    try self.appendCallable(output, child_id, scope, parent_selector);
+                },
+                .comment, .detached_ruleset, .extend => {},
+                else => {
+                    try self.transaction.report(
+                        .err,
+                        .unsupported_feature,
+                        child.span,
+                        "native Less callable nested rules are not implemented in this evaluator slice",
+                        &.{},
+                    );
+                    return error.UnsupportedFeature;
+                },
+            }
+        }
+    }
+
+    fn lookupMixin(
+        self: *const Engine,
+        scope: Scope,
+        name: []const u8,
+    ) ?MixinDefinition {
+        var scope_id: ?usize = scope.id;
+        while (scope_id) |current| {
+            var index = self.mixins.items.len;
+            while (index > 0) {
+                index -= 1;
+                const definition = self.mixins.items[index];
+                if (definition.scope.id == current and std.mem.eql(u8, definition.name, name)) {
+                    return definition;
+                }
+            }
+            scope_id = self.scopes.items[current].parent;
+        }
+        return null;
+    }
+
+    fn lookupDetached(
+        self: *const Engine,
+        scope: Scope,
+        name: []const u8,
+    ) ?DetachedDefinition {
+        var scope_id: ?usize = scope.id;
+        while (scope_id) |current| {
+            var index = self.detached.items.len;
+            while (index > 0) {
+                index -= 1;
+                const definition = self.detached.items[index];
+                if (definition.scope.id == current and std.mem.eql(u8, definition.name, name)) {
+                    return definition;
+                }
+            }
+            scope_id = self.scopes.items[current].parent;
+        }
+        return null;
     }
 
     fn emitAtRule(
@@ -640,6 +1155,11 @@ const Engine = struct {
         var output: std.ArrayList(u8) = .empty;
         errdefer output.deinit(self.allocator);
         try self.renderInto(span, scope, context, &output);
+        if (context == .value) {
+            const evaluated = try self.evaluateValueOwned(span, output.items);
+            output.deinit(self.allocator);
+            return evaluated;
+        }
         return try output.toOwnedSlice(self.allocator);
     }
 
@@ -655,7 +1175,6 @@ const Engine = struct {
         defer if (tokens.len > 0) self.allocator.free(tokens);
         try self.transaction.consumeOperations(@intCast(tokens.len));
 
-        var unsupported = false;
         var cursor: usize = 0;
         var index: usize = 0;
         while (index < tokens.len) : (index += 1) {
@@ -733,35 +1252,202 @@ const Engine = struct {
                 cursor = token_end;
                 continue;
             }
-            if (context == .value and token.kind == .operator) {
-                const operator = token.raw(raw);
-                if (std.mem.eql(u8, operator, "+") or
-                    std.mem.eql(u8, operator, "*") or
-                    std.mem.eql(u8, operator, "/") or
-                    std.mem.eql(u8, operator, "~"))
-                {
-                    unsupported = true;
-                }
-            }
-            if (context == .value and token.kind == .identifier and
-                nextSignificantKind(tokens, index + 1) == .open_paren)
-            {
-                unsupported = true;
-            }
             try self.appendTemporary(output, token.raw(raw));
             cursor = token_end;
         }
         try self.appendTemporary(output, raw[cursor..]);
-        if (unsupported) {
-            try self.transaction.report(
-                .err,
-                .unsupported_feature,
-                span,
-                "native Less operations and functions are not implemented in this evaluator slice",
-                &.{},
-            );
-            return error.UnsupportedFeature;
+    }
+
+    fn evaluateValueOwned(
+        self: *Engine,
+        span: native_source.Span,
+        rendered: []const u8,
+    ) Error![]u8 {
+        const value = std.mem.trim(u8, rendered, " \t\r\n\x0c");
+        if (value.len == 0) return try self.allocator.dupe(u8, value);
+        if (functionArguments(value, "url") != null or
+            functionArguments(value, "calc") != null)
+        {
+            return try self.allocator.dupe(u8, value);
         }
+        if (functionArguments(value, "percentage")) |arguments| {
+            const numeric = try self.parseNumericOrReport(span, value[arguments.start..arguments.end]);
+            if (!numeric.isDimensionless()) {
+                try self.reportInvalidOperation(span, "native Less percentage() requires a unitless number");
+                return error.InvalidOperation;
+            }
+            var buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+            const percentage = native_numeric.serialize(numeric.value * 100, &buffer, true) catch {
+                try self.reportInvalidOperation(span, "native Less percentage() result is invalid");
+                return error.InvalidOperation;
+            };
+            return try std.fmt.allocPrint(self.allocator, "{s}%", .{percentage});
+        }
+        if (functionArguments(value, "darken")) |arguments| {
+            var parts = try splitTopLevelAlloc(self.allocator, value, arguments, ',');
+            defer parts.deinit(self.allocator);
+            if (parts.items.len != 2) {
+                try self.reportInvalidOperation(span, "native Less darken() requires two arguments");
+                return error.InvalidOperation;
+            }
+            const color_range = trimByteRange(value, parts.items[0]);
+            const amount_range = trimByteRange(value, parts.items[1]);
+            const color = native_color.parseLiteral(value[color_range.start..color_range.end]) orelse {
+                try self.reportInvalidOperation(span, "native Less darken() requires a color");
+                return error.InvalidOperation;
+            };
+            const amount = try self.parseNumericOrReport(
+                span,
+                value[amount_range.start..amount_range.end],
+            );
+            var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+            var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+            const amount_number = amount.toNumber(&numerator, &denominator) catch {
+                try self.reportInvalidOperation(span, "native Less darken() amount is invalid");
+                return error.InvalidOperation;
+            };
+            if (amount_number.numerator_units.len != 1 or
+                !std.mem.eql(u8, amount_number.numerator_units[0], "%") or
+                amount_number.denominator_units.len != 0)
+            {
+                try self.reportInvalidOperation(span, "native Less darken() amount requires percent units");
+                return error.InvalidOperation;
+            }
+            const adjusted = native_color.adjustLightness(color, -amount.value) catch {
+                try self.reportInvalidOperation(span, "native Less darken() arguments are invalid");
+                return error.InvalidOperation;
+            };
+            const channels = native_color.toRgb(adjusted) catch {
+                try self.reportInvalidOperation(span, "native Less darken() result is invalid");
+                return error.InvalidOperation;
+            };
+            if (channels[3] != 1) {
+                try self.reportInvalidOperation(span, "native Less darken() alpha is unsupported");
+                return error.InvalidOperation;
+            }
+            const result = try self.allocator.alloc(u8, 7);
+            result[0] = '#';
+            for (channels[0..3], 0..) |channel, index| {
+                const rounded: u8 = @intFromFloat(@floor(
+                    std.math.clamp(channel, 0, 255) + 0.5 - 1e-9,
+                ));
+                result[1 + index * 2] = hexDigit(rounded >> 4);
+                result[2 + index * 2] = hexDigit(rounded & 0x0f);
+            }
+            return result;
+        }
+
+        if (!looksNumeric(value)) return try self.allocator.dupe(u8, value);
+        var parser = NumericParser{
+            .input = value,
+            .max_depth = self.limits.max_expression_depth,
+        };
+        const numeric = parser.parse() catch |err| switch (err) {
+            error.ExpressionDepthExceeded => {
+                try self.transaction.report(
+                    .err,
+                    .resource_limit,
+                    span,
+                    "native Less expression depth exceeded",
+                    &.{},
+                );
+                return error.ExpressionDepthExceeded;
+            },
+            error.IncompatibleUnits => {
+                try self.reportInvalidOperation(span, "native Less operation uses incompatible units");
+                return error.IncompatibleUnits;
+            },
+            else => return try self.allocator.dupe(u8, value),
+        };
+        return try self.serializeNumeric(numeric);
+    }
+
+    fn parseNumericOrReport(
+        self: *Engine,
+        span: native_source.Span,
+        input: []const u8,
+    ) Error!native_numeric.Numeric {
+        var parser = NumericParser{
+            .input = std.mem.trim(u8, input, " \t\r\n\x0c"),
+            .max_depth = self.limits.max_expression_depth,
+        };
+        return parser.parse() catch |err| switch (err) {
+            error.ExpressionDepthExceeded => {
+                try self.transaction.report(
+                    .err,
+                    .resource_limit,
+                    span,
+                    "native Less expression depth exceeded",
+                    &.{},
+                );
+                return error.ExpressionDepthExceeded;
+            },
+            error.IncompatibleUnits => {
+                try self.reportInvalidOperation(span, "native Less operation uses incompatible units");
+                return error.IncompatibleUnits;
+            },
+            else => {
+                try self.reportInvalidOperation(span, "native Less numeric expression is invalid");
+                return error.InvalidOperation;
+            },
+        };
+    }
+
+    fn serializeNumeric(
+        self: *Engine,
+        numeric: native_numeric.Numeric,
+    ) Error![]u8 {
+        var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+        var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+        const number = numeric.toNumber(&numerator, &denominator) catch
+            return error.InvalidOperation;
+        var number_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        const value = native_numeric.serialize(number.value, &number_buffer, true) catch
+            return error.InvalidOperation;
+        var unit_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        const units = native_numeric.serializeUnits(number, &unit_buffer) catch
+            return error.InvalidOperation;
+        return try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ value, units });
+    }
+
+    fn guardMatches(
+        self: *Engine,
+        span: native_source.Span,
+        scope: Scope,
+    ) Error!bool {
+        const rendered = try self.renderOwned(span, scope.cursor, .at_rule);
+        defer self.allocator.free(rendered);
+        var raw = std.mem.trim(u8, rendered, " \t\r\n\x0c");
+        if (!std.mem.startsWith(u8, raw, "when")) return error.InvalidOperation;
+        raw = std.mem.trim(u8, raw[4..], " \t\r\n\x0c");
+        if (raw.len >= 2 and raw[0] == '(' and raw[raw.len - 1] == ')') {
+            raw = std.mem.trim(u8, raw[1 .. raw.len - 1], " \t\r\n\x0c");
+        }
+        const comparison = findComparison(raw) orelse return error.InvalidOperation;
+        const left = try self.parseNumericOrReport(span, raw[0..comparison.index]);
+        const right = try self.parseNumericOrReport(
+            span,
+            raw[comparison.index + comparison.length ..],
+        );
+        const ordering = native_numeric.compare(left, right) catch {
+            try self.reportInvalidOperation(span, "native Less guard uses incompatible units");
+            return error.IncompatibleUnits;
+        };
+        return switch (comparison.kind) {
+            .less => ordering == .less,
+            .less_equal => ordering != .greater,
+            .greater => ordering == .greater,
+            .greater_equal => ordering != .less,
+            .equal => ordering == .equal,
+        };
+    }
+
+    fn reportInvalidOperation(
+        self: *Engine,
+        span: native_source.Span,
+        message: []const u8,
+    ) Error!void {
+        try self.transaction.report(.err, .invalid_operation, span, message, &.{});
     }
 
     fn resolveVariable(
@@ -870,6 +1556,296 @@ const Engine = struct {
         try output.appendSlice(self.allocator, bytes);
     }
 };
+
+const ComparisonKind = enum {
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+    equal,
+};
+
+const Comparison = struct {
+    index: usize,
+    length: usize,
+    kind: ComparisonKind,
+};
+
+const NumericParser = struct {
+    input: []const u8,
+    max_depth: u16,
+    cursor: usize = 0,
+
+    const ParseError = native_numeric.Error || error{
+        ExpressionDepthExceeded,
+        InvalidExpression,
+    };
+
+    fn parse(self: *NumericParser) ParseError!native_numeric.Numeric {
+        const result = try self.parseAdd(0);
+        self.skipWhitespace();
+        if (self.cursor != self.input.len) return error.InvalidExpression;
+        return result;
+    }
+
+    fn parseAdd(self: *NumericParser, depth: u16) ParseError!native_numeric.Numeric {
+        var result = try self.parseMultiply(depth);
+        while (true) {
+            self.skipWhitespace();
+            const operation = self.peek();
+            if (operation != '+' and operation != '-') return result;
+            self.cursor += 1;
+            const right = try self.parseMultiply(depth);
+            result = try native_numeric.add(result, right, operation);
+        }
+    }
+
+    fn parseMultiply(self: *NumericParser, depth: u16) ParseError!native_numeric.Numeric {
+        var result = try self.parsePrimary(depth);
+        while (true) {
+            self.skipWhitespace();
+            const operation = self.peek();
+            if (operation != '*' and operation != '/') return result;
+            self.cursor += 1;
+            const right = try self.parsePrimary(depth);
+            result = try native_numeric.multiply(result, right, operation);
+        }
+    }
+
+    fn parsePrimary(self: *NumericParser, depth: u16) ParseError!native_numeric.Numeric {
+        self.skipWhitespace();
+        if (self.peek() == '(') {
+            if (depth + 1 >= self.max_depth) return error.ExpressionDepthExceeded;
+            self.cursor += 1;
+            const result = try self.parseAdd(depth + 1);
+            self.skipWhitespace();
+            if (self.peek() != ')') return error.InvalidExpression;
+            self.cursor += 1;
+            return result;
+        }
+
+        const start = self.cursor;
+        if (self.peek() == '+' or self.peek() == '-') self.cursor += 1;
+        var saw_digit = false;
+        while (std.ascii.isDigit(self.peek())) {
+            saw_digit = true;
+            self.cursor += 1;
+        }
+        if (self.peek() == '.') {
+            self.cursor += 1;
+            while (std.ascii.isDigit(self.peek())) {
+                saw_digit = true;
+                self.cursor += 1;
+            }
+        }
+        if (!saw_digit) return error.InvalidExpression;
+        const number_end = self.cursor;
+        while (std.ascii.isAlphabetic(self.peek()) or self.peek() == '%') self.cursor += 1;
+        const unit = if (self.cursor > number_end) self.input[number_end..self.cursor] else null;
+        const value = std.fmt.parseFloat(f64, self.input[start..number_end]) catch
+            return error.InvalidExpression;
+        return try native_numeric.Numeric.init(value, unit);
+    }
+
+    fn skipWhitespace(self: *NumericParser) void {
+        while (self.cursor < self.input.len and
+            std.ascii.isWhitespace(self.input[self.cursor]))
+        {
+            self.cursor += 1;
+        }
+    }
+
+    fn peek(self: *const NumericParser) u8 {
+        return if (self.cursor < self.input.len) self.input[self.cursor] else 0;
+    }
+};
+
+fn callableName(raw: []const u8) ?[]const u8 {
+    const input = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+    if (input.len == 0) return null;
+    var end: usize = 0;
+    while (end < input.len and input[end] != '(' and
+        !std.ascii.isWhitespace(input[end])) : (end += 1)
+    {}
+    if (end == 0 or (input[0] != '.' and input[0] != '#' and input[0] != '@')) {
+        return null;
+    }
+    return input[0..end];
+}
+
+fn callableArguments(raw: []const u8) ?ByteRange {
+    const opening = std.mem.indexOfScalar(u8, raw, '(') orelse return null;
+    var depth: usize = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    var index = opening;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '(') depth += 1;
+        if (byte == ')') {
+            depth -= 1;
+            if (depth == 0) {
+                if (std.mem.trim(u8, raw[index + 1 ..], " \t\r\n\x0c;").len != 0) {
+                    return null;
+                }
+                return .{ .start = opening + 1, .end = index };
+            }
+        }
+    }
+    return null;
+}
+
+fn functionArguments(raw: []const u8, name: []const u8) ?ByteRange {
+    const arguments = callableArguments(raw) orelse return null;
+    const function_name = std.mem.trim(u8, raw[0 .. arguments.start - 1], " \t\r\n\x0c");
+    if (!std.ascii.eqlIgnoreCase(function_name, name)) return null;
+    return arguments;
+}
+
+fn splitTopLevelAlloc(
+    allocator: std.mem.Allocator,
+    raw: []const u8,
+    bounds: ByteRange,
+    delimiter: u8,
+) std.mem.Allocator.Error!std.ArrayList(ByteRange) {
+    var result: std.ArrayList(ByteRange) = .empty;
+    errdefer result.deinit(allocator);
+    const trimmed = trimByteRange(raw, bounds);
+    if (trimmed.start == trimmed.end) return result;
+    var depth: usize = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    var start = bounds.start;
+    var index = bounds.start;
+    while (index < bounds.end) : (index += 1) {
+        const byte = raw[index];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => if (depth > 0) {
+                depth -= 1;
+            },
+            else => {},
+        }
+        if (byte == delimiter and depth == 0) {
+            try result.append(allocator, .{ .start = start, .end = index });
+            start = index + 1;
+        }
+    }
+    try result.append(allocator, .{ .start = start, .end = bounds.end });
+    return result;
+}
+
+fn containsTopLevel(raw: []const u8, needle: u8) bool {
+    return findTopLevelByte(raw, .{ .start = 0, .end = raw.len }, needle) != null;
+}
+
+fn findTopLevelByte(raw: []const u8, bounds: ByteRange, needle: u8) ?usize {
+    var depth: usize = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    for (raw[bounds.start..bounds.end], bounds.start..) |byte, index| {
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => if (depth > 0) {
+                depth -= 1;
+            },
+            else => {},
+        }
+        if (byte == needle and depth == 0) return index;
+    }
+    return null;
+}
+
+fn trimByteRange(raw: []const u8, input: ByteRange) ByteRange {
+    var start = input.start;
+    var end = input.end;
+    while (start < end and std.ascii.isWhitespace(raw[start])) start += 1;
+    while (end > start and std.ascii.isWhitespace(raw[end - 1])) end -= 1;
+    return .{ .start = start, .end = end };
+}
+
+fn extendTarget(raw: []const u8) ?[]const u8 {
+    const marker = ":extend(";
+    const opening = std.mem.indexOf(u8, raw, marker) orelse return null;
+    if (!std.mem.eql(u8, std.mem.trim(u8, raw[0..opening], " \t\r\n\x0c"), "&")) {
+        return null;
+    }
+    const target_start = opening + marker.len;
+    const closing = std.mem.lastIndexOfScalar(u8, raw, ')') orelse return null;
+    if (closing <= target_start) return null;
+    const target = std.mem.trim(u8, raw[target_start..closing], " \t\r\n\x0c");
+    if (target.len == 0 or std.mem.indexOfAny(u8, target, " ,()") != null) return null;
+    return target;
+}
+
+fn looksNumeric(raw: []const u8) bool {
+    return raw.len > 0 and (std.ascii.isDigit(raw[0]) or raw[0] == '.' or
+        raw[0] == '(' or raw[0] == '+' or raw[0] == '-');
+}
+
+fn hexDigit(value: u8) u8 {
+    return if (value < 10) '0' + value else 'a' + (value - 10);
+}
+
+fn findComparison(raw: []const u8) ?Comparison {
+    for (raw, 0..) |byte, index| {
+        if (byte != '<' and byte != '>' and byte != '=') continue;
+        const has_equal = index + 1 < raw.len and raw[index + 1] == '=';
+        return .{
+            .index = index,
+            .length = if (has_equal) 2 else 1,
+            .kind = switch (byte) {
+                '<' => if (has_equal) .less_equal else .less,
+                '>' => if (has_equal) .greater_equal else .greater,
+                '=' => .equal,
+                else => unreachable,
+            },
+        };
+    }
+    return null;
+}
 
 fn normalizeVariableName(raw: []const u8) error{InvalidDocument}![]const u8 {
     if (raw.len < 2 or raw[0] != '@' or !validBareVariableName(raw[1..])) {

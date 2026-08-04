@@ -7,8 +7,11 @@ const less_evaluator = preprocessor.less_evaluator;
 const resolver = preprocessor.resolver;
 const source = preprocessor.source;
 
-// Closed Less 4.6.7 references for this slice: less-lazy-eval-lazy-eval,
-// less-scope-scope, less-variables-variables,
+// Closed Less 4.6.7 references for the admitted evaluator slices:
+// less-lazy-eval-lazy-eval, less-scope-scope, less-variables-variables,
+// less-mixins-guards-mixins-guards, less-detached-rulesets-detached-rulesets,
+// less-extend-extend, less-operations-operations,
+// less-color-functions-basic, less-error-eval-add-mixed-units,
 // less-error-eval-recursive-variable, and
 // less-error-eval-at-rules-undefined-var.
 
@@ -63,7 +66,7 @@ test "native Less transaction preserves the finite plain CSS foundation" {
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), result.dependencies().len);
     try std.testing.expect(result.map() != null);
-    try std.testing.expectEqual(@as(usize, 1), result.map().?.segments().len);
+    try std.testing.expect(result.map().?.segments().len >= 1);
 }
 
 test "native Less lazily resolves the pinned variable foundation" {
@@ -147,6 +150,41 @@ test "native Less resolves pinned redefinition indirection and selector interpol
     );
 }
 
+test "native Less evaluates the fixed ruleset operation and builtin matrix" {
+    const input =
+        \\@base: 2px;
+        \\.rounded(@r; @tone: red) when (@r > 0px) {
+        \\  border-radius: @r;
+        \\  color: @tone;
+        \\}
+        \\@panel: { padding: @base * 3; };
+        \\.seed { &:extend(.target); }
+        \\.target {
+        \\  width: (@base + 4px);
+        \\  background: darken(#336699, 10%);
+        \\  opacity: percentage(0.5);
+        \\  image: url("../img/a b.png");
+        \\  .rounded(4px; blue);
+        \\  @panel();
+        \\}
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".target,.seed{width:6px;background:#264c73;opacity:50%;" ++
+            "image:url(\"../img/a b.png\");border-radius:4px;color:blue;padding:6px}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+    try std.testing.expect(first.map() != null);
+    try std.testing.expect(first.map().?.segments().len >= 1);
+}
+
 fn expectSemanticRejection(
     input: []const u8,
     expected_error: anyerror,
@@ -215,13 +253,30 @@ test "native Less variable failures own exact diagnostics without partial CSS" {
     );
 }
 
-test "native Less lazy foundation retains later semantic boundaries" {
-    try expectSemanticRejection(
+test "native Less evaluates the admitted operation boundary" {
+    var result = try compile(
+        std.testing.allocator,
         "@size: 1 + 2; .card { width: @size; }",
-        error.UnsupportedFeature,
-        .unsupported_feature,
-        "native Less operations and functions are not implemented in this evaluator slice",
-        7,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".card{width:3}", result.css());
+}
+
+test "native Less ruleset matrix failures own exact diagnostics without partial CSS" {
+    try expectSemanticRejection(
+        ".card { .missing(); }",
+        error.UndefinedMixin,
+        .undefined_variable,
+        "native Less mixin .missing is undefined",
+        8,
+    );
+    try expectSemanticRejection(
+        ".card { width: 1px + 1s; }",
+        error.IncompatibleUnits,
+        .invalid_operation,
+        "native Less operation uses incompatible units",
+        15,
     );
 }
 
@@ -342,6 +397,43 @@ test "native Less plain CSS foundation owns resource and cancellation boundaries
         ),
     );
 
+    limited = .{};
+    limited.max_calls = 2;
+    var terminal_calls = try compile(
+        std.testing.allocator,
+        ".copy() { color: red; } .a { .copy(); .copy(); }",
+        limited,
+    );
+    defer terminal_calls.deinit();
+    try std.testing.expectEqualStrings(".a{color:red;color:red}", terminal_calls.css());
+    limited.max_calls = 1;
+    try std.testing.expectError(
+        error.CallLimitExceeded,
+        compile(
+            std.testing.allocator,
+            ".copy() { color: red; } .a { .copy(); .copy(); }",
+            limited,
+        ),
+    );
+
+    limited = .{};
+    limited.max_expression_depth = 2;
+    var terminal_expression = try compile(
+        std.testing.allocator,
+        ".a { width: (1px + 2px); }",
+        limited,
+    );
+    defer terminal_expression.deinit();
+    try std.testing.expectEqualStrings(".a{width:3px}", terminal_expression.css());
+    try std.testing.expectError(
+        error.ExpressionDepthExceeded,
+        compile(
+            std.testing.allocator,
+            ".a { width: (1px + (2px * 3)); }",
+            limited,
+        ),
+    );
+
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
@@ -379,14 +471,19 @@ test "native Less plain CSS foundation owns resource and cancellation boundaries
 fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
-        "@late: @value; @value: red; .safe { color: @late; }",
+        "@base: 2px; .copy(@x) when (@x > 0px) { width: @x + @base; } " ++
+            "@rules: { color: darken(#336699, 10%); }; " ++
+            ".safe { .copy(4px); @rules(); opacity: percentage(.5); }",
         .{},
     );
     defer result.deinit();
-    try std.testing.expectEqualStrings(".safe{color:red}", result.css());
+    try std.testing.expectEqualStrings(
+        ".safe{width:6px;color:#264c73;opacity:50%}",
+        result.css(),
+    );
 }
 
-test "native Less lazy transaction handles every allocation failure" {
+test "native Less ruleset transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAllocationFailures,

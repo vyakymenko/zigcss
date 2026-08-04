@@ -579,12 +579,43 @@ test('binds the native Less evaluator and permanent execution boundary', () => {
     /native Less evaluator evidence.*missing/,
   )
 
+  const missingRulesetEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
+    .replace(
+      'test "native Less evaluates the fixed ruleset operation and builtin matrix"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { lessEvaluatorTests: missingRulesetEvidence }),
+    /native Less evaluator evidence.*missing/,
+  )
+
   const missingReferenceEvidence = fs
     .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
     .replace('less-error-eval-recursive-variable', 'removed-reference-case')
   assert.throws(
     () => validateContract(loadContract(), { lessEvaluatorTests: missingReferenceEvidence }),
     /native Less evaluator pinned reference evidence.*missing/,
+  )
+
+  const missingRulesetReference = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
+    .replace('less-mixins-guards-mixins-guards', 'removed-reference-case')
+  assert.throws(
+    () => validateContract(loadContract(), { lessEvaluatorTests: missingRulesetReference }),
+    /native Less evaluator pinned reference evidence.*missing/,
+  )
+
+  const weakenedContract = loadContract()
+  const lessImplementation = weakenedContract.implementations.find(
+    implementation => implementation.id === 'native-less-semantic-core',
+  )
+  lessImplementation.capabilities = lessImplementation.capabilities.filter(
+    capability => capability !== 'ruleset-operation-builtin-foundation',
+  )
+  assert.throws(
+    () => validateContract(weakenedContract),
+    /implementations.*inventory drifted/,
   )
 
   const weakenedBoundary = fs

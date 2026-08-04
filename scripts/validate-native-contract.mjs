@@ -635,6 +635,7 @@ const expectedImplementations = Object.freeze([
       'plain-css-transaction',
       'permanent-javascript-plugin-rejection',
       'lazy-variable-scope-selector-declaration-foundation',
+      'ruleset-operation-builtin-foundation',
       'resource-cancellation',
       'allocation-failure',
     ]),
@@ -960,10 +961,12 @@ function validateLessEvaluator(source, tests, plan) {
     'native Less evaluates the pinned lexical scope and nested selector foundation',
     'native Less resolves pinned redefinition indirection and selector interpolation',
     'native Less variable failures own exact diagnostics without partial CSS',
-    'native Less lazy foundation retains later semantic boundaries',
+    'native Less evaluates the admitted operation boundary',
+    'native Less evaluates the fixed ruleset operation and builtin matrix',
+    'native Less ruleset matrix failures own exact diagnostics without partial CSS',
     'native Less permanently rejects JavaScript and plugins without partial CSS',
     'native Less plain CSS foundation owns resource and cancellation boundaries',
-    'native Less lazy transaction handles every allocation failure',
+    'native Less ruleset transaction handles every allocation failure',
   ]) {
     requireText(tests, `test "${evidenceTest}"`, 'native Less evaluator evidence')
   }
@@ -971,6 +974,12 @@ function validateLessEvaluator(source, tests, plan) {
     'less-lazy-eval-lazy-eval',
     'less-scope-scope',
     'less-variables-variables',
+    'less-mixins-guards-mixins-guards',
+    'less-detached-rulesets-detached-rulesets',
+    'less-extend-extend',
+    'less-operations-operations',
+    'less-color-functions-basic',
+    'less-error-eval-add-mixed-units',
     'less-error-eval-recursive-variable',
     'less-error-eval-at-rules-undefined-var',
   ]) {
