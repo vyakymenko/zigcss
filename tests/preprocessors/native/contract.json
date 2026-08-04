@@ -263,8 +263,8 @@
       "manifest": "tests/preprocessors/stylus/corpus/manifest.json",
       "caseCount": 346
     },
-    "completedCaseCount": 1,
-    "remainingCaseCount": 345,
+    "completedCaseCount": 2,
+    "remainingCaseCount": 344,
     "terminalContract": {
       "selectionDerived": true,
       "successCaseCount": 326,
@@ -279,6 +279,13 @@
         "caseIds": ["stylus-official-variable"],
         "evidenceTests": [
           "native Stylus matches the pinned variable conformance cohort deterministically"
+        ]
+      },
+      {
+        "feature": "conditional-assignment",
+        "caseIds": ["stylus-official-conditional-assignment"],
+        "evidenceTests": [
+          "native Stylus matches the pinned conditional assignment conformance cohort deterministically"
         ]
       }
     ],

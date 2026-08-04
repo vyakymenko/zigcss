@@ -11,6 +11,7 @@ const std = @import("std");
 const native_environment = @import("environment.zig");
 const native_evaluator = @import("evaluator.zig");
 const native_lexer = @import("lexer.zig");
+const native_color = @import("sass_color.zig");
 const native_numeric = @import("sass_numeric.zig");
 const native_resolver = @import("resolver.zig");
 const native_source = @import("source.zig");
@@ -1435,6 +1436,9 @@ const Engine = struct {
         if (std.mem.eql(u8, input, "false")) {
             return self.ownValue(span, .{ .boolean = false });
         }
+        if (native_color.parseLiteral(input)) |color| {
+            return self.ownValue(span, .{ .color = color });
+        }
 
         if (parseCall(input)) |call| {
             const name = input[call.name.start..call.name.end];
@@ -1794,6 +1798,14 @@ const Engine = struct {
                 };
                 try self.appendTemporary(&output, span, scalar);
                 try self.appendTemporary(&output, span, units);
+            },
+            .color => |color| {
+                var color_buffer: [native_color.max_serialized_bytes]u8 = undefined;
+                const serialized = native_color.serialize(color, &color_buffer, false) catch {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                };
+                try self.appendTemporary(&output, span, serialized);
             },
             .string, .selector => |item| {
                 if (item.quoted and context == .value) {

@@ -97,8 +97,12 @@ fn compileExpectedCss(
     return transaction.finish(.{ .format = .pretty });
 }
 
-test "native Stylus matches the pinned variable conformance cohort deterministically" {
-    const allocator = std.testing.allocator;
+fn expectSuccessfulCase(
+    allocator: std.mem.Allocator,
+    case_id: []const u8,
+    feature: []const u8,
+    expected_output: []const u8,
+) !void {
     const manifest_bytes = try std.fs.cwd().readFileAlloc(
         allocator,
         "tests/preprocessors/stylus/corpus/manifest.json",
@@ -119,8 +123,8 @@ test "native Stylus matches the pinned variable conformance cohort deterministic
     try std.testing.expectEqual(@as(usize, 326), parsed.value.officialSuccessCount);
     try std.testing.expectEqual(@as(usize, 20), parsed.value.integrationErrorCount);
 
-    const case = try findCase(parsed.value.cases, "stylus-official-variable");
-    try std.testing.expectEqualStrings("variable", case.feature);
+    const case = try findCase(parsed.value.cases, case_id);
+    try std.testing.expectEqualStrings(feature, case.feature);
     try std.testing.expectEqualStrings("success", case.outcome);
 
     const input_path = try fixturePath(allocator, case.entry);
@@ -132,7 +136,7 @@ test "native Stylus matches the pinned variable conformance cohort deterministic
     const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
     defer allocator.free(expected);
 
-    try std.testing.expectEqualStrings("body {\n  font: 12px;\n}", expected);
+    try std.testing.expectEqualStrings(expected_output, expected);
 
     var expected_css = try compileExpectedCss(allocator, expected);
     defer expected_css.deinit();
@@ -147,4 +151,22 @@ test "native Stylus matches the pinned variable conformance cohort deterministic
     try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
+test "native Stylus matches the pinned variable conformance cohort deterministically" {
+    try expectSuccessfulCase(
+        std.testing.allocator,
+        "stylus-official-variable",
+        "variable",
+        "body {\n  font: 12px;\n}",
+    );
+}
+
+test "native Stylus matches the pinned conditional assignment conformance cohort deterministically" {
+    try expectSuccessfulCase(
+        std.testing.allocator,
+        "stylus-official-conditional-assignment",
+        "conditional-assignment",
+        "a.button {\n  font: 14px;\n  background: #fff;\n}",
+    );
 }

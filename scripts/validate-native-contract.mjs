@@ -282,8 +282,8 @@ const expectedStylusConformance = Object.freeze({
     manifest: 'tests/preprocessors/stylus/corpus/manifest.json',
     caseCount: 346,
   }),
-  completedCaseCount: 1,
-  remainingCaseCount: 345,
+  completedCaseCount: 2,
+  remainingCaseCount: 344,
   terminalContract: Object.freeze({
     selectionDerived: true,
     successCaseCount: 326,
@@ -298,6 +298,13 @@ const expectedStylusConformance = Object.freeze({
       caseIds: Object.freeze(['stylus-official-variable']),
       evidenceTests: Object.freeze([
         'native Stylus matches the pinned variable conformance cohort deterministically',
+      ]),
+    }),
+    Object.freeze({
+      feature: 'conditional-assignment',
+      caseIds: Object.freeze(['stylus-official-conditional-assignment']),
+      evidenceTests: Object.freeze([
+        'native Stylus matches the pinned conditional assignment conformance cohort deterministically',
       ]),
     }),
   ]),
