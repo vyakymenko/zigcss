@@ -605,6 +605,7 @@
       "capabilities": [
         "plain-css-transaction",
         "permanent-javascript-plugin-rejection",
+        "lazy-variable-scope-selector-declaration-foundation",
         "resource-cancellation",
         "allocation-failure"
       ],

@@ -568,6 +568,25 @@ test('binds the native Less evaluator and permanent execution boundary', () => {
     /native Less evaluator evidence.*missing/,
   )
 
+  const missingSemanticEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
+    .replace(
+      'test "native Less lazily resolves the pinned variable foundation"',
+      'test "removed"',
+    )
+  assert.throws(
+    () => validateContract(loadContract(), { lessEvaluatorTests: missingSemanticEvidence }),
+    /native Less evaluator evidence.*missing/,
+  )
+
+  const missingReferenceEvidence = fs
+    .readFileSync(path.join(repositoryRoot, 'tests/native-preprocessor/less_evaluator.zig'), 'utf8')
+    .replace('less-error-eval-recursive-variable', 'removed-reference-case')
+  assert.throws(
+    () => validateContract(loadContract(), { lessEvaluatorTests: missingReferenceEvidence }),
+    /native Less evaluator pinned reference evidence.*missing/,
+  )
+
   const weakenedBoundary = fs
     .readFileSync(path.join(repositoryRoot, 'src/preprocessor/less_evaluator.zig'), 'utf8')
     .replace('native Less plugins are permanently disabled', 'native Less plugins are unavailable')

@@ -634,6 +634,7 @@ const expectedImplementations = Object.freeze([
     capabilities: Object.freeze([
       'plain-css-transaction',
       'permanent-javascript-plugin-rejection',
+      'lazy-variable-scope-selector-declaration-foundation',
       'resource-cancellation',
       'allocation-failure',
     ]),
@@ -955,11 +956,25 @@ function validateLessParser(selection, tests, plan) {
 function validateLessEvaluator(source, tests, plan) {
   for (const evidenceTest of [
     'native Less transaction preserves the finite plain CSS foundation',
+    'native Less lazily resolves the pinned variable foundation',
+    'native Less evaluates the pinned lexical scope and nested selector foundation',
+    'native Less resolves pinned redefinition indirection and selector interpolation',
+    'native Less variable failures own exact diagnostics without partial CSS',
+    'native Less lazy foundation retains later semantic boundaries',
     'native Less permanently rejects JavaScript and plugins without partial CSS',
     'native Less plain CSS foundation owns resource and cancellation boundaries',
-    'native Less plain CSS transaction handles every allocation failure',
+    'native Less lazy transaction handles every allocation failure',
   ]) {
     requireText(tests, `test "${evidenceTest}"`, 'native Less evaluator evidence')
+  }
+  for (const referenceCase of [
+    'less-lazy-eval-lazy-eval',
+    'less-scope-scope',
+    'less-variables-variables',
+    'less-error-eval-recursive-variable',
+    'less-error-eval-at-rules-undefined-var',
+  ]) {
+    requireText(tests, referenceCase, 'native Less evaluator pinned reference evidence')
   }
   for (const permanentBoundary of [
     'native Less JavaScript evaluation is permanently disabled',
