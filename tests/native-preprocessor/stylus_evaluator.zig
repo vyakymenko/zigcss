@@ -584,6 +584,43 @@ test "native Stylus evaluates the fixed variable property selector expression sl
     try std.testing.expect(first.map().?.segments().len >= 9);
 }
 
+test "native Stylus applies the finite selector scope directive" {
+    const input =
+        \\@scope #sidebar
+        \\h2
+        \\  color red
+        \\a
+        \\  &:hover
+        \\    color pink
+        \\@scope body.signup-page[attr='foo']
+        \\& .container
+        \\  color red
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        "#sidebar h2{color:#f00}#sidebar a:hover{color:#ffc0cb}" ++
+            "body.signup-page[attr=\"foo\"] .container{color:#f00}",
+        compiled.css(),
+    );
+}
+
+test "native Stylus evaluates finite color component getters" {
+    const input =
+        \\body
+        \\  background red(#fc0)
+        \\  background green(#fc0)
+        \\  background blue(#fc0)
+        \\  background alpha(#fff - rgba(0,0,0,.6))
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        "body{background:255;background:204;background:0;background:0.4}",
+        compiled.css(),
+    );
+}
+
 test "native Stylus semantic failures own diagnostics without partial CSS" {
     try expectSemanticRejection(
         \\.a
@@ -599,9 +636,9 @@ test "native Stylus semantic failures own diagnostics without partial CSS" {
         \\.a
         \\  width push(base)
     ,
-        error.UnsupportedFeature,
-        .unsupported_feature,
-        "native Stylus built-in functions are not implemented in this evaluator slice",
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
         22,
     );
 }
@@ -745,6 +782,128 @@ test "native Stylus semantic values and bindings retain finite ceilings" {
         .resource_limit,
         "native Stylus lexical environment limit exceeded",
         @intCast(std.mem.indexOf(u8, binding_input, "local =").?),
+    );
+}
+
+test "native Stylus scalar conversion and expansion limits fail closed" {
+    const bitwise_overflow =
+        \\.a
+        \\  width ~1e300
+    ;
+    try expectSemanticRejection(
+        bitwise_overflow,
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus expression is invalid",
+        @intCast(std.mem.indexOf(u8, bitwise_overflow, "~1e300").?),
+    );
+
+    const index_overflow =
+        \\.a
+        \\  width (1 2)[1e300]
+    ;
+    try expectSemanticRejection(
+        index_overflow,
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus expression is invalid",
+        @intCast(std.mem.indexOf(u8, index_overflow, "(1 2)").?),
+    );
+
+    const empty_split =
+        \\.a
+        \\  content split('', 'abc')
+    ;
+    try expectSemanticRejection(
+        empty_split,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, empty_split, "split").?),
+    );
+
+    const empty_replace =
+        \\.a
+        \\  content replace('', 'x', 'abc')
+    ;
+    try expectSemanticRejection(
+        empty_replace,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, empty_replace, "replace").?),
+    );
+
+    const repetition =
+        \\.a
+        \\  content 'ab' * 3
+    ;
+    var terminal_temporary = stylus_evaluator.Limits{};
+    terminal_temporary.max_temporary_bytes = 64;
+    var repeated = try compile(std.testing.allocator, repetition, terminal_temporary);
+    defer repeated.deinit();
+    try std.testing.expectEqualStrings(".a{content:'ababab'}", repeated.css());
+
+    var over_temporary = terminal_temporary;
+    over_temporary.max_temporary_bytes = 43;
+    try expectSemanticRejectionWithLimits(
+        repetition,
+        over_temporary,
+        error.TemporaryLimitExceeded,
+        .resource_limit,
+        "native Stylus temporary byte limit exceeded",
+        @intCast(std.mem.indexOf(u8, repetition, "'ab'").?),
+    );
+
+    const extension =
+        \\.base
+        \\  width 1px
+        \\.one
+        \\  @extend .base
+    ;
+    var terminal_selectors = stylus_evaluator.Limits{};
+    terminal_selectors.max_selectors = 3;
+    var extended = try compile(std.testing.allocator, extension, terminal_selectors);
+    defer extended.deinit();
+    try std.testing.expectEqualStrings(".base,.one{width:1px}", extended.css());
+
+    var over_selectors = terminal_selectors;
+    over_selectors.max_selectors = 1;
+    try expectSemanticRejectionWithLimits(
+        extension,
+        over_selectors,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, extension, ".base").?),
+    );
+
+    const padded =
+        \\.a
+        \\  content base-convert(15, 16, 100)
+    ;
+    try expectSemanticRejectionWithLimits(
+        padded,
+        terminal_temporary,
+        error.TemporaryLimitExceeded,
+        .resource_limit,
+        "native Stylus temporary byte limit exceeded",
+        @intCast(std.mem.indexOf(u8, padded, "base-convert").?),
+    );
+
+    const replacement_growth =
+        \\.a
+        \\  content replace('a', '0123456789', 'aaaaaaaaaaaaaaaaaaaa')
+    ;
+    var bounded_replacement = stylus_evaluator.Limits{};
+    bounded_replacement.max_temporary_bytes = 128;
+    try expectSemanticRejectionWithLimits(
+        replacement_growth,
+        bounded_replacement,
+        error.TemporaryLimitExceeded,
+        .resource_limit,
+        "native Stylus temporary byte limit exceeded",
+        @intCast(std.mem.indexOf(u8, replacement_growth, "replace").?),
     );
 }
 

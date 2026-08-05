@@ -153,6 +153,32 @@ pub const Environment = struct {
         return null;
     }
 
+    pub fn update(
+        self: *Environment,
+        current: ScopeId,
+        name: []const u8,
+        item: *const value.Value,
+    ) Error!bool {
+        if (name.len == 0) return error.InvalidName;
+        var cursor: ?ScopeId = current;
+        while (cursor) |scope| {
+            const index: usize = @intCast(scope.value);
+            if (index >= self.nodes.items.len) return error.UnknownScope;
+            const node = &self.nodes.items[index];
+            switch (node.data) {
+                .boundary => {},
+                .binding => |*binding| {
+                    if (std.mem.eql(u8, binding.name, name)) {
+                        binding.value = item;
+                        return true;
+                    }
+                },
+            }
+            cursor = node.parent;
+        }
+        return false;
+    }
+
     pub fn lookupLocal(
         self: *const Environment,
         current: ScopeId,

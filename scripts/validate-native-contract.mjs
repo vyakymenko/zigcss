@@ -272,6 +272,7 @@ const expectedLessConformance = Object.freeze({
 const expectedStylusConformance = Object.freeze({
   ownerPackage: 'NSTYLUS-012',
   releaseGapFamily: 'native-stylus-conformance',
+  convergenceState: 'closed',
   state: 'in-progress',
   packageState: 'in-progress',
   oracle: Object.freeze({
@@ -282,52 +283,33 @@ const expectedStylusConformance = Object.freeze({
     manifest: 'tests/preprocessors/stylus/corpus/manifest.json',
     caseCount: 346,
   }),
-  completedCaseCount: 4,
-  remainingCaseCount: 342,
+  completedCaseCount: 178,
+  remainingCaseCount: 168,
   terminalContract: Object.freeze({
     selectionDerived: true,
     successCaseCount: 326,
     errorCaseCount: 20,
+    exactSuccessCount: 158,
+    nonconformingSuccessCount: 168,
+    exactSuccessCaseIdWyhash: '68da89ea4ac6523f',
     deterministicRunsPerSuccessCase: 2,
     fuzzMutationsPerCase: 3,
     maxConcurrentCompilations: 4,
+    evidenceTests: Object.freeze([
+      'native Stylus measures the finite pinned success corpus without ordinal expansion',
+      'native Stylus rejects the finite pinned error corpus deterministically',
+      'native Stylus parser owns finite resource and cancellation boundaries',
+      'native Stylus compilation is deterministic under bounded concurrency',
+      'native Stylus finite corpus seeds bounded parser and evaluator fuzzing',
+      'native Stylus successful transaction handles every allocation failure',
+    ]),
   }),
-  completedCohorts: Object.freeze([
-    Object.freeze({
-      feature: 'variable',
-      caseIds: Object.freeze(['stylus-official-variable']),
-      evidenceTests: Object.freeze([
-        'native Stylus matches the pinned variable conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'conditional-assignment',
-      caseIds: Object.freeze(['stylus-official-conditional-assignment']),
-      evidenceTests: Object.freeze([
-        'native Stylus matches the pinned conditional assignment conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'self-assignment',
-      caseIds: Object.freeze(['stylus-official-self-assignment']),
-      evidenceTests: Object.freeze([
-        'native Stylus matches the pinned self assignment conformance cohort deterministically',
-      ]),
-    }),
-    Object.freeze({
-      feature: 'utf8',
-      caseIds: Object.freeze(['stylus-official-utf8-bom']),
-      evidenceTests: Object.freeze([
-        'native Stylus matches the pinned UTF-8 BOM conformance cohort deterministically',
-      ]),
-    }),
-  ]),
   gates: Object.freeze({
     corpusDifferential: 'in-progress',
-    negativeAndResource: 'not-started',
-    deterministicConcurrency: 'not-started',
-    fuzz: 'not-started',
-    allocationFailure: 'not-started',
+    negativeAndResource: 'verified',
+    deterministicConcurrency: 'verified',
+    fuzz: 'verified',
+    allocationFailure: 'verified',
   }),
 })
 
@@ -1298,28 +1280,41 @@ function validateStylusConformance(
       successCaseCount + errorCaseCount !== conformance.oracle.caseCount) {
     fail('native Stylus conformance terminal accounting drifted')
   }
-  const selectedById = new Map(manifest.cases.map(specCase => [specCase.id, specCase]))
-  const completed = new Set()
-  for (const cohort of conformance.completedCohorts) {
-    for (const caseId of cohort.caseIds) {
-      const specCase = selectedById.get(caseId)
-      if (specCase === undefined || specCase.feature !== cohort.feature ||
-          specCase.outcome !== 'success' || completed.has(caseId)) {
-        fail('native Stylus conformance completed cohort drifted')
-      }
-      completed.add(caseId)
-    }
-    for (const evidenceTest of cohort.evidenceTests) {
-      requireText(
-        conformanceTests,
-        `test "${evidenceTest}"`,
-        'native Stylus conformance evidence',
-      )
-    }
+  if (conformance.convergenceState !== 'closed' ||
+      !Number.isInteger(conformance.terminalContract.exactSuccessCount) ||
+      !Number.isInteger(conformance.terminalContract.nonconformingSuccessCount) ||
+      conformance.terminalContract.exactSuccessCount +
+        conformance.terminalContract.nonconformingSuccessCount !== successCaseCount ||
+      conformance.completedCaseCount !==
+        conformance.terminalContract.exactSuccessCount + errorCaseCount ||
+      conformance.remainingCaseCount !==
+        conformance.terminalContract.nonconformingSuccessCount ||
+      conformance.completedCaseCount + conformance.remainingCaseCount !==
+        conformance.oracle.caseCount ||
+      !/^[0-9a-f]{16}$/.test(conformance.terminalContract.exactSuccessCaseIdWyhash)) {
+    fail('native Stylus conformance convergence contract drifted')
   }
-  if (completed.size !== conformance.completedCaseCount ||
-      conformance.completedCaseCount + conformance.remainingCaseCount !== conformance.oracle.caseCount) {
-    fail('native Stylus conformance case accounting drifted')
+  requireText(
+    conformanceTests,
+    `expectEqual(@as(usize, ${conformance.terminalContract.exactSuccessCount}), exact_success_count)`,
+    'native Stylus conformance exact success accounting',
+  )
+  requireText(
+    conformanceTests,
+    `expectEqual(@as(usize, ${conformance.terminalContract.nonconformingSuccessCount}), nonconforming_count)`,
+    'native Stylus conformance nonconforming success accounting',
+  )
+  requireText(
+    conformanceTests,
+    `@as(u64, 0x${conformance.terminalContract.exactSuccessCaseIdWyhash})`,
+    'native Stylus conformance exact identity hash',
+  )
+  for (const evidenceTest of conformance.terminalContract.evidenceTests) {
+    requireText(
+      conformanceTests,
+      `test "${evidenceTest}"`,
+      'native Stylus conformance terminal evidence',
+    )
   }
   requireText(
     plan,

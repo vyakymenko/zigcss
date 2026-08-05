@@ -224,6 +224,7 @@ pub const Parser = struct {
     fn collectLines(self: *Parser, lines: *std.ArrayList(Line)) Error!void {
         var line_start: usize = 0;
         var token_cursor: usize = 0;
+        var explicit_depth: u32 = 0;
         while (line_start < self.source_bytes.len) {
             var line_end = line_start;
             while (line_end < self.source_bytes.len and
@@ -253,37 +254,103 @@ pub const Parser = struct {
                 }
                 content_start += 1;
             }
-            var content_end = line_end;
-            while (content_end > content_start and
-                isHorizontalWhitespace(self.source_bytes[content_end - 1]))
-            {
-                content_end -= 1;
-            }
+            var segment_start = content_start;
+            var cursor = content_start;
+            var quote: u8 = 0;
+            var escaped = false;
+            var paren_depth: usize = 0;
+            var square_depth: usize = 0;
+            while (cursor < line_end) : (cursor += 1) {
+                const byte = self.source_bytes[cursor];
+                if (escaped) {
+                    escaped = false;
+                    continue;
+                }
+                if (byte == '\\') {
+                    escaped = true;
+                    continue;
+                }
+                if (quote != 0) {
+                    if (byte == quote) quote = 0;
+                    continue;
+                }
+                if (byte == '\'' or byte == '"') {
+                    quote = byte;
+                    continue;
+                }
+                if (byte == '/' and cursor + 1 < line_end and
+                    self.source_bytes[cursor + 1] == '/')
+                {
+                    break;
+                }
+                switch (byte) {
+                    '(' => paren_depth += 1,
+                    ')' => paren_depth -|= 1,
+                    '[' => square_depth += 1,
+                    ']' => square_depth -|= 1,
+                    else => {},
+                }
+                if (paren_depth != 0 or square_depth != 0) continue;
 
-            if (content_start < content_end) {
-                while (token_cursor < self.tokens.len and
-                    self.tokens[token_cursor].span.end <= content_start)
-                {
-                    token_cursor += 1;
+                if (byte == '{') {
+                    if (self.isBlockOpeningBrace(segment_start, cursor, line_end)) {
+                        try self.appendLineSegment(
+                            lines,
+                            line_start,
+                            line_end,
+                            segment_start,
+                            cursor,
+                            indent + explicit_depth * self.limits.lexer.tab_width,
+                            &token_cursor,
+                        );
+                        explicit_depth += 1;
+                        segment_start = cursor + 1;
+                    } else if (std.mem.indexOfScalarPos(
+                        u8,
+                        self.source_bytes,
+                        cursor + 1,
+                        '}',
+                    )) |closing| {
+                        cursor = closing;
+                    }
+                    continue;
                 }
-                const token_start = token_cursor;
-                var token_end = token_start;
-                while (token_end < self.tokens.len and
-                    self.tokens[token_end].span.start < content_end)
-                {
-                    token_end += 1;
+                if (byte == '}') {
+                    try self.appendLineSegment(
+                        lines,
+                        line_start,
+                        line_end,
+                        segment_start,
+                        cursor,
+                        indent + explicit_depth * self.limits.lexer.tab_width,
+                        &token_cursor,
+                    );
+                    explicit_depth -|= 1;
+                    segment_start = cursor + 1;
+                    continue;
                 }
-                try lines.append(self.allocator, .{
-                    .start = @intCast(line_start),
-                    .end = @intCast(line_end),
-                    .content_start = @intCast(content_start),
-                    .content_end = @intCast(content_end),
-                    .indent = indent,
-                    .token_start = token_start,
-                    .token_end = token_end,
-                });
-                token_cursor = token_end;
+                if (byte == ';') {
+                    try self.appendLineSegment(
+                        lines,
+                        line_start,
+                        line_end,
+                        segment_start,
+                        cursor + 1,
+                        indent + explicit_depth * self.limits.lexer.tab_width,
+                        &token_cursor,
+                    );
+                    segment_start = cursor + 1;
+                }
             }
+            try self.appendLineSegment(
+                lines,
+                line_start,
+                line_end,
+                segment_start,
+                line_end,
+                indent + explicit_depth * self.limits.lexer.tab_width,
+                &token_cursor,
+            );
 
             if (line_end >= self.source_bytes.len) break;
             if (self.source_bytes[line_end] == '\r' and
@@ -294,6 +361,83 @@ pub const Parser = struct {
                 line_start = line_end + 1;
             }
         }
+    }
+
+    fn appendLineSegment(
+        self: *Parser,
+        lines: *std.ArrayList(Line),
+        line_start: usize,
+        line_end: usize,
+        raw_start: usize,
+        raw_end: usize,
+        indent: u32,
+        token_cursor: *usize,
+    ) Error!void {
+        var content_start = raw_start;
+        while (content_start < raw_end and
+            isHorizontalWhitespace(self.source_bytes[content_start]))
+        {
+            content_start += 1;
+        }
+        var content_end = raw_end;
+        while (content_end > content_start and
+            isHorizontalWhitespace(self.source_bytes[content_end - 1]))
+        {
+            content_end -= 1;
+        }
+        if (content_start >= content_end) return;
+
+        while (token_cursor.* < self.tokens.len and
+            self.tokens[token_cursor.*].span.end <= content_start)
+        {
+            token_cursor.* += 1;
+        }
+        const token_start = token_cursor.*;
+        var token_end = token_start;
+        while (token_end < self.tokens.len and
+            self.tokens[token_end].span.start < content_end)
+        {
+            token_end += 1;
+        }
+        try lines.append(self.allocator, .{
+            .start = @intCast(line_start),
+            .end = @intCast(line_end),
+            .content_start = @intCast(content_start),
+            .content_end = @intCast(content_end),
+            .indent = indent,
+            .token_start = token_start,
+            .token_end = token_end,
+        });
+        token_cursor.* = token_end;
+    }
+
+    fn isBlockOpeningBrace(
+        self: *const Parser,
+        segment_start: usize,
+        opening: usize,
+        line_end: usize,
+    ) bool {
+        const closing = std.mem.indexOfScalarPos(u8, self.source_bytes, opening + 1, '}');
+        if (closing) |end| {
+            if (end < line_end) {
+                const interior = self.source_bytes[opening + 1 .. end];
+                const prefix = self.source_bytes[segment_start..opening];
+                if (trimAscii(interior).len == 0 and
+                    std.mem.indexOfScalar(u8, prefix, '=') != null)
+                {
+                    return false;
+                }
+                const previous = if (opening > segment_start) self.source_bytes[opening - 1] else 0;
+                const interpolation_prefix = opening == segment_start or
+                    !isHorizontalWhitespace(previous);
+                if (interpolation_prefix and
+                    std.mem.indexOfAny(u8, interior, ":;") == null)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     fn validateLines(self: *Parser, lines: []const Line) Error!void {
@@ -317,6 +461,16 @@ pub const Parser = struct {
             if (containsUnclosedTernary(raw)) {
                 return self.rejectLine(line, "Stylus ternary expression requires ':'");
             }
+            if (self.findAssignment(line)) |assignment_index| {
+                const assignment = self.tokens[assignment_index];
+                const value = trimAscii(self.source_bytes[assignment.span.end..line.content_end]);
+                const owns_block = index + 1 < lines.len and lines[index + 1].indent > line.indent;
+                if ((!owns_block and value.len == 0) or
+                    (value.len > 0 and endsWithBinaryOperator(value)))
+                {
+                    return self.rejectLine(line, "Stylus assignment value is incomplete");
+                }
+            }
             if (line.indent == 0 and wordEql(raw, "break")) {
                 return self.rejectLine(line, "Stylus break is not valid at stylesheet scope");
             }
@@ -337,7 +491,13 @@ pub const Parser = struct {
         output: *std.ArrayList(Built),
     ) Error!void {
         while (cursor.* < lines.len and lines[cursor.*].indent == indent) {
-            const line = lines[cursor.*];
+            var line = lines[cursor.*];
+            if (self.selectorGroupEnd(lines, cursor.*)) |group_end| {
+                line.end = lines[group_end].end;
+                line.content_end = lines[group_end].content_end;
+                line.token_end = lines[group_end].token_end;
+                cursor.* = group_end;
+            }
             try self.consumeStatement(line);
             cursor.* += 1;
 
@@ -349,6 +509,34 @@ pub const Parser = struct {
             const built = try self.buildLine(line, nested.items);
             try output.append(self.allocator, built);
         }
+    }
+
+    fn selectorGroupEnd(
+        self: *const Parser,
+        lines: []const Line,
+        start: usize,
+    ) ?usize {
+        const indent = lines[start].indent;
+        var end = start;
+        while (end + 1 < lines.len and lines[end + 1].indent == indent) : (end += 1) {}
+        if (end == start or end + 1 >= lines.len or lines[end + 1].indent <= indent) {
+            return null;
+        }
+        for (lines[start .. end + 1]) |candidate| {
+            const raw = self.lineBytes(candidate);
+            const bare_selector = std.mem.indexOfAny(u8, raw, " \t(){}=;") == null;
+            if (raw[0] == '@' or (!looksLikeSelector(raw) and !bare_selector) or
+                self.findAssignment(candidate) != null or
+                startsDirective(raw, "@import") or startsDirective(raw, "@require") or
+                startsWord(raw, "return") or startsWord(raw, "if") or
+                startsWord(raw, "unless") or startsWord(raw, "else") or
+                startsWord(raw, "for") or startsWord(raw, "while") or
+                startsWord(raw, "each"))
+            {
+                return null;
+            }
+        }
+        return end;
     }
 
     fn buildLine(self: *Parser, line: Line, nested: []const Built) Error!Built {
@@ -724,6 +912,20 @@ fn wordEql(raw: []const u8, expected: []const u8) bool {
 fn containsUnclosedTernary(raw: []const u8) bool {
     const question = std.mem.indexOf(u8, raw, " ? ") orelse return false;
     return std.mem.indexOfPos(u8, raw, question + 3, " : ") == null;
+}
+
+fn endsWithBinaryOperator(raw: []const u8) bool {
+    if (raw.len == 0) return true;
+    const last = raw[raw.len - 1];
+    if (last == '%' and raw.len > 1 and
+        (std.ascii.isDigit(raw[raw.len - 2]) or raw[raw.len - 2] == '.'))
+    {
+        return false;
+    }
+    return switch (last) {
+        '+', '-', '*', '/', '%', '=', '<', '>', '&', '|', '?' => true,
+        else => false,
+    };
 }
 
 fn endsWithSignificant(raw: []const u8, byte: u8) bool {

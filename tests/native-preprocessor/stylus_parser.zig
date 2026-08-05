@@ -174,6 +174,30 @@ test "native Stylus parser excludes an initial UTF-8 BOM from exact syntax spans
     try std.testing.expectEqualStrings("body", try sources.slice(selector.text.?));
 }
 
+test "native Stylus parser keeps root selector scopes separate from following rules" {
+    const input =
+        \\@scope #sidebar
+        \\h2
+        \\  color red
+        \\a
+        \\  color pink
+        \\@scope body.signup-page[attr='foo']
+        \\& .container
+        \\  color red
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("scope.styl", input);
+    var parser = try stylus.Parser.init(std.testing.allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 5), children.len);
+    try std.testing.expectEqual(syntax.Kind.at_rule, (try document.get(children[0])).kind);
+    try std.testing.expectEqual(@as(usize, 1), (try document.children(children[0])).len);
+}
+
 test "native parser rejects every pinned Stylus parser error" {
     const NegativeCase = struct {
         id: []const u8,

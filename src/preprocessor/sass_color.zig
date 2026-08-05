@@ -1071,6 +1071,22 @@ pub fn serializePreferHex(
     return serialize(input, buffer, minified);
 }
 
+pub fn serializeRgbFunctional(
+    input: native_value.Color,
+    buffer: *[max_serialized_bytes]u8,
+    minified: bool,
+) Error![]const u8 {
+    const channels = try toRgb(input);
+    return serializeFunctional(
+        channels,
+        "rgb",
+        "rgba",
+        buffer,
+        minified,
+        false,
+    );
+}
+
 fn serializeModern(
     input: native_value.Color,
     buffer: *[max_serialized_bytes]u8,
