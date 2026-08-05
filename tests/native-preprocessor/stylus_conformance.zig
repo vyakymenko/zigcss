@@ -71,7 +71,6 @@ fn compileNative(
     defer parser.deinit();
     var document = try parser.parse();
     defer document.deinit();
-
     var transaction = try evaluator.Transaction.init(allocator, &sources, &session, .{}, .{});
     defer transaction.deinit();
     try stylus_evaluator.evaluate(&sources, &document, &transaction, .{});
@@ -259,9 +258,86 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
 
     try std.testing.expectEqual(@as(usize, 326), success_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 158), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 168), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0x68da89ea4ac6523f), exact_case_id_hash.final());
+    try std.testing.expectEqual(@as(usize, 164), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 162), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0xf0d3f1294f4f10df), exact_case_id_hash.final());
+}
+
+test "native Stylus closes the finite arithmetic conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case_ids = [_][]const u8{
+        "stylus-official-arithmetic",
+        "stylus-official-arithmetic-color",
+        "stylus-official-arithmetic-unary",
+    };
+    var mismatch_count: usize = 0;
+    for (case_ids) |case_id| {
+        const case = try findCase(parsed.value.cases, case_id);
+        try std.testing.expectEqualStrings("arithmetic", case.feature);
+        try std.testing.expectEqualStrings("success", case.outcome);
+
+        const input_path = try fixturePath(allocator, case.entry);
+        defer allocator.free(input_path);
+        const expected_path = try fixturePath(allocator, try expectedPath(case));
+        defer allocator.free(expected_path);
+        const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+        defer allocator.free(input);
+        const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+        defer allocator.free(expected);
+
+        var expected_css = try compileExpectedCss(allocator, expected);
+        defer expected_css.deinit();
+        var first = try compileNative(allocator, case, input);
+        defer first.deinit();
+        var second = try compileNative(allocator, case, input);
+        defer second.deinit();
+
+        std.testing.expectEqualStrings(expected_css.css(), first.css()) catch {
+            std.debug.print("\nnative Stylus arithmetic mismatch: {s}\n", .{case.id});
+            mismatch_count += 1;
+        };
+        try std.testing.expectEqualStrings(first.css(), second.css());
+        try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+        try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+        try expectDependencyDeterminism(&first, &second);
+    }
+    try std.testing.expectEqual(@as(usize, 0), mismatch_count);
+
+    const allocation_case_ids = [_][]const u8{
+        "stylus-official-arithmetic-color",
+        "stylus-official-arithmetic-unary",
+    };
+    for (allocation_case_ids) |case_id| {
+        const case = try findCase(parsed.value.cases, case_id);
+        const input_path = try fixturePath(allocator, case.entry);
+        defer allocator.free(input_path);
+        const input = try std.fs.cwd().readFileAlloc(
+            allocator,
+            input_path,
+            max_fixture_bytes,
+        );
+        defer allocator.free(input);
+        try std.testing.checkAllAllocationFailures(
+            allocator,
+            exerciseNativeCompilationAllocationFailures,
+            .{ case, input },
+        );
+    }
 }
 
 test "native Stylus rejects the finite pinned error corpus deterministically" {

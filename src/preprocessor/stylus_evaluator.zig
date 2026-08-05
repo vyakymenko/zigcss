@@ -2593,12 +2593,6 @@ const Engine = struct {
                         .positive => {},
                         .negative => number.value = -number.value,
                         .bitwise_not => {
-                            if (number.numerator_units.len != 0 or
-                                number.denominator_units.len != 0)
-                            {
-                                try self.reportInvalidOperation(span);
-                                return error.InvalidOperation;
-                            }
                             const integer = integerScalar(operand.*) orelse {
                                 try self.reportInvalidOperation(span);
                                 return error.InvalidOperation;
@@ -2796,20 +2790,46 @@ const Engine = struct {
             const sign: f64 = if (operator == '+') 1 else -1;
             var result: native_value.Color = undefined;
             if (right.* == .color) {
-                const left_channels = native_color.toRgb(left.color) catch return error.InvalidOperation;
-                const right_channels = native_color.toRgb(right.color) catch return error.InvalidOperation;
-                result = native_color.rgb(
-                    left_channels[0] + sign * right_channels[0],
-                    left_channels[1] + sign * right_channels[1],
-                    left_channels[2] + sign * right_channels[2],
-                    left_channels[3] + sign * right_channels[3],
-                ) catch return error.InvalidOperation;
+                if (right.color.space == .hsl) {
+                    const left_channels = native_color.toHsl(left.color) catch
+                        return error.InvalidOperation;
+                    const right_channels = native_color.toHsl(right.color) catch
+                        return error.InvalidOperation;
+                    result = native_color.hsl(
+                        left_channels[0] + sign * right_channels[0],
+                        left_channels[1] + sign * right_channels[1],
+                        left_channels[2] + sign * right_channels[2],
+                        left_channels[3],
+                    ) catch return error.InvalidOperation;
+                } else {
+                    const left_channels = native_color.toRgb(left.color) catch
+                        return error.InvalidOperation;
+                    const right_channels = native_color.toRgb(right.color) catch
+                        return error.InvalidOperation;
+                    const alpha = if (operator == '-' and right_channels[3] == 1)
+                        left_channels[3]
+                    else
+                        left_channels[3] + sign * right_channels[3];
+                    result = native_color.rgb(
+                        left_channels[0] + sign * right_channels[0],
+                        left_channels[1] + sign * right_channels[1],
+                        left_channels[2] + sign * right_channels[2],
+                        alpha,
+                    ) catch return error.InvalidOperation;
+                }
             } else if (right.* == .number) {
                 const unit = singleUnit(right.number);
                 if (unit != null and std.mem.eql(u8, unit.?, "deg")) {
                     result = native_color.adjustHue(left.color, sign * right.number.value) catch return error.InvalidOperation;
                 } else if (unit != null and std.mem.eql(u8, unit.?, "%")) {
-                    result = native_color.adjustLightness(left.color, sign * right.number.value) catch return error.InvalidOperation;
+                    const channels = native_color.toHsl(left.color) catch
+                        return error.InvalidOperation;
+                    const amount = if (operator == '+')
+                        (100 - channels[2]) * right.number.value / 100
+                    else
+                        -channels[2] * right.number.value / 100;
+                    result = native_color.adjustLightness(left.color, amount) catch
+                        return error.InvalidOperation;
                 } else if (unit == null) {
                     const channels = native_color.toRgb(left.color) catch return error.InvalidOperation;
                     result = native_color.rgb(
@@ -4939,6 +4959,23 @@ fn findGenericBinary(raw: []const u8) ?GenericBinary {
             else => {},
         }
         if (depth != 0 or (byte != '+' and byte != '-' and byte != '%' and byte != '*' and byte != '/')) continue;
+        const previous = previousSignificantByte(raw, index);
+        if ((byte == '+' or byte == '-') and
+            (previous == null or std.mem.indexOfScalar(
+                u8,
+                "+-*/%~!<>=&|?:([{,",
+                previous.?,
+            ) != null))
+        {
+            continue;
+        }
+        if ((byte == '+' or byte == '-') and index > 0 and
+            std.ascii.isWhitespace(raw[index - 1]) and index + 1 < raw.len and
+            !std.ascii.isWhitespace(raw[index + 1]) and
+            (std.ascii.isDigit(raw[index + 1]) or raw[index + 1] == '.'))
+        {
+            continue;
+        }
         if (byte == '%' and index > 0 and
             (std.ascii.isDigit(raw[index - 1]) or raw[index - 1] == '.') and
             (index + 1 == raw.len or std.ascii.isWhitespace(raw[index + 1]))) continue;
@@ -4953,6 +4990,15 @@ fn findGenericBinary(raw: []const u8) ?GenericBinary {
         if (candidate == null or low_precedence or (!candidate_low and (byte == '%' or byte == '/'))) candidate = next;
     }
     return candidate;
+}
+
+fn previousSignificantByte(raw: []const u8, end: usize) ?u8 {
+    var cursor = end;
+    while (cursor > 0) {
+        cursor -= 1;
+        if (!std.ascii.isWhitespace(raw[cursor])) return raw[cursor];
+    }
+    return null;
 }
 
 fn findRangeOperator(raw: []const u8) ?RangeExpression {
@@ -5954,6 +6000,14 @@ const NumericParser = struct {
             self.skipWhitespace();
             const operation = self.peek();
             if (operation != '+' and operation != '-') return result;
+            if (self.cursor > 0 and std.ascii.isWhitespace(self.input[self.cursor - 1]) and
+                self.cursor + 1 < self.input.len and
+                !std.ascii.isWhitespace(self.input[self.cursor + 1]) and
+                (std.ascii.isDigit(self.input[self.cursor + 1]) or
+                    self.input[self.cursor + 1] == '.'))
+            {
+                return result;
+            }
             self.cursor += 1;
             const right = try self.parseMultiply(depth);
             if (result.isDimensionless() and numericHasSingleUnit(right, "%")) {
