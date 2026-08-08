@@ -863,6 +863,50 @@ test "native Stylus indexed current-property access retains its callable snapsho
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Stylus define owns local and explicit global scope" {
+    const input =
+        \\a = 1
+        \\local()
+        \\  define('b', 2)
+        \\  return b
+        \\global()
+        \\  define('c', 3, true)
+        \\shadow()
+        \\  a = 2
+        \\  define('a', 3, true)
+        \\  return a
+        \\body
+        \\  local-result: local()
+        \\  local-visible: b is defined
+        \\  global()
+        \\  global-visible: c
+        \\  shadow-result: shadow()
+        \\  global-a: a
+    ;
+    var result = try compile(std.testing.allocator, input, .{});
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{local-result:2;local-visible:false;global-visible:3;" ++
+            "shadow-result:2;global-a:3}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+
+    const nested =
+        \\value = define('hidden', 1)
+        \\body
+        \\  test: value
+    ;
+    try expectSemanticRejection(
+        nested,
+        error.UnsupportedFeature,
+        .unsupported_feature,
+        "native Stylus define() is supported only as a statement",
+        0,
+    );
+}
+
 test "native Stylus callable control slice fails closed with exact diagnostics" {
     const missing =
         \\.a

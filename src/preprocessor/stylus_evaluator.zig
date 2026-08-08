@@ -1646,6 +1646,7 @@ const Engine = struct {
     active_keyframe_header: ?[]const u8 = null,
     active_rule_selector: ?[]const u8 = null,
     active_rule_orders: ?[]const u64 = null,
+    global_scope: ?*native_environment.ScopeId = null,
     cache_context_depth: u16 = 0,
 
     fn init(
@@ -1718,6 +1719,8 @@ const Engine = struct {
             return error.InvalidDocument;
         if (root.kind != .stylesheet) return error.InvalidDocument;
         var scope = self.environment.root();
+        self.global_scope = &scope;
+        defer self.global_scope = null;
         const root_statements = try self.document.children(self.document.root);
         try self.collectStaticExtensions(root_statements, null);
         var ordinary: std.ArrayList(native_syntax.NodeId) = .empty;
@@ -1816,7 +1819,7 @@ const Engine = struct {
             return error.InvalidDocument;
         };
         if (assignment.conditional and
-            try self.environment.lookup(scope.*, assignment.name) != null)
+            try self.lookupBinding(scope.*, assignment.name) != null)
         {
             return;
         }
@@ -1828,7 +1831,7 @@ const Engine = struct {
         else
             try self.evaluateValue(text, assignment.value, scope.*, 0);
         if (assignment.operator) |operator| {
-            const current = (try self.environment.lookup(scope.*, assignment.name)) orelse {
+            const current = (try self.lookupBinding(scope.*, assignment.name)) orelse {
                 try self.reportUndefinedVariable(text);
                 return error.UndefinedVariable;
             };
@@ -1913,7 +1916,7 @@ const Engine = struct {
         block_value: *const native_value.Value,
         scope: native_environment.ScopeId,
     ) Error!void {
-        const current = (try self.environment.lookup(scope, assignment.base)) orelse {
+        const current = (try self.lookupBinding(scope, assignment.base)) orelse {
             try self.reportUndefinedVariable(span);
             return error.UndefinedVariable;
         };
@@ -1967,7 +1970,7 @@ const Engine = struct {
                 return error.InvalidOperation;
             },
         };
-        if (!(try self.environment.update(scope, assignment.base, replacement))) {
+        if (!(try self.updateBinding(scope, assignment.base, replacement))) {
             return error.UndefinedVariable;
         }
     }
@@ -1990,7 +1993,7 @@ const Engine = struct {
         }
         const value_raw = assignment.value[postfix.declaration.start..postfix.declaration.end];
         const value = try self.evaluateValue(span, value_raw, scope, 0);
-        const current = (try self.environment.lookup(scope, assignment.base)) orelse {
+        const current = (try self.lookupBinding(scope, assignment.base)) orelse {
             try self.reportUndefinedVariable(span);
             return error.UndefinedVariable;
         };
@@ -2125,9 +2128,9 @@ const Engine = struct {
         if (cursor >= raw.len or (raw[cursor] != '.' and raw[cursor] != '[')) return null;
         const base = raw[0..cursor];
         const current = if (nameEql(base, "current-property")) blk: {
-            if (try self.environment.lookup(scope, base)) |bound| break :blk bound;
+            if (try self.lookupBinding(scope, base)) |bound| break :blk bound;
             break :blk (try self.currentPropertyValue(span, scope)) orelse return null;
-        } else (try self.environment.lookup(scope, base)) orelse return null;
+        } else (try self.lookupBinding(scope, base)) orelse return null;
         return self.evaluateMemberSuffix(span, raw, cursor, current, scope);
     }
 
@@ -2740,8 +2743,57 @@ const Engine = struct {
 
         var previous_condition: ?bool = null;
         var implicit_result: ?*const native_value.Value = null;
+        var pending_define_closing = false;
         for (statements) |statement_id| {
             const statement = try self.document.get(statement_id);
+            if (pending_define_closing) {
+                const text = statement.text orelse return error.InvalidDocument;
+                const raw = std.mem.trim(
+                    u8,
+                    try self.sources.slice(text),
+                    " \t\r\n\x0c;",
+                );
+                if (statement.kind != .expression or !std.mem.eql(u8, raw, ")")) {
+                    return error.InvalidDocument;
+                }
+                pending_define_closing = false;
+                previous_condition = null;
+                continue;
+            }
+            if (statement.kind == .function and statement.text != null and
+                try self.executeDefineObjectStatement(
+                    statement_id,
+                    statement.text.?,
+                    scope,
+                ))
+            {
+                pending_define_closing = true;
+                previous_condition = null;
+                if (allow_return) {
+                    implicit_result = try self.ownValue(
+                        statement.text.?,
+                        .{ .null_value = {} },
+                    );
+                }
+                continue;
+            }
+            if (statement.kind == .expression and statement.text != null) {
+                const statement_raw = try self.sources.slice(statement.text.?);
+                if (try self.executeDefineStatement(
+                    statement.text.?,
+                    statement_raw,
+                    scope,
+                )) {
+                    previous_condition = null;
+                    if (allow_return) {
+                        implicit_result = try self.ownValue(
+                            statement.text.?,
+                            .{ .null_value = {} },
+                        );
+                    }
+                    continue;
+                }
+            }
             if (statement.kind == .expression and statement.text != null and
                 try self.executeBlockInsertion(
                     statement.text.?,
@@ -2795,7 +2847,7 @@ const Engine = struct {
                             assignment.base
                         else
                             return error.InvalidDocument;
-                        implicit_result = (try self.environment.lookup(scope.*, name)) orelse
+                        implicit_result = (try self.lookupBinding(scope.*, name)) orelse
                             return error.InvalidDocument;
                     }
                 },
@@ -3056,6 +3108,7 @@ const Engine = struct {
                 else => return error.InvalidDocument,
             }
         }
+        if (pending_define_closing) return error.InvalidDocument;
         if (allow_return) {
             if (implicit_result) |value| return .{ .value = value, .explicit = false };
         }
@@ -3349,7 +3402,7 @@ const Engine = struct {
         const name = raw[call.name.start..call.name.end];
         var callable = self.findCallable(name);
         if (callable == null) {
-            if (try self.environment.lookup(caller_scope, name)) |alias| {
+            if (try self.lookupBinding(caller_scope, name)) |alias| {
                 if (alias.* == .string) callable = self.findCallable(alias.string.bytes);
             }
         }
@@ -3757,18 +3810,18 @@ const Engine = struct {
             var value: *const native_value.Value = undefined;
             if (parseMemberAssignment(expression)) |assignment| {
                 try self.assignMemberValue(span, assignment, loop_scope);
-                value = (try self.environment.lookup(loop_scope, assignment.base)) orelse
+                value = (try self.lookupBinding(loop_scope, assignment.base)) orelse
                     return error.UndefinedVariable;
             } else if (parseAssignment(expression)) |assignment| {
                 value = try self.evaluateValue(span, assignment.value, loop_scope, 0);
                 if (assignment.operator) |operator| {
-                    const current = (try self.environment.lookup(loop_scope, assignment.name)) orelse {
+                    const current = (try self.lookupBinding(loop_scope, assignment.name)) orelse {
                         try self.reportUndefinedVariable(span);
                         return error.UndefinedVariable;
                     };
                     value = try self.evaluateGenericBinary(span, current, value, operator);
                 }
-                if (!(try self.environment.update(loop_scope, assignment.name, value))) {
+                if (!(try self.updateBinding(loop_scope, assignment.name, value))) {
                     loop_scope = try self.setBinding(loop_scope, assignment.name, value, span);
                 }
             } else {
@@ -3922,7 +3975,7 @@ const Engine = struct {
             return error.ExpressionDepthExceeded;
         }
         if (parseDefinedTernary(raw)) |ternary| {
-            const selected = if (try self.environment.lookup(scope, ternary.name) != null)
+            const selected = if (try self.lookupBinding(scope, ternary.name) != null)
                 ternary.when_defined
             else
                 ternary.when_undefined;
@@ -3936,7 +3989,7 @@ const Engine = struct {
         }
         if (memberAccessBase(raw)) |base| {
             if (!nameEql(base, "current-property") and
-                try self.environment.lookup(scope, base) == null)
+                try self.lookupBinding(scope, base) == null)
             {
                 try self.transaction.report(
                     .err,
@@ -3950,7 +4003,7 @@ const Engine = struct {
         }
         const source_input = std.mem.trim(u8, raw, " \t\r\n\x0c;");
         if (nameEql(source_input, "current-property")) {
-            if (try self.environment.lookup(scope, "current-property")) |bound| {
+            if (try self.lookupBinding(scope, "current-property")) |bound| {
                 return bound;
             }
             return (try self.currentPropertyValue(span, scope)) orelse
@@ -3989,13 +4042,13 @@ const Engine = struct {
             if (assignment.value.len > 0) {
                 var assigned = try self.evaluateValue(span, assignment.value, scope, depth + 1);
                 if (assignment.operator) |operator| {
-                    const current = (try self.environment.lookup(scope, assignment.name)) orelse {
+                    const current = (try self.lookupBinding(scope, assignment.name)) orelse {
                         try self.reportUndefinedVariable(span);
                         return error.UndefinedVariable;
                     };
                     assigned = try self.evaluateGenericBinary(span, current, assigned, operator);
                 }
-                _ = try self.environment.update(scope, assignment.name, assigned);
+                _ = try self.updateBinding(scope, assignment.name, assigned);
                 return assigned;
             }
         }
@@ -4005,7 +4058,7 @@ const Engine = struct {
         if (try self.evaluateCallMemberChain(span, source_input, scope, depth)) |member| return member;
         if (try self.evaluateMemberChain(span, source_input, scope)) |member| return member;
         if (validVariableName(source_input)) {
-            if (try self.environment.lookup(scope, source_input)) |resolved| {
+            if (try self.lookupBinding(scope, source_input)) |resolved| {
                 return self.ownValue(span, resolved.*);
             }
         }
@@ -4585,6 +4638,16 @@ const Engine = struct {
         scope: native_environment.ScopeId,
     ) Error!?*const native_value.Value {
         const name = raw[call.name.start..call.name.end];
+        if (nameEql(name, "define")) {
+            try self.transaction.report(
+                .err,
+                .unsupported_feature,
+                span,
+                "native Stylus define() is supported only as a statement",
+                &.{},
+            );
+            return error.UnsupportedFeature;
+        }
         if (nameEql(name, "append") or nameEql(name, "push") or
             nameEql(name, "prepend") or nameEql(name, "unshift") or
             nameEql(name, "pop") or nameEql(name, "shift"))
@@ -4679,7 +4742,7 @@ const Engine = struct {
         if (nameEql(name, "lookup")) {
             if (arguments.items.len != 1) return self.invalidBuiltinArguments(span);
             const binding_name = stringBytes(arguments.items[0].*) orelse return self.invalidBuiltinArguments(span);
-            if (try self.environment.lookup(scope, binding_name)) |value| return self.ownValue(span, value.*);
+            if (try self.lookupBinding(scope, binding_name)) |value| return self.ownValue(span, value.*);
             return try self.ownValue(span, .{ .null_value = {} });
         }
         if (nameEql(name, "clone")) {
@@ -5104,6 +5167,115 @@ const Engine = struct {
         return null;
     }
 
+    fn executeDefineStatement(
+        self: *Engine,
+        span: native_source.Span,
+        raw_input: []const u8,
+        scope: *native_environment.ScopeId,
+    ) Error!bool {
+        const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+        const call = parseCall(raw) orelse parseBareCall(raw) orelse return false;
+        const name = raw[call.name.start..call.name.end];
+        if (!nameEql(name, "define") or self.findCallable(name) != null) return false;
+
+        var arguments = try self.evaluateCallArguments(span, raw, call, scope.*);
+        defer arguments.deinit(self.allocator);
+        if (arguments.items.len < 2 or arguments.items.len > 3) {
+            return self.invalidBuiltinArguments(span);
+        }
+
+        const global = arguments.items.len == 3 and isTruthy(arguments.items[2]);
+        try self.bindDefinedValue(
+            span,
+            scope,
+            arguments.items[0],
+            arguments.items[1],
+            global,
+        );
+        return true;
+    }
+
+    fn executeDefineObjectStatement(
+        self: *Engine,
+        statement_id: native_syntax.NodeId,
+        span: native_source.Span,
+        scope: *native_environment.ScopeId,
+    ) Error!bool {
+        const raw = std.mem.trim(
+            u8,
+            try self.sources.slice(span),
+            " \t\r\n\x0c;",
+        );
+        if (raw.len < "define(, {".len or !isNameStart(raw, 0) or
+            raw[raw.len - 1] != '{')
+        {
+            return false;
+        }
+        const name_end = nameEnd(raw, 0);
+        if (!nameEql(raw[0..name_end], "define") or
+            self.findCallable(raw[0..name_end]) != null)
+        {
+            return false;
+        }
+        var opening = name_end;
+        while (opening < raw.len and std.ascii.isWhitespace(raw[opening])) opening += 1;
+        if (opening >= raw.len or raw[opening] != '(') return false;
+        const prefix = std.mem.trim(
+            u8,
+            raw[opening + 1 .. raw.len - 1],
+            " \t\r\n\x0c",
+        );
+        const comma = findTopLevelScalar(prefix, ',') orelse return false;
+        if (std.mem.trim(u8, prefix[comma + 1 ..], " \t\r\n\x0c").len != 0) {
+            return false;
+        }
+        const name_raw = std.mem.trim(u8, prefix[0..comma], " \t\r\n\x0c");
+        if (name_raw.len == 0) return self.invalidBuiltinArguments(span);
+        const binding_name = try self.evaluateValue(span, name_raw, scope.*, 0);
+        const object = try self.evaluateObjectBlock(statement_id, scope.*);
+        try self.bindDefinedValue(span, scope, binding_name, object, false);
+        return true;
+    }
+
+    fn bindDefinedValue(
+        self: *Engine,
+        span: native_source.Span,
+        scope: *native_environment.ScopeId,
+        name: *const native_value.Value,
+        value: *const native_value.Value,
+        global: bool,
+    ) Error!void {
+        if (name.* != .string or !name.string.quoted or
+            !validVariableName(name.string.bytes))
+        {
+            return self.invalidBuiltinArguments(span);
+        }
+        const binding_name = name.string.bytes;
+        if (global) {
+            const global_scope = self.global_scope orelse return error.InvalidDocument;
+            if (!(try self.environment.update(
+                global_scope.*,
+                binding_name,
+                value,
+            ))) {
+                global_scope.* = try self.setBinding(
+                    global_scope.*,
+                    binding_name,
+                    value,
+                    span,
+                );
+            }
+        } else {
+            self.detachMutationAlias(binding_name);
+            scope.* = try self.setBinding(
+                scope.*,
+                binding_name,
+                value,
+                span,
+            );
+        }
+    }
+
     fn evaluateAddPropertyBuiltin(
         self: *Engine,
         span: native_source.Span,
@@ -5198,7 +5370,7 @@ const Engine = struct {
             " \t\r\n\x0c",
         );
         if (!validVariableName(variable)) return self.invalidBuiltinArguments(span);
-        const current = (try self.environment.lookup(scope, variable)) orelse
+        const current = (try self.lookupBinding(scope, variable)) orelse
             return self.invalidBuiltinArguments(span);
         var values: std.ArrayList(native_value.Value) = .empty;
         defer values.deinit(self.allocator);
@@ -5265,7 +5437,7 @@ const Engine = struct {
         name: []const u8,
         replacement: *const native_value.Value,
     ) Error!bool {
-        if (!(try self.environment.update(scope, name, replacement))) return false;
+        if (!(try self.updateBinding(scope, name, replacement))) return false;
         var index = self.mutation_aliases.items.len;
         while (index > 0) {
             index -= 1;
@@ -5273,7 +5445,7 @@ const Engine = struct {
             if (!std.mem.eql(u8, alias.local_name, name)) continue;
             switch (alias.target) {
                 .binding => |binding| {
-                    _ = try self.environment.update(binding.scope, binding.name, replacement);
+                    _ = try self.updateBinding(binding.scope, binding.name, replacement);
                 },
                 .current_property_index => |property_index| {
                     if (!(try self.updateCurrentPropertyIndex(property_index, replacement))) {
@@ -5953,7 +6125,7 @@ const Engine = struct {
         if (findTopLevelSequence(source_condition, " is defined")) |marker| {
             if (marker + " is defined".len == source_condition.len) {
                 const name = std.mem.trim(u8, source_condition[0..marker], " \t\r\n\x0c");
-                if (validVariableName(name)) return try self.environment.lookup(scope, name) != null;
+                if (validVariableName(name)) return try self.lookupBinding(scope, name) != null;
             }
         }
         if (findTopLevelSequence(source_condition, " is a ")) |marker| {
@@ -6155,7 +6327,7 @@ const Engine = struct {
                 const start = index;
                 index = nameEnd(raw, index + 1);
                 const name = raw[start..index];
-                if (try self.environment.lookup(scope, name)) |resolved| {
+                if (try self.lookupBinding(scope, name)) |resolved| {
                     const replacement = try self.serializeValueOwned(resolved, context, span);
                     defer self.allocator.free(replacement);
                     try self.appendTemporary(&output, span, replacement);
@@ -6172,7 +6344,7 @@ const Engine = struct {
                     (std.ascii.isDigit(raw[start - 1]) or raw[start - 1] == '.');
                 const substitute = (context == .value or context == .interpolation) and !unit_suffix;
                 if (substitute) {
-                    if (try self.environment.lookup(scope, name) != null) {
+                    if (try self.lookupBinding(scope, name) != null) {
                         const chain_end = memberChainEnd(raw, index);
                         if (chain_end > index) {
                             const member = (try self.evaluateMemberChain(
@@ -6191,7 +6363,7 @@ const Engine = struct {
                             continue;
                         }
                     }
-                    if (try self.environment.lookup(scope, name)) |resolved| {
+                    if (try self.lookupBinding(scope, name)) |resolved| {
                         const replacement = try self.serializeValueOwned(
                             resolved,
                             context,
@@ -6537,6 +6709,29 @@ const Engine = struct {
 
     fn reportResource(self: *Engine, span: native_source.Span, message: []const u8) Error!void {
         try self.transaction.report(.err, .resource_limit, span, message, &.{});
+    }
+
+    fn lookupBinding(
+        self: *const Engine,
+        scope: native_environment.ScopeId,
+        name: []const u8,
+    ) Error!?*const native_value.Value {
+        if (try self.environment.lookup(scope, name)) |value| return value;
+        const global_scope = self.global_scope orelse return null;
+        if (global_scope.value == scope.value) return null;
+        return self.environment.lookup(global_scope.*, name);
+    }
+
+    fn updateBinding(
+        self: *Engine,
+        scope: native_environment.ScopeId,
+        name: []const u8,
+        value: *const native_value.Value,
+    ) Error!bool {
+        if (try self.environment.update(scope, name, value)) return true;
+        const global_scope = self.global_scope orelse return false;
+        if (global_scope.value == scope.value) return false;
+        return self.environment.update(global_scope.*, name, value);
     }
 
     fn setBinding(
