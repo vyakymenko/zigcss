@@ -754,6 +754,72 @@ test "native Stylus queries previously evaluated selector identity" {
     );
 }
 
+test "native Stylus reconstructs transparent colors over bounded backdrops" {
+    const input =
+        \\body
+        \\  default-white transparentify(#fff)
+        \\  default-black transparentify(#000)
+        \\  inferred transparentify(#808080)
+        \\  backdrop transparentify(#808080, #000)
+        \\  overload-unitless transparentify(#808080, .7)
+        \\  explicit-percent transparentify(#808080, #000, 70%)
+        \\  explicit-hsl transparentify(hsla(200,40%,40%,.3), hsla(200,0%,100%,1))
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{default-white:rgba(255,255,255,0);default-black:#000;" ++
+            "inferred:rgba(0,0,0,0.5);backdrop:rgba(255,255,255,0.5);" ++
+            "overload-unitless:rgba(74,74,74,0.7);" ++
+            "explicit-percent:rgba(183,183,183,0.7);" ++
+            "explicit-hsl:rgba(0,72,108,0.76)}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const missing_top =
+        \\body
+        \\  value transparentify()
+    ;
+    try expectSemanticRejection(
+        missing_top,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, missing_top, "transparentify").?),
+    );
+
+    const invalid_backdrop =
+        \\body
+        \\  value transparentify(#fff, nope)
+    ;
+    try expectSemanticRejection(
+        invalid_backdrop,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid_backdrop, "transparentify").?),
+    );
+
+    const invalid_alpha =
+        \\body
+        \\  value transparentify(#fff, #000, nope)
+    ;
+    try expectSemanticRejection(
+        invalid_alpha,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid_alpha, "transparentify").?),
+    );
+}
+
 test "native Stylus evaluates the finite contrast result object and CSS fallback" {
     const input =
         \\.probe

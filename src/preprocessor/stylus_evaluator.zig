@@ -5651,6 +5651,37 @@ const Engine = struct {
             ) catch return self.invalidBuiltinArguments(span);
             return try self.ownValue(span, .{ .color = color });
         }
+        if (nameEql(name, "transparentify")) {
+            if (arguments.items.len < 1 or arguments.items.len > 3 or
+                arguments.items[0].* != .color)
+            {
+                return self.invalidBuiltinArguments(span);
+            }
+            var background = native_color.parseLiteral("white").?;
+            var explicit_alpha: ?f64 = null;
+            if (arguments.items.len == 2) {
+                if (arguments.items[1].* == .color) {
+                    background = arguments.items[1].color;
+                } else {
+                    explicit_alpha = alphaScalar(arguments.items[1].*) orelse
+                        return self.invalidBuiltinArguments(span);
+                }
+            } else if (arguments.items.len == 3) {
+                if (arguments.items[1].* != .color) {
+                    return self.invalidBuiltinArguments(span);
+                }
+                background = arguments.items[1].color;
+                explicit_alpha = alphaScalar(arguments.items[2].*) orelse
+                    return self.invalidBuiltinArguments(span);
+            }
+            try self.transaction.consumeOperations(3);
+            const color = stylusTransparentify(
+                arguments.items[0].color,
+                background,
+                explicit_alpha,
+            ) catch return self.invalidBuiltinArguments(span);
+            return try self.ownValue(span, .{ .color = color });
+        }
         if (nameEql(name, "blend")) {
             if (arguments.items.len < 1 or arguments.items.len > 2) return self.invalidBuiltinArguments(span);
             const foreground_color = colorValue(arguments.items[0].*) orelse return self.invalidBuiltinArguments(span);
@@ -10040,6 +10071,49 @@ fn stylusBlend(
         @round(top[1] * top[3] + bottom[1] * (1 - top[3])),
         @round(top[2] * top[3] + bottom[2] * (1 - top[3])),
         top[3] + bottom[3] - top[3] * bottom[3],
+    );
+}
+
+fn stylusTransparentify(
+    top_color: native_value.Color,
+    bottom_color: native_value.Color,
+    explicit_alpha: ?f64,
+) native_color.Error!native_value.Color {
+    var top = try native_color.toRgb(top_color);
+    var bottom = try native_color.toRgb(bottom_color);
+    for (0..3) |index| {
+        top[index] = @round(top[index]);
+        bottom[index] = @round(bottom[index]);
+    }
+
+    var best_alpha = explicit_alpha orelse blk: {
+        var maximum: ?f64 = null;
+        for (0..3) |index| {
+            const difference = top[index] - bottom[index];
+            const limit: f64 = if (difference > 0) 255 else 0;
+            const denominator = limit - bottom[index];
+            if (denominator == 0) return error.InvalidColor;
+            const candidate = difference / denominator;
+            if (!std.math.isFinite(candidate)) return error.InvalidColor;
+            maximum = if (maximum) |current| @max(current, candidate) else candidate;
+        }
+        break :blk maximum orelse return error.InvalidColor;
+    };
+    if (!std.math.isFinite(best_alpha)) return error.InvalidColor;
+    best_alpha = std.math.clamp(best_alpha, 0, 1);
+
+    var result: [3]f64 = undefined;
+    for (&result, 0..) |*channel, index| {
+        channel.* = @round(if (best_alpha == 0)
+            bottom[index]
+        else
+            bottom[index] + (top[index] - bottom[index]) / best_alpha);
+    }
+    return native_color.rgb(
+        result[0],
+        result[1],
+        result[2],
+        @round(best_alpha * 100) / 100,
     );
 }
 
