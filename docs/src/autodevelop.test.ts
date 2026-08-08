@@ -74,7 +74,7 @@ describe('autonomous development operations', () => {
     }
     expect(after).toBe(before)
     expect(selftest).toContain('PASS=96 FAIL=0')
-    expect(prompt).toContain('Use only gpt-5.6-sol with xhigh reasoning')
+    expect(prompt).toContain('Use only gpt-5.6-sol with max reasoning')
     expect(prompt).toContain('Never delegate, spawn subagents, create child tasks, or fall back')
     expect(prompt).toContain('NATIVE-001 through NATIVE-005')
     expect(prompt).toContain('NSASS-010 through NSASS-012')

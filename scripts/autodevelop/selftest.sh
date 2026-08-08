@@ -182,7 +182,7 @@ assert_equal "$(grep '^BLOCKER_CODE=' "$PASS_HOME/state/last-run.env" | cut -d= 
 assert_equal "$(grep -xc -- '--ephemeral' "$FAKE_ARGS")" 1 'ephemeral CLI flag'
 assert_equal "$(grep -xc -- '--output-last-message' "$FAKE_ARGS")" 1 'isolated final-message CLI flag'
 assert_equal "$(grep -xc -- 'gpt-5.6-sol' "$FAKE_ARGS")" 1 'fixed model argument'
-assert_equal "$(grep -xc -- 'model_reasoning_effort="xhigh"' "$FAKE_ARGS")" 1 'fixed reasoning argument'
+assert_equal "$(grep -xc -- 'model_reasoning_effort="max"' "$FAKE_ARGS")" 1 'fixed reasoning argument'
 if autodevelop_git_clean; then
   assert_equal "$(if [ -e "$PASS_HOME/state/resume-wip" ]; then printf 'present'; else printf 'absent'; fi)" absent 'clean pass leaves no WIP marker'
 else

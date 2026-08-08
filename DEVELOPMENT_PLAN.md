@@ -1,9 +1,9 @@
 # ZigCSS Development Plan
 
 Status: Approved and in execution
-Plan version: 1.4
+Plan version: 1.5
 Prepared: 2026-07-11  
-Amended: 2026-08-02 (owner-approved release-directed convergence and CI throughput control)
+Amended: 2026-08-08 (owner-approved `gpt-5.6-sol` max autonomous runtime)
 Primary target: a trustworthy, standards-oriented CSS compiler, minifier, Zig library, and CLI  
 Core target release: `0.4.0`
 Preprocessor expansion target: `0.5.0`
@@ -11,7 +11,7 @@ Self-contained native target: `0.6.0`
 
 ## 1. Purpose
 
-This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.4 preserves the completed `0.4.x` CSS recovery and verified unpublished `0.5.x` canonical-preprocessor reference implementation, the owner-approved self-contained native frontend program defined by ADR-013, the xhigh autonomous runtime, and the fail-closed native publication path. ADR-014 adds finite release-directed convergence and hosted-CI throughput controls so autonomous passes reduce a bounded definition-of-done inventory instead of creating open-ended sibling work.
+This document turns the repository audit into an executable development program. It is the source of truth for stabilization, implementation order, validation, release gates, and autonomous work. Plan version 1.5 preserves the completed `0.4.x` CSS recovery and verified unpublished `0.5.x` canonical-preprocessor reference implementation, the owner-approved self-contained native frontend program defined by ADR-013, the `gpt-5.6-sol` max autonomous runtime, and the fail-closed native publication path. ADR-014 adds finite release-directed convergence and hosted-CI throughput controls so autonomous passes reduce a bounded definition-of-done inventory instead of creating open-ended sibling work.
 
 The current repository is an ambitious prototype. It has useful scaffolding for parsing, optimization, preprocessors, a CLI, an LSP, documentation, packaging, and benchmarks, but the core parser and optimizer are not yet safe enough for production CSS. Development must therefore prioritize correctness and security before new features or performance work.
 
@@ -34,7 +34,7 @@ The following decisions are defaults for the autonomous program. Changing one re
 
 ### 3.1 Required model
 
-The project owner requires autonomous development to use **Codex 5.6 Sol with xhigh reasoning exclusively**.
+The project owner requires autonomous development to use **Codex 5.6 Sol with max reasoning exclusively**.
 
 Execution rules:
 
@@ -49,7 +49,7 @@ Execution rules:
 Autonomous implementation begins only when all of these are true:
 
 - This plan is approved by the project owner.
-- Codex 5.6 Sol with xhigh reasoning is selected and verified.
+- Codex 5.6 Sol with max reasoning is selected and verified.
 - A dedicated branch is created from a clean, current `main` branch.
 - Baseline commands and known failures are recorded in `DEVELOPMENT_STATUS.md`.
 - The public compile endpoint is either disabled or explicitly accepted as the first security task.
@@ -923,7 +923,7 @@ Work-Package: TOK-002
 | Compatibility data becoming stale | Incorrect prefixing | Generate versioned tables and record their source/version |
 | Cross-compilation mislabeled as native | Broken release assets | Inspect architectures and smoke-test artifacts |
 | Benchmark marketing pressure | Speed prioritized over semantics | Reject timing samples until output validation succeeds |
-| Model availability | Autonomous run violates owner requirement | Hard stop when Codex 5.6 Sol with xhigh reasoning cannot be verified |
+| Model availability | Autonomous run violates owner requirement | Hard stop when Codex 5.6 Sol with max reasoning cannot be verified |
 | Large migration destabilizes all surfaces | CLI, LSP, docs, and formats break together | Maintain explicit compatibility boundaries and milestone gates |
 
 ## 12. ADR backlog
