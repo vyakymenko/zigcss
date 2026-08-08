@@ -198,6 +198,35 @@ test "native Stylus parser keeps root selector scopes separate from following ru
     try std.testing.expectEqual(@as(usize, 1), (try document.children(children[0])).len);
 }
 
+test "native Stylus parser keeps declarations separate from a following nested selector" {
+    const input =
+        \\.root
+        \\  color: red
+        \\  &__child
+        \\    width: 1px
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("declaration-before-selector.styl", input);
+    var parser = try stylus.Parser.init(std.testing.allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const root_rule_children = try document.children(root_children[0]);
+    const root_block = root_rule_children[root_rule_children.len - 1];
+    const block_children = try document.children(root_block);
+    try std.testing.expectEqual(@as(usize, 2), block_children.len);
+    const declaration = try document.get(block_children[0]);
+    try std.testing.expectEqual(syntax.Kind.declaration, declaration.kind);
+    try std.testing.expectEqualStrings("color: red", try sources.slice(declaration.text.?));
+    const child_rule = try document.get(block_children[1]);
+    try std.testing.expectEqual(syntax.Kind.rule, child_rule.kind);
+    try std.testing.expectEqualStrings("&__child", try sources.slice(child_rule.text.?));
+}
+
 test "native parser rejects every pinned Stylus parser error" {
     const NegativeCase = struct {
         id: []const u8,

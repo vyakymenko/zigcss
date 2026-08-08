@@ -124,6 +124,13 @@ pub const Map = struct {
 };
 
 pub const Builder = struct {
+    pub const Checkpoint = struct {
+        segment_count: usize,
+        last_segment: ?Segment,
+        name_count: usize,
+        name_bytes: usize,
+    };
+
     allocator: std.mem.Allocator,
     sources: *const source.Table,
     limits: Limits,
@@ -179,6 +186,37 @@ pub const Builder = struct {
         } else {
             try self.segment_items.append(self.allocator, segment);
         }
+    }
+
+    pub fn checkpoint(self: *const Builder) Checkpoint {
+        return .{
+            .segment_count = self.segment_items.items.len,
+            .last_segment = if (self.segment_items.items.len > 0)
+                self.segment_items.items[self.segment_items.items.len - 1]
+            else
+                null,
+            .name_count = self.name_items.items.len,
+            .name_bytes = self.name_bytes,
+        };
+    }
+
+    pub fn restore(self: *Builder, checkpoint_value: Checkpoint) Error!void {
+        if (checkpoint_value.segment_count > self.segment_items.items.len or
+            (checkpoint_value.segment_count == 0) != (checkpoint_value.last_segment == null) or
+            checkpoint_value.name_count > self.name_items.items.len or
+            checkpoint_value.name_bytes > self.name_bytes)
+        {
+            return error.InvalidGeneratedPosition;
+        }
+        for (self.name_items.items[checkpoint_value.name_count..]) |name| {
+            if (name.len > 0) self.allocator.free(name);
+        }
+        self.segment_items.shrinkRetainingCapacity(checkpoint_value.segment_count);
+        if (checkpoint_value.last_segment) |last_segment| {
+            self.segment_items.items[self.segment_items.items.len - 1] = last_segment;
+        }
+        self.name_items.shrinkRetainingCapacity(checkpoint_value.name_count);
+        self.name_bytes = checkpoint_value.name_bytes;
     }
 
     pub fn finish(self: *Builder) Error!Map {

@@ -526,6 +526,7 @@ pub const Parser = struct {
             const raw = self.lineBytes(candidate);
             const bare_selector = std.mem.indexOfAny(u8, raw, " \t(){}=;") == null;
             if (isComment(raw) or raw[0] == '@' or
+                looksLikeDeclaration(raw, false) or
                 (!looksLikeSelector(raw) and !bare_selector) or
                 self.findAssignment(candidate) != null or
                 startsDirective(raw, "@import") or startsDirective(raw, "@require") or

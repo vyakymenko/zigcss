@@ -170,6 +170,31 @@ test "deterministic replay produces identical core and frontend output" {
     );
 }
 
+test "staging restoration removes speculative CSS and source-map ownership" {
+    var harness = try Harness.init(.{}, .{});
+    defer harness.deinit();
+    const span = try harness.addSource("input.styl", ".kept\n  color red\n");
+
+    try harness.transaction.markMapped(span, "kept-anchor");
+    const checkpoint = try harness.transaction.stagingCheckpoint();
+    try harness.transaction.emitMapped(span, "discarded", "@media screen{");
+    try harness.transaction.emitMapped(span, "discarded-rule", ".discarded{color:red}");
+    try harness.transaction.emit("}");
+    try harness.transaction.restoreStaging(checkpoint);
+    try std.testing.expectEqual(
+        evaluator.GeneratedPosition{ .line = 0, .column = 0 },
+        harness.transaction.position(),
+    );
+
+    try harness.transaction.emit(".kept{color:red}");
+    var result = try harness.transaction.finish(.{ .format = .pretty, .source_map = true });
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".kept {\n  color: red;\n}\n", result.css());
+    try std.testing.expectEqual(@as(usize, 1), result.map().?.segments().len);
+    try std.testing.expectEqual(@as(usize, 1), result.map().?.names().len);
+    try std.testing.expectEqualStrings("kept-anchor", result.map().?.names()[0]);
+}
+
 test "generated CSS rejection retains diagnostics but exposes no result" {
     var harness = try Harness.init(.{}, .{});
     defer harness.deinit();

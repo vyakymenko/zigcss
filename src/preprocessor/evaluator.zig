@@ -82,6 +82,12 @@ pub const Error = std.mem.Allocator.Error ||
 
 pub const GeneratedPosition = native_sourcemap.GeneratedPosition;
 
+pub const StagingCheckpoint = struct {
+    output_len: usize,
+    generated: GeneratedPosition,
+    map: native_sourcemap.Builder.Checkpoint,
+};
+
 /// Compares two complete generated stylesheets through the stable typed CSS
 /// pipeline. This is internal conformance support, not a public stylesheet
 /// frontend API.
@@ -348,6 +354,35 @@ pub const Transaction = struct {
     ) Error!void {
         try self.markMapped(original, name);
         try self.emit(bytes);
+    }
+
+    /// Captures reversible private staging state for a language-owned construct
+    /// that may normalize to no CSS. Resource budget already consumed while
+    /// probing the construct remains charged after restoration.
+    pub fn stagingCheckpoint(self: *Transaction) Error!StagingCheckpoint {
+        try self.requireOpen();
+        return .{
+            .output_len = self.output.items.len,
+            .generated = self.generated,
+            .map = self.map_builder.checkpoint(),
+        };
+    }
+
+    pub fn restoreStaging(
+        self: *Transaction,
+        checkpoint_value: StagingCheckpoint,
+    ) Error!void {
+        try self.requireOpen();
+        if (checkpoint_value.output_len > self.output.items.len) {
+            self.poison();
+            return error.InvalidOutput;
+        }
+        self.map_builder.restore(checkpoint_value.map) catch |failure| {
+            self.poison();
+            return failure;
+        };
+        self.output.shrinkRetainingCapacity(checkpoint_value.output_len);
+        self.generated = checkpoint_value.generated;
     }
 
     /// Explicitly terminates a language evaluator after a fatal language-owned

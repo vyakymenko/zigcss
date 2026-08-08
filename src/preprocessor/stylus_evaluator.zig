@@ -194,12 +194,59 @@ pub fn evaluate(
         return;
     }
 
+    var cache_plan: CachePlan = .{};
+    defer cache_plan.deinit(transaction.allocator);
+    if (try containsCacheBlock(sources, active_document)) {
+        var cache_seed: CachePlan = .{};
+        defer cache_seed.deinit(transaction.allocator);
+        const maximum_iterations = std.math.add(
+            usize,
+            @as(usize, limits.max_call_depth),
+            2,
+        ) catch return error.CallDepthExceeded;
+        var iteration: usize = 0;
+        while (iteration < maximum_iterations) : (iteration += 1) {
+            var discovered: CachePlan = .{};
+            errdefer discovered.deinit(transaction.allocator);
+            var discovery = try Engine.init(
+                transaction.allocator,
+                sources,
+                active_document,
+                transaction,
+                limits,
+                .discover_cache,
+                &cache_seed,
+                &discovered,
+            );
+            defer discovery.deinit();
+            try discovery.run();
+            if (CachePlan.eql(&cache_seed, &discovered)) {
+                cache_plan = discovered;
+                break;
+            }
+            cache_seed.deinit(transaction.allocator);
+            cache_seed = discovered;
+        } else {
+            try transaction.report(
+                .err,
+                .call_limit,
+                root.span,
+                "native Stylus cache plan did not converge within the call-depth bound",
+                &.{},
+            );
+            return error.CallDepthExceeded;
+        }
+    }
+
     var engine = try Engine.init(
         transaction.allocator,
         sources,
         active_document,
         transaction,
         limits,
+        .emit,
+        &cache_plan,
+        null,
     );
     defer engine.deinit();
     try engine.run();
@@ -526,6 +573,30 @@ fn appendCollapsedWhitespace(
 fn containsImports(document: *const native_syntax.Document) bool {
     for (document.nodes()) |node| {
         if (node.kind == .import) return true;
+    }
+    return false;
+}
+
+fn containsCacheBlock(
+    sources: *const native_source.Table,
+    document: *const native_syntax.Document,
+) Error!bool {
+    for (document.nodes(), 0..) |node, index| {
+        if (node.kind != .rule) continue;
+        const children = try document.children(.{ .value = @intCast(index) });
+        if (children.len != 2) continue;
+        const selector = try document.get(children[0]);
+        const block = try document.get(children[1]);
+        if (selector.kind != .selector or selector.text == null or block.kind != .block) continue;
+        const raw_selector = std.mem.trim(
+            u8,
+            try sources.slice(selector.text.?),
+            " \t\r\n\x0c;",
+        );
+        if (raw_selector.len < 2 or raw_selector[0] != '+') continue;
+        const raw_call = std.mem.trimLeft(u8, raw_selector[1..], " \t");
+        const call = parseCall(raw_call) orelse parseBareCall(raw_call) orelse continue;
+        if (nameEql(raw_call[call.name.start..call.name.end], "cache")) return true;
     }
     return false;
 }
@@ -1305,6 +1376,7 @@ const Call = struct {
     name: ByteRange,
     arguments: ByteRange,
     parenthesized: bool = true,
+    property_syntax: bool = false,
 };
 
 const Parameter = struct {
@@ -1369,10 +1441,140 @@ const NestedRule = struct {
     scope: native_environment.ScopeId,
 };
 
+const CacheSelector = struct {
+    bytes: []u8,
+    order: u64,
+};
+
+const CacheEntry = struct {
+    key: []u8,
+    selectors: std.ArrayList(CacheSelector) = .empty,
+
+    fn deinit(self: *CacheEntry, allocator: std.mem.Allocator) void {
+        allocator.free(self.key);
+        for (self.selectors.items) |selector| allocator.free(selector.bytes);
+        self.selectors.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+const CachePlan = struct {
+    entries: std.ArrayList(CacheEntry) = .empty,
+
+    fn deinit(self: *CachePlan, allocator: std.mem.Allocator) void {
+        for (self.entries.items) |*entry| entry.deinit(allocator);
+        self.entries.deinit(allocator);
+        self.* = undefined;
+    }
+
+    fn find(self: *const CachePlan, key: []const u8) ?usize {
+        for (self.entries.items, 0..) |entry, index| {
+            if (std.mem.eql(u8, entry.key, key)) return index;
+        }
+        return null;
+    }
+
+    fn record(
+        self: *CachePlan,
+        allocator: std.mem.Allocator,
+        key: []const u8,
+        selector: []const u8,
+        orders: []const u64,
+    ) Error!usize {
+        const entry_index = self.find(key) orelse blk: {
+            const owned_key = try allocator.dupe(u8, key);
+            errdefer allocator.free(owned_key);
+            try self.entries.append(allocator, .{ .key = owned_key });
+            break :blk self.entries.items.len - 1;
+        };
+        var selectors = try splitTopLevel(allocator, selector, ',');
+        defer selectors.deinit(allocator);
+        if (selectors.items.len != orders.len) return error.InvalidDocument;
+        for (selectors.items, orders) |range, order| {
+            const candidate = std.mem.trim(u8, selector[range.start..range.end], " \t\r\n\x0c");
+            if (candidate.len == 0) continue;
+            var existing_index: ?usize = null;
+            for (self.entries.items[entry_index].selectors.items, 0..) |existing, index| {
+                if (std.mem.eql(u8, existing.bytes, candidate)) {
+                    existing_index = index;
+                    break;
+                }
+            }
+            if (existing_index) |index| {
+                const selectors_list = &self.entries.items[entry_index].selectors;
+                if (order >= selectors_list.items[index].order) continue;
+                var updated = selectors_list.orderedRemove(index);
+                updated.order = order;
+                var insertion = selectors_list.items.len;
+                for (selectors_list.items, 0..) |existing, insert_index| {
+                    if (order < existing.order) {
+                        insertion = insert_index;
+                        break;
+                    }
+                }
+                selectors_list.insertAssumeCapacity(insertion, updated);
+                continue;
+            }
+            const owned_selector = try allocator.dupe(u8, candidate);
+            var insertion = self.entries.items[entry_index].selectors.items.len;
+            for (self.entries.items[entry_index].selectors.items, 0..) |existing, index| {
+                if (order < existing.order) {
+                    insertion = index;
+                    break;
+                }
+            }
+            self.entries.items[entry_index].selectors.insert(allocator, insertion, .{
+                .bytes = owned_selector,
+                .order = order,
+            }) catch |failure| {
+                allocator.free(owned_selector);
+                return failure;
+            };
+        }
+        return entry_index;
+    }
+
+    fn eql(left: *const CachePlan, right: *const CachePlan) bool {
+        if (left.entries.items.len != right.entries.items.len) return false;
+        for (left.entries.items, right.entries.items) |left_entry, right_entry| {
+            if (!std.mem.eql(u8, left_entry.key, right_entry.key) or
+                left_entry.selectors.items.len != right_entry.selectors.items.len)
+            {
+                return false;
+            }
+            for (left_entry.selectors.items, right_entry.selectors.items) |left_selector, right_selector| {
+                if (left_selector.order != right_selector.order or
+                    !std.mem.eql(u8, left_selector.bytes, right_selector.bytes))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+};
+
+const CachedRule = struct {
+    span: native_source.Span,
+    entry_index: usize,
+    declarations: std.ArrayList(RenderedDeclaration) = .empty,
+    nested: std.ArrayList(NestedRule) = .empty,
+    at_rules: std.ArrayList(NestedRule) = .empty,
+
+    fn deinit(self: *CachedRule, allocator: std.mem.Allocator) void {
+        for (self.declarations.items) |*declaration| declaration.deinit(allocator);
+        self.declarations.deinit(allocator);
+        self.nested.deinit(allocator);
+        self.at_rules.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 const RuleOutput = struct {
     declarations: *std.ArrayList(RenderedDeclaration),
     nested: *std.ArrayList(NestedRule),
     at_rules: *std.ArrayList(NestedRule),
+    cached: *std.ArrayList(CachedRule),
 };
 
 const StatementResult = struct {
@@ -1384,6 +1586,11 @@ const BlockValue = struct {
     block_id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
     replay_side_effects: bool,
+};
+
+const EngineMode = enum {
+    discover_cache,
+    emit,
 };
 
 const Engine = struct {
@@ -1401,10 +1608,15 @@ const Engine = struct {
     current_property_bindings: std.ArrayList(CurrentPropertyBinding) = .empty,
     selector_parts: std.ArrayList([]u8) = .empty,
     media_stack: std.ArrayList([]u8) = .empty,
+    cache_seen: std.ArrayList([]const u8) = .empty,
     extensions: std.ArrayList(StaticExtension) = .empty,
+    mode: EngineMode,
+    cache_seed: *const CachePlan,
+    cache_discovered: ?*CachePlan,
     call_depth: u16 = 0,
     loop_iterations: usize = 0,
     selector_count: usize = 0,
+    selector_order: u64 = 0,
     temporary_bytes: usize = 0,
     active_selector_scope: ?[]u8 = null,
     active_output: ?RuleOutput = null,
@@ -1413,6 +1625,9 @@ const Engine = struct {
     active_property_call_span: ?native_source.Span = null,
     pending_content_block: ?*const native_value.Value = null,
     active_keyframe_header: ?[]const u8 = null,
+    active_rule_selector: ?[]const u8 = null,
+    active_rule_orders: ?[]const u64 = null,
+    cache_context_depth: u16 = 0,
 
     fn init(
         allocator: std.mem.Allocator,
@@ -1420,6 +1635,9 @@ const Engine = struct {
         document: *const native_syntax.Document,
         transaction: *native_evaluator.Transaction,
         limits: Limits,
+        mode: EngineMode,
+        cache_seed: *const CachePlan,
+        cache_discovered: ?*CachePlan,
     ) Error!Engine {
         var values = native_value.Store.init(allocator, limits.values);
         errdefer values.deinit();
@@ -1433,6 +1651,9 @@ const Engine = struct {
             .document = document,
             .transaction = transaction,
             .limits = limits,
+            .mode = mode,
+            .cache_seed = cache_seed,
+            .cache_discovered = cache_discovered,
             .values = values,
             .environment = environment,
         };
@@ -1444,6 +1665,7 @@ const Engine = struct {
         self.selector_parts.deinit(self.allocator);
         for (self.media_stack.items) |media| self.allocator.free(media);
         self.media_stack.deinit(self.allocator);
+        self.cache_seen.deinit(self.allocator);
         for (self.extensions.items) |extension| {
             self.allocator.free(extension.target);
             self.allocator.free(extension.extender);
@@ -1457,6 +1679,19 @@ const Engine = struct {
         self.environment.deinit();
         self.values.deinit();
         self.* = undefined;
+    }
+
+    fn emit(self: *Engine, bytes: []const u8) Error!void {
+        if (self.mode == .emit) try self.transaction.emit(bytes);
+    }
+
+    fn emitMapped(
+        self: *Engine,
+        original: native_source.Span,
+        name: ?[]const u8,
+        bytes: []const u8,
+    ) Error!void {
+        if (self.mode == .emit) try self.transaction.emitMapped(original, name, bytes);
     }
 
     fn run(self: *Engine) Error!void {
@@ -2107,6 +2342,16 @@ const Engine = struct {
         defer self.allocator.free(base_selector);
         const selector = try self.expandExtendedSelectorOwned(selector_node.text.?, base_selector);
         defer self.allocator.free(selector);
+        const selector_orders = try self.selectorOrdersOwned(parent_selector, selector);
+        defer self.allocator.free(selector_orders);
+        const previous_rule_selector = self.active_rule_selector;
+        const previous_rule_orders = self.active_rule_orders;
+        self.active_rule_selector = selector;
+        self.active_rule_orders = selector_orders;
+        defer {
+            self.active_rule_selector = previous_rule_selector;
+            self.active_rule_orders = previous_rule_orders;
+        }
         const selector_part = try self.selectorPartOwned(
             selector_node.text.?,
             normalized_rendered,
@@ -2133,6 +2378,11 @@ const Engine = struct {
         defer nested.deinit(self.allocator);
         var at_rules: std.ArrayList(NestedRule) = .empty;
         defer at_rules.deinit(self.allocator);
+        var cached: std.ArrayList(CachedRule) = .empty;
+        defer {
+            for (cached.items) |*item| item.deinit(self.allocator);
+            cached.deinit(self.allocator);
+        }
 
         const returned = try self.executeStatements(
             try self.document.children(children[1]),
@@ -2141,24 +2391,25 @@ const Engine = struct {
                 .declarations = &declarations,
                 .nested = &nested,
                 .at_rules = &at_rules,
+                .cached = &cached,
             },
             false,
         );
         if (returned != null) return error.InvalidDocument;
 
         if (declarations.items.len > 0) {
-            try self.transaction.emitMapped(selector_node.text.?, null, selector);
-            try self.transaction.emit(if (self.emittingOKeyframes()) " {\n    " else "{");
+            try self.emitMapped(selector_node.text.?, null, selector);
+            try self.emit(if (self.emittingOKeyframes()) " {\n    " else "{");
             for (declarations.items, 0..) |declaration, declaration_index| {
-                try self.transaction.emitMapped(declaration.span, null, declaration.property);
-                try self.transaction.emit(if (self.emittingOKeyframes()) ": " else ":");
-                try self.transaction.emitMapped(declaration.span, null, declaration.value);
-                try self.transaction.emit(";");
+                try self.emitMapped(declaration.span, null, declaration.property);
+                try self.emit(if (self.emittingOKeyframes()) ": " else ":");
+                try self.emitMapped(declaration.span, null, declaration.value);
+                try self.emit(";");
                 if (self.emittingOKeyframes() and declaration_index + 1 < declarations.items.len) {
-                    try self.transaction.emit("\n    ");
+                    try self.emit("\n    ");
                 }
             }
-            try self.transaction.emit(if (self.emittingOKeyframes()) "\n  } " else "}");
+            try self.emit(if (self.emittingOKeyframes()) "\n  } " else "}");
         }
         for (nested.items) |child| {
             try self.emitRule(child.id, child.scope, selector);
@@ -2166,6 +2417,108 @@ const Engine = struct {
         for (at_rules.items) |child| {
             try self.emitAtRule(child.id, child.scope, selector);
         }
+        for (cached.items) |*item| try self.emitCachedRule(item);
+    }
+
+    fn emitCachedRule(self: *Engine, cached: *const CachedRule) Error!void {
+        const discovered_entry = self.cacheEntry(cached.entry_index) orelse return error.InvalidDocument;
+        const entry = if (self.mode == .discover_cache)
+            if (self.cache_seed.find(discovered_entry.key)) |seed_index|
+                &self.cache_seed.entries.items[seed_index]
+            else
+                discovered_entry
+        else
+            discovered_entry;
+        const selector = try self.cacheSelectorOwned(cached.span, entry);
+        defer self.allocator.free(selector);
+        const orders = try self.allocator.alloc(u64, entry.selectors.items.len);
+        defer self.allocator.free(orders);
+        for (entry.selectors.items, 0..) |cached_selector, index| {
+            orders[index] = cached_selector.order;
+        }
+        const previous_rule_selector = self.active_rule_selector;
+        const previous_rule_orders = self.active_rule_orders;
+        self.active_rule_selector = selector;
+        self.active_rule_orders = orders;
+        if (self.cache_context_depth == std.math.maxInt(u16)) return error.CallDepthExceeded;
+        self.cache_context_depth += 1;
+        defer {
+            self.cache_context_depth -= 1;
+            self.active_rule_selector = previous_rule_selector;
+            self.active_rule_orders = previous_rule_orders;
+        }
+        if (cached.declarations.items.len > 0) {
+            try self.emitMapped(cached.span, null, selector);
+            try self.emit("{");
+            for (cached.declarations.items) |declaration| {
+                try self.emitMapped(declaration.span, null, declaration.property);
+                try self.emit(":");
+                try self.emitMapped(declaration.span, null, declaration.value);
+                try self.emit(";");
+            }
+            try self.emit("}");
+        }
+        for (cached.nested.items) |child| {
+            try self.emitRule(child.id, child.scope, selector);
+        }
+        for (cached.at_rules.items) |child| {
+            try self.emitAtRule(child.id, child.scope, selector);
+        }
+    }
+
+    fn cacheEntry(self: *const Engine, index: usize) ?*const CacheEntry {
+        const plan: *const CachePlan = if (self.mode == .discover_cache and self.cache_discovered != null)
+            self.cache_discovered.?
+        else
+            self.cache_seed;
+        if (index >= plan.entries.items.len) return null;
+        return &plan.entries.items[index];
+    }
+
+    fn cacheSelectorOwned(
+        self: *Engine,
+        span: native_source.Span,
+        entry: *const CacheEntry,
+    ) Error![]u8 {
+        if (entry.selectors.items.len == 0) return error.InvalidDocument;
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (entry.selectors.items, 0..) |selector, index| {
+            if (index > 0) try self.appendTemporary(&output, span, ",");
+            try self.appendTemporary(&output, span, selector.bytes);
+        }
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn selectorOrdersOwned(
+        self: *Engine,
+        parent_selector: ?[]const u8,
+        selector: []const u8,
+    ) Error![]u64 {
+        var selector_ranges = try splitTopLevel(self.allocator, selector, ',');
+        defer selector_ranges.deinit(self.allocator);
+        if (selector_ranges.items.len == 0) return error.InvalidDocument;
+        const orders = try self.allocator.alloc(u64, selector_ranges.items.len);
+        errdefer self.allocator.free(orders);
+        if (parent_selector != null and self.active_rule_orders != null) {
+            var parent_ranges = try splitTopLevel(self.allocator, parent_selector.?, ',');
+            defer parent_ranges.deinit(self.allocator);
+            const parent_orders = self.active_rule_orders.?;
+            if (parent_ranges.items.len == parent_orders.len and
+                selector_ranges.items.len % parent_orders.len == 0)
+            {
+                for (orders, 0..) |*order, index| {
+                    order.* = parent_orders[index % parent_orders.len];
+                }
+                return orders;
+            }
+        }
+        for (orders) |*order| {
+            order.* = self.selector_order;
+            self.selector_order = std.math.add(u64, self.selector_order, 1) catch
+                return error.SelectorLimitExceeded;
+        }
+        return orders;
     }
 
     fn emitAtRule(
@@ -2214,9 +2567,15 @@ const Engine = struct {
         if (children.len > 0 and (try self.document.get(children[children.len - 1])).kind == .block) {
             block_id = children[children.len - 1];
         }
-        try self.transaction.emitMapped(at_rule.text.?, null, emitted_header);
+        const is_media = emitted_header.len > "@media".len and
+            std.ascii.eqlIgnoreCase(emitted_header[0.."@media".len], "@media");
+        const media_checkpoint = if (is_media and self.mode == .emit)
+            try self.transaction.stagingCheckpoint()
+        else
+            null;
+        try self.emitMapped(at_rule.text.?, null, emitted_header);
         if (block_id == null) {
-            try self.transaction.emit(";");
+            try self.emit(";");
             return;
         }
 
@@ -2224,8 +2583,6 @@ const Engine = struct {
             try self.reportResource(at_rule.span, "native Stylus lexical scope limit exceeded");
             return failure;
         };
-        const is_media = emitted_header.len > "@media".len and
-            std.ascii.eqlIgnoreCase(emitted_header[0.."@media".len], "@media");
         if (is_media) {
             const current_media = try self.formatCurrentMediaOwned(at_rule.text.?, emitted_header);
             self.media_stack.append(self.allocator, current_media) catch |failure| {
@@ -2243,6 +2600,11 @@ const Engine = struct {
         defer nested.deinit(self.allocator);
         var at_rules: std.ArrayList(NestedRule) = .empty;
         defer at_rules.deinit(self.allocator);
+        var cached: std.ArrayList(CachedRule) = .empty;
+        defer {
+            for (cached.items) |*item| item.deinit(self.allocator);
+            cached.deinit(self.allocator);
+        }
         const returned = try self.executeStatements(
             try self.document.children(block_id.?),
             &scope,
@@ -2250,24 +2612,29 @@ const Engine = struct {
                 .declarations = &declarations,
                 .nested = &nested,
                 .at_rules = &at_rules,
+                .cached = &cached,
             },
             false,
         );
         if (returned != null) return error.InvalidDocument;
 
-        try self.transaction.emit(if (self.emittingOKeyframes()) " { " else "{");
+        try self.emit(if (self.emittingOKeyframes()) " { " else "{");
+        const content_start = if (media_checkpoint != null)
+            self.transaction.position()
+        else
+            null;
         if (declarations.items.len > 0) {
             if (parent_selector) |selector| {
-                try self.transaction.emit(selector);
-                try self.transaction.emit("{");
+                try self.emit(selector);
+                try self.emit("{");
             }
             for (declarations.items) |declaration| {
-                try self.transaction.emitMapped(declaration.span, null, declaration.property);
-                try self.transaction.emit(":");
-                try self.transaction.emitMapped(declaration.span, null, declaration.value);
-                try self.transaction.emit(";");
+                try self.emitMapped(declaration.span, null, declaration.property);
+                try self.emit(":");
+                try self.emitMapped(declaration.span, null, declaration.value);
+                try self.emit(";");
             }
-            if (parent_selector != null) try self.transaction.emit("}");
+            if (parent_selector != null) try self.emit("}");
         }
         for (nested.items) |child| {
             try self.emitRule(child.id, child.scope, parent_selector);
@@ -2275,7 +2642,14 @@ const Engine = struct {
         for (at_rules.items) |child| {
             try self.emitAtRule(child.id, child.scope, parent_selector);
         }
-        try self.transaction.emit("}");
+        for (cached.items) |*item| try self.emitCachedRule(item);
+        if (media_checkpoint) |checkpoint_value| {
+            if (std.meta.eql(content_start.?, self.transaction.position())) {
+                try self.transaction.restoreStaging(checkpoint_value);
+                return;
+            }
+        }
+        try self.emit("}");
     }
 
     fn emittingOKeyframes(self: *const Engine) bool {
@@ -2715,6 +3089,16 @@ const Engine = struct {
         const raw = std.mem.trimLeft(u8, selector_raw[1..], " \t");
         const call = parseCall(raw) orelse parseBareCall(raw) orelse return false;
         const name = raw[call.name.start..call.name.end];
+        if (nameEql(name, "cache")) {
+            return self.invokeCacheBlockRule(
+                selector.text.?,
+                children[1],
+                raw,
+                call,
+                scope,
+                output,
+            );
+        }
         if (self.findCallable(name) == null) return false;
 
         const content = try self.ownBlockValue(selector.text.?, children[1], scope, false);
@@ -2731,6 +3115,118 @@ const Engine = struct {
         );
         if (returned != null) return error.InvalidDocument;
         return true;
+    }
+
+    fn invokeCacheBlockRule(
+        self: *Engine,
+        span: native_source.Span,
+        block_id: native_syntax.NodeId,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+        output: RuleOutput,
+    ) Error!bool {
+        const selector = self.active_rule_selector orelse {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        };
+        if (self.active_callables.items.len == 0) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        const caller = self.active_callables.items[self.active_callables.items.len - 1];
+        var arguments = try self.evaluateCallArguments(span, raw, call, scope);
+        defer arguments.deinit(self.allocator);
+        const key = try self.cacheKeyOwned(span, caller, arguments.items);
+        defer self.allocator.free(key);
+
+        const selector_orders = self.active_rule_orders orelse return error.InvalidDocument;
+        for (self.cache_seen.items) |seen| {
+            if (!std.mem.eql(u8, seen, key)) continue;
+            if (self.mode == .discover_cache) {
+                _ = try self.cache_discovered.?.record(
+                    self.allocator,
+                    key,
+                    selector,
+                    selector_orders,
+                );
+            } else if (self.cache_seed.find(key) == null) {
+                return error.InvalidDocument;
+            }
+            return true;
+        }
+
+        if (self.cache_context_depth > 0) {
+            var inline_scope = scope;
+            const returned = try self.executeStatements(
+                try self.document.children(block_id),
+                &inline_scope,
+                output,
+                false,
+            );
+            if (returned != null) return error.InvalidDocument;
+            return true;
+        }
+
+        const entry_index = if (self.mode == .discover_cache)
+            try self.cache_discovered.?.record(
+                self.allocator,
+                key,
+                selector,
+                selector_orders,
+            )
+        else
+            self.cache_seed.find(key) orelse return error.InvalidDocument;
+        const entry = self.cacheEntry(entry_index) orelse return error.InvalidDocument;
+        try self.cache_seen.append(self.allocator, entry.key);
+
+        var cached: CachedRule = .{ .span = span, .entry_index = entry_index };
+        var appended = false;
+        defer if (!appended) cached.deinit(self.allocator);
+        var cache_scope = scope;
+        if (self.cache_context_depth == std.math.maxInt(u16)) return error.CallDepthExceeded;
+        self.cache_context_depth += 1;
+        defer self.cache_context_depth -= 1;
+        const returned = try self.executeStatements(
+            try self.document.children(block_id),
+            &cache_scope,
+            .{
+                .declarations = &cached.declarations,
+                .nested = &cached.nested,
+                .at_rules = &cached.at_rules,
+                .cached = output.cached,
+            },
+            false,
+        );
+        if (returned != null) return error.InvalidDocument;
+        try output.cached.append(self.allocator, cached);
+        appended = true;
+        return true;
+    }
+
+    fn cacheKeyOwned(
+        self: *Engine,
+        span: native_source.Span,
+        caller: []const u8,
+        arguments: []const *const native_value.Value,
+    ) Error![]u8 {
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        const media = if (self.media_stack.items.len > 0)
+            self.media_stack.items[self.media_stack.items.len - 1]
+        else
+            "no-media";
+        try self.appendTemporary(&output, span, media);
+        try self.appendTemporary(&output, span, "__");
+        try self.appendTemporary(&output, span, caller);
+        try self.appendTemporary(&output, span, "__");
+        for (arguments, 0..) |argument, index| {
+            if (index > 0) try self.appendTemporary(&output, span, " ");
+            const serialized = try self.serializeValueOwned(argument, .value, span);
+            defer self.allocator.free(serialized);
+            try self.appendTemporary(&output, span, serialized);
+        }
+        return output.toOwnedSlice(self.allocator);
     }
 
     fn invokeUserCallable(
@@ -2814,7 +3310,12 @@ const Engine = struct {
             ',',
         );
         defer parameters.deinit(self.allocator);
-        var arguments = if (call.parenthesized)
+        var arguments = if (call.property_syntax and parameters.items.len > 1)
+            try splitTopLevelWhitespace(
+                self.allocator,
+                raw[call.arguments.start..call.arguments.end],
+            )
+        else if (call.parenthesized)
             try splitTopLevel(
                 self.allocator,
                 raw[call.arguments.start..call.arguments.end],
@@ -5162,6 +5663,25 @@ const Engine = struct {
                     (std.ascii.isDigit(raw[start - 1]) or raw[start - 1] == '.');
                 const substitute = (context == .value or context == .interpolation) and !unit_suffix;
                 if (substitute) {
+                    if (try self.environment.lookup(scope, name) != null) {
+                        const chain_end = memberChainEnd(raw, index);
+                        if (chain_end > index) {
+                            const member = (try self.evaluateMemberChain(
+                                span,
+                                raw[start..chain_end],
+                                scope,
+                            )) orelse return error.InvalidOperation;
+                            const replacement = try self.serializeValueOwned(
+                                member,
+                                context,
+                                span,
+                            );
+                            defer self.allocator.free(replacement);
+                            try self.appendTemporary(&output, span, replacement);
+                            index = chain_end;
+                            continue;
+                        }
+                    }
                     if (try self.environment.lookup(scope, name)) |resolved| {
                         const replacement = try self.serializeValueOwned(
                             resolved,
@@ -5705,6 +6225,7 @@ fn parseDeclarationCall(raw: []const u8) ?Call {
         .name = parts[0],
         .arguments = parts[1],
         .parenthesized = std.mem.indexOfScalar(u8, separator, ':') != null,
+        .property_syntax = std.mem.indexOfScalar(u8, separator, ':') != null,
     };
 }
 
@@ -6497,6 +7018,24 @@ fn currentPropertyArgumentIndex(raw_input: []const u8) ?usize {
         return null;
     }
     return std.fmt.parseUnsigned(usize, raw[prefix.len .. raw.len - 1], 10) catch null;
+}
+
+fn memberChainEnd(raw: []const u8, start: usize) usize {
+    var cursor = start;
+    while (cursor < raw.len) {
+        if (raw[cursor] == '.') {
+            if (cursor + 1 >= raw.len or !isNameStart(raw, cursor + 1)) break;
+            cursor = nameEnd(raw, cursor + 1);
+            continue;
+        }
+        if (raw[cursor] == '[') {
+            const closing = std.mem.indexOfScalarPos(u8, raw, cursor + 1, ']') orelse break;
+            cursor = closing + 1;
+            continue;
+        }
+        break;
+    }
+    return cursor;
 }
 
 fn nameEql(left: []const u8, right: []const u8) bool {

@@ -258,9 +258,9 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
 
     try std.testing.expectEqual(@as(usize, 326), success_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 174), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 152), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0x513ebfcbc79ae67c), exact_case_id_hash.final());
+    try std.testing.expectEqual(@as(usize, 178), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 148), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0xf6bdbc2afac421d6), exact_case_id_hash.final());
 }
 
 test "native Stylus closes the finite arithmetic conformance family" {
@@ -496,6 +496,86 @@ test "native Stylus closes the finite add-property conformance family" {
 
         std.testing.expectEqualStrings(expected_css.css(), first.css()) catch {
             std.debug.print("\nnative Stylus add-property mismatch: {s}\n", .{case.id});
+            mismatch_count += 1;
+        };
+        try std.testing.expectEqualStrings(first.css(), second.css());
+        try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+        try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+        try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+        try expectDependencyDeterminism(&first, &second);
+    }
+    try std.testing.expectEqual(@as(usize, 0), mismatch_count);
+
+    for (case_ids) |case_id| {
+        const case = try findCase(parsed.value.cases, case_id);
+        const input_path = try fixturePath(allocator, case.entry);
+        defer allocator.free(input_path);
+        const input = try std.fs.cwd().readFileAlloc(
+            allocator,
+            input_path,
+            max_fixture_bytes,
+        );
+        defer allocator.free(input);
+        try std.testing.checkAllAllocationFailures(
+            allocator,
+            exerciseNativeCompilationAllocationFailures,
+            .{ case, input },
+        );
+    }
+}
+
+test "native Stylus closes the finite cache conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case_ids = [_][]const u8{
+        "stylus-official-bifs-cache",
+        "stylus-official-bifs-cache-at-media",
+        "stylus-official-bifs-cache-samename",
+        "stylus-official-bifs-cache-size",
+    };
+    var mismatch_count: usize = 0;
+    for (case_ids) |case_id| {
+        const case = try findCase(parsed.value.cases, case_id);
+        try std.testing.expectEqualStrings("success", case.outcome);
+
+        const input_path = try fixturePath(allocator, case.entry);
+        defer allocator.free(input_path);
+        const expected_path = try fixturePath(allocator, try expectedPath(case));
+        defer allocator.free(expected_path);
+        const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+        defer allocator.free(input);
+        const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+        defer allocator.free(expected);
+
+        var expected_css = try compileExpectedCss(allocator, expected);
+        defer expected_css.deinit();
+        var first = compileNative(allocator, case, input) catch |failure| {
+            std.debug.print("\nnative Stylus cache compile failure: {s}: {s}\n", .{
+                case.id,
+                @errorName(failure),
+            });
+            mismatch_count += 1;
+            continue;
+        };
+        defer first.deinit();
+        var second = try compileNative(allocator, case, input);
+        defer second.deinit();
+
+        std.testing.expectEqualStrings(expected_css.css(), first.css()) catch {
+            std.debug.print("\nnative Stylus cache mismatch: {s}\n", .{case.id});
             mismatch_count += 1;
         };
         try std.testing.expectEqualStrings(first.css(), second.css());
