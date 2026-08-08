@@ -1662,6 +1662,11 @@ const MutationAlias = struct {
     },
 };
 
+const BindingReference = struct {
+    scope: native_environment.ScopeId,
+    name: []const u8,
+};
+
 const CurrentPropertyBinding = struct {
     scope: native_environment.ScopeId,
     name: []const u8,
@@ -1861,6 +1866,7 @@ const Engine = struct {
     block_values: std.ArrayList(BlockValue) = .empty,
     active_callables: std.ArrayList([]const u8) = .empty,
     mutation_aliases: std.ArrayList(MutationAlias) = .empty,
+    map_binding_aliases: std.ArrayList(BindingReference) = .empty,
     current_property_bindings: std.ArrayList(CurrentPropertyBinding) = .empty,
     json_local_names: std.ArrayList([]const u8) = .empty,
     selector_parts: std.ArrayList([]u8) = .empty,
@@ -1930,6 +1936,7 @@ const Engine = struct {
         }
         self.extensions.deinit(self.allocator);
         self.mutation_aliases.deinit(self.allocator);
+        self.map_binding_aliases.deinit(self.allocator);
         self.current_property_bindings.deinit(self.allocator);
         for (self.json_local_names.items) |name| self.allocator.free(name);
         self.json_local_names.deinit(self.allocator);
@@ -2063,13 +2070,23 @@ const Engine = struct {
         {
             return;
         }
+        var map_alias_name: ?[]const u8 = null;
         var evaluated = if (std.mem.eql(u8, assignment.value, "@block") or
             (assignment.value.len == 0 and !try self.hasExplicitOpeningBrace(node_id)))
             try self.ownBlockValue(text, try self.statementBlock(node_id), scope.*, true)
         else if (assignment.value.len == 0)
             try self.evaluateObjectBlock(node_id, scope.*)
-        else
-            try self.evaluateValue(text, assignment.value, scope.*, 0);
+        else alias: {
+            if (assignment.operator == null and validVariableName(assignment.value)) {
+                if (try self.lookupBinding(scope.*, assignment.value)) |candidate| {
+                    if (candidate.* == .map) {
+                        map_alias_name = assignment.value;
+                        break :alias candidate;
+                    }
+                }
+            }
+            break :alias try self.evaluateValue(text, assignment.value, scope.*, 0);
+        };
         if (assignment.operator) |operator| {
             const current = (try self.lookupBinding(scope.*, assignment.name)) orelse {
                 try self.reportUndefinedVariable(text);
@@ -2078,9 +2095,18 @@ const Engine = struct {
             evaluated = try self.evaluateGenericBinary(text, current, evaluated, operator);
         }
         self.detachMutationAlias(assignment.name);
+        try self.detachMapBindingAliases(scope.*, assignment.name);
         const aliases_current_property = self.active_property_value != null and
             evaluated == self.active_property_value.?;
         scope.* = try self.setBinding(scope.*, assignment.name, evaluated, text);
+        if (map_alias_name) |source_name| {
+            try self.registerMapBindingAlias(
+                scope.*,
+                assignment.name,
+                source_name,
+                text,
+            );
+        }
         if (aliases_current_property) {
             try self.current_property_bindings.append(self.allocator, .{
                 .scope = scope.*,
@@ -4955,6 +4981,9 @@ const Engine = struct {
             }
             return self.evaluateJsonBuiltin(span, json_arguments.items, scope);
         }
+        if (nameEql(name, "merge") or nameEql(name, "extend")) {
+            return try self.evaluateMergeBuiltin(span, raw, call, scope);
+        }
         var arguments = if (nameEql(name, "join"))
             try self.evaluateJoinCallArguments(span, raw, call, scope)
         else
@@ -6270,6 +6299,7 @@ const Engine = struct {
         name: []const u8,
         replacement: *const native_value.Value,
     ) Error!bool {
+        const original = (try self.lookupBinding(scope, name)) orelse return false;
         if (!(try self.updateBinding(scope, name, replacement))) return false;
         var index = self.mutation_aliases.items.len;
         while (index > 0) {
@@ -6278,7 +6308,14 @@ const Engine = struct {
             if (!std.mem.eql(u8, alias.local_name, name)) continue;
             switch (alias.target) {
                 .binding => |binding| {
+                    const target_original = try self.lookupBinding(
+                        binding.scope,
+                        binding.name,
+                    );
                     _ = try self.updateBinding(binding.scope, binding.name, replacement);
+                    if (target_original) |target| {
+                        try self.propagateMapBindingAliases(target, replacement);
+                    }
                 },
                 .current_property_index => |property_index| {
                     if (!(try self.updateCurrentPropertyIndex(property_index, replacement))) {
@@ -6288,7 +6325,176 @@ const Engine = struct {
             }
             break;
         }
+        try self.propagateMapBindingAliases(original, replacement);
         return true;
+    }
+
+    fn evaluateMergeBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        var ranges = try splitTopLevel(
+            self.allocator,
+            raw[call.arguments.start..call.arguments.end],
+            ',',
+        );
+        defer ranges.deinit(self.allocator);
+        if (call.arguments.start == call.arguments.end) ranges.clearRetainingCapacity();
+        if (ranges.items.len == 0) return self.invalidBuiltinArguments(span);
+
+        var arguments = try self.evaluateCallArguments(span, raw, call, scope);
+        defer arguments.deinit(self.allocator);
+        if (arguments.items[0].* != .map) return self.invalidBuiltinArguments(span);
+
+        const has_recursive_flag = arguments.items.len > 1 and
+            arguments.items[arguments.items.len - 1].* == .boolean;
+        const recursive = has_recursive_flag and
+            arguments.items[arguments.items.len - 1].boolean;
+        const source_end = arguments.items.len - @intFromBool(has_recursive_flag);
+        var merged = arguments.items[0];
+        for (arguments.items[1..source_end]) |source_value| {
+            if (source_value.* != .map) return self.invalidBuiltinArguments(span);
+            merged = try self.mergeMaps(
+                span,
+                merged.map,
+                source_value.map,
+                recursive,
+                0,
+            );
+        }
+
+        const destination_range = ranges.items[0];
+        const destination_name = std.mem.trim(
+            u8,
+            raw[call.arguments.start + destination_range.start .. call.arguments.start + destination_range.end],
+            " \t\r\n\x0c",
+        );
+        if (validVariableName(destination_name) and
+            !(try self.updateMutationBinding(scope, destination_name, merged)))
+        {
+            return self.invalidBuiltinArguments(span);
+        }
+        return merged;
+    }
+
+    fn mergeMaps(
+        self: *Engine,
+        span: native_source.Span,
+        destination: native_value.Map,
+        source_map: native_value.Map,
+        recursive: bool,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        if (depth >= self.limits.values.max_depth) {
+            try self.reportResource(span, "native Stylus value limit exceeded");
+            return error.ValueDepthExceeded;
+        }
+        var entries: std.ArrayList(native_value.Entry) = .empty;
+        defer entries.deinit(self.allocator);
+        try entries.appendSlice(self.allocator, destination.entries);
+        for (source_map.entries) |source_entry| {
+            try self.transaction.consumeOperations(1);
+            var existing: ?usize = null;
+            for (entries.items, 0..) |entry, entry_index| {
+                if (stylusValueEqual(entry.key, source_entry.key)) existing = entry_index;
+            }
+            if (existing) |entry_index| {
+                const prior = entries.items[entry_index];
+                entries.items[entry_index].value = if (recursive and
+                    prior.value == .map and source_entry.value == .map)
+                    (try self.mergeMaps(
+                        span,
+                        prior.value.map,
+                        source_entry.value.map,
+                        true,
+                        depth + 1,
+                    )).*
+                else
+                    source_entry.value;
+                continue;
+            }
+            if (entries.items.len >= self.limits.values.max_collection_items) {
+                try self.reportResource(span, "native Stylus value limit exceeded");
+                return error.ValueLimitExceeded;
+            }
+            try entries.append(self.allocator, source_entry);
+        }
+        return self.ownValue(span, .{ .map = .{ .entries = entries.items } });
+    }
+
+    fn registerMapBindingAlias(
+        self: *Engine,
+        scope: native_environment.ScopeId,
+        left: []const u8,
+        right: []const u8,
+        span: native_source.Span,
+    ) Error!void {
+        if (std.mem.eql(u8, left, right)) return;
+        for ([_]BindingReference{
+            .{ .scope = scope, .name = left },
+            .{ .scope = scope, .name = right },
+        }) |reference| {
+            const reference_value = try self.lookupBinding(reference.scope, reference.name);
+            var registered = false;
+            for (self.map_binding_aliases.items) |existing| {
+                if (!std.mem.eql(u8, existing.name, reference.name)) continue;
+                if (existing.scope.value == reference.scope.value) {
+                    registered = true;
+                    break;
+                }
+                const existing_value = try self.lookupBinding(existing.scope, existing.name);
+                if (reference_value != null and existing_value == reference_value) {
+                    registered = true;
+                    break;
+                }
+            }
+            if (registered) continue;
+            if (self.map_binding_aliases.items.len >= self.limits.max_nodes) {
+                try self.reportResource(span, "native Stylus evaluator node limit exceeded");
+                return error.NodeLimitExceeded;
+            }
+            try self.map_binding_aliases.append(self.allocator, reference);
+        }
+    }
+
+    fn detachMapBindingAliases(
+        self: *Engine,
+        scope: native_environment.ScopeId,
+        name: []const u8,
+    ) Error!void {
+        const current = try self.lookupBinding(scope, name);
+        if (current == null) return;
+        var index = self.map_binding_aliases.items.len;
+        while (index > 0) {
+            index -= 1;
+            const reference = self.map_binding_aliases.items[index];
+            if (!std.mem.eql(u8, reference.name, name)) continue;
+            const value = try self.lookupBinding(reference.scope, reference.name);
+            if (value != null and value.? == current.?) {
+                _ = self.map_binding_aliases.orderedRemove(index);
+            }
+        }
+    }
+
+    fn propagateMapBindingAliases(
+        self: *Engine,
+        original: *const native_value.Value,
+        replacement: *const native_value.Value,
+    ) Error!void {
+        if (original.* != .map or replacement.* != .map) return;
+        for (self.map_binding_aliases.items) |reference| {
+            const current = try self.lookupBinding(reference.scope, reference.name);
+            if (current != null and current.? == original) {
+                _ = try self.updateBinding(
+                    reference.scope,
+                    reference.name,
+                    replacement,
+                );
+            }
+        }
     }
 
     fn updateCurrentPropertyIndex(

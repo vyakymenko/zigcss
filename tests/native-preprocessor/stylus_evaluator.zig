@@ -789,6 +789,77 @@ test "native Stylus length preserves provider scalar list and string semantics" 
     try std.testing.expect(compiled.map() != null);
 }
 
+test "native Stylus merge mutates maps with shallow and recursive precedence" {
+    const input =
+        \\base = {
+        \\  first: 1
+        \\  shared: 2
+        \\  nested: {
+        \\    keep: 3
+        \\    replace: 4
+        \\  }
+        \\}
+        \\alias = base
+        \\merged = merge(base, { shared: 5, nested: { replace: 6, add: 7 } }, { tail: 8 }, true)
+        \\shallow = {
+        \\  nested: {
+        \\    keep: 9
+        \\  }
+        \\}
+        \\extended = extend(shallow, { nested: { replacement: 10 }, added: 11 })
+        \\flagged = {
+        \\  nested: {
+        \\    keep: 12
+        \\  }
+        \\}
+        \\flagged-result = merge(flagged, { nested: { replacement: 13 } }, false)
+        \\retained = { value: 14 }
+        \\retained-alias = retained
+        \\retained-peer = retained
+        \\retained = { value: 15 }
+        \\merge(retained-alias, { value: 16 })
+        \\body
+        \\  first merged.first
+        \\  shared merged.shared
+        \\  nested-keep merged.nested.keep
+        \\  nested-replace merged.nested.replace
+        \\  nested-add merged.nested.add
+        \\  tail merged.tail
+        \\  alias alias.shared
+        \\  original base.nested.add
+        \\  shallow-old shallow.nested.keep == null
+        \\  shallow-new shallow.nested.replacement
+        \\  added shallow.added
+        \\  flag-old flagged.nested.keep == null
+        \\  flag-new flagged-result.nested.replacement
+        \\  retained-root retained.value
+        \\  retained-peer retained-peer.value
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        "body{first:1;shared:5;nested-keep:3;nested-replace:6;" ++
+            "nested-add:7;tail:8;alias:5;original:7;shallow-old:true;" ++
+            "shallow-new:10;added:11;flag-old:true;flag-new:13;" ++
+            "retained-root:15;retained-peer:16}",
+        compiled.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), compiled.nativeDiagnostics().len);
+    try std.testing.expect(compiled.map() != null);
+
+    const invalid =
+        \\body
+        \\  value merge(1, { a: 1 })
+    ;
+    try expectSemanticRejection(
+        invalid,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid, "merge").?),
+    );
+}
+
 test "native Stylus invokes a provider-prefixed root block mixin" {
     const input =
         \\wrapper()
@@ -1659,7 +1730,12 @@ test "native Stylus plain CSS foundation owns resource and cancellation boundari
 fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
-        "factor = 2\n" ++
+        "base = {\n" ++
+            "  a: 1\n" ++
+            "}\n" ++
+            "alias = base\n" ++
+            "merged = merge(base, { b: 2 })\n" ++
+            "factor = 2\n" ++
             "bump(value)\n" ++
             "  return value * factor\n" ++
             "box(value)\n" ++
@@ -1672,6 +1748,7 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
             "    border-{side}-width value % 3\n" ++
             ".card\n" ++
             "  box(bump(2px))\n" ++
+            "  merged alias.b\n" ++
             "  count length(1 2 3)\n" ++
             "  kind type(4px)\n",
         .{},
@@ -1679,7 +1756,7 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     defer result.deinit();
     try std.testing.expectEqualStrings(
         ".card{padding:4px;margin:5px;border-top-width:1px;" ++
-            "border-right-width:1px;count:3;kind:'unit'}",
+            "border-right-width:1px;merged:2;count:3;kind:'unit'}",
         result.css(),
     );
 }
