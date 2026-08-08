@@ -929,6 +929,37 @@ test "native Stylus prefixes class selectors inside a bounded block mixin" {
     );
 }
 
+test "native Stylus mutates promoted lists across callable aliases and arguments" {
+    const input =
+        \\nums = 1
+        \\append(nums, 2)
+        \\append(nums, 3, 4, 5)
+        \\mutate(list)
+        \\  push(list, 6)
+        \\collect()
+        \\  list = ()
+        \\  for arg in arguments
+        \\    push(list, arg)
+        \\  return list
+        \\mutate(nums)
+        \\body
+        \\  appended nums
+        \\  pushed: ret = push(nums, 7, 8)
+        \\  unshifted unshift(nums, -1, 0)
+        \\  final nums
+        \\  args collect(alpha, beta)
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        "body{appended:1 2 3 4 5 6;pushed:8;unshifted:10;" ++
+            "final:0 -1 1 2 3 4 5 6 7 8;args:alpha beta}",
+        compiled.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), compiled.nativeDiagnostics().len);
+    try std.testing.expect(compiled.map() != null);
+}
+
 test "native Stylus composes match conversion and root media mixins" {
     const input =
         \\unit-intervals = { 'px': 1, 'em': 0.01, 'rem': 0.1 }

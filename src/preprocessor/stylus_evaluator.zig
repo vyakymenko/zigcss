@@ -6371,7 +6371,11 @@ const Engine = struct {
         if (nameEql(name, "prepend") or nameEql(name, "unshift")) {
             var combined: std.ArrayList(native_value.Value) = .empty;
             defer combined.deinit(self.allocator);
-            try combined.appendSlice(self.allocator, additions.items);
+            var addition_index = additions.items.len;
+            while (addition_index > 0) {
+                addition_index -= 1;
+                try combined.append(self.allocator, additions.items[addition_index]);
+            }
             try combined.appendSlice(self.allocator, values.items);
             values.clearRetainingCapacity();
             try values.appendSlice(self.allocator, combined.items);

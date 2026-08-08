@@ -628,7 +628,12 @@ pub const Parser = struct {
         if (startsWord(raw, "for") or startsWord(raw, "while") or startsWord(raw, "each")) {
             return .loop;
         }
-        if (self.findAssignment(line) != null) return .variable;
+        if (self.findAssignment(line)) |assignment_index| {
+            if (self.assignmentFollowsDeclarationColon(line, assignment_index)) {
+                return .declaration;
+            }
+            return .variable;
+        }
         if (has_children and looksLikeFunctionDefinition(self.tokens[line.token_start..line.token_end])) {
             return .function;
         }
@@ -659,6 +664,40 @@ pub const Parser = struct {
             }
         }
         return null;
+    }
+
+    fn assignmentFollowsDeclarationColon(
+        self: *const Parser,
+        line: Line,
+        assignment_index: usize,
+    ) bool {
+        var paren_depth: usize = 0;
+        var square_depth: usize = 0;
+        var curly_depth: usize = 0;
+        for (self.tokens[line.token_start..assignment_index]) |token| {
+            switch (token.kind) {
+                .open_paren => paren_depth += 1,
+                .close_paren => paren_depth -|= 1,
+                .open_square => square_depth += 1,
+                .close_square => square_depth -|= 1,
+                .open_curly => curly_depth += 1,
+                .close_curly => curly_depth -|= 1,
+                .colon => if (paren_depth == 0 and square_depth == 0 and curly_depth == 0) {
+                    const start: usize = @intCast(token.span.start);
+                    const end: usize = @intCast(token.span.end);
+                    const line_start: usize = @intCast(line.content_start);
+                    const line_end: usize = @intCast(line.content_end);
+                    if (start > line_start and end < line_end and
+                        !isHorizontalWhitespace(self.source_bytes[start - 1]) and
+                        isHorizontalWhitespace(self.source_bytes[end]))
+                    {
+                        return true;
+                    }
+                },
+                else => {},
+            }
+        }
+        return false;
     }
 
     fn collectFragments(

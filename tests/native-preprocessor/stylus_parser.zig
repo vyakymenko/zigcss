@@ -227,6 +227,35 @@ test "native Stylus parser keeps declarations separate from a following nested s
     try std.testing.expectEqualStrings("&__child", try sources.slice(child_rule.text.?));
 }
 
+test "native Stylus parser keeps property assignment expressions as declarations" {
+    const input =
+        \\values = 1
+        \\.root
+        \\  foo: ret = push(values, 2)
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("property-assignment.styl", input);
+    var parser = try stylus.Parser.init(std.testing.allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root_children.len);
+    try std.testing.expectEqual(syntax.Kind.variable, (try document.get(root_children[0])).kind);
+    const rule_children = try document.children(root_children[1]);
+    const block = rule_children[rule_children.len - 1];
+    const block_children = try document.children(block);
+    try std.testing.expectEqual(@as(usize, 1), block_children.len);
+    const declaration = try document.get(block_children[0]);
+    try std.testing.expectEqual(syntax.Kind.declaration, declaration.kind);
+    try std.testing.expectEqualStrings(
+        "foo: ret = push(values, 2)",
+        try sources.slice(declaration.text.?),
+    );
+}
+
 test "native parser rejects every pinned Stylus parser error" {
     const NegativeCase = struct {
         id: []const u8,
