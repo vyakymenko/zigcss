@@ -621,6 +621,38 @@ test "native Stylus evaluates finite color component getters" {
     );
 }
 
+test "native Stylus evaluates the finite contrast result object and CSS fallback" {
+    const input =
+        \\.probe
+        \\  test1: contrast(#000).ratio
+        \\  test2: contrast(rgba(#000,.5), #fff).ratio
+        \\  test3: contrast(#000, rgba(#fff,.5)).ratio
+        \\  test4: contrast(#000, rgba(#fff,.5)).error
+        \\  test5: contrast(#000, rgba(#fff,.5)).min
+        \\  test6: contrast(#000, rgba(#fff,.5)).max
+        \\  test7: contrast(200%, red)
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        ".probe{test1:21;test2:3.9;test3:13.15;test4:7.85;" ++
+            "test5:5.3;test6:21;test7:contrast(200%)}",
+        compiled.css(),
+    );
+
+    const invalid =
+        \\.probe
+        \\  test1: contrast(#000, 1).ratio
+    ;
+    try expectSemanticRejection(
+        invalid,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid, "contrast").?),
+    );
+}
+
 test "native Stylus semantic failures own diagnostics without partial CSS" {
     try expectSemanticRejection(
         \\.a

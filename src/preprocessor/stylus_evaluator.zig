@@ -2085,13 +2085,45 @@ const Engine = struct {
         scope: native_environment.ScopeId,
     ) Error!?*const native_value.Value {
         if (raw.len < 3 or !isNameStart(raw, 0)) return null;
-        var cursor = nameEnd(raw, 0);
+        const cursor = nameEnd(raw, 0);
         if (cursor >= raw.len or (raw[cursor] != '.' and raw[cursor] != '[')) return null;
         const base = raw[0..cursor];
-        var current = if (nameEql(base, "current-property"))
+        const current = if (nameEql(base, "current-property"))
             (try self.currentPropertyValue(span, scope)) orelse return null
         else
             (try self.environment.lookup(scope, base)) orelse return null;
+        return self.evaluateMemberSuffix(span, raw, cursor, current, scope);
+    }
+
+    fn evaluateCallMemberChain(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!?*const native_value.Value {
+        if (raw.len < 4 or !isNameStart(raw, 0)) return null;
+        const name_end = nameEnd(raw, 0);
+        var opening = name_end;
+        while (opening < raw.len and std.ascii.isWhitespace(raw[opening])) opening += 1;
+        if (opening >= raw.len or raw[opening] != '(') return null;
+        const closing = matchingParen(raw, opening) orelse return null;
+        const cursor = closing + 1;
+        if (cursor >= raw.len or (raw[cursor] != '.' and raw[cursor] != '[')) return null;
+        const current = try self.evaluateValue(span, raw[0..cursor], scope, depth + 1);
+        return self.evaluateMemberSuffix(span, raw, cursor, current, scope);
+    }
+
+    fn evaluateMemberSuffix(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        initial_cursor: usize,
+        initial: *const native_value.Value,
+        scope: native_environment.ScopeId,
+    ) Error!?*const native_value.Value {
+        var cursor = initial_cursor;
+        var current = initial;
         while (cursor < raw.len) {
             if (raw[cursor] == '.') {
                 cursor += 1;
@@ -3867,6 +3899,7 @@ const Engine = struct {
         if (source_input.len >= 2 and source_input[0] == '{' and source_input[source_input.len - 1] == '}') {
             return self.evaluateInlineMap(span, source_input[1 .. source_input.len - 1], scope);
         }
+        if (try self.evaluateCallMemberChain(span, source_input, scope, depth)) |member| return member;
         if (try self.evaluateMemberChain(span, source_input, scope)) |member| return member;
         if (validVariableName(source_input)) {
             if (try self.environment.lookup(scope, source_input)) |resolved| {
@@ -4542,6 +4575,50 @@ const Engine = struct {
             const color = native_color.hsl(hue, saturation, lightness, alpha) catch
                 return self.invalidBuiltinArguments(span);
             return try self.ownValue(span, .{ .color = color });
+        }
+        if (nameEql(name, "contrast")) {
+            if (arguments.items.len == 0 or arguments.items[0].* != .color) {
+                var literal: std.ArrayList(u8) = .empty;
+                defer literal.deinit(self.allocator);
+                try self.appendTemporary(&literal, span, "contrast(");
+                if (arguments.items.len > 0) {
+                    const serialized = try self.serializeValueOwned(arguments.items[0], .value, span);
+                    defer self.allocator.free(serialized);
+                    try self.appendTemporary(&literal, span, serialized);
+                }
+                try self.appendTemporary(&literal, span, ")");
+                return self.ownStringResult(span, literal.items, false);
+            }
+            if (arguments.items.len > 2 or
+                (arguments.items.len == 2 and arguments.items[1].* != .color))
+            {
+                return self.invalidBuiltinArguments(span);
+            }
+            const background = if (arguments.items.len == 2)
+                arguments.items[1].color
+            else
+                native_color.parseLiteral("white").?;
+            const contrast = stylusContrast(arguments.items[0].color, background) catch
+                return self.invalidBuiltinArguments(span);
+            const entries = [_]native_value.Entry{
+                .{
+                    .key = .{ .string = .{ .bytes = "ratio", .quoted = true } },
+                    .value = .{ .number = .{ .value = contrast.ratio } },
+                },
+                .{
+                    .key = .{ .string = .{ .bytes = "error", .quoted = true } },
+                    .value = .{ .number = .{ .value = contrast.error_value } },
+                },
+                .{
+                    .key = .{ .string = .{ .bytes = "min", .quoted = true } },
+                    .value = .{ .number = .{ .value = contrast.minimum } },
+                },
+                .{
+                    .key = .{ .string = .{ .bytes = "max", .quoted = true } },
+                    .value = .{ .number = .{ .value = contrast.maximum } },
+                },
+            };
+            return self.ownValue(span, .{ .map = .{ .entries = &entries } });
         }
 
         if (nameEql(name, "red") or nameEql(name, "green") or nameEql(name, "blue") or
@@ -7234,6 +7311,96 @@ fn colorLuminosity(color: native_value.Color) native_color.Error!f64 {
             std.math.pow(f64, (normalized + 0.055) / 1.055, 2.4);
     }
     return roundDecimal(linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722, 15);
+}
+
+const StylusContrast = struct {
+    ratio: f64,
+    error_value: f64,
+    minimum: f64,
+    maximum: f64,
+};
+
+fn stylusContrast(
+    foreground: native_value.Color,
+    background: native_value.Color,
+) native_color.Error!StylusContrast {
+    const background_channels = try native_color.toRgb(background);
+    if (background_channels[3] >= 1) {
+        const ratio = try stylusContrastRatio(foreground, background);
+        return .{
+            .ratio = ratio,
+            .error_value = 0,
+            .minimum = ratio,
+            .maximum = ratio,
+        };
+    }
+
+    const black = native_color.parseLiteral("black").?;
+    const white = native_color.parseLiteral("white").?;
+    const on_black = try stylusContrastRatio(
+        foreground,
+        try stylusBlend(background, black),
+    );
+    const on_white = try stylusContrastRatio(
+        foreground,
+        try stylusBlend(background, white),
+    );
+    const maximum = @max(on_black, on_white);
+    var closest_channels: [3]f64 = undefined;
+    const foreground_channels = try native_color.toRgb(foreground);
+    for (&closest_channels, 0..) |*channel, index| {
+        channel.* = std.math.clamp(
+            (foreground_channels[index] -
+                background_channels[index] * background_channels[3]) /
+                (1 - background_channels[3]),
+            0,
+            255,
+        );
+    }
+    const closest = try native_color.rgb(
+        @round(closest_channels[0]),
+        @round(closest_channels[1]),
+        @round(closest_channels[2]),
+        1,
+    );
+    const minimum = try stylusContrastRatio(
+        foreground,
+        try stylusBlend(background, closest),
+    );
+    return .{
+        .ratio = @round((minimum + maximum) * 50) / 100,
+        .error_value = @round((maximum - minimum) * 50) / 100,
+        .minimum = minimum,
+        .maximum = maximum,
+    };
+}
+
+fn stylusContrastRatio(
+    foreground_input: native_value.Color,
+    background: native_value.Color,
+) native_color.Error!f64 {
+    var foreground = foreground_input;
+    const foreground_channels = try native_color.toRgb(foreground);
+    if (foreground_channels[3] < 1) foreground = try stylusBlend(foreground, background);
+    const background_luminosity = try colorLuminosity(background) + 0.05;
+    const foreground_luminosity = try colorLuminosity(foreground) + 0.05;
+    const ratio = @max(background_luminosity, foreground_luminosity) /
+        @min(background_luminosity, foreground_luminosity);
+    return @round(ratio * 10) / 10;
+}
+
+fn stylusBlend(
+    foreground: native_value.Color,
+    background: native_value.Color,
+) native_color.Error!native_value.Color {
+    const top = try native_color.toRgb(foreground);
+    const bottom = try native_color.toRgb(background);
+    return native_color.rgb(
+        @round(top[0] * top[3] + bottom[0] * (1 - top[3])),
+        @round(top[1] * top[3] + bottom[1] * (1 - top[3])),
+        @round(top[2] * top[3] + bottom[2] * (1 - top[3])),
+        top[3] + bottom[3] - top[3] * bottom[3],
+    );
 }
 
 fn isUnicodeRangeValue(raw: []const u8) bool {
