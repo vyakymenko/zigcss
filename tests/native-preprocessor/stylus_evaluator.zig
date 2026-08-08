@@ -1081,6 +1081,155 @@ test "native Stylus image dimensions preserve resolver byte limits" {
     );
 }
 
+test "native Stylus JSON owns legacy variables, hashes, and optional assets" {
+    const files = [_]FixtureFile{
+        .{
+            .path = "vars.json",
+            .contents =
+            \\{
+            \\  "nope": "none",
+            \\  "color": "#abc",
+            \\  "length": "10px",
+            \\  "count": 2,
+            \\  "nested": { "value": "ready" },
+            \\  "enabled": true
+            \\}
+            ,
+        },
+        .{
+            .path = "local.json",
+            .contents = "{\"theme\":{\"color\":\"blue\"},\"size\":5}",
+        },
+        .{
+            .path = "strings.json",
+            .contents = "{\"color\":\"#abc\",\"length\":\"10px\"}",
+        },
+    };
+    const input =
+        \\json('vars.json')
+        \\.global
+        \\  ident: nope
+        \\  color: color
+        \\  length: length
+        \\  numeric: count * 2
+        \\  nested: nested-value
+        \\  truth: enabled
+        \\.local
+        \\  prefix = '$'
+        \\  json('local.json', true, prefix)
+        \\  color: $theme-color
+        \\  size: $size * 2
+        \\.hash
+        \\  vars = json('vars.json', { hash: true })
+        \\  ident: vars.nope
+        \\  color: vars.color
+        \\  length: vars.length
+        \\  numeric: vars.count * 2
+        \\  nested: vars.nested.value
+        \\  truth: vars.enabled
+        \\.strings
+        \\  vars = json('strings.json', { hash: true, leave-strings: true })
+        \\  color: vars.color
+        \\  length: vars.length
+        \\.outside
+        \\  color: $theme-color
+        \\.optional
+        \\  vars = json('missing.json', { hash: true, optional: true })
+        \\  missing: typeof(vars)
+    ;
+    var result = try compileFixture(std.testing.allocator, input, &files, .{}, .{});
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".global{ident:none;color:#abc;length:10px;numeric:4;nested:ready;truth:true}" ++
+            ".local{color:#00f;size:10}.hash{ident:none;color:#abc;length:10px;" ++
+            "numeric:4;nested:ready;truth:true}.strings{color:'#abc';length:'10px'}" ++
+            ".outside{color:$theme-color}.optional{missing:'null'}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, files.len), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), result.edges().len);
+    for (result.dependencies()) |dependency| {
+        try std.testing.expectEqual(resolver.DependencyKind.reference, dependency.kind);
+    }
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+    try std.testing.expect(result.map() != null);
+}
+
+test "native Stylus JSON rejects malformed and unconfined assets" {
+    try expectFixtureRejection(
+        "vars = json('invalid.json', { hash: true })\n",
+        &.{.{ .path = "invalid.json", .contents = "{\"value\":" }},
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus JSON asset is invalid",
+        0,
+        1,
+    );
+    try expectFixtureRejection(
+        "vars = json('missing.json', { hash: true })\n",
+        &.{},
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus JSON asset was not found",
+        0,
+        0,
+    );
+    try expectFixtureRejection(
+        "vars = json('array.json', { hash: true })\n",
+        &.{.{ .path = "array.json", .contents = "{\"values\":[1,2]}" }},
+        error.UnsupportedFeature,
+        .unsupported_feature,
+        "native Stylus JSON arrays are unavailable",
+        0,
+        1,
+    );
+    const invalid_options = "vars = json('data.json', { hash: false })\n";
+    try expectSemanticRejection(
+        invalid_options,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        0,
+    );
+    for ([_][]const u8{ "../escape.json", "https://example.invalid/data.json" }) |target| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "vars = json('{s}', {{ hash: true }})\n",
+            .{target},
+        );
+        defer std.testing.allocator.free(input);
+        try expectFixtureRejection(
+            input,
+            &.{},
+            error.InvalidOperation,
+            .invalid_operation,
+            "native Stylus JSON asset load was rejected",
+            0,
+            0,
+        );
+    }
+}
+
+test "native Stylus JSON preserves resolver byte limits" {
+    const input = "vars = json('data.json', { hash: true })\nbody\n  value: vars.value\n";
+    const json = "{\"value\":1}";
+    const files = [_]FixtureFile{.{ .path = "data.json", .contents = json }};
+    var terminal = resolver.Limits{};
+    terminal.max_total_bytes = json.len;
+    var result = try compileFixture(std.testing.allocator, input, &files, terminal, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings("body{value:1}", result.css());
+    try std.testing.expectEqual(@as(u64, json.len), result.stats().bytes);
+
+    var over_limit = terminal;
+    over_limit.max_total_bytes -= 1;
+    try std.testing.expectError(
+        error.TotalLimitExceeded,
+        compileFixture(std.testing.allocator, input, &files, over_limit, .{}),
+    );
+}
+
 test "native Stylus callable control slice fails closed with exact diagnostics" {
     const missing =
         \\.a

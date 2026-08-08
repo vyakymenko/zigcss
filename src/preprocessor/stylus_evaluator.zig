@@ -1353,7 +1353,7 @@ fn importCandidateUrl(
     return native_resolver.pathToFileUrl(allocator, absolute);
 }
 
-fn imageCandidateUrl(
+fn assetCandidateUrl(
     allocator: std.mem.Allocator,
     base_directory: []const u8,
     target: []const u8,
@@ -1372,6 +1372,11 @@ fn imageCandidateUrl(
 const ImageDimensions = struct {
     width: f64,
     height: f64,
+};
+
+const JsonOptions = struct {
+    leave_strings: bool = false,
+    optional: bool = false,
 };
 
 fn parseImageDimensions(bytes: []const u8) ?ImageDimensions {
@@ -1857,6 +1862,7 @@ const Engine = struct {
     active_callables: std.ArrayList([]const u8) = .empty,
     mutation_aliases: std.ArrayList(MutationAlias) = .empty,
     current_property_bindings: std.ArrayList(CurrentPropertyBinding) = .empty,
+    json_local_names: std.ArrayList([]const u8) = .empty,
     selector_parts: std.ArrayList([]u8) = .empty,
     media_stack: std.ArrayList([]u8) = .empty,
     cache_seen: std.ArrayList([]const u8) = .empty,
@@ -1925,6 +1931,8 @@ const Engine = struct {
         self.extensions.deinit(self.allocator);
         self.mutation_aliases.deinit(self.allocator);
         self.current_property_bindings.deinit(self.allocator);
+        for (self.json_local_names.items) |name| self.allocator.free(name);
+        self.json_local_names.deinit(self.allocator);
         self.block_values.deinit(self.allocator);
         self.active_callables.deinit(self.allocator);
         self.callables.deinit(self.allocator);
@@ -2872,11 +2880,17 @@ const Engine = struct {
         }
         const is_media = emitted_header.len > "@media".len and
             std.ascii.eqlIgnoreCase(emitted_header[0.."@media".len], "@media");
+        const spaced_media_header = if (is_media)
+            try self.spaceMediaFeaturesOwned(at_rule.text.?, emitted_header)
+        else
+            null;
+        defer if (spaced_media_header) |owned| self.allocator.free(owned);
+        const final_header = spaced_media_header orelse emitted_header;
         const media_checkpoint = if (is_media and self.mode == .emit)
             try self.transaction.stagingCheckpoint()
         else
             null;
-        try self.emitMapped(at_rule.text.?, null, emitted_header);
+        try self.emitMapped(at_rule.text.?, null, final_header);
         if (block_id == null) {
             try self.emit(";");
             return;
@@ -2887,7 +2901,7 @@ const Engine = struct {
             return failure;
         };
         if (is_media) {
-            const current_media = try self.formatCurrentMediaOwned(at_rule.text.?, emitted_header);
+            const current_media = try self.formatCurrentMediaOwned(at_rule.text.?, final_header);
             self.media_stack.append(self.allocator, current_media) catch |failure| {
                 self.allocator.free(current_media);
                 return failure;
@@ -3012,6 +3026,20 @@ const Engine = struct {
             if (statement.kind == .expression and statement.text != null) {
                 const statement_raw = try self.sources.slice(statement.text.?);
                 if (try self.executeDefineStatement(
+                    statement.text.?,
+                    statement_raw,
+                    scope,
+                )) {
+                    previous_condition = null;
+                    if (allow_return) {
+                        implicit_result = try self.ownValue(
+                            statement.text.?,
+                            .{ .null_value = {} },
+                        );
+                    }
+                    continue;
+                }
+                if (try self.executeJsonStatement(
                     statement.text.?,
                     statement_raw,
                     scope,
@@ -4912,6 +4940,21 @@ const Engine = struct {
         if (nameEql(name, "operate")) {
             return self.evaluateOperateBuiltin(span, raw, call, scope);
         }
+        if (nameEql(name, "json")) {
+            var json_arguments = try self.evaluateCallArguments(span, raw, call, scope);
+            defer json_arguments.deinit(self.allocator);
+            if (json_arguments.items.len != 2 or json_arguments.items[1].* != .map) {
+                try self.transaction.report(
+                    .err,
+                    .unsupported_feature,
+                    span,
+                    "native Stylus legacy json() is supported only as a statement",
+                    &.{},
+                );
+                return error.UnsupportedFeature;
+            }
+            return self.evaluateJsonBuiltin(span, json_arguments.items, scope);
+        }
         var arguments = if (nameEql(name, "join"))
             try self.evaluateJoinCallArguments(span, raw, call, scope)
         else
@@ -5468,7 +5511,7 @@ const Engine = struct {
                 try self.reportImageAssetRejected(span);
                 return error.InvalidOperation;
             };
-            const candidate_url = imageCandidateUrl(
+            const candidate_url = assetCandidateUrl(
                 self.allocator,
                 parent_directory,
                 target,
@@ -5477,7 +5520,7 @@ const Engine = struct {
             if (try self.loadImageCandidate(candidate_url, ancestry, span)) |loaded| return loaded;
         }
         for (self.limits.asset_load_paths) |load_path| {
-            const candidate_url = imageCandidateUrl(
+            const candidate_url = assetCandidateUrl(
                 self.allocator,
                 load_path,
                 target,
@@ -5559,6 +5602,398 @@ const Engine = struct {
             .separator = .space,
             .truthy_override = if (pixels) null else false,
         } });
+    }
+
+    fn executeJsonStatement(
+        self: *Engine,
+        span: native_source.Span,
+        raw_input: []const u8,
+        scope: *native_environment.ScopeId,
+    ) Error!bool {
+        const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+        const call = parseCall(raw) orelse return false;
+        const name = raw[call.name.start..call.name.end];
+        if (!nameEql(name, "json") or self.findCallable(name) != null) return false;
+
+        var arguments = try self.evaluateCallArguments(span, raw, call, scope.*);
+        defer arguments.deinit(self.allocator);
+        if (arguments.items.len < 1 or arguments.items.len > 3 or
+            arguments.items[0].* != .string)
+        {
+            return self.invalidBuiltinArguments(span);
+        }
+        if (arguments.items.len >= 2 and arguments.items[1].* == .map) {
+            if (arguments.items.len != 2) return self.invalidBuiltinArguments(span);
+            _ = try self.evaluateJsonBuiltin(span, arguments.items, scope.*);
+            return true;
+        }
+        if (arguments.items.len >= 2 and arguments.items[1].* != .boolean) {
+            return self.invalidBuiltinArguments(span);
+        }
+        if (arguments.items.len == 3 and arguments.items[2].* != .string) {
+            return self.invalidBuiltinArguments(span);
+        }
+
+        const converted = try self.loadJsonValue(
+            span,
+            arguments.items[0].string.bytes,
+            .{},
+            scope.*,
+        );
+        if (converted.* != .map) return self.invalidJsonAsset(span);
+        const local = arguments.items.len >= 2 and arguments.items[1].boolean;
+        const target_scope = if (local)
+            scope
+        else
+            self.global_scope orelse return error.InvalidDocument;
+        const prefix = if (arguments.items.len == 3)
+            arguments.items[2].string.bytes
+        else
+            "";
+        try self.bindJsonVariables(span, target_scope, converted.map, prefix, local);
+        return true;
+    }
+
+    fn evaluateJsonBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        arguments: []const *const native_value.Value,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        if (arguments.len != 2 or arguments[0].* != .string or
+            arguments[1].* != .map)
+        {
+            return self.invalidBuiltinArguments(span);
+        }
+        const options = try self.parseJsonOptions(span, arguments[1].map);
+        return self.loadJsonValue(span, arguments[0].string.bytes, options, scope);
+    }
+
+    fn parseJsonOptions(
+        self: *Engine,
+        span: native_source.Span,
+        map: native_value.Map,
+    ) Error!JsonOptions {
+        var options = JsonOptions{};
+        var has_hash = false;
+        for (map.entries) |entry| {
+            if (entry.key != .string or entry.value != .boolean) {
+                return self.invalidBuiltinArguments(span);
+            }
+            const key = entry.key.string.bytes;
+            if (nameEql(key, "hash")) {
+                if (has_hash or !entry.value.boolean) return self.invalidBuiltinArguments(span);
+                has_hash = true;
+            } else if (nameEql(key, "leave-strings")) {
+                options.leave_strings = entry.value.boolean;
+            } else if (nameEql(key, "optional")) {
+                options.optional = entry.value.boolean;
+            } else {
+                return self.invalidBuiltinArguments(span);
+            }
+        }
+        if (!has_hash) return self.invalidBuiltinArguments(span);
+        return options;
+    }
+
+    fn loadJsonValue(
+        self: *Engine,
+        span: native_source.Span,
+        target: []const u8,
+        options: JsonOptions,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        if (target.len == 0 or std.mem.indexOfAny(u8, target, "\x00\r\n?#") != null or
+            hasNonLocalScheme(target))
+        {
+            try self.reportJsonAssetRejected(span);
+            return error.InvalidOperation;
+        }
+
+        var loaded = (try self.loadJsonAsset(span, target)) orelse {
+            if (options.optional) return self.ownValue(span, .{ .null_value = {} });
+            try self.transaction.report(
+                .err,
+                .invalid_operation,
+                span,
+                "native Stylus JSON asset was not found",
+                &.{},
+            );
+            return error.InvalidOperation;
+        };
+        defer loaded.deinit();
+        try self.transaction.consumeOperations(@intCast(loaded.contents.len));
+        var parsed = std.json.parseFromSlice(
+            std.json.Value,
+            self.allocator,
+            loaded.contents,
+            .{ .max_value_len = loaded.contents.len },
+        ) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return self.invalidJsonAsset(span),
+        };
+        defer parsed.deinit();
+        if (parsed.value != .object) return self.invalidJsonAsset(span);
+        return self.convertJsonValue(span, parsed.value, options.leave_strings, scope, 0);
+    }
+
+    fn convertJsonValue(
+        self: *Engine,
+        span: native_source.Span,
+        input: std.json.Value,
+        leave_strings: bool,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        if (depth >= self.limits.max_expression_depth) {
+            try self.reportExpressionDepth(span);
+            return error.ExpressionDepthExceeded;
+        }
+        try self.transaction.consumeOperations(1);
+        return switch (input) {
+            .null => self.ownValue(span, .{ .null_value = {} }),
+            .bool => |value| self.ownValue(span, .{ .boolean = value }),
+            .integer => |value| self.ownUnitlessNumber(span, @floatFromInt(value)),
+            .float => |value| if (std.math.isFinite(value))
+                self.ownUnitlessNumber(span, value)
+            else
+                self.invalidJsonAsset(span),
+            .number_string => |bytes| blk: {
+                const value = std.fmt.parseFloat(f64, bytes) catch
+                    return self.invalidJsonAsset(span);
+                if (!std.math.isFinite(value)) return self.invalidJsonAsset(span);
+                break :blk self.ownUnitlessNumber(span, value);
+            },
+            .string => |bytes| if (leave_strings)
+                self.ownValue(span, .{ .string = .{ .bytes = bytes, .quoted = true } })
+            else
+                self.convertJsonString(span, bytes, scope, depth + 1),
+            .array => self.unsupportedJsonArray(span),
+            .object => |object| blk: {
+                var entries: std.ArrayList(native_value.Entry) = .empty;
+                defer entries.deinit(self.allocator);
+                try entries.ensureTotalCapacity(self.allocator, object.count());
+                var iterator = object.iterator();
+                while (iterator.next()) |entry| {
+                    const value = try self.convertJsonValue(
+                        span,
+                        entry.value_ptr.*,
+                        leave_strings,
+                        scope,
+                        depth + 1,
+                    );
+                    entries.appendAssumeCapacity(.{
+                        .key = .{ .string = .{
+                            .bytes = entry.key_ptr.*,
+                            .quoted = true,
+                        } },
+                        .value = value.*,
+                    });
+                }
+                break :blk self.ownValue(span, .{ .map = .{ .entries = entries.items } });
+            },
+        };
+    }
+
+    fn convertJsonString(
+        self: *Engine,
+        span: native_source.Span,
+        bytes: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        if (parseCall(bytes)) |call| {
+            const name = bytes[call.name.start..call.name.end];
+            if (nameEql(name, "rgb") or nameEql(name, "rgba") or
+                nameEql(name, "hsl") or nameEql(name, "hsla"))
+            {
+                return (try self.evaluateBuiltin(span, bytes, call, scope)) orelse
+                    self.invalidJsonAsset(span);
+            }
+        }
+        return self.evaluateConvertedString(span, bytes, depth);
+    }
+
+    fn bindJsonVariables(
+        self: *Engine,
+        span: native_source.Span,
+        scope: *native_environment.ScopeId,
+        map: native_value.Map,
+        prefix: []const u8,
+        local: bool,
+    ) Error!void {
+        var name: std.ArrayList(u8) = .empty;
+        defer name.deinit(self.allocator);
+        try self.appendTemporary(&name, span, prefix);
+        try self.bindJsonMap(span, scope, map, &name, prefix.len, local);
+    }
+
+    fn bindJsonMap(
+        self: *Engine,
+        span: native_source.Span,
+        scope: *native_environment.ScopeId,
+        map: native_value.Map,
+        name: *std.ArrayList(u8),
+        prefix_len: usize,
+        local: bool,
+    ) Error!void {
+        for (map.entries) |entry| {
+            if (entry.key != .string or entry.key.string.bytes.len == 0) {
+                return self.invalidJsonAsset(span);
+            }
+            const checkpoint = name.items.len;
+            defer name.shrinkRetainingCapacity(checkpoint);
+            if (name.items.len > prefix_len) try self.appendTemporary(name, span, "-");
+            try self.appendTemporary(name, span, entry.key.string.bytes);
+            if (entry.value == .map) {
+                try self.bindJsonMap(span, scope, entry.value.map, name, prefix_len, local);
+                continue;
+            }
+            if (!validVariableName(name.items)) return self.invalidJsonAsset(span);
+            if (local) try self.recordJsonLocalName(name.items);
+            self.detachMutationAlias(name.items);
+            scope.* = try self.setBinding(scope.*, name.items, try self.ownValue(span, entry.value), span);
+        }
+    }
+
+    fn recordJsonLocalName(self: *Engine, name: []const u8) Error!void {
+        for (self.json_local_names.items) |existing| {
+            if (std.mem.eql(u8, existing, name)) return;
+        }
+        const owned = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned);
+        try self.json_local_names.append(self.allocator, owned);
+    }
+
+    fn isJsonLocalName(self: *const Engine, name: []const u8) bool {
+        for (self.json_local_names.items) |existing| {
+            if (std.mem.eql(u8, existing, name)) return true;
+        }
+        return false;
+    }
+
+    fn loadJsonAsset(
+        self: *Engine,
+        span: native_source.Span,
+        target: []const u8,
+    ) Error!?native_resolver.Loaded {
+        const source_file = try self.sources.get(span.source);
+        const parent_path = native_resolver.fileUrlToPath(self.allocator, source_file.name) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => null,
+        };
+        defer if (parent_path) |path| self.allocator.free(path);
+        const ancestry: []const []const u8 = if (parent_path != null)
+            &.{source_file.name}
+        else
+            &.{};
+
+        if (parent_path) |path| {
+            const parent_directory = std.fs.path.dirname(path) orelse {
+                try self.reportJsonAssetRejected(span);
+                return error.InvalidOperation;
+            };
+            const candidate_url = assetCandidateUrl(
+                self.allocator,
+                parent_directory,
+                target,
+            ) catch |failure| return self.failJsonCandidate(failure, span);
+            defer self.allocator.free(candidate_url);
+            if (try self.loadJsonCandidate(candidate_url, ancestry, span)) |loaded| return loaded;
+        }
+        for (self.limits.asset_load_paths) |load_path| {
+            const candidate_url = assetCandidateUrl(
+                self.allocator,
+                load_path,
+                target,
+            ) catch |failure| return self.failJsonCandidate(failure, span);
+            defer self.allocator.free(candidate_url);
+            if (try self.loadJsonCandidate(candidate_url, ancestry, span)) |loaded| return loaded;
+        }
+        return null;
+    }
+
+    fn loadJsonCandidate(
+        self: *Engine,
+        candidate_url: []const u8,
+        ancestry: []const []const u8,
+        span: native_source.Span,
+    ) Error!?native_resolver.Loaded {
+        const session = try self.transaction.resolverSession();
+        return session.load(candidate_url, .{
+            .kind = .reference,
+            .ancestry = ancestry,
+        }) catch |failure| switch (failure) {
+            error.Missing, error.IsDirectory => null,
+            else => return self.failJsonCandidate(failure, span),
+        };
+    }
+
+    fn failJsonCandidate(
+        self: *Engine,
+        failure: native_resolver.Error,
+        span: native_source.Span,
+    ) Error {
+        switch (failure) {
+            error.OutOfMemory, error.Cancelled => return failure,
+            error.AttemptLimitExceeded,
+            error.DepthLimitExceeded,
+            error.FileCountExceeded,
+            error.FileLimitExceeded,
+            error.TotalLimitExceeded,
+            => {
+                self.reportResource(
+                    span,
+                    "native Stylus JSON asset resource limit exceeded",
+                ) catch |err| return err;
+                return failure;
+            },
+            else => {
+                self.reportJsonAssetRejected(span) catch |err| return err;
+                return error.InvalidOperation;
+            },
+        }
+    }
+
+    fn invalidJsonAsset(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.transaction.report(
+            .err,
+            .invalid_operation,
+            span,
+            "native Stylus JSON asset is invalid",
+            &.{},
+        ) catch |failure| return failure;
+        return error.InvalidOperation;
+    }
+
+    fn unsupportedJsonArray(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.transaction.report(
+            .err,
+            .unsupported_feature,
+            span,
+            "native Stylus JSON arrays are unavailable",
+            &.{},
+        ) catch |failure| return failure;
+        return error.UnsupportedFeature;
+    }
+
+    fn reportJsonAssetRejected(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error!void {
+        try self.transaction.report(
+            .err,
+            .invalid_operation,
+            span,
+            "native Stylus JSON asset load was rejected",
+            &.{},
+        );
     }
 
     fn executeDefineStatement(
@@ -6850,7 +7285,7 @@ const Engine = struct {
                         try self.appendTemporary(&output, span, replacement);
                         continue;
                     }
-                    if (name[0] == '$') {
+                    if (name[0] == '$' and !self.isJsonLocalName(name)) {
                         try self.transaction.report(
                             .err,
                             .undefined_variable,
@@ -7106,6 +7541,51 @@ const Engine = struct {
             cursor += 1;
         }
         try self.appendTemporary(&output, span, ")");
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn spaceMediaFeaturesOwned(
+        self: *Engine,
+        span: native_source.Span,
+        header: []const u8,
+    ) Error![]u8 {
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var depth: usize = 0;
+        var quote: u8 = 0;
+        var escaped = false;
+        for (header, 0..) |byte, index| {
+            try self.appendTemporary(&output, span, header[index .. index + 1]);
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (quote != 0) {
+                if (byte == '\\') {
+                    escaped = true;
+                } else if (byte == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                quote = byte;
+                continue;
+            }
+            if (byte == '(') {
+                depth += 1;
+                continue;
+            }
+            if (byte == ')') {
+                if (depth > 0) depth -= 1;
+                continue;
+            }
+            if (byte == ':' and depth > 0 and index + 1 < header.len and
+                !std.ascii.isWhitespace(header[index + 1]))
+            {
+                try self.appendTemporary(&output, span, " ");
+            }
+        }
         return output.toOwnedSlice(self.allocator);
     }
 
