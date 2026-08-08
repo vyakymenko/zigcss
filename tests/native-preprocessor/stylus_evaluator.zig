@@ -713,6 +713,43 @@ test "native Stylus evaluates bounded convert and match builtins" {
     );
 }
 
+test "native Stylus join preserves nested lists and HSL string identity" {
+    const input =
+        \\a = 1 2
+        \\b = 3 4
+        \\.probe
+        \\  nested: join(', ', a b)
+        \\  flat: join(',', 1 2 3)
+        \\  expression: join(',', 1 + 2)
+        \\  colors: join(', ', hsl(0, 0%, 0%), hsla(120, 20%, 80%, 1))
+        \\  rgb: join(', ', #fff #000)
+        \\  scalar: join(',', 1)
+        \\  empty: join(',') == null
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        ".probe{nested:'1 2, 3 4';flat:'1,2,3';expression:'3';" ++
+            "colors:'hsla(0,0%,0%,1), hsla(120,20%,80%,1)';" ++
+            "rgb:'#fff, #000';scalar:'1';empty:true}",
+        compiled.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), compiled.nativeDiagnostics().len);
+    try std.testing.expect(compiled.map() != null);
+
+    const invalid =
+        \\.probe
+        \\  value: join(1, 2)
+    ;
+    try expectSemanticRejection(
+        invalid,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid, "join").?),
+    );
+}
+
 test "native Stylus invokes a provider-prefixed root block mixin" {
     const input =
         \\wrapper()

@@ -4912,7 +4912,10 @@ const Engine = struct {
         if (nameEql(name, "operate")) {
             return self.evaluateOperateBuiltin(span, raw, call, scope);
         }
-        var arguments = try self.evaluateCallArguments(span, raw, call, scope);
+        var arguments = if (nameEql(name, "join"))
+            try self.evaluateJoinCallArguments(span, raw, call, scope)
+        else
+            try self.evaluateCallArguments(span, raw, call, scope);
         defer arguments.deinit(self.allocator);
 
         if (nameEql(name, "image-size")) {
@@ -5912,6 +5915,45 @@ const Engine = struct {
         return output;
     }
 
+    fn evaluateJoinCallArguments(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!std.ArrayList(*const native_value.Value) {
+        var output: std.ArrayList(*const native_value.Value) = .empty;
+        errdefer output.deinit(self.allocator);
+        var ranges = try splitTopLevel(self.allocator, raw[call.arguments.start..call.arguments.end], ',');
+        defer ranges.deinit(self.allocator);
+        if (call.arguments.start == call.arguments.end) ranges.clearRetainingCapacity();
+        try output.ensureTotalCapacity(self.allocator, ranges.items.len);
+        for (ranges.items, 0..) |range, index| {
+            const argument = std.mem.trim(
+                u8,
+                raw[call.arguments.start + range.start .. call.arguments.start + range.end],
+                " \t\r\n\x0c",
+            );
+            if (argument.len == 0) {
+                try self.reportInvalidArguments(span);
+                return error.InvalidArguments;
+            }
+            if (index == 0) {
+                output.appendAssumeCapacity(try self.evaluateValue(span, argument, scope, 0));
+                continue;
+            }
+
+            var space_items = try splitTopLevelWhitespace(self.allocator, argument);
+            defer space_items.deinit(self.allocator);
+            const value = if (space_items.items.len > 1 and !joinArgumentIsOperation(argument))
+                try self.evaluateList(span, argument, space_items.items, .space, scope, 0)
+            else
+                try self.evaluateValue(span, argument, scope, 0);
+            output.appendAssumeCapacity(value);
+        }
+        return output;
+    }
+
     fn evaluateMatchArguments(
         self: *Engine,
         span: native_source.Span,
@@ -6191,7 +6233,7 @@ const Engine = struct {
                     @as([]const native_value.Value, &.{argument.*});
                 for (items) |*item| {
                     if (emitted > 0) try self.appendTemporary(&output, span, separator);
-                    const serialized = try self.serializeValueOwned(item, .interpolation, span);
+                    const serialized = try self.serializeJoinValueOwned(item, span);
                     defer self.allocator.free(serialized);
                     try self.appendTemporary(&output, span, serialized);
                     emitted += 1;
@@ -6229,6 +6271,50 @@ const Engine = struct {
             return self.ownValue(span, .{ .string = .{ .bytes = output.items } });
         }
         return self.invalidBuiltinArguments(span);
+    }
+
+    fn serializeJoinValueOwned(
+        self: *Engine,
+        input: *const native_value.Value,
+        span: native_source.Span,
+    ) Error![]u8 {
+        if (input.* != .color or input.color.space != .hsl) {
+            return self.serializeValueOwned(input, .interpolation, span);
+        }
+
+        const channels = native_color.toHsl(input.color) catch {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        };
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, "hsla(");
+        var buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
+        const hue = serializeStylusNumber(channels[0], &buffer) catch {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        };
+        try self.appendTemporary(&output, span, hue);
+        try self.appendTemporary(&output, span, ",");
+        const saturation = serializeStylusNumber(@round(channels[1]), &buffer) catch {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        };
+        try self.appendTemporary(&output, span, saturation);
+        try self.appendTemporary(&output, span, "%,");
+        const lightness = serializeStylusNumber(@round(channels[2]), &buffer) catch {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        };
+        try self.appendTemporary(&output, span, lightness);
+        try self.appendTemporary(&output, span, "%,");
+        const alpha = serializeStylusNumber(channels[3], &buffer) catch {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        };
+        try self.appendTemporary(&output, span, alpha);
+        try self.appendTemporary(&output, span, ")");
+        return output.toOwnedSlice(self.allocator);
     }
 
     fn evaluateConvertedString(
@@ -7618,6 +7704,19 @@ fn splitTopLevelWhitespace(
         try output.append(allocator, .{ .start = item_start, .end = raw.len });
     }
     return output;
+}
+
+fn joinArgumentIsOperation(raw: []const u8) bool {
+    return parseAssignment(raw) != null or
+        parseDefinedTernary(raw) != null or
+        parseGenericTernary(raw) != null or
+        parseUnitCast(raw) != null or
+        findLogicalOperator(raw, .or_value) != null or
+        findLogicalOperator(raw, .and_value) != null or
+        findGenericBinary(raw) != null or
+        findRangeOperator(raw) != null or
+        findComparison(raw) != null or
+        unaryPrefix(raw) != null;
 }
 
 fn parseUnitCast(raw: []const u8) ?UnitCast {
