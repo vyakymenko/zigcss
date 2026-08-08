@@ -820,6 +820,57 @@ test "native Stylus reconstructs transparent colors over bounded backdrops" {
     );
 }
 
+test "native Stylus evaluates URL expressions without loading assets" {
+    const input =
+        \\brown = #462323
+        \\body
+        \\  empty url()
+        \\  tokens url(foo bar)
+        \\  commas url(foo, bar)
+        \\  background url("/images/foo.png")
+        \\  background url(/images/foo.png)
+        \\  dir = '/images'
+        \\  img = 'foo.png'
+        \\  background url(dir/foo.png)
+        \\  background url(dir/img)
+        \\  background url('/images/' + img)
+        \\  background url(dir'/foo.png')
+        \\  background url(dir + '/foo.png')
+        \\  background url(dir + '/' + img)
+        \\  list = foo bar
+        \\  background url('/images/' + list[0] + '.png')
+        \\  background url(http://foo.com/images/bar.png)
+        \\  background url(//foo.com/images/bar.png)
+        \\  background url(/some/brown/white/icon.png)
+        \\  color brown
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{empty:url(\"\");tokens:url(\"foobar\");commas:url(\"foo,bar\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"/images/foo.png\");" ++
+            "background:url(\"http://foo.com/images/bar.png\");" ++
+            "background:url(\"//foo.com/images/bar.png\");" ++
+            "background:url(\"/some/brown/white/icon.png\");color:#462323}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus evaluates the finite contrast result object and CSS fallback" {
     const input =
         \\.probe

@@ -4979,11 +4979,6 @@ const Engine = struct {
                 try self.reportInvalidArguments(span);
                 return error.InvalidArguments;
             }
-            if (nameEql(name, "url")) {
-                const normalized = try self.normalizeUrlQuotesOwned(span, input);
-                defer self.allocator.free(normalized);
-                return self.ownValue(span, .{ .string = .{ .bytes = normalized } });
-            }
             return self.ownValue(span, .{ .string = .{ .bytes = input } });
         }
         if (parseBareCall(input)) |call| {
@@ -5251,6 +5246,9 @@ const Engine = struct {
         scope: native_environment.ScopeId,
     ) Error!?*const native_value.Value {
         const name = raw[call.name.start..call.name.end];
+        if (nameEql(name, "url")) {
+            return try self.evaluateUrlBuiltin(span, raw, call, scope);
+        }
         if (nameEql(name, "selector")) {
             return try self.evaluateSelectorBuiltin(span, raw, call, scope);
         }
@@ -8660,6 +8658,91 @@ const Engine = struct {
             }
         }
         return output.toOwnedSlice(self.allocator);
+    }
+
+    fn evaluateUrlBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        // Stylus evaluates URL expression nodes but never resolves the URL as
+        // an asset. The compiler then concatenates the nodes inside one quote.
+        const arguments = raw[call.arguments.start..call.arguments.end];
+        try self.transaction.consumeOperations(@intCast(arguments.len));
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, "url(\"");
+        try self.appendUrlExpression(&output, span, arguments, scope);
+        try self.appendTemporary(&output, span, "\")");
+        return self.ownValue(span, .{ .string = .{ .bytes = output.items } });
+    }
+
+    fn appendUrlExpression(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!void {
+        var cursor: usize = 0;
+        while (cursor < raw.len) {
+            const byte = raw[cursor];
+            if (std.ascii.isWhitespace(byte) or byte == '+') {
+                cursor += 1;
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                const closing = closingQuote(raw, cursor) orelse return error.InvalidDocument;
+                const value = try self.evaluateValue(span, raw[cursor .. closing + 1], scope, 0);
+                const serialized = try self.serializeValueOwned(value, .interpolation, span);
+                defer self.allocator.free(serialized);
+                try self.appendTemporary(output, span, serialized);
+                cursor = closing + 1;
+                continue;
+            }
+            if (byte == '{') {
+                const closing = matchingCurly(raw, cursor) orelse return error.InvalidDocument;
+                const value = try self.evaluateValue(span, raw[cursor + 1 .. closing], scope, 0);
+                const serialized = try self.serializeValueOwned(value, .interpolation, span);
+                defer self.allocator.free(serialized);
+                try self.appendTemporary(output, span, serialized);
+                cursor = closing + 1;
+                continue;
+            }
+            if (isNameStart(raw, cursor)) {
+                const name_end = nameEnd(raw, cursor);
+                const name = raw[cursor..name_end];
+                var token_end = memberChainEnd(raw, name_end);
+                var opening = name_end;
+                while (opening < raw.len and std.ascii.isWhitespace(raw[opening])) {
+                    opening += 1;
+                }
+                if (opening < raw.len and raw[opening] == '(') {
+                    const closing = matchingParen(raw, opening) orelse
+                        return error.InvalidDocument;
+                    token_end = memberChainEnd(raw, closing + 1);
+                }
+                const ignore_color = native_color.parseLiteral(name) != null;
+                const should_evaluate = !ignore_color and
+                    ((try self.lookupBinding(scope, name)) != null or
+                        self.findCallable(name) != null or isBuiltinCallableName(name) or
+                        nameEql(name, "url") or name[0] == '$');
+                if (should_evaluate) {
+                    const value = try self.evaluateValue(span, raw[cursor..token_end], scope, 0);
+                    const serialized = try self.serializeValueOwned(value, .interpolation, span);
+                    defer self.allocator.free(serialized);
+                    try self.appendTemporary(output, span, serialized);
+                } else {
+                    try self.appendTemporary(output, span, raw[cursor..token_end]);
+                }
+                cursor = token_end;
+                continue;
+            }
+            try self.appendTemporary(output, span, raw[cursor .. cursor + 1]);
+            cursor += 1;
+        }
     }
 
     fn normalizeUrlQuotesOwned(
