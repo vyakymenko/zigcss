@@ -16,6 +16,7 @@ const ManifestCase = struct {
     outcome: []const u8,
     entry: []const u8,
     expected: std.json.Value,
+    style: []const u8,
 };
 
 const Manifest = struct {
@@ -75,9 +76,23 @@ fn compileNative(
     defer document.deinit();
     var transaction = try evaluator.Transaction.init(allocator, &sources, &session, .{}, .{});
     defer transaction.deinit();
-    try stylus_evaluator.evaluate(&sources, &document, &transaction, .{
-        .asset_load_paths = &.{images_root},
-    });
+    const output_style: stylus_evaluator.OutputStyle = if (std.mem.eql(
+        u8,
+        case.style,
+        "expanded",
+    ))
+        .expanded
+    else if (std.mem.eql(u8, case.style, "compressed"))
+        .compressed
+    else
+        return error.InvalidConformanceCase;
+    try stylus_evaluator.evaluateWithOptions(
+        &sources,
+        &document,
+        &transaction,
+        .{ .output_style = output_style },
+        .{ .asset_load_paths = &.{images_root} },
+    );
     return transaction.finish(.{ .format = .pretty, .source_map = true });
 }
 
@@ -208,7 +223,7 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     var nondeterministic_count: usize = 0;
     var first_nonconforming_id: ?[]const u8 = null;
     var exact_case_id_hash = std.hash.Wyhash.init(0);
-    var prior_exact_case_id_hash = std.hash.Wyhash.init(0);
+    var previous_exact_case_id_hash = std.hash.Wyhash.init(0);
     for (parsed.value.cases) |case| {
         if (!std.mem.eql(u8, case.outcome, "success")) continue;
         success_count += 1;
@@ -258,9 +273,9 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
             exact_success_count += 1;
             exact_case_id_hash.update(case.id);
             exact_case_id_hash.update("\x00");
-            if (!std.mem.eql(u8, case.id, "stylus-official-comments")) {
-                prior_exact_case_id_hash.update(case.id);
-                prior_exact_case_id_hash.update("\x00");
+            if (!std.mem.eql(u8, case.id, "stylus-official-compress-units")) {
+                previous_exact_case_id_hash.update(case.id);
+                previous_exact_case_id_hash.update("\x00");
             }
         } else {
             nonconforming_count += 1;
@@ -269,8 +284,8 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
 
     const exact_hash = exact_case_id_hash.final();
-    if (exact_success_count != 205 or nonconforming_count != 121 or
-        exact_hash != 0x0c7ac3765ddfc2fe)
+    if (exact_success_count != 206 or nonconforming_count != 120 or
+        exact_hash != 0xd6ef0ac0cdb28e9a)
     {
         std.debug.print(
             "\nnative Stylus exact inventory: {d} exact, {d} nonconforming, {x:0>16}\n",
@@ -279,11 +294,17 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
     try std.testing.expectEqual(@as(usize, 326), success_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 205), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 121), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0x0c7ac3765ddfc2fe), exact_hash);
-    try std.testing.expectEqual(@as(u64, 0x8e2ca57648ec57b0), prior_exact_case_id_hash.final());
-    try std.testing.expectEqualStrings("stylus-official-compress-units", first_nonconforming_id.?);
+    try std.testing.expectEqual(@as(usize, 206), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 120), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0xd6ef0ac0cdb28e9a), exact_hash);
+    try std.testing.expectEqual(
+        @as(u64, 0x0c7ac3765ddfc2fe),
+        previous_exact_case_id_hash.final(),
+    );
+    try std.testing.expectEqualStrings(
+        "stylus-official-control-blueprint-screen",
+        first_nonconforming_id.?,
+    );
 }
 
 test "native Stylus closes the finite arithmetic conformance family" {
@@ -1524,6 +1545,59 @@ test "native Stylus closes the finite comments conformance family" {
 
     std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
         std.debug.print("\nnative Stylus comments mismatch\n", .{});
+        return failure;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try expectDependencyDeterminism(&first, &second);
+    try std.testing.checkAllAllocationFailures(
+        allocator,
+        exerciseNativeCompilationAllocationFailures,
+        .{ case, input },
+    );
+}
+
+test "native Stylus closes the finite compressed units conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(parsed.value.cases, "stylus-official-compress-units");
+    try std.testing.expectEqualStrings("compress", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+    try std.testing.expectEqualStrings("compressed", case.style);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var first = try compileNative(allocator, case, input);
+    defer first.deinit();
+    var second = try compileNative(allocator, case, input);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
+        std.debug.print("\nnative Stylus compressed units mismatch\n", .{});
         return failure;
     };
     try std.testing.expectEqualStrings(first.css(), second.css());

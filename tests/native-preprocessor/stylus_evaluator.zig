@@ -12,6 +12,15 @@ fn compile(
     input: []const u8,
     limits: stylus_evaluator.Limits,
 ) !evaluator.ValidatedCss {
+    return compileWithOptions(allocator, input, .{}, limits);
+}
+
+fn compileWithOptions(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    options: stylus_evaluator.Options,
+    limits: stylus_evaluator.Limits,
+) !evaluator.ValidatedCss {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     try temporary.dir.makeDir("root");
@@ -39,7 +48,13 @@ fn compile(
         .{},
     );
     defer transaction.deinit();
-    try stylus_evaluator.evaluate(&sources, &document, &transaction, limits);
+    try stylus_evaluator.evaluateWithOptions(
+        &sources,
+        &document,
+        &transaction,
+        options,
+        limits,
+    );
     return transaction.finish(.{ .format = .minified, .source_map = true });
 }
 
@@ -582,6 +597,51 @@ test "native Stylus evaluates the fixed variable property selector expression sl
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
     try std.testing.expect(first.map() != null);
     try std.testing.expect(first.map().?.segments().len >= 9);
+}
+
+test "native Stylus compressed numbers retain the finite provider unit exclusions" {
+    const input =
+        \\body
+        \\  removable-zero 0px
+        \\  percentage-zero 0%
+        \\  seconds-zero 0s
+        \\  milliseconds-zero 0ms
+        \\  degrees-zero 0deg
+        \\  fraction-zero 0fr
+        \\  positive-fraction 0.1
+        \\  negative-fraction -0.1
+        \\  positive-boundary 1.1
+        \\  negative-boundary -1.1
+        \\  joined join(',', 0.1px 0px)
+    ;
+    var expanded = try compile(std.testing.allocator, input, .{});
+    defer expanded.deinit();
+    var compressed = try compileWithOptions(
+        std.testing.allocator,
+        input,
+        .{ .output_style = .compressed },
+        .{},
+    );
+    defer compressed.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{removable-zero:0px;percentage-zero:0%;seconds-zero:0s;" ++
+            "milliseconds-zero:0ms;degrees-zero:0deg;fraction-zero:0fr;" ++
+            "positive-fraction:0.1;negative-fraction:-0.1;" ++
+            "positive-boundary:1.1;negative-boundary:-1.1;joined:'0.1px,0px'}",
+        expanded.css(),
+    );
+    try std.testing.expectEqualStrings(
+        "body{removable-zero:0;percentage-zero:0%;seconds-zero:0s;" ++
+            "milliseconds-zero:0ms;degrees-zero:0deg;fraction-zero:0fr;" ++
+            "positive-fraction:.1;negative-fraction:-.1;" ++
+            "positive-boundary:1.1;negative-boundary:-1.1;joined:'0.1px,0px'}",
+        compressed.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), expanded.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), compressed.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), expanded.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 0), compressed.dependencies().len);
 }
 
 test "native Stylus applies the finite selector scope directive" {

@@ -44,6 +44,15 @@ pub const Limits = struct {
     asset_load_paths: []const []const u8 = &.{},
 };
 
+pub const OutputStyle = enum {
+    expanded,
+    compressed,
+};
+
+pub const Options = struct {
+    output_style: OutputStyle = .expanded,
+};
+
 pub const Error = native_environment.Error ||
     native_evaluator.Error ||
     native_lexer.Error ||
@@ -72,6 +81,16 @@ pub fn evaluate(
     sources: *native_source.Table,
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
+    limits: Limits,
+) Error!void {
+    return evaluateWithOptions(sources, document, transaction, .{}, limits);
+}
+
+pub fn evaluateWithOptions(
+    sources: *native_source.Table,
+    document: *const native_syntax.Document,
+    transaction: *native_evaluator.Transaction,
+    options: Options,
     limits: Limits,
 ) Error!void {
     errdefer transaction.abort();
@@ -218,6 +237,7 @@ pub fn evaluate(
                 active_document,
                 transaction,
                 limits,
+                options,
                 .discover_cache,
                 &cache_seed,
                 &discovered,
@@ -248,6 +268,7 @@ pub fn evaluate(
         active_document,
         transaction,
         limits,
+        options,
         .emit,
         &cache_plan,
         null,
@@ -1884,6 +1905,7 @@ const Engine = struct {
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
     limits: Limits,
+    options: Options,
     values: native_value.Store,
     environment: native_environment.Environment,
     callables: std.ArrayList(Callable) = .empty,
@@ -1927,6 +1949,7 @@ const Engine = struct {
         document: *const native_syntax.Document,
         transaction: *native_evaluator.Transaction,
         limits: Limits,
+        options: Options,
         mode: EngineMode,
         cache_seed: *const CachePlan,
         cache_discovered: ?*CachePlan,
@@ -1943,6 +1966,7 @@ const Engine = struct {
             .document = document,
             .transaction = transaction,
             .limits = limits,
+            .options = options,
             .mode = mode,
             .cache_seed = cache_seed,
             .cache_discovered = cache_discovered,
@@ -7683,7 +7707,12 @@ const Engine = struct {
         span: native_source.Span,
     ) Error![]u8 {
         if (input.* != .color or input.color.space != .hsl) {
-            return self.serializeValueOwned(input, .interpolation, span);
+            return self.serializeValueForStyleOwned(
+                input,
+                .interpolation,
+                span,
+                .expanded,
+            );
         }
 
         const channels = native_color.toHsl(input.color) catch {
@@ -7694,25 +7723,41 @@ const Engine = struct {
         errdefer output.deinit(self.allocator);
         try self.appendTemporary(&output, span, "hsla(");
         var buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
-        const hue = serializeStylusNumber(channels[0], &buffer) catch {
+        const hue = serializeStylusNumberForStyle(
+            channels[0],
+            .expanded,
+            &buffer,
+        ) catch {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
         };
         try self.appendTemporary(&output, span, hue);
         try self.appendTemporary(&output, span, ",");
-        const saturation = serializeStylusNumber(@round(channels[1]), &buffer) catch {
+        const saturation = serializeStylusNumberForStyle(
+            @round(channels[1]),
+            .expanded,
+            &buffer,
+        ) catch {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
         };
         try self.appendTemporary(&output, span, saturation);
         try self.appendTemporary(&output, span, "%,");
-        const lightness = serializeStylusNumber(@round(channels[2]), &buffer) catch {
+        const lightness = serializeStylusNumberForStyle(
+            @round(channels[2]),
+            .expanded,
+            &buffer,
+        ) catch {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
         };
         try self.appendTemporary(&output, span, lightness);
         try self.appendTemporary(&output, span, "%,");
-        const alpha = serializeStylusNumber(channels[3], &buffer) catch {
+        const alpha = serializeStylusNumberForStyle(
+            channels[3],
+            .expanded,
+            &buffer,
+        ) catch {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
         };
@@ -8292,6 +8337,21 @@ const Engine = struct {
         context: RenderContext,
         span: native_source.Span,
     ) Error![]u8 {
+        return self.serializeValueForStyleOwned(
+            input,
+            context,
+            span,
+            self.options.output_style,
+        );
+    }
+
+    fn serializeValueForStyleOwned(
+        self: *Engine,
+        input: *const native_value.Value,
+        context: RenderContext,
+        span: native_source.Span,
+        output_style: OutputStyle,
+    ) Error![]u8 {
         if (self.blockValue(input) != null) {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
@@ -8307,7 +8367,11 @@ const Engine = struct {
             ),
             .number => |number| {
                 var number_buffer: [native_numeric.max_serialized_bytes]u8 = undefined;
-                const scalar = serializeStylusNumber(number.value, &number_buffer) catch {
+                const scalar = serializeStylusNumberForStyle(
+                    number.value,
+                    output_style,
+                    &number_buffer,
+                ) catch {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 };
@@ -8317,7 +8381,13 @@ const Engine = struct {
                     return error.InvalidOperation;
                 };
                 try self.appendTemporary(&output, span, scalar);
-                try self.appendTemporary(&output, span, units);
+                if (!omitCompressedZeroUnit(
+                    number.value,
+                    units,
+                    output_style,
+                )) {
+                    try self.appendTemporary(&output, span, units);
+                }
             },
             .color => |color| {
                 var color_buffer: [native_color.max_serialized_bytes]u8 = undefined;
@@ -8361,7 +8431,12 @@ const Engine = struct {
                 if (list.bracketed) try self.appendTemporary(&output, span, "[");
                 for (list.items, 0..) |*item, index| {
                     if (index > 0) try self.appendTemporary(&output, span, separator);
-                    const serialized = try self.serializeValueOwned(item, context, span);
+                    const serialized = try self.serializeValueForStyleOwned(
+                        item,
+                        context,
+                        span,
+                        output_style,
+                    );
                     defer self.allocator.free(serialized);
                     try self.appendTemporary(&output, span, serialized);
                 }
@@ -10578,14 +10653,36 @@ fn baseConvert(
     return buffer[cursor..];
 }
 
-fn serializeStylusNumber(
+fn serializeStylusNumberForStyle(
     value: f64,
+    output_style: OutputStyle,
     buffer: *[native_numeric.max_serialized_bytes]u8,
 ) error{ InvalidNumber, SerializationLimitExceeded }![]const u8 {
     if (!std.math.isFinite(value)) return error.InvalidNumber;
     const normalized = if (value == 0) @as(f64, 0) else value;
-    return std.fmt.bufPrint(buffer, "{d}", .{normalized}) catch
+    const serialized = std.fmt.bufPrint(buffer, "{d}", .{normalized}) catch
         return error.SerializationLimitExceeded;
+    if (output_style != .compressed or normalized <= -1 or normalized >= 1 or normalized == 0) {
+        return serialized;
+    }
+    if (std.mem.startsWith(u8, serialized, "0.")) return serialized[1..];
+    if (std.mem.startsWith(u8, serialized, "-0.")) {
+        std.mem.copyForwards(u8, buffer[1 .. serialized.len - 1], serialized[2..]);
+        return buffer[0 .. serialized.len - 1];
+    }
+    return serialized;
+}
+
+fn omitCompressedZeroUnit(
+    value: f64,
+    units: []const u8,
+    output_style: OutputStyle,
+) bool {
+    if (output_style != .compressed or value != 0) return false;
+    for ([_][]const u8{ "%", "s", "ms", "deg", "fr" }) |retained| {
+        if (std.mem.eql(u8, units, retained)) return false;
+    }
+    return true;
 }
 
 fn parseAssignment(raw_input: []const u8) ?Assignment {
