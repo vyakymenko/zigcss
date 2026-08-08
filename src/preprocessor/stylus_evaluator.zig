@@ -2786,6 +2786,19 @@ const Engine = struct {
         right: *const native_value.Value,
         operator: u8,
     ) Error!*const native_value.Value {
+        // Stylus Unit.coerce() follows JavaScript parseFloat() when the right
+        // operand is a quoted string and retains the left number's unit.
+        if (left.* == .number and right.* == .string and operator == '+') {
+            if (parseStylusFloatPrefix(right.string.bytes)) |right_value| {
+                var number = left.number;
+                number.value += right_value;
+                if (!std.math.isFinite(number.value)) {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                }
+                return self.ownValue(span, .{ .number = number });
+            }
+        }
         if (left.* == .color and (operator == '+' or operator == '-')) {
             const sign: f64 = if (operator == '+') 1 else -1;
             var result: native_value.Color = undefined;
@@ -2857,7 +2870,8 @@ const Engine = struct {
             };
             const result = switch (operator) {
                 '+', '-' => native_numeric.addPermissive(left_numeric, right_numeric, operator),
-                '*', '/' => native_numeric.multiply(left_numeric, right_numeric, operator),
+                '*' => native_numeric.multiply(left_numeric, right_numeric, operator),
+                '/' => divideStylusNumbers(left_numeric, right_numeric),
                 '%' => native_numeric.modulo(left_numeric, right_numeric),
                 else => return error.InvalidOperation,
             } catch {
@@ -6046,6 +6060,8 @@ const NumericParser = struct {
                     return error.InvalidExpression;
                 }
                 result.value = @mod(result.value, right.value);
+            } else if (operation == '/') {
+                result = try divideStylusNumbers(result, right);
             } else {
                 result = try native_numeric.multiply(result, right, operation);
             }
@@ -6104,4 +6120,70 @@ fn numericHasSingleUnit(input: native_numeric.Numeric, expected: []const u8) boo
     const number = input.toNumber(&numerator, &denominator) catch return false;
     return number.denominator_units.len == 0 and number.numerator_units.len == 1 and
         std.mem.eql(u8, number.numerator_units[0], expected);
+}
+
+fn divideStylusNumbers(
+    left: native_numeric.Numeric,
+    right: native_numeric.Numeric,
+) native_numeric.Error!native_numeric.Numeric {
+    if (right.value == 0) return error.DivisionByZero;
+
+    var left_numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+    var left_denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+    const left_number = try left.toNumber(&left_numerator, &left_denominator);
+    var right_numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+    var right_denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+    const right_number = try right.toNumber(&right_numerator, &right_denominator);
+
+    // Stylus models a number as one scalar plus one optional unit. Division
+    // converts the right scalar to the left unit but retains a result unit.
+    const simple_left = left_number.denominator_units.len == 0 and
+        left_number.numerator_units.len <= 1;
+    const simple_right = right_number.denominator_units.len == 0 and
+        right_number.numerator_units.len <= 1;
+    if (!simple_left or !simple_right) return native_numeric.multiply(left, right, '/');
+
+    const result_unit = if (left_number.numerator_units.len == 1)
+        left_number.numerator_units[0]
+    else if (right_number.numerator_units.len == 1)
+        right_number.numerator_units[0]
+    else
+        null;
+    const right_value = if (left_number.numerator_units.len == 1 and
+        right_number.numerator_units.len == 1)
+        native_numeric.convertValueToMatch(right, left) catch right.value
+    else
+        right.value;
+    return native_numeric.Numeric.init(left.value / right_value, result_unit);
+}
+
+fn parseStylusFloatPrefix(raw: []const u8) ?f64 {
+    var index: usize = 0;
+    while (index < raw.len and std.ascii.isWhitespace(raw[index])) index += 1;
+    const start = index;
+    if (index < raw.len and (raw[index] == '+' or raw[index] == '-')) index += 1;
+
+    var saw_digit = false;
+    while (index < raw.len and std.ascii.isDigit(raw[index])) : (index += 1) {
+        saw_digit = true;
+    }
+    if (index < raw.len and raw[index] == '.') {
+        index += 1;
+        while (index < raw.len and std.ascii.isDigit(raw[index])) : (index += 1) {
+            saw_digit = true;
+        }
+    }
+    if (!saw_digit) return null;
+
+    const exponent_start = index;
+    if (index < raw.len and (raw[index] == 'e' or raw[index] == 'E')) {
+        index += 1;
+        if (index < raw.len and (raw[index] == '+' or raw[index] == '-')) index += 1;
+        const exponent_digits = index;
+        while (index < raw.len and std.ascii.isDigit(raw[index])) : (index += 1) {}
+        if (index == exponent_digits) index = exponent_start;
+    }
+
+    const value = std.fmt.parseFloat(f64, raw[start..index]) catch return null;
+    return if (std.math.isFinite(value)) value else null;
 }

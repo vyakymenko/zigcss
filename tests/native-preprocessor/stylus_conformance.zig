@@ -258,9 +258,9 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
 
     try std.testing.expectEqual(@as(usize, 326), success_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 164), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 162), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0xf0d3f1294f4f10df), exact_case_id_hash.final());
+    try std.testing.expectEqual(@as(usize, 165), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 161), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0xf6b072dd47336d0e), exact_case_id_hash.final());
 }
 
 test "native Stylus closes the finite arithmetic conformance family" {
@@ -338,6 +338,58 @@ test "native Stylus closes the finite arithmetic conformance family" {
             .{ case, input },
         );
     }
+}
+
+test "native Stylus closes the finite coercion conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(parsed.value.cases, "stylus-official-coercion");
+    try std.testing.expectEqualStrings("coercion", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var first = try compileNative(allocator, case, input);
+    defer first.deinit();
+    var second = try compileNative(allocator, case, input);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |err| {
+        std.debug.print("\nnative Stylus coercion mismatch\n", .{});
+        return err;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try expectDependencyDeterminism(&first, &second);
+    try std.testing.checkAllAllocationFailures(
+        allocator,
+        exerciseNativeCompilationAllocationFailures,
+        .{ case, input },
+    );
 }
 
 test "native Stylus rejects the finite pinned error corpus deterministically" {
