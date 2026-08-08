@@ -1288,12 +1288,16 @@ const Assignment = struct {
     operator: ?u8 = null,
 };
 
+const MemberReference = union(enum) {
+    key: []const u8,
+    index: usize,
+    expression: []const u8,
+};
+
 const MemberAssignment = struct {
     base: []const u8,
-    member: union(enum) {
-        key: []const u8,
-        index: usize,
-    },
+    member: MemberReference,
+    value: []const u8,
     value_empty: bool,
 };
 
@@ -1322,8 +1326,18 @@ const Callable = struct {
 
 const MutationAlias = struct {
     local_name: []const u8,
-    caller_scope: native_environment.ScopeId,
-    caller_name: []const u8,
+    target: union(enum) {
+        binding: struct {
+            scope: native_environment.ScopeId,
+            name: []const u8,
+        },
+        current_property_index: usize,
+    },
+};
+
+const CurrentPropertyBinding = struct {
+    scope: native_environment.ScopeId,
+    name: []const u8,
 };
 
 const StaticExtension = struct {
@@ -1336,12 +1350,18 @@ const RenderedDeclaration = struct {
     property: []u8,
     value: []u8,
     semantic_value: *const native_value.Value,
+    side_effect: bool,
 
     fn deinit(self: *RenderedDeclaration, allocator: std.mem.Allocator) void {
         allocator.free(self.property);
         allocator.free(self.value);
         self.* = undefined;
     }
+};
+
+const ActiveProperty = struct {
+    property: []const u8,
+    value_span: native_source.Span,
 };
 
 const NestedRule = struct {
@@ -1363,6 +1383,7 @@ const StatementResult = struct {
 const BlockValue = struct {
     block_id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
+    replay_side_effects: bool,
 };
 
 const Engine = struct {
@@ -1377,6 +1398,7 @@ const Engine = struct {
     block_values: std.ArrayList(BlockValue) = .empty,
     active_callables: std.ArrayList([]const u8) = .empty,
     mutation_aliases: std.ArrayList(MutationAlias) = .empty,
+    current_property_bindings: std.ArrayList(CurrentPropertyBinding) = .empty,
     selector_parts: std.ArrayList([]u8) = .empty,
     media_stack: std.ArrayList([]u8) = .empty,
     extensions: std.ArrayList(StaticExtension) = .empty,
@@ -1385,6 +1407,12 @@ const Engine = struct {
     selector_count: usize = 0,
     temporary_bytes: usize = 0,
     active_selector_scope: ?[]u8 = null,
+    active_output: ?RuleOutput = null,
+    active_property: ?ActiveProperty = null,
+    active_property_value: ?*const native_value.Value = null,
+    active_property_call_span: ?native_source.Span = null,
+    pending_content_block: ?*const native_value.Value = null,
+    active_keyframe_header: ?[]const u8 = null,
 
     fn init(
         allocator: std.mem.Allocator,
@@ -1422,6 +1450,7 @@ const Engine = struct {
         }
         self.extensions.deinit(self.allocator);
         self.mutation_aliases.deinit(self.allocator);
+        self.current_property_bindings.deinit(self.allocator);
         self.block_values.deinit(self.allocator);
         self.active_callables.deinit(self.allocator);
         self.callables.deinit(self.allocator);
@@ -1451,7 +1480,11 @@ const Engine = struct {
             const statement = try self.document.get(statement_id);
             if (statement.kind == .at_rule and statement.text != null) {
                 const raw = std.mem.trim(u8, try self.sources.slice(statement.text.?), " \t\r\n\x0c;");
-                if (startsWordAscii(raw, "@charset") or startsWordAscii(raw, "@import")) continue;
+                if (startsWordAscii(raw, "@charset") or startsWordAscii(raw, "@import") or
+                    startsWordAscii(raw, "@keyframes"))
+                {
+                    continue;
+                }
             }
             try ordinary.append(self.allocator, statement_id);
         }
@@ -1462,6 +1495,14 @@ const Engine = struct {
             false,
         );
         if (returned != null) return error.InvalidDocument;
+        for (root_statements) |statement_id| {
+            const statement = try self.document.get(statement_id);
+            if (statement.kind != .at_rule or statement.text == null) continue;
+            const raw = std.mem.trim(u8, try self.sources.slice(statement.text.?), " \t\r\n\x0c;");
+            if (startsWordAscii(raw, "@keyframes")) {
+                try self.emitAtRule(statement_id, scope, null);
+            }
+        }
     }
 
     fn registerCallable(
@@ -1493,7 +1534,11 @@ const Engine = struct {
         const text = node.text orelse return error.InvalidDocument;
         const raw = try self.sources.slice(text);
         if (parseMemberAssignment(raw)) |member| {
-            if (!member.value_empty or try self.hasExplicitOpeningBrace(node_id)) {
+            if (!member.value_empty) {
+                try self.assignMemberValue(text, member, scope.*);
+                return;
+            }
+            if (try self.hasExplicitOpeningBrace(node_id)) {
                 try self.reportInvalidOperation(text);
                 return error.InvalidOperation;
             }
@@ -1501,6 +1546,7 @@ const Engine = struct {
                 text,
                 try self.statementBlock(node_id),
                 scope.*,
+                true,
             );
             try self.assignMemberBlock(text, member, block_value, scope.*);
             return;
@@ -1522,7 +1568,7 @@ const Engine = struct {
         }
         var evaluated = if (std.mem.eql(u8, assignment.value, "@block") or
             (assignment.value.len == 0 and !try self.hasExplicitOpeningBrace(node_id)))
-            try self.ownBlockValue(text, try self.statementBlock(node_id), scope.*)
+            try self.ownBlockValue(text, try self.statementBlock(node_id), scope.*, true)
         else if (assignment.value.len == 0)
             try self.evaluateObjectBlock(node_id, scope.*)
         else
@@ -1534,7 +1580,16 @@ const Engine = struct {
             };
             evaluated = try self.evaluateGenericBinary(text, current, evaluated, operator);
         }
+        self.detachMutationAlias(assignment.name);
+        const aliases_current_property = self.active_property_value != null and
+            evaluated == self.active_property_value.?;
         scope.* = try self.setBinding(scope.*, assignment.name, evaluated, text);
+        if (aliases_current_property) {
+            try self.current_property_bindings.append(self.allocator, .{
+                .scope = scope.*,
+                .name = assignment.name,
+            });
+        }
     }
 
     fn hasExplicitOpeningBrace(
@@ -1560,6 +1615,7 @@ const Engine = struct {
         span: native_source.Span,
         block_id: native_syntax.NodeId,
         scope: native_environment.ScopeId,
+        replay_side_effects: bool,
     ) Error!*const native_value.Value {
         if (self.block_values.items.len >= std.math.maxInt(u32)) {
             try self.reportResource(span, "native Stylus value limit exceeded");
@@ -1569,6 +1625,7 @@ const Engine = struct {
         try self.block_values.append(self.allocator, .{
             .block_id = block_id,
             .scope = scope,
+            .replay_side_effects = replay_side_effects,
         });
         errdefer _ = self.block_values.pop();
         var marker_buffer: [block_value_prefix.len + 10]u8 = undefined;
@@ -1651,8 +1708,101 @@ const Engine = struct {
                     .bracketed = current.list.bracketed,
                 } });
             },
+            .expression => {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            },
         };
         if (!(try self.environment.update(scope, assignment.base, replacement))) {
+            return error.UndefinedVariable;
+        }
+    }
+
+    fn assignMemberValue(
+        self: *Engine,
+        span: native_source.Span,
+        assignment: MemberAssignment,
+        scope: native_environment.ScopeId,
+    ) Error!void {
+        const postfix = splitPostfixCondition(assignment.value);
+        if (postfix.condition) |condition| {
+            var selected = try self.evaluateCondition(
+                span,
+                assignment.value[condition.expression.start..condition.expression.end],
+                scope,
+            );
+            if (condition.negated) selected = !selected;
+            if (!selected) return;
+        }
+        const value_raw = assignment.value[postfix.declaration.start..postfix.declaration.end];
+        const value = try self.evaluateValue(span, value_raw, scope, 0);
+        const current = (try self.environment.lookup(scope, assignment.base)) orelse {
+            try self.reportUndefinedVariable(span);
+            return error.UndefinedVariable;
+        };
+
+        const resolved_member: union(enum) { key: []const u8, index: usize } = switch (assignment.member) {
+            .key => |key| .{ .key = key },
+            .index => |index| .{ .index = index },
+            .expression => |raw_member| blk: {
+                const member_value = try self.evaluateValue(span, raw_member, scope, 0);
+                if (stringBytes(member_value.*)) |key| break :blk .{ .key = key };
+                const signed = integerScalar(member_value.*) orelse {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                };
+                const index = std.math.cast(usize, signed) orelse {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                };
+                break :blk .{ .index = index };
+            },
+        };
+        const replacement = switch (resolved_member) {
+            .key => |key| blk: {
+                if (current.* != .map) {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                }
+                var entries: std.ArrayList(native_value.Entry) = .empty;
+                defer entries.deinit(self.allocator);
+                var replaced = false;
+                for (current.map.entries) |entry| {
+                    if (entry.key == .string and std.mem.eql(u8, entry.key.string.bytes, key)) {
+                        try entries.append(self.allocator, .{ .key = entry.key, .value = value.* });
+                        replaced = true;
+                    } else {
+                        try entries.append(self.allocator, entry);
+                    }
+                }
+                if (!replaced) try entries.append(self.allocator, .{
+                    .key = .{ .string = .{ .bytes = key } },
+                    .value = value.*,
+                });
+                break :blk try self.ownValue(span, .{ .map = .{ .entries = entries.items } });
+            },
+            .index => |index| blk: {
+                if (current.* != .list) {
+                    if (index == 0) break :blk value;
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                }
+                if (index >= current.list.items.len) {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                }
+                var items: std.ArrayList(native_value.Value) = .empty;
+                defer items.deinit(self.allocator);
+                try items.appendSlice(self.allocator, current.list.items);
+                items.items[index] = value.*;
+                break :blk try self.ownValue(span, .{ .list = .{
+                    .items = items.items,
+                    .separator = current.list.separator,
+                    .bracketed = current.list.bracketed,
+                } });
+            },
+        };
+        if (!(try self.updateMutationBinding(scope, assignment.base, replacement))) {
             return error.UndefinedVariable;
         }
     }
@@ -1686,7 +1836,7 @@ const Engine = struct {
                 );
             }
             try entries.append(self.allocator, .{
-                .key = .{ .string = .{ .bytes = key } },
+                .key = .{ .string = .{ .bytes = key, .quoted = true } },
                 .value = value.*,
             });
         }
@@ -1702,7 +1852,11 @@ const Engine = struct {
         if (raw.len < 3 or !isNameStart(raw, 0)) return null;
         var cursor = nameEnd(raw, 0);
         if (cursor >= raw.len or (raw[cursor] != '.' and raw[cursor] != '[')) return null;
-        var current = (try self.environment.lookup(scope, raw[0..cursor])) orelse return null;
+        const base = raw[0..cursor];
+        var current = if (nameEql(base, "current-property"))
+            (try self.currentPropertyValue(span, scope)) orelse return null
+        else
+            (try self.environment.lookup(scope, base)) orelse return null;
         while (cursor < raw.len) {
             if (raw[cursor] == '.') {
                 cursor += 1;
@@ -1994,14 +2148,17 @@ const Engine = struct {
 
         if (declarations.items.len > 0) {
             try self.transaction.emitMapped(selector_node.text.?, null, selector);
-            try self.transaction.emit("{");
-            for (declarations.items) |declaration| {
+            try self.transaction.emit(if (self.emittingOKeyframes()) " {\n    " else "{");
+            for (declarations.items, 0..) |declaration, declaration_index| {
                 try self.transaction.emitMapped(declaration.span, null, declaration.property);
-                try self.transaction.emit(":");
+                try self.transaction.emit(if (self.emittingOKeyframes()) ": " else ":");
                 try self.transaction.emitMapped(declaration.span, null, declaration.value);
                 try self.transaction.emit(";");
+                if (self.emittingOKeyframes() and declaration_index + 1 < declarations.items.len) {
+                    try self.transaction.emit("\n    ");
+                }
             }
-            try self.transaction.emit("}");
+            try self.transaction.emit(if (self.emittingOKeyframes()) "\n  } " else "}");
         }
         for (nested.items) |child| {
             try self.emitRule(child.id, child.scope, selector);
@@ -2025,12 +2182,39 @@ const Engine = struct {
         const normalized_header = try self.normalizeUrlQuotesOwned(at_rule.text.?, header_owned);
         defer self.allocator.free(normalized_header);
         const header = std.mem.trimRight(u8, normalized_header, " \t\r\n\x0c;");
+        const keyframes = "@keyframes";
+        const is_official_keyframes = startsWordAscii(header, keyframes);
+        if (is_official_keyframes and self.active_keyframe_header == null) {
+            const previous_header = self.active_keyframe_header;
+            defer self.active_keyframe_header = previous_header;
+            for ([_][]const u8{
+                "@-moz-keyframes",
+                "@-webkit-keyframes",
+                "@-o-keyframes",
+                keyframes,
+            }) |prefixed| {
+                self.active_keyframe_header = prefixed;
+                try self.emitAtRule(at_rule_id, parent_scope, parent_selector);
+            }
+            return;
+        }
+        const prefixed_header = if (is_official_keyframes and
+            !std.mem.eql(u8, self.active_keyframe_header.?, keyframes))
+            try std.fmt.allocPrint(
+                self.allocator,
+                "{s}{s}",
+                .{ self.active_keyframe_header.?, header[keyframes.len..] },
+            )
+        else
+            null;
+        defer if (prefixed_header) |owned| self.allocator.free(owned);
+        const emitted_header = prefixed_header orelse header;
 
         var block_id: ?native_syntax.NodeId = null;
         if (children.len > 0 and (try self.document.get(children[children.len - 1])).kind == .block) {
             block_id = children[children.len - 1];
         }
-        try self.transaction.emitMapped(at_rule.text.?, null, header);
+        try self.transaction.emitMapped(at_rule.text.?, null, emitted_header);
         if (block_id == null) {
             try self.transaction.emit(";");
             return;
@@ -2040,10 +2224,10 @@ const Engine = struct {
             try self.reportResource(at_rule.span, "native Stylus lexical scope limit exceeded");
             return failure;
         };
-        const is_media = header.len > "@media".len and
-            std.ascii.eqlIgnoreCase(header[0.."@media".len], "@media");
+        const is_media = emitted_header.len > "@media".len and
+            std.ascii.eqlIgnoreCase(emitted_header[0.."@media".len], "@media");
         if (is_media) {
-            const current_media = try self.formatCurrentMediaOwned(at_rule.text.?, header);
+            const current_media = try self.formatCurrentMediaOwned(at_rule.text.?, emitted_header);
             self.media_stack.append(self.allocator, current_media) catch |failure| {
                 self.allocator.free(current_media);
                 return failure;
@@ -2071,7 +2255,7 @@ const Engine = struct {
         );
         if (returned != null) return error.InvalidDocument;
 
-        try self.transaction.emit("{");
+        try self.transaction.emit(if (self.emittingOKeyframes()) " { " else "{");
         if (declarations.items.len > 0) {
             if (parent_selector) |selector| {
                 try self.transaction.emit(selector);
@@ -2094,6 +2278,13 @@ const Engine = struct {
         try self.transaction.emit("}");
     }
 
+    fn emittingOKeyframes(self: *const Engine) bool {
+        return if (self.active_keyframe_header) |header|
+            std.mem.eql(u8, header, "@-o-keyframes")
+        else
+            false;
+    }
+
     fn executeStatements(
         self: *Engine,
         statements: []const native_syntax.NodeId,
@@ -2101,6 +2292,10 @@ const Engine = struct {
         output: ?RuleOutput,
         allow_return: bool,
     ) Error!?StatementResult {
+        const previous_output = self.active_output;
+        if (output) |destination| self.active_output = destination;
+        defer self.active_output = previous_output;
+
         var previous_condition: ?bool = null;
         var implicit_result: ?*const native_value.Value = null;
         for (statements) |statement_id| {
@@ -2151,9 +2346,14 @@ const Engine = struct {
                     try self.assign(statement_id, scope);
                     if (allow_return and output == null) {
                         const text = statement.text orelse return error.InvalidDocument;
-                        const assignment = parseAssignment(try self.sources.slice(text)) orelse
+                        const raw = try self.sources.slice(text);
+                        const name = if (parseAssignment(raw)) |assignment|
+                            assignment.name
+                        else if (parseMemberAssignment(raw)) |assignment|
+                            assignment.base
+                        else
                             return error.InvalidDocument;
-                        implicit_result = (try self.environment.lookup(scope.*, assignment.name)) orelse
+                        implicit_result = (try self.environment.lookup(scope.*, name)) orelse
                             return error.InvalidDocument;
                     }
                 },
@@ -2204,6 +2404,9 @@ const Engine = struct {
                         try self.emitRule(statement_id, scope.*, self.active_selector_scope);
                         continue;
                     };
+                    if (try self.invokeBlockMixinRule(statement_id, scope.*, destination)) {
+                        continue;
+                    }
                     try destination.nested.append(
                         self.allocator,
                         .{ .id = statement_id, .scope = scope.* },
@@ -2359,6 +2562,7 @@ const Engine = struct {
                             text,
                             try self.statementBlock(statement_id),
                             scope.*,
+                            true,
                         ),
                         .explicit = true,
                     };
@@ -2395,6 +2599,10 @@ const Engine = struct {
         const block = try self.document.get(block_value.block_id);
         if (block.kind != .block) return error.InvalidDocument;
         var block_scope = block_value.scope;
+        const declaration_start = if (output) |destination|
+            destination.declarations.items.len
+        else
+            0;
         const returned = try self.executeStatements(
             try self.document.children(block_value.block_id),
             &block_scope,
@@ -2405,7 +2613,49 @@ const Engine = struct {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
         }
+        if (block_value.replay_side_effects) {
+            if (output) |destination| {
+                var duplicates: std.ArrayList(RenderedDeclaration) = .empty;
+                defer {
+                    for (duplicates.items) |*declaration| declaration.deinit(self.allocator);
+                    duplicates.deinit(self.allocator);
+                }
+                for (destination.declarations.items[declaration_start..]) |declaration| {
+                    if (!declaration.side_effect) continue;
+                    var duplicate = try self.cloneRenderedDeclaration(declaration);
+                    duplicates.append(self.allocator, duplicate) catch |failure| {
+                        duplicate.deinit(self.allocator);
+                        return failure;
+                    };
+                }
+                if (duplicates.items.len > 0) {
+                    try destination.declarations.insertSlice(
+                        self.allocator,
+                        declaration_start,
+                        duplicates.items,
+                    );
+                    duplicates.clearRetainingCapacity();
+                }
+            }
+        }
         return true;
+    }
+
+    fn cloneRenderedDeclaration(
+        self: *Engine,
+        declaration: RenderedDeclaration,
+    ) Error!RenderedDeclaration {
+        const property = try self.allocator.dupe(u8, declaration.property);
+        errdefer self.allocator.free(property);
+        const value = try self.allocator.dupe(u8, declaration.value);
+        errdefer self.allocator.free(value);
+        return .{
+            .span = declaration.span,
+            .property = property,
+            .value = value,
+            .semantic_value = declaration.semantic_value,
+            .side_effect = declaration.side_effect,
+        };
     }
 
     fn statementBlock(
@@ -2445,6 +2695,44 @@ const Engine = struct {
         if (returned != null) return error.InvalidDocument;
     }
 
+    fn invokeBlockMixinRule(
+        self: *Engine,
+        statement_id: native_syntax.NodeId,
+        scope: native_environment.ScopeId,
+        output: RuleOutput,
+    ) Error!bool {
+        const children = try self.document.children(statement_id);
+        if (children.len != 2) return false;
+        const selector = try self.document.get(children[0]);
+        const block = try self.document.get(children[1]);
+        if (selector.kind != .selector or selector.text == null or block.kind != .block) return false;
+        const selector_raw = std.mem.trim(
+            u8,
+            try self.sources.slice(selector.text.?),
+            " \t\r\n\x0c;",
+        );
+        if (selector_raw.len < 2 or selector_raw[0] != '+') return false;
+        const raw = std.mem.trimLeft(u8, selector_raw[1..], " \t");
+        const call = parseCall(raw) orelse parseBareCall(raw) orelse return false;
+        const name = raw[call.name.start..call.name.end];
+        if (self.findCallable(name) == null) return false;
+
+        const content = try self.ownBlockValue(selector.text.?, children[1], scope, false);
+        const previous_content = self.pending_content_block;
+        self.pending_content_block = content;
+        defer self.pending_content_block = previous_content;
+        const returned = try self.invokeUserCallable(
+            selector.text.?,
+            raw,
+            call,
+            scope,
+            output,
+            false,
+        );
+        if (returned != null) return error.InvalidDocument;
+        return true;
+    }
+
     fn invokeUserCallable(
         self: *Engine,
         span: native_source.Span,
@@ -2465,6 +2753,31 @@ const Engine = struct {
             try self.reportUndefinedCallable(span);
             return error.UndefinedCallable;
         };
+        const previous_property_call_span = self.active_property_call_span;
+        if (self.active_property_call_span == null) {
+            if (self.active_property) |property| {
+                const property_source = try self.sources.slice(property.value_span);
+                if (std.mem.indexOf(u8, property_source, std.mem.trim(u8, raw, " \t\r\n\x0c;"))) |relative| {
+                    const call_start = std.math.add(u32, property.value_span.start, @intCast(relative)) catch
+                        return error.InvalidDocument;
+                    const call_end = std.math.add(
+                        u32,
+                        call_start,
+                        @intCast(std.mem.trim(u8, raw, " \t\r\n\x0c;").len),
+                    ) catch return error.InvalidDocument;
+                    self.active_property_call_span = try self.sources.span(
+                        property.value_span.source,
+                        call_start,
+                        call_end,
+                    );
+                } else if (span.source.value == property.value_span.source.value and
+                    span.start >= property.value_span.start and span.end <= property.value_span.end)
+                {
+                    self.active_property_call_span = span;
+                }
+            }
+        }
+        defer self.active_property_call_span = previous_property_call_span;
         if (self.call_depth >= self.limits.max_call_depth) {
             try self.transaction.report(
                 .err,
@@ -2520,6 +2833,12 @@ const Engine = struct {
             try self.reportResource(span, "native Stylus lexical scope limit exceeded");
             return failure;
         };
+        const content_block = self.pending_content_block;
+        self.pending_content_block = null;
+        defer self.pending_content_block = content_block;
+        if (content_block) |content| {
+            call_scope = try self.setBinding(call_scope, "block", content, span);
+        }
         const alias_start = self.mutation_aliases.items.len;
         defer self.mutation_aliases.shrinkRetainingCapacity(alias_start);
 
@@ -2612,8 +2931,15 @@ const Engine = struct {
                 if (validVariableName(caller_name)) {
                     try self.mutation_aliases.append(self.allocator, .{
                         .local_name = parameter.name,
-                        .caller_scope = caller_scope,
-                        .caller_name = caller_name,
+                        .target = .{ .binding = .{
+                            .scope = caller_scope,
+                            .name = caller_name,
+                        } },
+                    });
+                } else if (currentPropertyArgumentIndex(caller_name)) |property_index| {
+                    try self.mutation_aliases.append(self.allocator, .{
+                        .local_name = parameter.name,
+                        .target = .{ .current_property_index = property_index },
                     });
                 }
                 break :blk argument_values.items[index];
@@ -2645,6 +2971,7 @@ const Engine = struct {
             output,
             true,
         );
+        if (!require_return) return null;
         if (require_return and returned == null) {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
@@ -2685,13 +3012,14 @@ const Engine = struct {
             return error.InvalidOperation;
         };
         const collection = try self.evaluateValue(text, loop.items, parent_scope.*, 0);
-        const items = if (collection.* == .list)
-            collection.list.items
-        else
-            @as([]const native_value.Value, &.{collection.*});
+        const item_count: usize = switch (collection.*) {
+            .list => |list| list.items.len,
+            .map => |map| map.entries.len,
+            else => 1,
+        };
         const block = try self.statementBlock(statement_id);
         var implicit_result: ?StatementResult = null;
-        for (items, 0..) |item, index| {
+        for (0..item_count) |index| {
             if (self.loop_iterations >= self.limits.max_loop_iterations) {
                 try self.transaction.report(
                     .err,
@@ -2708,10 +3036,18 @@ const Engine = struct {
                 try self.reportResource(text, "native Stylus lexical scope limit exceeded");
                 return failure;
             };
+            const item = switch (collection.*) {
+                .list => |list| list.items[index],
+                .map => |map| map.entries[index].key,
+                else => collection.*,
+            };
             const value = try self.ownValue(text, item);
             loop_scope = try self.setBinding(loop_scope, loop.name, value, text);
             if (loop.index_name) |index_name| {
-                const index_value = try self.ownUnitlessNumber(text, @floatFromInt(index));
+                const index_value = switch (collection.*) {
+                    .map => |map| try self.ownValue(text, map.entries[index].value),
+                    else => try self.ownUnitlessNumber(text, @floatFromInt(index)),
+                };
                 loop_scope = try self.setBinding(loop_scope, index_name, index_value, text);
             }
             if (try self.executeStatements(
@@ -2790,7 +3126,11 @@ const Engine = struct {
             }
             const expression = candidate[conditional.declaration.start..conditional.declaration.end];
             var value: *const native_value.Value = undefined;
-            if (parseAssignment(expression)) |assignment| {
+            if (parseMemberAssignment(expression)) |assignment| {
+                try self.assignMemberValue(span, assignment, loop_scope);
+                value = (try self.environment.lookup(loop_scope, assignment.base)) orelse
+                    return error.UndefinedVariable;
+            } else if (parseAssignment(expression)) |assignment| {
                 value = try self.evaluateValue(span, assignment.value, loop_scope, 0);
                 if (assignment.operator) |operator| {
                     const current = (try self.environment.lookup(loop_scope, assignment.name)) orelse {
@@ -2913,7 +3253,18 @@ const Engine = struct {
                 .property = property,
                 .value = value,
                 .semantic_value = try self.ownValue(value_span, .{ .string = .{ .bytes = value } }),
+                .side_effect = false,
             };
+        }
+        const previous_property = self.active_property;
+        const previous_property_value = self.active_property_value;
+        const property_binding_start = self.current_property_bindings.items.len;
+        self.active_property = .{ .property = property, .value_span = value_span };
+        self.active_property_value = null;
+        defer {
+            self.active_property = previous_property;
+            self.active_property_value = previous_property_value;
+            self.current_property_bindings.shrinkRetainingCapacity(property_binding_start);
         }
         const value = try self.evaluateValue(value_span, raw[parts[1].start..parts[1].end], scope, 0);
         const serialized = try self.serializeValueOwned(value, .value, value_span);
@@ -2922,6 +3273,7 @@ const Engine = struct {
             .property = property,
             .value = serialized,
             .semantic_value = value,
+            .side_effect = false,
         };
     }
 
@@ -2950,7 +3302,9 @@ const Engine = struct {
             );
         }
         if (memberAccessBase(raw)) |base| {
-            if (try self.environment.lookup(scope, base) == null) {
+            if (!nameEql(base, "current-property") and
+                try self.environment.lookup(scope, base) == null)
+            {
                 try self.transaction.report(
                     .err,
                     .undefined_variable,
@@ -2962,6 +3316,23 @@ const Engine = struct {
             }
         }
         const source_input = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+        if (nameEql(source_input, "current-property")) {
+            return (try self.currentPropertyValue(span, scope)) orelse
+                self.ownValue(span, .{ .null_value = {} });
+        }
+        if (nameEql(source_input, "vendors")) {
+            const items = [_]native_value.Value{
+                .{ .string = .{ .bytes = "moz" } },
+                .{ .string = .{ .bytes = "webkit" } },
+                .{ .string = .{ .bytes = "o" } },
+                .{ .string = .{ .bytes = "ms" } },
+                .{ .string = .{ .bytes = "official" } },
+            };
+            return self.ownValue(span, .{ .list = .{
+                .items = &items,
+                .separator = .space,
+            } });
+        }
         if (isUnicodeRangeValue(source_input)) {
             return self.ownValue(span, .{ .string = .{ .bytes = source_input } });
         }
@@ -3545,6 +3916,24 @@ const Engine = struct {
         {
             return try self.evaluateMutationBuiltin(span, raw, call, scope, name);
         }
+        if (nameEql(name, "add-property")) {
+            return try self.evaluateAddPropertyBuiltin(span, raw, call, scope);
+        }
+        if (nameEql(name, "error")) {
+            var arguments = try self.evaluateCallArguments(span, raw, call, scope);
+            defer arguments.deinit(self.allocator);
+            if (arguments.items.len != 1 or stringBytes(arguments.items[0].*) == null) {
+                return self.invalidBuiltinArguments(span);
+            }
+            try self.transaction.report(
+                .err,
+                .invalid_operation,
+                span,
+                "native Stylus error() was invoked",
+                &.{},
+            );
+            return error.InvalidOperation;
+        }
         var arguments = try self.evaluateCallArguments(span, raw, call, scope);
         defer arguments.deinit(self.allocator);
 
@@ -3556,8 +3945,6 @@ const Engine = struct {
                 .null_value => 0,
                 .list => |list| list.items.len,
                 .map => |map| map.entries.len,
-                .string => |string| std.unicode.utf8CountCodepoints(string.bytes) catch
-                    return self.invalidBuiltinArguments(span),
                 else => 1,
             };
             return try self.ownUnitlessNumber(span, @floatFromInt(count));
@@ -3984,6 +4371,75 @@ const Engine = struct {
         return null;
     }
 
+    fn evaluateAddPropertyBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        const destination = self.active_output orelse return self.invalidBuiltinArguments(span);
+        var arguments = try self.evaluateCallArguments(span, raw, call, scope);
+        defer arguments.deinit(self.allocator);
+        if (arguments.items.len != 2) return self.invalidBuiltinArguments(span);
+        const property_bytes = stringBytes(arguments.items[0].*) orelse
+            return self.invalidBuiltinArguments(span);
+        if (property_bytes.len == 0) return self.invalidBuiltinArguments(span);
+
+        const property = try self.allocator.dupe(u8, property_bytes);
+        errdefer self.allocator.free(property);
+        const value = try self.serializeValueOwned(arguments.items[1], .value, span);
+        errdefer self.allocator.free(value);
+        try destination.declarations.append(self.allocator, .{
+            .span = span,
+            .property = property,
+            .value = value,
+            .semantic_value = arguments.items[1],
+            .side_effect = true,
+        });
+        return self.ownValue(span, .{ .null_value = {} });
+    }
+
+    fn currentPropertyValue(
+        self: *Engine,
+        span: native_source.Span,
+        scope: native_environment.ScopeId,
+    ) Error!?*const native_value.Value {
+        const property = self.active_property orelse return null;
+        if (self.active_property_value) |value| return value;
+        const source_value = try self.sources.slice(property.value_span);
+        var normalized: std.ArrayList(u8) = .empty;
+        defer normalized.deinit(self.allocator);
+        if (self.active_property_call_span) |call_span| {
+            if (call_span.source.value != property.value_span.source.value or
+                call_span.start < property.value_span.start or
+                call_span.end > property.value_span.end)
+            {
+                return error.InvalidDocument;
+            }
+            const start: usize = @intCast(call_span.start - property.value_span.start);
+            const end: usize = @intCast(call_span.end - property.value_span.start);
+            try self.appendTemporary(&normalized, span, source_value[0..start]);
+            try self.appendTemporary(&normalized, span, "__CALL__");
+            try self.appendTemporary(&normalized, span, source_value[end..]);
+        } else {
+            try self.appendTemporary(&normalized, span, source_value);
+        }
+
+        const previous_property = self.active_property;
+        self.active_property = null;
+        defer self.active_property = previous_property;
+        const property_value = try self.ownValue(span, .{ .string = .{ .bytes = property.property } });
+        const expression_value = try self.evaluateValue(span, normalized.items, scope, 0);
+        const items = [_]native_value.Value{ property_value.*, expression_value.* };
+        const value = try self.ownValue(span, .{ .list = .{
+            .items = &items,
+            .separator = .space,
+        } });
+        self.active_property_value = value;
+        return value;
+    }
+
     fn evaluateMutationBuiltin(
         self: *Engine,
         span: native_source.Span,
@@ -4074,10 +4530,54 @@ const Engine = struct {
             index -= 1;
             const alias = self.mutation_aliases.items[index];
             if (!std.mem.eql(u8, alias.local_name, name)) continue;
-            _ = try self.environment.update(alias.caller_scope, alias.caller_name, replacement);
+            switch (alias.target) {
+                .binding => |binding| {
+                    _ = try self.environment.update(binding.scope, binding.name, replacement);
+                },
+                .current_property_index => |property_index| {
+                    if (!(try self.updateCurrentPropertyIndex(property_index, replacement))) {
+                        return false;
+                    }
+                },
+            }
             break;
         }
         return true;
+    }
+
+    fn updateCurrentPropertyIndex(
+        self: *Engine,
+        index: usize,
+        replacement: *const native_value.Value,
+    ) Error!bool {
+        const current = self.active_property_value orelse return false;
+        const property = self.active_property orelse return false;
+        if (current.* != .list or index >= current.list.items.len) return false;
+        var items: std.ArrayList(native_value.Value) = .empty;
+        defer items.deinit(self.allocator);
+        try items.appendSlice(self.allocator, current.list.items);
+        items.items[index] = replacement.*;
+        const updated = try self.ownValue(property.value_span, .{ .list = .{
+            .items = items.items,
+            .separator = current.list.separator,
+            .bracketed = current.list.bracketed,
+        } });
+        self.active_property_value = updated;
+        for (self.current_property_bindings.items) |binding| {
+            _ = try self.environment.update(binding.scope, binding.name, updated);
+        }
+        return true;
+    }
+
+    fn detachMutationAlias(self: *Engine, name: []const u8) void {
+        var index = self.mutation_aliases.items.len;
+        while (index > 0) {
+            index -= 1;
+            if (std.mem.eql(u8, self.mutation_aliases.items[index].local_name, name)) {
+                _ = self.mutation_aliases.orderedRemove(index);
+                return;
+            }
+        }
     }
 
     fn evaluateCallArguments(
@@ -4310,7 +4810,7 @@ const Engine = struct {
                     @as([]const native_value.Value, &.{argument.*});
                 for (items) |*item| {
                     if (emitted > 0) try self.appendTemporary(&output, span, separator);
-                    const serialized = try self.serializeValueOwned(item, .value, span);
+                    const serialized = try self.serializeValueOwned(item, .interpolation, span);
                     defer self.allocator.free(serialized);
                     try self.appendTemporary(&output, span, serialized);
                     emitted += 1;
@@ -4500,7 +5000,7 @@ const Engine = struct {
         operator: ComparisonOperator,
     ) Error!bool {
         if (operator == .equal or operator == .not_equal) {
-            const equal = native_value.eql(left.*, right.*);
+            const equal = stylusValueEqual(left.*, right.*);
             return if (operator == .equal) equal else !equal;
         }
         if (left.* != .number or right.* != .number or
@@ -5988,6 +6488,17 @@ fn normalizeIndex(index: i64, length: usize) ?usize {
     return @intCast(normalized);
 }
 
+fn currentPropertyArgumentIndex(raw_input: []const u8) ?usize {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    const prefix = "current-property[";
+    if (!std.mem.startsWith(u8, raw, prefix) or raw.len <= prefix.len + 1 or
+        raw[raw.len - 1] != ']')
+    {
+        return null;
+    }
+    return std.fmt.parseUnsigned(usize, raw[prefix.len .. raw.len - 1], 10) catch null;
+}
+
 fn nameEql(left: []const u8, right: []const u8) bool {
     return native_lexer.identifierEqlIgnoreCaseAscii(left, right);
 }
@@ -6381,6 +6892,7 @@ fn parseMemberAssignment(raw_input: []const u8) ?MemberAssignment {
         return .{
             .base = base,
             .member = .{ .key = key },
+            .value = value,
             .value_empty = value.len == 0,
         };
     }
@@ -6393,13 +6905,18 @@ fn parseMemberAssignment(raw_input: []const u8) ?MemberAssignment {
         return .{
             .base = base,
             .member = .{ .key = raw_key[1 .. raw_key.len - 1] },
+            .value = value,
             .value_empty = value.len == 0,
         };
     }
-    const index = std.fmt.parseUnsigned(usize, raw_key, 10) catch return null;
+    const member: MemberReference = if (std.fmt.parseUnsigned(usize, raw_key, 10)) |index|
+        .{ .index = index }
+    else |_|
+        .{ .expression = raw_key };
     return .{
         .base = base,
-        .member = .{ .index = index },
+        .member = member,
+        .value = value,
         .value_empty = value.len == 0,
     };
 }

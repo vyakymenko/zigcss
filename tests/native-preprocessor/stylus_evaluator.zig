@@ -678,6 +678,36 @@ test "native Stylus evaluates the fixed callable control operator builtin slice"
     try std.testing.expect(first.map().?.segments().len >= 7);
 }
 
+test "native Stylus add-property preserves declaration context and interpolation" {
+    const input =
+        \\custom(name, value)
+        \\  {name} value
+        \\replacement()
+        \\  add-property(current-property[0], before)
+        \\  after
+        \\copy()
+        \\  add-property(current-property[0], current-property[1])
+        \\  done
+        \\.direct
+        \\  add-property(foo, bar)
+        \\.custom
+        \\  custom(height, 10px)
+        \\.nested
+        \\  width replacement()
+        \\.copy
+        \\  background test copy(), stuff
+    ;
+    var result = try compile(std.testing.allocator, input, .{});
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".direct{foo:bar}.custom{height:10px}.nested{width:before;width:after}" ++
+            ".copy{background:test __CALL__, stuff;background:test done, stuff}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
 test "native Stylus callable control slice fails closed with exact diagnostics" {
     const missing =
         \\.a

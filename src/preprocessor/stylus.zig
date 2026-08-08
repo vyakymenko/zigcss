@@ -631,6 +631,7 @@ pub const Parser = struct {
         if (has_children and looksLikeFunctionDefinition(self.tokens[line.token_start..line.token_end])) {
             return .function;
         }
+        if (!has_children and looksLikeAdjacentCall(raw)) return .expression;
         if (looksLikeDeclaration(raw, has_children)) return .declaration;
         if (has_children or looksLikeSelector(raw)) return .rule;
         return .expression;
@@ -982,6 +983,21 @@ fn looksLikeFunctionDefinition(tokens: []const native_lexer.Token) bool {
     var opening = name + 1;
     while (opening < tokens.len and tokens[opening].kind == .whitespace) : (opening += 1) {}
     return opening < tokens.len and tokens[opening].kind == .open_paren;
+}
+
+fn looksLikeAdjacentCall(raw: []const u8) bool {
+    if (raw.len < 3 or
+        (!std.ascii.isAlphabetic(raw[0]) and raw[0] != '_' and raw[0] != '-'))
+    {
+        return false;
+    }
+    var end: usize = 1;
+    while (end < raw.len and
+        (std.ascii.isAlphanumeric(raw[end]) or raw[end] == '_' or raw[end] == '-'))
+    {
+        end += 1;
+    }
+    return end < raw.len and raw[end] == '(';
 }
 
 fn isAssignmentOperator(raw: []const u8) bool {
