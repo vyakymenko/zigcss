@@ -1352,6 +1352,24 @@ const ByteRange = struct {
     end: usize,
 };
 
+const StylusMatchFlags = struct {
+    global: bool = false,
+    ignore_case: bool = false,
+    multiline: bool = false,
+};
+
+const StylusLiteralPattern = struct {
+    bytes: []const u8,
+    anchor_start: bool,
+    anchor_end: bool,
+};
+
+const StylusStructuredMatchPattern = struct {
+    alternatives: []const u8,
+    character_class: []const u8,
+    minimum: usize,
+};
+
 const Assignment = struct {
     name: []const u8,
     value: []const u8,
@@ -2055,25 +2073,42 @@ const Engine = struct {
             const text = child.text orelse continue;
             const raw = std.mem.trim(u8, try self.sources.slice(text), " \t\r\n\x0c;,{");
             if (child.kind == .comment) continue;
-            var key: []const u8 = undefined;
-            var value: *const native_value.Value = undefined;
             if (child.kind == .rule and (try self.document.children(child_id)).len > 1) {
-                key = std.mem.trimRight(u8, raw, " \t\r\n\x0c:");
-                value = try self.evaluateObjectBlock(child_id, scope);
-            } else {
-                const parts = splitDeclaration(raw) orelse return error.InvalidDocument;
-                key = std.mem.trim(u8, raw[parts[0].start..parts[0].end], " \t\r\n\x0c'\"");
-                value = try self.evaluateValue(
+                const key = std.mem.trimRight(u8, raw, " \t\r\n\x0c:");
+                const value = try self.evaluateObjectBlock(child_id, scope);
+                try entries.append(self.allocator, .{
+                    .key = .{ .string = .{ .bytes = key, .quoted = true } },
+                    .value = value.*,
+                });
+                continue;
+            }
+            // The parser retains a same-line object literal as one declaration
+            // node, so split its finite top-level members here.
+            var member_ranges = try splitTopLevel(self.allocator, raw, ',');
+            defer member_ranges.deinit(self.allocator);
+            for (member_ranges.items) |range| {
+                const member_raw = std.mem.trim(
+                    u8,
+                    raw[range.start..range.end],
+                    " \t\r\n\x0c",
+                );
+                const parts = splitDeclaration(member_raw) orelse return error.InvalidDocument;
+                const key = std.mem.trim(
+                    u8,
+                    member_raw[parts[0].start..parts[0].end],
+                    " \t\r\n\x0c'\"",
+                );
+                const value = try self.evaluateValue(
                     text,
-                    raw[parts[1].start..parts[1].end],
+                    member_raw[parts[1].start..parts[1].end],
                     scope,
                     0,
                 );
+                try entries.append(self.allocator, .{
+                    .key = .{ .string = .{ .bytes = key, .quoted = true } },
+                    .value = value.*,
+                });
             }
-            try entries.append(self.allocator, .{
-                .key = .{ .string = .{ .bytes = key, .quoted = true } },
-                .value = value.*,
-            });
         }
         return self.ownValue((try self.document.get(node_id)).span, .{ .map = .{ .entries = entries.items } });
     }
@@ -2806,13 +2841,13 @@ const Engine = struct {
                 },
                 .rule => {
                     previous_condition = null;
+                    if (try self.invokeBlockMixinRule(statement_id, scope.*, output)) {
+                        continue;
+                    }
                     const destination = output orelse {
                         try self.emitRule(statement_id, scope.*, self.active_selector_scope);
                         continue;
                     };
-                    if (try self.invokeBlockMixinRule(statement_id, scope.*, destination)) {
-                        continue;
-                    }
                     try destination.nested.append(
                         self.allocator,
                         .{ .id = statement_id, .scope = scope.* },
@@ -3105,7 +3140,7 @@ const Engine = struct {
         self: *Engine,
         statement_id: native_syntax.NodeId,
         scope: native_environment.ScopeId,
-        output: RuleOutput,
+        output: ?RuleOutput,
     ) Error!bool {
         const children = try self.document.children(statement_id);
         if (children.len != 2) return false;
@@ -3122,13 +3157,14 @@ const Engine = struct {
         const call = parseCall(raw) orelse parseBareCall(raw) orelse return false;
         const name = raw[call.name.start..call.name.end];
         if (nameEql(name, "cache")) {
+            const destination = output orelse return false;
             return self.invokeCacheBlockRule(
                 selector.text.?,
                 children[1],
                 raw,
                 call,
                 scope,
-                output,
+                destination,
             );
         }
         if (self.findCallable(name) == null) return false;
@@ -3924,6 +3960,44 @@ const Engine = struct {
                 return error.InvalidArguments;
             }
         }
+        // Preserve null operands until logical fallback runs. Rendering first
+        // intentionally omits null bytes, which would erase the left operand.
+        if (std.mem.indexOf(u8, source_input, "||") != null) {
+            const source_ungrouped = stripOuterParentheses(source_input);
+            if (source_ungrouped.len != source_input.len) {
+                return self.evaluateValue(span, source_ungrouped, scope, depth + 1);
+            }
+            if (findLogicalOperator(source_input, .or_value)) |logical| {
+                const left = try self.evaluateValue(
+                    span,
+                    source_input[logical.left.start..logical.left.end],
+                    scope,
+                    depth + 1,
+                );
+                if (isTruthy(left)) return left;
+                return self.evaluateValue(
+                    span,
+                    source_input[logical.right.start..logical.right.end],
+                    scope,
+                    depth + 1,
+                );
+            }
+            if (findGenericBinary(source_input)) |binary| {
+                const left = try self.evaluateValue(
+                    span,
+                    source_input[binary.left.start..binary.left.end],
+                    scope,
+                    depth + 1,
+                );
+                const right = try self.evaluateValue(
+                    span,
+                    source_input[binary.right.start..binary.right.end],
+                    scope,
+                    depth + 1,
+                );
+                return self.evaluateGenericBinary(span, left, right, binary.operator);
+            }
+        }
         if (findComparison(source_input)) |comparison| {
             const left = try self.evaluateValue(
                 span,
@@ -4468,6 +4542,14 @@ const Engine = struct {
             );
             return error.InvalidOperation;
         }
+        if (nameEql(name, "match")) {
+            var match_arguments = try self.evaluateMatchArguments(span, raw, call, scope);
+            defer match_arguments.deinit(self.allocator);
+            return self.evaluateMatchBuiltin(span, match_arguments.items);
+        }
+        if (nameEql(name, "operate")) {
+            return self.evaluateOperateBuiltin(span, raw, call, scope);
+        }
         var arguments = try self.evaluateCallArguments(span, raw, call, scope);
         defer arguments.deinit(self.allocator);
 
@@ -4520,6 +4602,12 @@ const Engine = struct {
                 else => "ident",
             };
             return try self.ownValue(span, .{ .string = .{ .bytes = kind, .quoted = true } });
+        }
+        if (nameEql(name, "convert")) {
+            if (arguments.items.len != 1 or arguments.items[0].* != .string) {
+                return self.invalidBuiltinArguments(span);
+            }
+            return self.evaluateConvertedString(span, arguments.items[0].string.bytes, 0);
         }
         if (nameEql(name, "lookup")) {
             if (arguments.items.len != 1) return self.invalidBuiltinArguments(span);
@@ -5186,6 +5274,83 @@ const Engine = struct {
         return output;
     }
 
+    fn evaluateMatchArguments(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!std.ArrayList(*const native_value.Value) {
+        var output: std.ArrayList(*const native_value.Value) = .empty;
+        errdefer output.deinit(self.allocator);
+        var ranges = try splitTopLevel(self.allocator, raw[call.arguments.start..call.arguments.end], ',');
+        defer ranges.deinit(self.allocator);
+        if (call.arguments.start == call.arguments.end) ranges.clearRetainingCapacity();
+        try output.ensureTotalCapacity(self.allocator, ranges.items.len);
+        for (ranges.items, 0..) |range, index| {
+            const argument = std.mem.trim(
+                u8,
+                raw[call.arguments.start + range.start .. call.arguments.start + range.end],
+                " \t\r\n\x0c",
+            );
+            if (argument.len == 0) return self.invalidBuiltinArguments(span);
+            if (index == 0 and argument.len >= 2 and
+                (argument[0] == '\'' or argument[0] == '"') and
+                closingQuote(argument, 0) == argument.len - 1)
+            {
+                output.appendAssumeCapacity(try self.ownValue(span, .{ .string = .{
+                    .bytes = argument[1 .. argument.len - 1],
+                    .quoted = true,
+                } }));
+            } else {
+                output.appendAssumeCapacity(try self.evaluateValue(span, argument, scope, 0));
+            }
+        }
+        return output;
+    }
+
+    fn evaluateOperateBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        var ranges = try splitTopLevel(self.allocator, raw[call.arguments.start..call.arguments.end], ',');
+        defer ranges.deinit(self.allocator);
+        if (ranges.items.len != 3) return self.invalidBuiltinArguments(span);
+        var arguments: [3][]const u8 = undefined;
+        for (ranges.items, 0..) |range, index| {
+            arguments[index] = std.mem.trim(
+                u8,
+                raw[call.arguments.start + range.start .. call.arguments.start + range.end],
+                " \t\r\n\x0c",
+            );
+            if (arguments[index].len == 0) return self.invalidBuiltinArguments(span);
+        }
+        const operation = if (parseGenericTernary(arguments[0])) |ternary| blk: {
+            const condition = arguments[0][ternary.condition.start..ternary.condition.end];
+            const selected = if (try self.evaluateCondition(span, condition, scope))
+                ternary.when_true
+            else
+                ternary.when_false;
+            break :blk try self.evaluateValue(
+                span,
+                arguments[0][selected.start..selected.end],
+                scope,
+                0,
+            );
+        } else try self.evaluateValue(span, arguments[0], scope, 0);
+        if (operation.* != .string or !operation.string.quoted or operation.string.bytes.len != 1 or
+            std.mem.indexOfScalar(u8, "+-*/%", operation.string.bytes[0]) == null)
+        {
+            return self.invalidBuiltinArguments(span);
+        }
+        const left = try self.evaluateValue(span, arguments[1], scope, 0);
+        const right = try self.evaluateValue(span, arguments[2], scope, 0);
+        return self.evaluateGenericBinary(span, left, right, operation.string.bytes[0]);
+    }
+
     fn invalidBuiltinArguments(self: *Engine, span: native_source.Span) Error {
         self.reportInvalidArguments(span) catch |failure| return failure;
         return error.InvalidArguments;
@@ -5426,6 +5591,198 @@ const Engine = struct {
             return self.ownValue(span, .{ .string = .{ .bytes = output.items } });
         }
         return self.invalidBuiltinArguments(span);
+    }
+
+    fn evaluateConvertedString(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        if (depth >= self.limits.max_expression_depth) {
+            try self.reportExpressionDepth(span);
+            return error.ExpressionDepthExceeded;
+        }
+        try self.transaction.consumeOperations(@intCast(raw.len));
+        const input = std.mem.trim(u8, raw, " \t\r\n\x0c");
+        if (input.len >= 2 and (input[0] == '\'' or input[0] == '"') and
+            closingQuote(input, 0) == input.len - 1)
+        {
+            return self.ownValue(span, .{ .string = .{
+                .bytes = input[1 .. input.len - 1],
+                .quoted = true,
+            } });
+        }
+        if (std.mem.eql(u8, input, "true")) {
+            return self.ownValue(span, .{ .boolean = true });
+        }
+        if (std.mem.eql(u8, input, "false")) {
+            return self.ownValue(span, .{ .boolean = false });
+        }
+        if (std.mem.eql(u8, input, "null")) {
+            return self.ownValue(span, .{ .null_value = {} });
+        }
+        if (native_color.parseLiteral(input)) |color| {
+            return self.ownValue(span, .{ .color = color });
+        }
+        if (looksNumeric(input)) {
+            var parser = NumericParser{
+                .input = input,
+                .max_depth = self.limits.max_expression_depth,
+            };
+            if (parser.parse()) |numeric| {
+                var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+                if (numeric.toNumber(&numerator, &denominator)) |number| {
+                    return self.ownValue(span, .{ .number = number });
+                } else |_| {}
+            } else |failure| switch (failure) {
+                error.ExpressionDepthExceeded => {
+                    try self.reportExpressionDepth(span);
+                    return error.ExpressionDepthExceeded;
+                },
+                else => {},
+            }
+        }
+
+        var comma_items = try splitTopLevel(self.allocator, input, ',');
+        defer comma_items.deinit(self.allocator);
+        if (comma_items.items.len > 1) {
+            return self.evaluateConvertedList(span, input, comma_items.items, .comma, depth + 1);
+        }
+        var space_items = try splitTopLevelWhitespace(self.allocator, input);
+        defer space_items.deinit(self.allocator);
+        if (space_items.items.len > 1) {
+            return self.evaluateConvertedList(span, input, space_items.items, .space, depth + 1);
+        }
+        return self.ownValue(span, .{ .string = .{ .bytes = input } });
+    }
+
+    fn evaluateConvertedList(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        ranges: []const ByteRange,
+        separator: native_value.Separator,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        var items: std.ArrayList(native_value.Value) = .empty;
+        defer items.deinit(self.allocator);
+        try items.ensureTotalCapacity(self.allocator, ranges.len);
+        for (ranges) |range| {
+            const item = try self.evaluateConvertedString(
+                span,
+                raw[range.start..range.end],
+                depth + 1,
+            );
+            items.appendAssumeCapacity(item.*);
+        }
+        return self.ownValue(span, .{ .list = .{
+            .items = items.items,
+            .separator = separator,
+        } });
+    }
+
+    fn evaluateMatchBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        arguments: []const *const native_value.Value,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 2 or arguments.len > 3 or
+            arguments[0].* != .string or !arguments[0].string.quoted or
+            arguments[1].* != .string)
+        {
+            return self.invalidBuiltinArguments(span);
+        }
+        const pattern = arguments[0].string.bytes;
+        const subject = arguments[1].string.bytes;
+        const flags = if (arguments.len == 3 and arguments[2].* == .string)
+            parseStylusMatchFlags(arguments[2].string.bytes) orelse StylusMatchFlags{}
+        else
+            StylusMatchFlags{};
+        const pattern_work: u64 = @intCast(pattern.len +| 1);
+        const subject_work: u64 = @intCast(subject.len +| 1);
+        const work = std.math.mul(u64, pattern_work, subject_work) catch
+            std.math.maxInt(u64);
+        try self.transaction.consumeOperations(work);
+
+        var items: std.ArrayList(native_value.Value) = .empty;
+        defer items.deinit(self.allocator);
+        // The pinned provider family needs literal/prefix matching and one
+        // anchored capture grammar. Every other regex form fails closed.
+        const matched = if (parseStylusStructuredMatchPattern(pattern)) |structured|
+            try self.appendStructuredMatches(&items, subject, structured, flags)
+        else if (parseStylusLiteralPattern(pattern)) |literal|
+            try self.appendLiteralMatches(&items, subject, literal, flags)
+        else
+            return self.invalidBuiltinArguments(span);
+        if (!matched) return self.ownValue(span, .{ .null_value = {} });
+        return self.ownValue(span, .{ .list = .{
+            .items = items.items,
+            .separator = .space,
+        } });
+    }
+
+    fn appendStructuredMatches(
+        self: *Engine,
+        items: *std.ArrayList(native_value.Value),
+        subject: []const u8,
+        pattern: StylusStructuredMatchPattern,
+        flags: StylusMatchFlags,
+    ) Error!bool {
+        _ = flags.multiline;
+        var cursor: usize = 0;
+        var first_capture: ?ByteRange = null;
+        var alternatives = std.mem.splitScalar(u8, pattern.alternatives, '|');
+        while (alternatives.next()) |alternative| {
+            if (sliceStartsWith(subject[cursor..], alternative, flags.ignore_case)) {
+                first_capture = .{ .start = cursor, .end = cursor + alternative.len };
+                cursor += alternative.len;
+                break;
+            }
+        }
+        const operator_start = cursor;
+        while (cursor < subject.len and
+            stylusCharacterClassContains(pattern.character_class, subject[cursor], flags.ignore_case))
+        {
+            cursor += 1;
+        }
+        if (cursor - operator_start < pattern.minimum) return false;
+
+        try items.append(self.allocator, quotedMatchValue(subject));
+        if (flags.global) return true;
+        try items.append(
+            self.allocator,
+            if (first_capture) |range|
+                quotedMatchValue(subject[range.start..range.end])
+            else
+                .{ .null_value = {} },
+        );
+        try items.append(self.allocator, quotedMatchValue(subject[operator_start..cursor]));
+        try items.append(self.allocator, quotedMatchValue(subject[cursor..]));
+        return true;
+    }
+
+    fn appendLiteralMatches(
+        self: *Engine,
+        items: *std.ArrayList(native_value.Value),
+        subject: []const u8,
+        pattern: StylusLiteralPattern,
+        flags: StylusMatchFlags,
+    ) Error!bool {
+        var search_start: usize = 0;
+        var matched = false;
+        while (search_start <= subject.len) {
+            const found = findStylusLiteralMatch(subject, pattern, flags, search_start) orelse break;
+            try items.append(
+                self.allocator,
+                quotedMatchValue(subject[found.start..found.end]),
+            );
+            matched = true;
+            if (!flags.global or pattern.anchor_start or pattern.anchor_end) break;
+            search_start = if (found.end > found.start) found.end else found.start + 1;
+        }
+        return matched;
     }
 
     fn ownStringResult(
@@ -7536,6 +7893,7 @@ fn parseAssignment(raw_input: []const u8) ?Assignment {
             else => {},
         }
         if (depth != 0 or byte != '=') continue;
+        if (index + 1 < raw.len and raw[index + 1] == '=') continue;
         const prefix = if (index > 0) raw[index - 1] else 0;
         const has_prefix = std.mem.indexOfScalar(u8, "?+-*/%:", prefix) != null;
         const operator_start = if (has_prefix) index - 1 else index;
@@ -7761,6 +8119,166 @@ fn splitTopLevelOwnedStrings(
         };
     }
     return output;
+}
+
+fn parseStylusMatchFlags(raw: []const u8) ?StylusMatchFlags {
+    var flags = StylusMatchFlags{};
+    for (raw) |flag| switch (flag) {
+        'g' => {
+            if (flags.global) return null;
+            flags.global = true;
+        },
+        'i' => {
+            if (flags.ignore_case) return null;
+            flags.ignore_case = true;
+        },
+        'm' => {
+            if (flags.multiline) return null;
+            flags.multiline = true;
+        },
+        else => return null,
+    };
+    return flags;
+}
+
+fn parseStylusLiteralPattern(raw: []const u8) ?StylusLiteralPattern {
+    var start: usize = 0;
+    var end = raw.len;
+    var anchor_start = false;
+    var anchor_end = false;
+    if (start < end and raw[start] == '^') {
+        anchor_start = true;
+        start += 1;
+    }
+    if (start < end and raw[end - 1] == '$') {
+        anchor_end = true;
+        end -= 1;
+    }
+    for (raw[start..end]) |byte| {
+        if (std.mem.indexOfScalar(u8, "\\.^$*+?()[]{}|", byte) != null) return null;
+    }
+    return .{
+        .bytes = raw[start..end],
+        .anchor_start = anchor_start,
+        .anchor_end = anchor_end,
+    };
+}
+
+fn parseStylusStructuredMatchPattern(raw: []const u8) ?StylusStructuredMatchPattern {
+    if (raw.len < 12 or !std.mem.startsWith(u8, raw, "^(")) return null;
+    const alternatives_end = std.mem.indexOfScalarPos(u8, raw, 2, ')') orelse return null;
+    if (alternatives_end + 3 >= raw.len or raw[alternatives_end + 1] != '?' or
+        raw[alternatives_end + 2] != '(')
+    {
+        return null;
+    }
+    const alternatives = raw[2..alternatives_end];
+    if (!validStylusRegexAlternatives(alternatives)) return null;
+
+    const repeated_start = alternatives_end + 3;
+    const repeated_end = std.mem.indexOfScalarPos(u8, raw, repeated_start, ')') orelse return null;
+    if (!std.mem.eql(u8, raw[repeated_end + 1 ..], "(.*)")) return null;
+    const repeated = raw[repeated_start..repeated_end];
+    if (repeated.len < 6 or repeated[0] != '[') return null;
+    const class_end = std.mem.indexOfScalarPos(u8, repeated, 1, ']') orelse return null;
+    const character_class = repeated[1..class_end];
+    if (character_class.len == 0) return null;
+    const quantifier = repeated[class_end + 1 ..];
+    if (quantifier.len < 4 or quantifier[0] != '{' or
+        quantifier[quantifier.len - 2] != ',' or quantifier[quantifier.len - 1] != '}')
+    {
+        return null;
+    }
+    const minimum = std.fmt.parseInt(usize, quantifier[1 .. quantifier.len - 2], 10) catch
+        return null;
+    if (minimum == 0) return null;
+    return .{
+        .alternatives = alternatives,
+        .character_class = character_class,
+        .minimum = minimum,
+    };
+}
+
+fn validStylusRegexAlternatives(raw: []const u8) bool {
+    var alternatives = std.mem.splitScalar(u8, raw, '|');
+    var count: usize = 0;
+    while (alternatives.next()) |alternative| {
+        if (alternative.len == 0) return false;
+        for (alternative) |byte| {
+            if (std.mem.indexOfScalar(u8, "\\.^$*+?()[]{}|", byte) != null) return false;
+        }
+        count += 1;
+    }
+    return count > 0;
+}
+
+fn stylusCharacterClassContains(raw: []const u8, target: u8, ignore_case: bool) bool {
+    var index: usize = 0;
+    while (index < raw.len) {
+        if (index + 2 < raw.len and raw[index + 1] == '-') {
+            const start = foldStylusMatchByte(raw[index], ignore_case);
+            const end = foldStylusMatchByte(raw[index + 2], ignore_case);
+            const folded = foldStylusMatchByte(target, ignore_case);
+            if (start <= folded and folded <= end) return true;
+            index += 3;
+            continue;
+        }
+        if (foldStylusMatchByte(raw[index], ignore_case) ==
+            foldStylusMatchByte(target, ignore_case)) return true;
+        index += 1;
+    }
+    return false;
+}
+
+fn findStylusLiteralMatch(
+    subject: []const u8,
+    pattern: StylusLiteralPattern,
+    flags: StylusMatchFlags,
+    search_start: usize,
+) ?ByteRange {
+    if (pattern.bytes.len > subject.len or search_start > subject.len) return null;
+    const terminal = subject.len - pattern.bytes.len;
+    var index = search_start;
+    while (index <= terminal) : (index += 1) {
+        if (pattern.anchor_start and index != 0 and
+            !(flags.multiline and subject[index - 1] == '\n'))
+        {
+            continue;
+        }
+        if (pattern.anchor_end and index + pattern.bytes.len != subject.len and
+            !(flags.multiline and subject[index + pattern.bytes.len] == '\n'))
+        {
+            continue;
+        }
+        if (sliceEql(subject[index .. index + pattern.bytes.len], pattern.bytes, flags.ignore_case)) {
+            return .{ .start = index, .end = index + pattern.bytes.len };
+        }
+        if (pattern.anchor_start and !flags.multiline) break;
+    }
+    return null;
+}
+
+fn sliceStartsWith(subject: []const u8, prefix: []const u8, ignore_case: bool) bool {
+    return subject.len >= prefix.len and sliceEql(subject[0..prefix.len], prefix, ignore_case);
+}
+
+fn sliceEql(left: []const u8, right: []const u8, ignore_case: bool) bool {
+    if (left.len != right.len) return false;
+    if (!ignore_case) return std.mem.eql(u8, left, right);
+    for (left, right) |left_byte, right_byte| {
+        if (foldStylusMatchByte(left_byte, true) != foldStylusMatchByte(right_byte, true)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+fn foldStylusMatchByte(byte: u8, ignore_case: bool) u8 {
+    return if (ignore_case) std.ascii.toLower(byte) else byte;
+}
+
+fn quotedMatchValue(bytes: []const u8) native_value.Value {
+    return .{ .string = .{ .bytes = bytes, .quoted = true } };
 }
 
 fn selectorTokenIndex(selector: []const u8, target: []const u8) ?usize {

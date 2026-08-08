@@ -653,6 +653,108 @@ test "native Stylus evaluates the finite contrast result object and CSS fallback
     );
 }
 
+test "native Stylus evaluates bounded convert and match builtins" {
+    const input =
+        \\parsed = match('^(height|width)?([<>=]{1,})(.*)', 'height>=10px')
+        \\without-dimension = match('^(height|width)?([<>=]{1,})(.*)', '>400px')
+        \\direction = 'min'
+        \\.probe
+        \\  numeric: convert('1.334em')
+        \\  color-type: type(convert('#c00'))
+        \\  ident-type: type(convert('something'))
+        \\  space-list: convert('10 20 30')
+        \\  comma-list: convert('10, 20, 30')
+        \\  prefix: match('^pad', 'padding')
+        \\  captures: parsed
+        \\  operator: parsed[2]
+        \\  converted: convert(parsed[3])
+        \\  global: match('ain', 'The rain in SPAIN stays mainly in the plain', 'gi')
+        \\  invalid-flags: match('ain', 'The rain in SPAIN', 'x')
+        \\  fallback: direction + '-' + (without-dimension[1] || 'width')
+        \\  operated: operate(direction == 'min' ? '+' : '-', 400px, 1px)
+        \\  if match('absent', 'present')
+        \\    state: bad
+        \\  else
+        \\    state: good
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        ".probe{numeric:1.334em;color-type:'rgba';ident-type:'ident';" ++
+            "space-list:10 20 30;comma-list:10, 20, 30;prefix:'pad';" ++
+            "captures:'height>=10px' 'height' '>=' '10px';operator:'>=';" ++
+            "converted:10px;global:'ain' 'AIN' 'ain' 'ain';" ++
+            "invalid-flags:'ain';fallback:'min-width';operated:401px;state:good}",
+        compiled.css(),
+    );
+
+    const invalid =
+        \\.probe
+        \\  test: convert(1)
+    ;
+    try expectSemanticRejection(
+        invalid,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid, "convert").?),
+    );
+
+    const unsupported_match =
+        \\.probe
+        \\  test: match('a+', 'aaa')
+    ;
+    try expectSemanticRejection(
+        unsupported_match,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, unsupported_match, "match").?),
+    );
+}
+
+test "native Stylus invokes a provider-prefixed root block mixin" {
+    const input =
+        \\wrapper()
+        \\  @media print
+        \\    {block}
+        \\+wrapper()
+        \\  body
+        \\    color red
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        "@media print{body{color:#f00}}",
+        compiled.css(),
+    );
+}
+
+test "native Stylus composes match conversion and root media mixins" {
+    const input =
+        \\unit-intervals = { 'px': 1, 'em': 0.01, 'rem': 0.1 }
+        \\media(expression)
+        \\  parsed-expression = match('^(height|width)?([<>=]{1,})(.*)', expression)
+        \\  operator = parsed-expression[2]
+        \\  direction = match('>', operator) ? 'min' : 'max'
+        \\  type = direction + '-' + (parsed-expression[1] || 'width')
+        \\  value = convert(parsed-expression[3])
+        \\  unless match('=', operator)
+        \\    value = operate(direction == 'min' ? '+' : '-', value, unit-intervals[unit(value)])
+        \\  @media ({type}: value)
+        \\    {block}
+        \\+media('>400px')
+        \\  body
+        \\    margin 1px
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        "@media (min-width: 401px){body{margin:1px}}",
+        compiled.css(),
+    );
+}
+
 test "native Stylus semantic failures own diagnostics without partial CSS" {
     try expectSemanticRejection(
         \\.a
