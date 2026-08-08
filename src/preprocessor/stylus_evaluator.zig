@@ -5332,15 +5332,16 @@ const Engine = struct {
                     return self.invalidBuiltinArguments(span);
                 if (nameEql(name, "lighten")) adjusted_amount = (100 - hsl_channels[2]) * amount / 100;
                 if (nameEql(name, "darken")) adjusted_amount = hsl_channels[2] * amount / 100;
-                if (nameEql(name, "saturate")) adjusted_amount = (100 - hsl_channels[1]) * amount / 100;
-                if (nameEql(name, "desaturate")) adjusted_amount = hsl_channels[1] * amount / 100;
+                if (nameEql(name, "saturate") or nameEql(name, "desaturate")) {
+                    adjusted_amount = hsl_channels[1] * amount / 100;
+                }
             }
             const signed = if (nameEql(name, "darken") or nameEql(name, "desaturate") or
                 nameEql(name, "fade-out")) -adjusted_amount else adjusted_amount;
             const color = if (nameEql(name, "lighten") or nameEql(name, "darken"))
                 native_color.adjustLightness(arguments.items[0].color, signed)
             else if (nameEql(name, "saturate") or nameEql(name, "desaturate"))
-                native_color.adjustSaturation(arguments.items[0].color, signed)
+                adjustStylusSaturation(arguments.items[0].color, signed)
             else if (nameEql(name, "adjust-hue"))
                 native_color.adjustHue(arguments.items[0].color, signed)
             else
@@ -9480,6 +9481,15 @@ fn quantizeColor(
     const green = if (mode == .nearest) @round(channels[1]) else @floor(channels[1]);
     const blue = if (mode == .nearest) @round(channels[2]) else @floor(channels[2]);
     return native_color.rgb(red, green, blue, @trunc(channels[3] * 1000) / 1000);
+}
+
+fn adjustStylusSaturation(
+    color: native_value.Color,
+    amount: f64,
+) native_color.Error!native_value.Color {
+    var channels = try native_color.toHsl(color);
+    channels[1] += amount;
+    return native_color.hsl(channels[0], channels[1], channels[2], channels[3]);
 }
 
 fn roundDecimal(value: f64, places: i32) f64 {

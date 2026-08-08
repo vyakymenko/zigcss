@@ -621,6 +621,32 @@ test "native Stylus evaluates finite color component getters" {
     );
 }
 
+test "native Stylus preserves relative saturation endpoints alpha and CSS fallbacks" {
+    const input =
+        \\body
+        \\  saturate-lower saturate(#ee0, 0%)
+        \\  saturate-terminal saturate(#fd0cc7, 100%)
+        \\  saturate-alpha saturate(rgba(35,124,46,0.5), 80%)
+        \\  desaturate-lower desaturate(#ee0, 0%)
+        \\  desaturate-terminal desaturate(#fd0cc7, 100%)
+        \\  desaturate-alpha desaturate(rgba(35,124,46,0.5), 80%)
+        \\  filter-empty saturate()
+        \\  filter-amount saturate(100%)
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        "body{saturate-lower:#ee0;saturate-terminal:#f0f;" ++
+            "saturate-alpha:rgba(0,160,19,0.5);desaturate-lower:#ee0;" ++
+            "desaturate-terminal:#858585;desaturate-alpha:rgba(71,88,73,0.5);" ++
+            "filter-empty:saturate();filter-amount:saturate(100%)}",
+        compiled.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), compiled.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), compiled.dependencies().len);
+    try std.testing.expect(compiled.map() != null);
+}
+
 test "native Stylus evaluates the finite contrast result object and CSS fallback" {
     const input =
         \\.probe
