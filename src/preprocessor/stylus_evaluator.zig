@@ -1700,6 +1700,7 @@ const ActiveProperty = struct {
 const NestedRule = struct {
     id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
+    class_prefix: ?[]const u8 = null,
 };
 
 const CacheSelector = struct {
@@ -1882,6 +1883,7 @@ const Engine = struct {
     selector_order: u64 = 0,
     temporary_bytes: usize = 0,
     active_selector_scope: ?[]u8 = null,
+    active_class_prefix: ?[]const u8 = null,
     active_output: ?RuleOutput = null,
     active_property: ?ActiveProperty = null,
     active_property_value: ?*const native_value.Value = null,
@@ -2489,7 +2491,11 @@ const Engine = struct {
             const normalized = try self.normalizeSelectorLines(selector_node.text.?, raw_selector);
             defer self.allocator.free(normalized);
             const saved_selector_count = self.selector_count;
-            const full_selector = try self.combineSelectors(parent_selector, normalized, selector_node.text.?);
+            const full_selector = try self.combineSelectorsLiteral(
+                parent_selector,
+                normalized,
+                selector_node.text.?,
+            );
             self.selector_count = saved_selector_count;
             defer self.allocator.free(full_selector);
 
@@ -2642,6 +2648,22 @@ const Engine = struct {
         return self.ownValue(span, .{ .map = .{ .entries = entries.items } });
     }
 
+    fn emitNestedOutput(
+        self: *Engine,
+        child: NestedRule,
+        parent_selector: ?[]const u8,
+        at_rule: bool,
+    ) Error!void {
+        const previous_prefix = self.active_class_prefix;
+        self.active_class_prefix = child.class_prefix;
+        defer self.active_class_prefix = previous_prefix;
+        if (at_rule) {
+            try self.emitAtRule(child.id, child.scope, parent_selector);
+        } else {
+            try self.emitRule(child.id, child.scope, parent_selector);
+        }
+    }
+
     fn emitRule(
         self: *Engine,
         rule_id: native_syntax.NodeId,
@@ -2671,9 +2693,22 @@ const Engine = struct {
             rendered,
         );
         defer self.allocator.free(normalized_rendered);
+        const prefixed_rendered = if (self.active_class_prefix) |prefix|
+            if (prefix.len > 0)
+                try self.prefixClassSelectorsOwned(
+                    selector_node.text.?,
+                    normalized_rendered,
+                    prefix,
+                )
+            else
+                null
+        else
+            null;
+        defer if (prefixed_rendered) |owned| self.allocator.free(owned);
+        const scoped_rendered = prefixed_rendered orelse normalized_rendered;
         const base_selector = try self.combineSelectors(
             parent_selector,
-            normalized_rendered,
+            scoped_rendered,
             selector_node.text.?,
         );
         defer self.allocator.free(base_selector);
@@ -2691,7 +2726,7 @@ const Engine = struct {
         }
         const selector_part = try self.selectorPartOwned(
             selector_node.text.?,
-            normalized_rendered,
+            scoped_rendered,
             parent_selector != null,
         );
         self.selector_parts.append(self.allocator, selector_part) catch |failure| {
@@ -2749,10 +2784,10 @@ const Engine = struct {
             try self.emit(if (self.emittingOKeyframes()) "\n  } " else "}");
         }
         for (nested.items) |child| {
-            try self.emitRule(child.id, child.scope, selector);
+            try self.emitNestedOutput(child, selector, false);
         }
         for (at_rules.items) |child| {
-            try self.emitAtRule(child.id, child.scope, selector);
+            try self.emitNestedOutput(child, selector, true);
         }
         for (cached.items) |*item| try self.emitCachedRule(item);
     }
@@ -2796,10 +2831,10 @@ const Engine = struct {
             try self.emit("}");
         }
         for (cached.nested.items) |child| {
-            try self.emitRule(child.id, child.scope, selector);
+            try self.emitNestedOutput(child, selector, false);
         }
         for (cached.at_rules.items) |child| {
-            try self.emitAtRule(child.id, child.scope, selector);
+            try self.emitNestedOutput(child, selector, true);
         }
     }
 
@@ -2980,10 +3015,10 @@ const Engine = struct {
             if (parent_selector != null) try self.emit("}");
         }
         for (nested.items) |child| {
-            try self.emitRule(child.id, child.scope, parent_selector);
+            try self.emitNestedOutput(child, parent_selector, false);
         }
         for (at_rules.items) |child| {
-            try self.emitAtRule(child.id, child.scope, parent_selector);
+            try self.emitNestedOutput(child, parent_selector, true);
         }
         for (cached.items) |*item| try self.emitCachedRule(item);
         if (media_checkpoint) |checkpoint_value| {
@@ -3228,7 +3263,11 @@ const Engine = struct {
                     };
                     try destination.nested.append(
                         self.allocator,
-                        .{ .id = statement_id, .scope = scope.* },
+                        .{
+                            .id = statement_id,
+                            .scope = scope.*,
+                            .class_prefix = self.active_class_prefix,
+                        },
                     );
                 },
                 .at_rule => {
@@ -3256,7 +3295,11 @@ const Engine = struct {
                     };
                     try destination.at_rules.append(
                         self.allocator,
-                        .{ .id = statement_id, .scope = scope.* },
+                        .{
+                            .id = statement_id,
+                            .scope = scope.*,
+                            .class_prefix = self.active_class_prefix,
+                        },
                     );
                 },
                 .expression => {
@@ -3535,6 +3578,16 @@ const Engine = struct {
         const raw = std.mem.trimLeft(u8, selector_raw[1..], " \t");
         const call = parseCall(raw) orelse parseBareCall(raw) orelse return false;
         const name = raw[call.name.start..call.name.end];
+        if (nameEql(name, "prefix-classes")) {
+            return self.invokePrefixClassesBlockRule(
+                selector.text.?,
+                children[1],
+                raw,
+                call,
+                scope,
+                output,
+            );
+        }
         if (nameEql(name, "cache")) {
             const destination = output orelse return false;
             return self.invokeCacheBlockRule(
@@ -3557,6 +3610,38 @@ const Engine = struct {
             raw,
             call,
             scope,
+            output,
+            false,
+        );
+        if (returned != null) return error.InvalidDocument;
+        return true;
+    }
+
+    fn invokePrefixClassesBlockRule(
+        self: *Engine,
+        span: native_source.Span,
+        block_id: native_syntax.NodeId,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+        output: ?RuleOutput,
+    ) Error!bool {
+        var arguments = try self.evaluateCallArguments(span, raw, call, scope);
+        defer arguments.deinit(self.allocator);
+        if (arguments.items.len != 1 or arguments.items[0].* != .string or
+            !validClassPrefix(arguments.items[0].string.bytes))
+        {
+            try self.reportInvalidArguments(span);
+            return error.InvalidArguments;
+        }
+
+        const previous_prefix = self.active_class_prefix;
+        self.active_class_prefix = arguments.items[0].string.bytes;
+        defer self.active_class_prefix = previous_prefix;
+        var content_scope = scope;
+        const returned = try self.executeStatements(
+            try self.document.children(block_id),
+            &content_scope,
             output,
             false,
         );
@@ -4924,6 +5009,16 @@ const Engine = struct {
         scope: native_environment.ScopeId,
     ) Error!?*const native_value.Value {
         const name = raw[call.name.start..call.name.end];
+        if (nameEql(name, "prefix-classes")) {
+            try self.transaction.report(
+                .err,
+                .unsupported_feature,
+                span,
+                "native Stylus prefix-classes() requires a content block",
+                &.{},
+            );
+            return error.UnsupportedFeature;
+        }
         if (nameEql(name, "define")) {
             try self.transaction.report(
                 .err,
@@ -7602,7 +7697,147 @@ const Engine = struct {
         return output.toOwnedSlice(self.allocator);
     }
 
+    fn prefixClassSelectorsOwned(
+        self: *Engine,
+        span: native_source.Span,
+        selector: []const u8,
+        prefix: []const u8,
+    ) Error![]u8 {
+        try self.transaction.consumeOperations(@intCast(selector.len));
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var quote: u8 = 0;
+        var escaped = false;
+        var attribute_depth: usize = 0;
+        for (selector, 0..) |byte, index| {
+            if (escaped) {
+                try self.appendTemporary(&output, span, selector[index .. index + 1]);
+                escaped = false;
+                continue;
+            }
+            if (byte == '\\') {
+                try self.appendTemporary(&output, span, selector[index .. index + 1]);
+                escaped = true;
+                continue;
+            }
+            if (quote != 0) {
+                try self.appendTemporary(&output, span, selector[index .. index + 1]);
+                if (byte == quote) quote = 0;
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                quote = byte;
+                try self.appendTemporary(&output, span, selector[index .. index + 1]);
+                continue;
+            }
+            if (byte == '[') {
+                attribute_depth += 1;
+                try self.appendTemporary(&output, span, selector[index .. index + 1]);
+                continue;
+            }
+            if (byte == ']') {
+                attribute_depth -|= 1;
+                try self.appendTemporary(&output, span, selector[index .. index + 1]);
+                continue;
+            }
+            if (byte == '.' and attribute_depth == 0 and index + 1 < selector.len and
+                isClassSelectorStart(selector[index + 1]))
+            {
+                try self.transaction.consumeOperations(@intCast(prefix.len));
+                try self.appendTemporary(&output, span, ".");
+                try self.appendTemporary(&output, span, prefix);
+                continue;
+            }
+            try self.appendTemporary(&output, span, selector[index .. index + 1]);
+        }
+        return output.toOwnedSlice(self.allocator);
+    }
+
     fn combineSelectors(
+        self: *Engine,
+        parent_selector: ?[]const u8,
+        child_selector: []const u8,
+        span: native_source.Span,
+    ) Error![]u8 {
+        if (try self.resolveSelectorReferenceOwned(span, child_selector)) |resolved| {
+            return resolved;
+        }
+        return self.combineSelectorsLiteral(parent_selector, child_selector, span);
+    }
+
+    fn resolveSelectorReferenceOwned(
+        self: *Engine,
+        span: native_source.Span,
+        child_selector: []const u8,
+    ) Error!?[]u8 {
+        const child = std.mem.trim(u8, child_selector, " \t\r\n\x0c");
+        var selected_parts: []const []u8 = &.{};
+        var remainder: []const u8 = "";
+
+        var relative_cursor: usize = 0;
+        var relative_hops: usize = 0;
+        while (std.mem.startsWith(u8, child[relative_cursor..], "../")) {
+            relative_hops += 1;
+            relative_cursor += 3;
+        }
+        if (relative_hops > 0) {
+            remainder = std.mem.trim(u8, child[relative_cursor..], " \t\r\n\x0c");
+            if (remainder.len == 0 or relative_hops >= self.selector_parts.items.len) {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            }
+            selected_parts = self.selector_parts.items[0 .. self.selector_parts.items.len - relative_hops];
+        } else if (std.mem.startsWith(u8, child, "^[")) {
+            const closing = std.mem.indexOfScalarPos(u8, child, 2, ']') orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+            const range = parseSelectorSlice(child[2..closing], self.selector_parts.items.len) orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+            remainder = std.mem.trim(u8, child[closing + 1 ..], " \t\r\n\x0c");
+            if (remainder.len == 0) {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            }
+            selected_parts = self.selector_parts.items[range.start .. range.end + 1];
+        } else {
+            return null;
+        }
+
+        const saved_selector_count = self.selector_count;
+        const base = try self.selectorFromPartsOwned(span, selected_parts);
+        self.selector_count = saved_selector_count;
+        defer self.allocator.free(base);
+        return try self.combineSelectorsLiteral(base, remainder, span);
+    }
+
+    fn selectorFromPartsOwned(
+        self: *Engine,
+        span: native_source.Span,
+        parts: []const []u8,
+    ) Error![]u8 {
+        if (parts.len == 0) return error.InvalidDocument;
+        var first = std.mem.trim(u8, parts[0], " \t\r\n\x0c");
+        if (first.len > 0 and first[0] == '&') {
+            first = std.mem.trimLeft(u8, first[1..], " \t\r\n\x0c");
+        }
+        if (first.len == 0) return error.InvalidDocument;
+        var initial: std.ArrayList(u8) = .empty;
+        errdefer initial.deinit(self.allocator);
+        try self.appendTemporary(&initial, span, first);
+        var current = try initial.toOwnedSlice(self.allocator);
+        errdefer self.allocator.free(current);
+        for (parts[1..]) |part| {
+            const combined = try self.combineSelectorsLiteral(current, part, span);
+            self.allocator.free(current);
+            current = combined;
+        }
+        return current;
+    }
+
+    fn combineSelectorsLiteral(
         self: *Engine,
         parent_selector: ?[]const u8,
         child_selector: []const u8,
@@ -9743,6 +9978,55 @@ fn selectorTokenIndex(selector: []const u8, target: []const u8) ?usize {
         cursor = index + 1;
     }
     return null;
+}
+
+const SelectorSlice = struct {
+    start: usize,
+    end: usize,
+};
+
+fn parseSelectorSlice(raw: []const u8, part_count: usize) ?SelectorSlice {
+    const separator = std.mem.indexOf(u8, raw, "..") orelse return null;
+    if (std.mem.indexOfPos(u8, raw, separator + 2, "..") != null) return null;
+    const start_raw = std.mem.trim(u8, raw[0..separator], " \t\r\n\x0c");
+    const end_raw = std.mem.trim(u8, raw[separator + 2 ..], " \t\r\n\x0c");
+    if (start_raw.len == 0 or end_raw.len == 0) return null;
+    const start = selectorSliceIndex(start_raw, part_count) orelse return null;
+    const end = selectorSliceIndex(end_raw, part_count) orelse return null;
+    if (start > end) return null;
+    return .{ .start = start, .end = end };
+}
+
+fn selectorSliceIndex(raw: []const u8, part_count: usize) ?usize {
+    if (part_count == 0) return null;
+    const value = std.fmt.parseInt(i32, raw, 10) catch return null;
+    if (value >= 0) {
+        const index: usize = @intCast(value);
+        return if (index < part_count) index else null;
+    }
+    const magnitude: usize = @intCast(-@as(i64, value));
+    return if (magnitude <= part_count) part_count - magnitude else null;
+}
+
+fn validClassPrefix(prefix: []const u8) bool {
+    if (prefix.len == 0) return true;
+    if (!std.unicode.utf8ValidateSlice(prefix) or
+        !(std.ascii.isAlphabetic(prefix[0]) or prefix[0] == '_' or prefix[0] == '-' or
+            prefix[0] >= 0x80))
+    {
+        return false;
+    }
+    for (prefix[1..]) |byte| {
+        if (!std.ascii.isAlphanumeric(byte) and byte != '_' and byte != '-' and byte < 0x80) {
+            return false;
+        }
+    }
+    return true;
+}
+
+fn isClassSelectorStart(byte: u8) bool {
+    return std.ascii.isAlphabetic(byte) or byte == '_' or byte == '-' or
+        byte == '\\' or byte >= 0x80;
 }
 
 fn isSelectorNameByte(byte: u8) bool {

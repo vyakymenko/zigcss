@@ -877,6 +877,58 @@ test "native Stylus invokes a provider-prefixed root block mixin" {
     );
 }
 
+test "native Stylus prefixes class selectors inside a bounded block mixin" {
+    const input =
+        \\+prefix-classes('pre-')
+        \\  .alpha.beta:hover, #identity .gamma
+        \\    color red
+        \\.host
+        \\  +prefix-classes(unquoted-)
+        \\    .child
+        \\      width 1px
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        ".pre-alpha.pre-beta:hover,#identity .pre-gamma{color:#f00}" ++
+            ".host .unquoted-child{width:1px}",
+        compiled.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), compiled.nativeDiagnostics().len);
+    try std.testing.expect(compiled.map() != null);
+
+    const invalid =
+        \\+prefix-classes(1)
+        \\  .child
+        \\    width 1px
+    ;
+    try expectSemanticRejection(
+        invalid,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        0,
+    );
+    try expectSemanticRejection(
+        \\+prefix-classes('bad .')
+        \\  .child
+        \\    width 1px
+    ,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        0,
+    );
+    try expectSemanticRejection(
+        \\prefix-classes('orphan-')
+    ,
+        error.UnsupportedFeature,
+        .unsupported_feature,
+        "native Stylus prefix-classes() requires a content block",
+        0,
+    );
+}
+
 test "native Stylus composes match conversion and root media mixins" {
     const input =
         \\unit-intervals = { 'px': 1, 'em': 0.01, 'rem': 0.1 }
