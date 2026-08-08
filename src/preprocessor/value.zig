@@ -60,6 +60,7 @@ pub const List = struct {
     items: []const Value,
     separator: Separator = .undecided,
     bracketed: bool = false,
+    truthy_override: ?bool = null,
 };
 
 pub const Entry = struct {
@@ -260,6 +261,7 @@ pub const Store = struct {
             .items = &.{},
             .separator = input.separator,
             .bracketed = input.bracketed,
+            .truthy_override = input.truthy_override,
         };
         const items = try self.arena.allocator().alloc(Value, input.items.len);
         for (input.items, 0..) |item, index| {
@@ -274,6 +276,7 @@ pub const Store = struct {
             .items = items,
             .separator = input.separator,
             .bracketed = input.bracketed,
+            .truthy_override = input.truthy_override,
         };
     }
 

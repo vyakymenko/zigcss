@@ -54,6 +54,8 @@ fn compileNative(
 ) !evaluator.ValidatedCss {
     const corpus_root = try std.fs.cwd().realpathAlloc(allocator, corpus_files_root);
     defer allocator.free(corpus_root);
+    const images_root = try std.fs.path.join(allocator, &.{ corpus_root, "upstream/images" });
+    defer allocator.free(images_root);
     const entry_path = try std.fs.path.join(allocator, &.{ corpus_root, case.entry });
     defer allocator.free(entry_path);
     const entry_url = try resolver.pathToFileUrl(allocator, entry_path);
@@ -73,7 +75,9 @@ fn compileNative(
     defer document.deinit();
     var transaction = try evaluator.Transaction.init(allocator, &sources, &session, .{}, .{});
     defer transaction.deinit();
-    try stylus_evaluator.evaluate(&sources, &document, &transaction, .{});
+    try stylus_evaluator.evaluate(&sources, &document, &transaction, .{
+        .asset_load_paths = &.{images_root},
+    });
     return transaction.finish(.{ .format = .pretty, .source_map = true });
 }
 
@@ -258,9 +262,9 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
 
     try std.testing.expectEqual(@as(usize, 326), success_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 184), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 142), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0x04aeb0b29da6e111), exact_case_id_hash.final());
+    try std.testing.expectEqual(@as(usize, 185), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 141), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0x653eebfbaba42d25), exact_case_id_hash.final());
 }
 
 test "native Stylus closes the finite arithmetic conformance family" {
@@ -825,6 +829,58 @@ test "native Stylus closes the finite define conformance family" {
 
     std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
         std.debug.print("\nnative Stylus define mismatch\n", .{});
+        return failure;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try expectDependencyDeterminism(&first, &second);
+    try std.testing.checkAllAllocationFailures(
+        allocator,
+        exerciseNativeCompilationAllocationFailures,
+        .{ case, input },
+    );
+}
+
+test "native Stylus closes the finite image-size conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(parsed.value.cases, "stylus-official-bifs-image-size");
+    try std.testing.expectEqualStrings("built-ins", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var first = try compileNative(allocator, case, input);
+    defer first.deinit();
+    var second = try compileNative(allocator, case, input);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
+        std.debug.print("\nnative Stylus image-size mismatch\n", .{});
         return failure;
     };
     try std.testing.expectEqualStrings(first.css(), second.css());

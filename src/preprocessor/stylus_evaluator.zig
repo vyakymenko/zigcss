@@ -27,6 +27,8 @@ const hard_loop_iterations: usize = 10_000_000;
 const hard_selectors = 1_000_000;
 const hard_temporary_bytes = 20 * 1024 * 1024;
 const hard_import_statements = 200_000;
+const hard_asset_load_paths = 64;
+const hard_asset_load_path_bytes = 4_096;
 const block_value_prefix = "\x1fzigcss-native-stylus-block:";
 
 pub const Limits = struct {
@@ -39,6 +41,7 @@ pub const Limits = struct {
     max_loop_iterations: usize = 1_000_000,
     max_selectors: usize = 200_000,
     max_temporary_bytes: usize = 10 * 1024 * 1024,
+    asset_load_paths: []const []const u8 = &.{},
 };
 
 pub const Error = native_environment.Error ||
@@ -73,6 +76,7 @@ pub fn evaluate(
 ) Error!void {
     errdefer transaction.abort();
     try validateLimits(limits);
+    try validateAssetLoadPaths(limits.asset_load_paths);
 
     const root = try document.get(document.root);
     if (root.kind != .stylesheet) return error.InvalidDocument;
@@ -628,6 +632,21 @@ fn validateLimits(limits: Limits) Error!void {
         limits.max_temporary_bytes > hard_temporary_bytes)
     {
         return error.InvalidLimits;
+    }
+}
+
+fn validateAssetLoadPaths(paths: []const []const u8) Error!void {
+    if (paths.len > hard_asset_load_paths) return error.InvalidLimits;
+    for (paths, 0..) |path, index| {
+        if (path.len == 0 or path.len > hard_asset_load_path_bytes or
+            !std.fs.path.isAbsolute(path) or
+            std.mem.indexOfAny(u8, path, "\x00\r\n") != null)
+        {
+            return error.InvalidLimits;
+        }
+        for (paths[0..index]) |prior| {
+            if (std.mem.eql(u8, prior, path)) return error.InvalidLimits;
+        }
     }
 }
 
@@ -1332,6 +1351,219 @@ fn importCandidateUrl(
         try std.fs.path.resolve(allocator, &.{ parent_directory, target });
     defer allocator.free(absolute);
     return native_resolver.pathToFileUrl(allocator, absolute);
+}
+
+fn imageCandidateUrl(
+    allocator: std.mem.Allocator,
+    base_directory: []const u8,
+    target: []const u8,
+) native_resolver.Error![]u8 {
+    if (hasNonLocalScheme(target) or std.mem.indexOfAny(u8, target, "\x00\r\n?#") != null) {
+        return error.SchemeNotAllowed;
+    }
+    const absolute = if (std.fs.path.isAbsolute(target))
+        try std.fs.path.resolve(allocator, &.{target})
+    else
+        try std.fs.path.resolve(allocator, &.{ base_directory, target });
+    defer allocator.free(absolute);
+    return native_resolver.pathToFileUrl(allocator, absolute);
+}
+
+const ImageDimensions = struct {
+    width: f64,
+    height: f64,
+};
+
+fn parseImageDimensions(bytes: []const u8) ?ImageDimensions {
+    if (parseGifDimensions(bytes)) |dimensions| return dimensions;
+    if (parsePngDimensions(bytes)) |dimensions| return dimensions;
+    if (parseJpegDimensions(bytes)) |dimensions| return dimensions;
+    return parseSvgDimensions(bytes);
+}
+
+fn parseGifDimensions(bytes: []const u8) ?ImageDimensions {
+    if (bytes.len < 10 or
+        (!std.mem.startsWith(u8, bytes, "GIF87a") and
+            !std.mem.startsWith(u8, bytes, "GIF89a")))
+    {
+        return null;
+    }
+    const width = readLittleU16(bytes[6..10], 0);
+    const height = readLittleU16(bytes[6..10], 2);
+    if (width == 0 or height == 0) return null;
+    return .{ .width = @floatFromInt(width), .height = @floatFromInt(height) };
+}
+
+fn parsePngDimensions(bytes: []const u8) ?ImageDimensions {
+    const signature = "\x89PNG\r\n\x1a\n";
+    if (bytes.len < 24 or !std.mem.startsWith(u8, bytes, signature) or
+        readBigU32(bytes[8..12]) != 13 or
+        !std.mem.eql(u8, bytes[12..16], "IHDR"))
+    {
+        return null;
+    }
+    const width = readBigU32(bytes[16..20]);
+    const height = readBigU32(bytes[20..24]);
+    if (width == 0 or height == 0) return null;
+    return .{ .width = @floatFromInt(width), .height = @floatFromInt(height) };
+}
+
+fn parseJpegDimensions(bytes: []const u8) ?ImageDimensions {
+    if (bytes.len < 4 or bytes[0] != 0xff or bytes[1] != 0xd8) return null;
+    var cursor: usize = 2;
+    while (cursor < bytes.len) {
+        while (cursor < bytes.len and bytes[cursor] != 0xff) : (cursor += 1) {}
+        if (cursor == bytes.len) return null;
+        while (cursor < bytes.len and bytes[cursor] == 0xff) : (cursor += 1) {}
+        if (cursor == bytes.len) return null;
+        const marker = bytes[cursor];
+        cursor += 1;
+        if (marker == 0x00) continue;
+        if (marker == 0xd9 or marker == 0xda) return null;
+        if (marker == 0xd8 or marker == 0x01 or
+            (marker >= 0xd0 and marker <= 0xd7))
+        {
+            continue;
+        }
+        if (cursor + 2 > bytes.len) return null;
+        const segment_length: usize = readBigU16(bytes[cursor .. cursor + 2]);
+        if (segment_length < 2 or segment_length > bytes.len - cursor) return null;
+        if (isJpegStartOfFrame(marker)) {
+            if (segment_length < 7) return null;
+            const height = readBigU16(bytes[cursor + 3 .. cursor + 5]);
+            const width = readBigU16(bytes[cursor + 5 .. cursor + 7]);
+            if (width == 0 or height == 0) return null;
+            return .{ .width = @floatFromInt(width), .height = @floatFromInt(height) };
+        }
+        cursor += segment_length;
+    }
+    return null;
+}
+
+fn isJpegStartOfFrame(marker: u8) bool {
+    return (marker >= 0xc0 and marker <= 0xcf) and
+        marker != 0xc4 and marker != 0xc8 and marker != 0xcc;
+}
+
+fn parseSvgDimensions(bytes: []const u8) ?ImageDimensions {
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, bytes, search, "<svg")) |opening| {
+        const after_name = opening + "<svg".len;
+        if (after_name < bytes.len and
+            (std.ascii.isWhitespace(bytes[after_name]) or bytes[after_name] == '>'))
+        {
+            const closing = findSvgTagEnd(bytes, after_name) orelse return null;
+            const attributes = bytes[after_name..closing];
+            const width_value = svgAttribute(attributes, "width");
+            const height_value = svgAttribute(attributes, "height");
+            if (width_value != null and height_value != null) {
+                const width = parseSvgLength(width_value.?) orelse return null;
+                const height = parseSvgLength(height_value.?) orelse return null;
+                return .{ .width = width, .height = height };
+            }
+            const view_box = svgAttribute(attributes, "viewBox") orelse return null;
+            return parseSvgViewBox(view_box);
+        }
+        search = after_name;
+    }
+    return null;
+}
+
+fn findSvgTagEnd(bytes: []const u8, start: usize) ?usize {
+    var quote: u8 = 0;
+    var cursor = start;
+    while (cursor < bytes.len) : (cursor += 1) {
+        const byte = bytes[cursor];
+        if (quote != 0) {
+            if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+        } else if (byte == '>') {
+            return cursor;
+        }
+    }
+    return null;
+}
+
+fn svgAttribute(attributes: []const u8, wanted: []const u8) ?[]const u8 {
+    var cursor: usize = 0;
+    while (cursor < attributes.len) {
+        while (cursor < attributes.len and std.ascii.isWhitespace(attributes[cursor])) cursor += 1;
+        if (cursor == attributes.len or attributes[cursor] == '/') return null;
+        const name_start = cursor;
+        while (cursor < attributes.len and isSvgAttributeNameByte(attributes[cursor])) cursor += 1;
+        if (cursor == name_start) return null;
+        const name = attributes[name_start..cursor];
+        while (cursor < attributes.len and std.ascii.isWhitespace(attributes[cursor])) cursor += 1;
+        if (cursor == attributes.len or attributes[cursor] != '=') return null;
+        cursor += 1;
+        while (cursor < attributes.len and std.ascii.isWhitespace(attributes[cursor])) cursor += 1;
+        if (cursor == attributes.len or (attributes[cursor] != '\'' and attributes[cursor] != '"')) {
+            return null;
+        }
+        const quote = attributes[cursor];
+        cursor += 1;
+        const value_start = cursor;
+        while (cursor < attributes.len and attributes[cursor] != quote) cursor += 1;
+        if (cursor == attributes.len) return null;
+        const value = attributes[value_start..cursor];
+        cursor += 1;
+        if (std.mem.eql(u8, name, wanted)) return value;
+    }
+    return null;
+}
+
+fn isSvgAttributeNameByte(byte: u8) bool {
+    return std.ascii.isAlphanumeric(byte) or byte == '_' or byte == '-' or
+        byte == ':' or byte == '.';
+}
+
+fn parseSvgLength(raw: []const u8) ?f64 {
+    var value = std.mem.trim(u8, raw, " \t\r\n\x0c");
+    if (value.len >= 2 and std.ascii.eqlIgnoreCase(value[value.len - 2 ..], "px")) {
+        value = std.mem.trimRight(u8, value[0 .. value.len - 2], " \t\r\n\x0c");
+    }
+    if (value.len == 0) return null;
+    const parsed = std.fmt.parseFloat(f64, value) catch return null;
+    if (!std.math.isFinite(parsed) or parsed <= 0) return null;
+    return parsed;
+}
+
+fn parseSvgViewBox(raw: []const u8) ?ImageDimensions {
+    var values: [4]f64 = undefined;
+    var count: usize = 0;
+    var cursor: usize = 0;
+    while (cursor < raw.len) {
+        while (cursor < raw.len and
+            (std.ascii.isWhitespace(raw[cursor]) or raw[cursor] == ',')) cursor += 1;
+        if (cursor == raw.len) break;
+        if (count == values.len) return null;
+        const start = cursor;
+        while (cursor < raw.len and
+            !std.ascii.isWhitespace(raw[cursor]) and raw[cursor] != ',') cursor += 1;
+        values[count] = std.fmt.parseFloat(f64, raw[start..cursor]) catch return null;
+        if (!std.math.isFinite(values[count])) return null;
+        count += 1;
+    }
+    if (count != values.len or values[2] <= 0 or values[3] <= 0) return null;
+    return .{ .width = values[2], .height = values[3] };
+}
+
+fn readLittleU16(bytes: []const u8, offset: usize) u16 {
+    return @as(u16, bytes[offset]) | (@as(u16, bytes[offset + 1]) << 8);
+}
+
+fn readBigU16(bytes: []const u8) u16 {
+    return (@as(u16, bytes[0]) << 8) | @as(u16, bytes[1]);
+}
+
+fn readBigU32(bytes: []const u8) u32 {
+    return (@as(u32, bytes[0]) << 24) |
+        (@as(u32, bytes[1]) << 16) |
+        (@as(u32, bytes[2]) << 8) |
+        @as(u32, bytes[3]);
 }
 
 fn hasNonLocalScheme(target: []const u8) bool {
@@ -4683,6 +4915,9 @@ const Engine = struct {
         var arguments = try self.evaluateCallArguments(span, raw, call, scope);
         defer arguments.deinit(self.allocator);
 
+        if (nameEql(name, "image-size")) {
+            return try self.evaluateImageSizeBuiltin(span, arguments.items);
+        }
         if (nameEql(name, "length")) {
             if (arguments.items.len > 1) return self.invalidBuiltinArguments(span);
             const count: usize = if (arguments.items.len == 0)
@@ -5165,6 +5400,162 @@ const Engine = struct {
             return try self.ownValue(span, .{ .string = .{ .bytes = padded.items } });
         }
         return null;
+    }
+
+    fn evaluateImageSizeBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        arguments: []const *const native_value.Value,
+    ) Error!*const native_value.Value {
+        if (arguments.len < 1 or arguments.len > 2 or arguments[0].* != .string) {
+            return self.invalidBuiltinArguments(span);
+        }
+        const target = arguments[0].string.bytes;
+        if (target.len == 0 or std.mem.indexOfAny(u8, target, "\x00\r\n?#") != null or
+            hasNonLocalScheme(target))
+        {
+            try self.reportImageAssetRejected(span);
+            return error.InvalidOperation;
+        }
+
+        var loaded = (try self.loadImageAsset(span, target)) orelse {
+            if (arguments.len == 2) return self.imageSizeValue(span, .{ .width = 0, .height = 0 }, false);
+            try self.transaction.report(
+                .err,
+                .invalid_operation,
+                span,
+                "native Stylus image asset was not found",
+                &.{},
+            );
+            return error.InvalidOperation;
+        };
+        defer loaded.deinit();
+        try self.transaction.consumeOperations(@intCast(loaded.contents.len));
+        const dimensions = parseImageDimensions(loaded.contents) orelse {
+            try self.transaction.report(
+                .err,
+                .invalid_operation,
+                span,
+                "native Stylus image asset is invalid",
+                &.{},
+            );
+            return error.InvalidOperation;
+        };
+        return self.imageSizeValue(span, dimensions, true);
+    }
+
+    fn loadImageAsset(
+        self: *Engine,
+        span: native_source.Span,
+        target: []const u8,
+    ) Error!?native_resolver.Loaded {
+        const source_file = try self.sources.get(span.source);
+        const parent_path = native_resolver.fileUrlToPath(self.allocator, source_file.name) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => null,
+        };
+        defer if (parent_path) |path| self.allocator.free(path);
+        const ancestry: []const []const u8 = if (parent_path != null)
+            &.{source_file.name}
+        else
+            &.{};
+
+        if (parent_path) |path| {
+            const parent_directory = std.fs.path.dirname(path) orelse {
+                try self.reportImageAssetRejected(span);
+                return error.InvalidOperation;
+            };
+            const candidate_url = imageCandidateUrl(
+                self.allocator,
+                parent_directory,
+                target,
+            ) catch |failure| return self.failImageCandidate(failure, span);
+            defer self.allocator.free(candidate_url);
+            if (try self.loadImageCandidate(candidate_url, ancestry, span)) |loaded| return loaded;
+        }
+        for (self.limits.asset_load_paths) |load_path| {
+            const candidate_url = imageCandidateUrl(
+                self.allocator,
+                load_path,
+                target,
+            ) catch |failure| return self.failImageCandidate(failure, span);
+            defer self.allocator.free(candidate_url);
+            if (try self.loadImageCandidate(candidate_url, ancestry, span)) |loaded| return loaded;
+        }
+        return null;
+    }
+
+    fn loadImageCandidate(
+        self: *Engine,
+        candidate_url: []const u8,
+        ancestry: []const []const u8,
+        span: native_source.Span,
+    ) Error!?native_resolver.Loaded {
+        const session = try self.transaction.resolverSession();
+        return session.load(candidate_url, .{
+            .kind = .reference,
+            .ancestry = ancestry,
+        }) catch |failure| switch (failure) {
+            error.Missing, error.IsDirectory => null,
+            else => return self.failImageCandidate(failure, span),
+        };
+    }
+
+    fn failImageCandidate(
+        self: *Engine,
+        failure: native_resolver.Error,
+        span: native_source.Span,
+    ) Error {
+        switch (failure) {
+            error.OutOfMemory, error.Cancelled => return failure,
+            error.AttemptLimitExceeded,
+            error.DepthLimitExceeded,
+            error.FileCountExceeded,
+            error.FileLimitExceeded,
+            error.TotalLimitExceeded,
+            => {
+                self.reportResource(
+                    span,
+                    "native Stylus image asset resource limit exceeded",
+                ) catch |err| return err;
+                return failure;
+            },
+            else => {
+                self.reportImageAssetRejected(span) catch |err| return err;
+                return error.InvalidOperation;
+            },
+        }
+    }
+
+    fn reportImageAssetRejected(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error!void {
+        try self.transaction.report(
+            .err,
+            .invalid_operation,
+            span,
+            "native Stylus image asset load was rejected",
+            &.{},
+        );
+    }
+
+    fn imageSizeValue(
+        self: *Engine,
+        span: native_source.Span,
+        dimensions: ImageDimensions,
+        pixels: bool,
+    ) Error!*const native_value.Value {
+        const units: []const []const u8 = if (pixels) &.{"px"} else &.{};
+        const items = [_]native_value.Value{
+            .{ .number = .{ .value = dimensions.width, .numerator_units = units } },
+            .{ .number = .{ .value = dimensions.height, .numerator_units = units } },
+        };
+        return self.ownValue(span, .{ .list = .{
+            .items = &items,
+            .separator = .space,
+            .truthy_override = if (pixels) null else false,
+        } });
     }
 
     fn executeDefineStatement(
@@ -7432,6 +7823,7 @@ fn isTruthy(value: *const native_value.Value) bool {
         .boolean => |item| item,
         .number => |number| number.value != 0,
         .string => |string| string.bytes.len != 0,
+        .list => |list| list.truthy_override orelse true,
         else => true,
     };
 }

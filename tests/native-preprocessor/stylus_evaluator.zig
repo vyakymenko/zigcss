@@ -907,6 +907,143 @@ test "native Stylus define owns local and explicit global scope" {
     );
 }
 
+test "native Stylus reads bounded image dimensions through resolver ownership" {
+    const allocator = std.testing.allocator;
+    const image_root = "tests/preprocessors/stylus/corpus/files/upstream/images";
+    const names = [_][]const u8{
+        "gif",
+        "tux.png",
+        "flowers.jpeg",
+        "flowers_p.jpg",
+        "tiger.svg",
+    };
+    var contents: [names.len][]u8 = undefined;
+    var loaded: usize = 0;
+    defer for (contents[0..loaded]) |bytes| allocator.free(bytes);
+    for (names, 0..) |name, index| {
+        const path = try std.fs.path.join(allocator, &.{ image_root, name });
+        defer allocator.free(path);
+        contents[index] = try std.fs.cwd().readFileAlloc(allocator, path, 10 * 1024 * 1024);
+        loaded += 1;
+    }
+
+    const files = [_]FixtureFile{
+        .{ .path = names[0], .contents = contents[0] },
+        .{ .path = names[1], .contents = contents[1] },
+        .{ .path = names[2], .contents = contents[2] },
+        .{ .path = names[3], .contents = contents[3] },
+        .{ .path = names[4], .contents = contents[4] },
+    };
+    const input =
+        \\body
+        \\  gif: image-size('gif')
+        \\  gif-width: image-size('gif')[0]
+        \\  png: image-size('tux.png')
+        \\  jpeg: image-size('flowers.jpeg')
+        \\  progressive-jpeg: image-size('flowers_p.jpg')
+        \\  svg: image-size('tiger.svg')
+        \\  missing: image-size('missing.png', true)
+        \\.present
+        \\  if image-size('tux.png', true)
+        \\    found: yes
+        \\  else
+        \\    found: no
+        \\.missing
+        \\  if image-size('missing.png', true)
+        \\    found: yes
+        \\  else
+        \\    found: no
+    ;
+    var result = try compileFixture(allocator, input, &files, .{}, .{});
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{gif:118px 104px;gif-width:118px;png:510px 640px;" ++
+            "jpeg:640px 480px;progressive-jpeg:640px 480px;" ++
+            "svg:900px 900px;missing:0 0}.present{found:yes}.missing{found:no}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, names.len), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, names.len), result.edges().len);
+    for (result.dependencies(), names) |dependency, name| {
+        try std.testing.expectEqual(resolver.DependencyKind.reference, dependency.kind);
+        try std.testing.expectEqualStrings(name, std.fs.path.basename(dependency.url));
+    }
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
+test "native Stylus image dimensions reject invalid assets and unconfined targets" {
+    const invalid_assets = [_]FixtureFile{
+        .{ .path = "invalid.gif", .contents = "GIF89a\x00\x00\x01\x00" },
+        .{ .path = "invalid.png", .contents = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x00\x00\x00\x00\x01" },
+        .{ .path = "invalid.jpeg", .contents = "\xff\xd8\xff\xc0\x00\x07\x08\x00\x00\x00\x01" },
+        .{ .path = "invalid.svg", .contents = "<svg width='0' height='1'></svg>" },
+    };
+    for (invalid_assets) |asset| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "body\n  size: image-size('{s}')\n",
+            .{asset.path},
+        );
+        defer std.testing.allocator.free(input);
+        try expectFixtureRejection(
+            input,
+            &.{asset},
+            error.InvalidOperation,
+            .invalid_operation,
+            "native Stylus image asset is invalid",
+            0,
+            1,
+        );
+    }
+
+    try expectFixtureRejection(
+        "body\n  size: image-size('missing.png')\n",
+        &.{},
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus image asset was not found",
+        0,
+        0,
+    );
+    for ([_][]const u8{ "../escape.png", "https://example.invalid/image.png" }) |target| {
+        const input = try std.fmt.allocPrint(
+            std.testing.allocator,
+            "body\n  size: image-size('{s}')\n",
+            .{target},
+        );
+        defer std.testing.allocator.free(input);
+        try expectFixtureRejection(
+            input,
+            &.{},
+            error.InvalidOperation,
+            .invalid_operation,
+            "native Stylus image asset load was rejected",
+            0,
+            0,
+        );
+    }
+}
+
+test "native Stylus image dimensions preserve resolver byte limits" {
+    const input = "body\n  size: image-size('tiny.gif')\n";
+    const gif = "GIF89a\x01\x00\x01\x00";
+    const files = [_]FixtureFile{.{ .path = "tiny.gif", .contents = gif }};
+    var terminal = resolver.Limits{};
+    terminal.max_total_bytes = gif.len;
+    var result = try compileFixture(std.testing.allocator, input, &files, terminal, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings("body{size:1px 1px}", result.css());
+    try std.testing.expectEqual(@as(u64, gif.len), result.stats().bytes);
+
+    var over_limit = terminal;
+    over_limit.max_total_bytes -= 1;
+    try std.testing.expectError(
+        error.TotalLimitExceeded,
+        compileFixture(std.testing.allocator, input, &files, over_limit, .{}),
+    );
+}
+
 test "native Stylus callable control slice fails closed with exact diagnostics" {
     const missing =
         \\.a
@@ -1237,6 +1374,14 @@ test "native Stylus plain CSS foundation owns resource and cancellation boundari
     {
         var invalid = stylus_evaluator.Limits{};
         invalid.max_nodes = 0;
+        try std.testing.expectError(
+            error.InvalidLimits,
+            compile(std.testing.allocator, input, invalid),
+        );
+    }
+    {
+        var invalid = stylus_evaluator.Limits{};
+        invalid.asset_load_paths = &.{"relative"};
         try std.testing.expectError(
             error.InvalidLimits,
             compile(std.testing.allocator, input, invalid),
