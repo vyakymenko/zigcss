@@ -842,6 +842,27 @@ test "native Stylus add-property preserves declaration context and interpolation
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Stylus indexed current-property access retains its callable snapshot" {
+    const input =
+        \\identity(value)
+        \\  add-property('captured', value)
+        \\  return 1px
+        \\outer()
+        \\  temporary: identity(current-property[0])
+        \\  return 2px
+        \\body
+        \\  width: outer()
+    ;
+    var result = try compile(std.testing.allocator, input, .{});
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{captured:'width';width:2px}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
+}
+
 test "native Stylus callable control slice fails closed with exact diagnostics" {
     const missing =
         \\.a

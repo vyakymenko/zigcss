@@ -1452,6 +1452,7 @@ const RenderedDeclaration = struct {
 const ActiveProperty = struct {
     property: []const u8,
     value_span: native_source.Span,
+    scope: native_environment.ScopeId,
 };
 
 const NestedRule = struct {
@@ -2123,10 +2124,10 @@ const Engine = struct {
         const cursor = nameEnd(raw, 0);
         if (cursor >= raw.len or (raw[cursor] != '.' and raw[cursor] != '[')) return null;
         const base = raw[0..cursor];
-        const current = if (nameEql(base, "current-property"))
-            (try self.currentPropertyValue(span, scope)) orelse return null
-        else
-            (try self.environment.lookup(scope, base)) orelse return null;
+        const current = if (nameEql(base, "current-property")) blk: {
+            if (try self.environment.lookup(scope, base)) |bound| break :blk bound;
+            break :blk (try self.currentPropertyValue(span, scope)) orelse return null;
+        } else (try self.environment.lookup(scope, base)) orelse return null;
         return self.evaluateMemberSuffix(span, raw, cursor, current, scope);
     }
 
@@ -2820,6 +2821,25 @@ const Engine = struct {
                     if (parseDeclarationCall(raw)) |call| {
                         const name = raw[call.name.start..call.name.end];
                         if (self.findCallable(name) != null and !self.isActiveCallable(name)) {
+                            const previous_property = self.active_property;
+                            const previous_property_value = self.active_property_value;
+                            const previous_property_call_span = self.active_property_call_span;
+                            const property_binding_start = self.current_property_bindings.items.len;
+                            self.active_property = .{
+                                .property = name,
+                                .value_span = try self.relativeSpan(text, call.arguments),
+                                .scope = scope.*,
+                            };
+                            self.active_property_value = null;
+                            self.active_property_call_span = null;
+                            defer {
+                                self.active_property = previous_property;
+                                self.active_property_value = previous_property_value;
+                                self.active_property_call_span = previous_property_call_span;
+                                self.current_property_bindings.shrinkRetainingCapacity(
+                                    property_binding_start,
+                                );
+                            }
                             const returned = try self.invokeUserCallable(
                                 text,
                                 raw,
@@ -2843,6 +2863,26 @@ const Engine = struct {
                     previous_condition = null;
                     if (try self.invokeBlockMixinRule(statement_id, scope.*, output)) {
                         continue;
+                    }
+                    if (output == null and allow_return) {
+                        const children = try self.document.children(statement_id);
+                        if (children.len == 1) {
+                            const selector = try self.document.get(children[0]);
+                            if (selector.kind == .selector and selector.text != null) {
+                                const raw = std.mem.trim(
+                                    u8,
+                                    try self.sources.slice(selector.text.?),
+                                    " \t\r\n\x0c;",
+                                );
+                                implicit_result = try self.evaluateValue(
+                                    selector.text.?,
+                                    raw,
+                                    scope.*,
+                                    0,
+                                );
+                                continue;
+                            }
+                        }
                     }
                     const destination = output orelse {
                         try self.emitRule(statement_id, scope.*, self.active_selector_scope);
@@ -3410,6 +3450,10 @@ const Engine = struct {
         }
         const alias_start = self.mutation_aliases.items.len;
         defer self.mutation_aliases.shrinkRetainingCapacity(alias_start);
+        const current_property_binding_start = self.current_property_bindings.items.len;
+        defer self.current_property_bindings.shrinkRetainingCapacity(
+            current_property_binding_start,
+        );
 
         var argument_values: std.ArrayList(*const native_value.Value) = .empty;
         defer argument_values.deinit(self.allocator);
@@ -3532,6 +3576,22 @@ const Engine = struct {
                 .space,
         } });
         call_scope = try self.setBinding(call_scope, "arguments", arguments_value, span);
+        const current_property = (try self.currentPropertyValue(span, caller_scope)) orelse
+            try self.ownValue(span, .{ .null_value = {} });
+        call_scope = try self.setBinding(
+            call_scope,
+            "current-property",
+            current_property,
+            span,
+        );
+        if (self.active_property_value != null and
+            current_property == self.active_property_value.?)
+        {
+            try self.current_property_bindings.append(self.allocator, .{
+                .scope = call_scope,
+                .name = "current-property",
+            });
+        }
 
         const block = try self.statementBlock(resolved_callable.node_id);
         const returned = try self.executeStatements(
@@ -3828,7 +3888,11 @@ const Engine = struct {
         const previous_property = self.active_property;
         const previous_property_value = self.active_property_value;
         const property_binding_start = self.current_property_bindings.items.len;
-        self.active_property = .{ .property = property, .value_span = value_span };
+        self.active_property = .{
+            .property = property,
+            .value_span = value_span,
+            .scope = scope,
+        };
         self.active_property_value = null;
         defer {
             self.active_property = previous_property;
@@ -3886,6 +3950,9 @@ const Engine = struct {
         }
         const source_input = std.mem.trim(u8, raw, " \t\r\n\x0c;");
         if (nameEql(source_input, "current-property")) {
+            if (try self.environment.lookup(scope, "current-property")) |bound| {
+                return bound;
+            }
             return (try self.currentPropertyValue(span, scope)) orelse
                 self.ownValue(span, .{ .null_value = {} });
         }
@@ -5069,7 +5136,7 @@ const Engine = struct {
     fn currentPropertyValue(
         self: *Engine,
         span: native_source.Span,
-        scope: native_environment.ScopeId,
+        _: native_environment.ScopeId,
     ) Error!?*const native_value.Value {
         const property = self.active_property orelse return null;
         if (self.active_property_value) |value| return value;
@@ -5095,8 +5162,16 @@ const Engine = struct {
         const previous_property = self.active_property;
         self.active_property = null;
         defer self.active_property = previous_property;
-        const property_value = try self.ownValue(span, .{ .string = .{ .bytes = property.property } });
-        const expression_value = try self.evaluateValue(span, normalized.items, scope, 0);
+        const property_value = try self.ownValue(span, .{ .string = .{
+            .bytes = property.property,
+            .quoted = true,
+        } });
+        const expression_value = try self.evaluateValue(
+            span,
+            normalized.items,
+            property.scope,
+            0,
+        );
         const items = [_]native_value.Value{ property_value.*, expression_value.* };
         const value = try self.ownValue(span, .{ .list = .{
             .items = &items,
