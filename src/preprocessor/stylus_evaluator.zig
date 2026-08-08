@@ -27,6 +27,7 @@ const hard_loop_iterations: usize = 10_000_000;
 const hard_selectors = 1_000_000;
 const hard_temporary_bytes = 20 * 1024 * 1024;
 const hard_import_statements = 200_000;
+const block_value_prefix = "\x1fzigcss-native-stylus-block:";
 
 pub const Limits = struct {
     max_source_bytes: usize = hard_source_bytes,
@@ -86,9 +87,62 @@ pub fn evaluate(
         );
         return error.SourceLimitExceeded;
     }
+
+    const normalized_input = normalizeInlineAtBlocks(
+        transaction.allocator,
+        input,
+        limits.max_temporary_bytes,
+    ) catch |failure| {
+        if (failure == error.TemporaryLimitExceeded) {
+            try transaction.report(
+                .err,
+                .resource_limit,
+                root.span,
+                "native Stylus temporary byte limit exceeded",
+                &.{},
+            );
+        }
+        return failure;
+    };
+    defer if (normalized_input) |bytes| transaction.allocator.free(bytes);
+    var normalized_document: ?native_syntax.Document = null;
+    defer if (normalized_document) |*normalized| normalized.deinit();
+    if (normalized_input) |bytes| {
+        if (bytes.len > limits.max_source_bytes) {
+            try transaction.report(
+                .err,
+                .resource_limit,
+                root.span,
+                "native Stylus evaluator source limit exceeded",
+                &.{},
+            );
+            return error.SourceLimitExceeded;
+        }
+        const original_file = try sources.get(root.span.source);
+        const normalized_name = try std.fmt.allocPrint(
+            transaction.allocator,
+            "{s}#zigcss-native-atblock-{d}",
+            .{ original_file.name, sources.count() },
+        );
+        defer transaction.allocator.free(normalized_name);
+        const normalized_source = try sources.add(normalized_name, bytes);
+        var parser = try native_stylus.Parser.init(
+            transaction.allocator,
+            sources,
+            normalized_source,
+            .{},
+            .{},
+        );
+        defer parser.deinit();
+        normalized_document = try parser.parse();
+    }
+    const base_document = if (normalized_document) |*normalized| normalized else document;
+    const base_root = try base_document.get(base_document.root);
+    const base_input = try sources.slice(base_root.span);
+
     var expanded_document: ?native_syntax.Document = null;
     defer if (expanded_document) |*expanded| expanded.deinit();
-    if (containsImports(document)) {
+    if (containsImports(base_document)) {
         var expander = ImportExpander.init(
             transaction.allocator,
             sources,
@@ -96,7 +150,7 @@ pub fn evaluate(
             limits,
         );
         defer expander.deinit();
-        expanded_document = expander.expand(document) catch |failure| switch (failure) {
+        expanded_document = expander.expand(base_document) catch |failure| switch (failure) {
             error.SyntaxDepthExceeded,
             error.SyntaxEdgeLimitExceeded,
             error.SyntaxNodeLimitExceeded,
@@ -113,7 +167,7 @@ pub fn evaluate(
             else => return failure,
         };
     }
-    const active_document = if (expanded_document) |*expanded| expanded else document;
+    const active_document = if (expanded_document) |*expanded| expanded else base_document;
     if (active_document.nodes().len > limits.max_nodes) {
         try transaction.report(
             .err,
@@ -126,9 +180,9 @@ pub fn evaluate(
     }
 
     try transaction.consumeOperations(@intCast(active_document.nodes().len));
-    try rejectUsePlugins(sources, root.span, input, transaction);
-    const semantic = expanded_document != null or
-        try requiresSemanticEvaluation(active_document, input);
+    try rejectUsePlugins(sources, base_root.span, base_input, transaction);
+    const semantic = normalized_document != null or expanded_document != null or
+        try requiresSemanticEvaluation(active_document, base_input);
     try preflightStatements(
         active_document,
         try active_document.children(active_document.root),
@@ -136,7 +190,7 @@ pub fn evaluate(
         semantic,
     );
     if (!semantic) {
-        try transaction.emitMapped(root.span, null, input);
+        try transaction.emitMapped(base_root.span, null, base_input);
         return;
     }
 
@@ -149,6 +203,324 @@ pub fn evaluate(
     );
     defer engine.deinit();
     try engine.run();
+}
+
+const InlineAtBlock = struct {
+    marker: usize,
+    opening: usize,
+    closing: usize,
+    name: []u8,
+};
+
+fn normalizeInlineAtBlocks(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    maximum: usize,
+) Error!?[]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    var input_cursor: usize = 0;
+    var search_cursor: usize = 0;
+    var generated_index: usize = 0;
+    var changed = false;
+
+    while (findInlineAtBlock(input, search_cursor)) |first| {
+        const line_start = (std.mem.lastIndexOfScalar(u8, input[0..first.marker], '\n') orelse
+            std.math.maxInt(usize)) +% 1;
+        const opening_paren = std.mem.lastIndexOfScalar(
+            u8,
+            input[line_start..first.marker],
+            '(',
+        ) orelse return error.InvalidDocument;
+        const call_opening = line_start + opening_paren;
+        const call_closing = matchingParen(input, call_opening) orelse
+            return error.InvalidDocument;
+        if (call_closing < first.closing) return error.InvalidDocument;
+
+        var blocks: std.ArrayList(InlineAtBlock) = .empty;
+        defer {
+            for (blocks.items) |block| allocator.free(block.name);
+            blocks.deinit(allocator);
+        }
+        var block_cursor = first.marker;
+        while (findInlineAtBlock(input[0 .. call_closing + 1], block_cursor)) |found| {
+            var name: []u8 = undefined;
+            while (true) : (generated_index += 1) {
+                name = try std.fmt.allocPrint(
+                    allocator,
+                    "__zigcss_native_atblock_{d}",
+                    .{generated_index},
+                );
+                if (std.mem.indexOf(u8, input, name) == null) break;
+                allocator.free(name);
+            }
+            generated_index += 1;
+            blocks.append(allocator, .{
+                .marker = found.marker,
+                .opening = found.opening,
+                .closing = found.closing,
+                .name = name,
+            }) catch |failure| {
+                allocator.free(name);
+                return failure;
+            };
+            block_cursor = found.closing + 1;
+        }
+        if (blocks.items.len == 0) return error.InvalidDocument;
+
+        var line_end = call_closing + 1;
+        while (line_end < input.len and input[line_end] != '\r' and input[line_end] != '\n') {
+            line_end += 1;
+        }
+        var next_line = line_end;
+        if (next_line < input.len and input[next_line] == '\r') next_line += 1;
+        if (next_line < input.len and input[next_line] == '\n') next_line += 1 else if (next_line == line_end and next_line < input.len and input[next_line] == '\n') next_line += 1;
+
+        if (line_start < input_cursor) return error.InvalidDocument;
+        try appendBounded(&output, allocator, input[input_cursor..line_start], maximum);
+        var indent_end = line_start;
+        while (indent_end < input.len and
+            (input[indent_end] == ' ' or input[indent_end] == '\t'))
+        {
+            indent_end += 1;
+        }
+        const indent = input[line_start..indent_end];
+        for (blocks.items) |block| {
+            try appendBounded(&output, allocator, indent, maximum);
+            try appendBounded(&output, allocator, block.name, maximum);
+            try appendBounded(&output, allocator, " = @block {", maximum);
+            const body = std.mem.trimRight(
+                u8,
+                input[block.opening + 1 .. block.closing],
+                " \t",
+            );
+            try appendBounded(&output, allocator, body, maximum);
+            if (body.len == 0 or (body[body.len - 1] != '\n' and body[body.len - 1] != '\r')) {
+                try appendBounded(&output, allocator, "\n", maximum);
+            }
+            try appendBounded(&output, allocator, indent, maximum);
+            try appendBounded(&output, allocator, "}\n", maximum);
+        }
+
+        var normalized_call: std.ArrayList(u8) = .empty;
+        defer normalized_call.deinit(allocator);
+        var call_cursor = line_start;
+        for (blocks.items) |block| {
+            try normalized_call.appendSlice(allocator, input[call_cursor..block.marker]);
+            try normalized_call.appendSlice(allocator, block.name);
+            call_cursor = block.closing + 1;
+        }
+        try normalized_call.appendSlice(allocator, input[call_cursor .. call_closing + 1]);
+        try appendBounded(&output, allocator, indent, maximum);
+        try appendCollapsedWhitespace(
+            &output,
+            allocator,
+            normalized_call.items,
+            maximum,
+        );
+        try appendBounded(
+            &output,
+            allocator,
+            std.mem.trimRight(u8, input[call_closing + 1 .. line_end], " \t"),
+            maximum,
+        );
+        if (next_line > line_end) {
+            try appendBounded(&output, allocator, input[line_end..next_line], maximum);
+        } else if (line_end == input.len) {
+            // Preserve an input without a final newline.
+        }
+
+        input_cursor = next_line;
+        search_cursor = next_line;
+        changed = true;
+    }
+    if (!changed) return null;
+    try appendBounded(&output, allocator, input[input_cursor..], maximum);
+    return try output.toOwnedSlice(allocator);
+}
+
+fn findInlineAtBlock(input: []const u8, start: usize) ?struct {
+    marker: usize,
+    opening: usize,
+    closing: usize,
+} {
+    var cursor: usize = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    var line_comment = false;
+    var block_comment = false;
+    while (cursor < input.len) : (cursor += 1) {
+        const byte = input[cursor];
+        if (line_comment) {
+            if (byte == '\r' or byte == '\n') line_comment = false;
+            continue;
+        }
+        if (block_comment) {
+            if (byte == '*' and cursor + 1 < input.len and input[cursor + 1] == '/') {
+                block_comment = false;
+                cursor += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '/' and cursor + 1 < input.len and input[cursor + 1] == '/') {
+            line_comment = true;
+            cursor += 1;
+            continue;
+        }
+        if (byte == '/' and cursor + 1 < input.len and input[cursor + 1] == '*') {
+            block_comment = true;
+            cursor += 1;
+            continue;
+        }
+        if (cursor < start or !std.mem.startsWith(u8, input[cursor..], "@block")) continue;
+        const marker = cursor;
+        cursor = marker + "@block".len;
+        if ((marker > 0 and isSelectorNameByte(input[marker - 1])) or
+            (cursor < input.len and isSelectorNameByte(input[cursor])))
+        {
+            continue;
+        }
+        var opening = cursor;
+        while (opening < input.len and
+            (input[opening] == ' ' or input[opening] == '\t'))
+        {
+            opening += 1;
+        }
+        if (opening >= input.len or input[opening] != '{') continue;
+        var previous = marker;
+        while (previous > 0 and std.ascii.isWhitespace(input[previous - 1])) previous -= 1;
+        if (previous == 0 or (input[previous - 1] != '(' and input[previous - 1] != ',')) {
+            continue;
+        }
+        const closing = matchingAtBlockCurly(input, opening) orelse return null;
+        return .{ .marker = marker, .opening = opening, .closing = closing };
+    }
+    return null;
+}
+
+fn matchingAtBlockCurly(raw: []const u8, opening: usize) ?usize {
+    if (opening >= raw.len or raw[opening] != '{') return null;
+    var quote: u8 = 0;
+    var escaped = false;
+    var line_comment = false;
+    var block_comment = false;
+    var depth: usize = 0;
+    var index = opening;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (line_comment) {
+            if (byte == '\r' or byte == '\n') line_comment = false;
+            continue;
+        }
+        if (block_comment) {
+            if (byte == '*' and index + 1 < raw.len and raw[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '/') {
+            line_comment = true;
+            index += 1;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '*') {
+            block_comment = true;
+            index += 1;
+            continue;
+        }
+        if (byte == '{') depth += 1;
+        if (byte == '}') {
+            depth -= 1;
+            if (depth == 0) return index;
+        }
+    }
+    return null;
+}
+
+fn appendBounded(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    bytes: []const u8,
+    maximum: usize,
+) Error!void {
+    const next = std.math.add(usize, output.items.len, bytes.len) catch
+        return error.TemporaryLimitExceeded;
+    if (next > maximum) return error.TemporaryLimitExceeded;
+    try output.appendSlice(allocator, bytes);
+}
+
+fn appendCollapsedWhitespace(
+    output: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    raw: []const u8,
+    maximum: usize,
+) Error!void {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n\x0c");
+    var quote: u8 = 0;
+    var escaped = false;
+    var pending_space = false;
+    for (trimmed) |byte| {
+        if (quote != 0) {
+            if (pending_space) {
+                try appendBounded(output, allocator, " ", maximum);
+                pending_space = false;
+            }
+            try appendBounded(output, allocator, (&[_]u8{byte})[0..], maximum);
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            if (pending_space) {
+                try appendBounded(output, allocator, " ", maximum);
+                pending_space = false;
+            }
+            quote = byte;
+            try appendBounded(output, allocator, (&[_]u8{byte})[0..], maximum);
+        } else if (std.ascii.isWhitespace(byte)) {
+            pending_space = output.items.len > 0;
+        } else {
+            if (pending_space) {
+                try appendBounded(output, allocator, " ", maximum);
+                pending_space = false;
+            }
+            try appendBounded(output, allocator, (&[_]u8{byte})[0..], maximum);
+        }
+    }
 }
 
 fn containsImports(document: *const native_syntax.Document) bool {
@@ -916,6 +1288,15 @@ const Assignment = struct {
     operator: ?u8 = null,
 };
 
+const MemberAssignment = struct {
+    base: []const u8,
+    member: union(enum) {
+        key: []const u8,
+        index: usize,
+    },
+    value_empty: bool,
+};
+
 const Call = struct {
     name: ByteRange,
     arguments: ByteRange,
@@ -979,6 +1360,11 @@ const StatementResult = struct {
     explicit: bool,
 };
 
+const BlockValue = struct {
+    block_id: native_syntax.NodeId,
+    scope: native_environment.ScopeId,
+};
+
 const Engine = struct {
     allocator: std.mem.Allocator,
     sources: *const native_source.Table,
@@ -988,6 +1374,7 @@ const Engine = struct {
     values: native_value.Store,
     environment: native_environment.Environment,
     callables: std.ArrayList(Callable) = .empty,
+    block_values: std.ArrayList(BlockValue) = .empty,
     active_callables: std.ArrayList([]const u8) = .empty,
     mutation_aliases: std.ArrayList(MutationAlias) = .empty,
     selector_parts: std.ArrayList([]u8) = .empty,
@@ -1035,6 +1422,7 @@ const Engine = struct {
         }
         self.extensions.deinit(self.allocator);
         self.mutation_aliases.deinit(self.allocator);
+        self.block_values.deinit(self.allocator);
         self.active_callables.deinit(self.allocator);
         self.callables.deinit(self.allocator);
         self.environment.deinit();
@@ -1104,6 +1492,19 @@ const Engine = struct {
         const node = try self.document.get(node_id);
         const text = node.text orelse return error.InvalidDocument;
         const raw = try self.sources.slice(text);
+        if (parseMemberAssignment(raw)) |member| {
+            if (!member.value_empty or try self.hasExplicitOpeningBrace(node_id)) {
+                try self.reportInvalidOperation(text);
+                return error.InvalidOperation;
+            }
+            const block_value = try self.ownBlockValue(
+                text,
+                try self.statementBlock(node_id),
+                scope.*,
+            );
+            try self.assignMemberBlock(text, member, block_value, scope.*);
+            return;
+        }
         const assignment = parseAssignment(raw) orelse {
             try self.transaction.report(
                 .err,
@@ -1119,7 +1520,10 @@ const Engine = struct {
         {
             return;
         }
-        var evaluated = if (assignment.value.len == 0)
+        var evaluated = if (std.mem.eql(u8, assignment.value, "@block") or
+            (assignment.value.len == 0 and !try self.hasExplicitOpeningBrace(node_id)))
+            try self.ownBlockValue(text, try self.statementBlock(node_id), scope.*)
+        else if (assignment.value.len == 0)
             try self.evaluateObjectBlock(node_id, scope.*)
         else
             try self.evaluateValue(text, assignment.value, scope.*, 0);
@@ -1131,6 +1535,126 @@ const Engine = struct {
             evaluated = try self.evaluateGenericBinary(text, current, evaluated, operator);
         }
         scope.* = try self.setBinding(scope.*, assignment.name, evaluated, text);
+    }
+
+    fn hasExplicitOpeningBrace(
+        self: *const Engine,
+        node_id: native_syntax.NodeId,
+    ) Error!bool {
+        const node = try self.document.get(node_id);
+        const text = node.text orelse return error.InvalidDocument;
+        const block = try self.document.get(try self.statementBlock(node_id));
+        if (text.source.value != block.span.source.value or text.end > block.span.start) {
+            return error.InvalidDocument;
+        }
+        const file = try self.sources.get(text.source);
+        return std.mem.indexOfScalar(
+            u8,
+            file.bytes[@intCast(text.end)..@intCast(block.span.start)],
+            '{',
+        ) != null;
+    }
+
+    fn ownBlockValue(
+        self: *Engine,
+        span: native_source.Span,
+        block_id: native_syntax.NodeId,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        if (self.block_values.items.len >= std.math.maxInt(u32)) {
+            try self.reportResource(span, "native Stylus value limit exceeded");
+            return error.ValueLimitExceeded;
+        }
+        const index = self.block_values.items.len;
+        try self.block_values.append(self.allocator, .{
+            .block_id = block_id,
+            .scope = scope,
+        });
+        errdefer _ = self.block_values.pop();
+        var marker_buffer: [block_value_prefix.len + 10]u8 = undefined;
+        const marker = std.fmt.bufPrint(
+            &marker_buffer,
+            "{s}{d}",
+            .{ block_value_prefix, index },
+        ) catch return error.ValueLimitExceeded;
+        return self.ownValue(span, .{ .string = .{ .bytes = marker } });
+    }
+
+    fn blockValue(self: *const Engine, value: *const native_value.Value) ?BlockValue {
+        if (value.* != .string or value.string.quoted or
+            !std.mem.startsWith(u8, value.string.bytes, block_value_prefix))
+        {
+            return null;
+        }
+        const index = std.fmt.parseUnsigned(
+            usize,
+            value.string.bytes[block_value_prefix.len..],
+            10,
+        ) catch return null;
+        if (index >= self.block_values.items.len) return null;
+        return self.block_values.items[index];
+    }
+
+    fn assignMemberBlock(
+        self: *Engine,
+        span: native_source.Span,
+        assignment: MemberAssignment,
+        block_value: *const native_value.Value,
+        scope: native_environment.ScopeId,
+    ) Error!void {
+        const current = (try self.environment.lookup(scope, assignment.base)) orelse {
+            try self.reportUndefinedVariable(span);
+            return error.UndefinedVariable;
+        };
+        const replacement = switch (assignment.member) {
+            .key => |key| blk: {
+                if (current.* != .map) {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                }
+                var entries: std.ArrayList(native_value.Entry) = .empty;
+                defer entries.deinit(self.allocator);
+                var replaced = false;
+                for (current.map.entries) |entry| {
+                    if (entry.key == .string and std.mem.eql(u8, entry.key.string.bytes, key)) {
+                        try entries.append(self.allocator, .{
+                            .key = entry.key,
+                            .value = block_value.*,
+                        });
+                        replaced = true;
+                    } else {
+                        try entries.append(self.allocator, entry);
+                    }
+                }
+                if (!replaced) try entries.append(self.allocator, .{
+                    .key = .{ .string = .{ .bytes = key } },
+                    .value = block_value.*,
+                });
+                break :blk try self.ownValue(span, .{ .map = .{ .entries = entries.items } });
+            },
+            .index => |index| blk: {
+                if (current.* != .list or index > current.list.items.len) {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                }
+                var items: std.ArrayList(native_value.Value) = .empty;
+                defer items.deinit(self.allocator);
+                try items.appendSlice(self.allocator, current.list.items);
+                if (index == items.items.len) {
+                    try items.append(self.allocator, block_value.*);
+                } else {
+                    items.items[index] = block_value.*;
+                }
+                break :blk try self.ownValue(span, .{ .list = .{
+                    .items = items.items,
+                    .separator = current.list.separator,
+                    .bracketed = current.list.bracketed,
+                } });
+            },
+        };
+        if (!(try self.environment.update(scope, assignment.base, replacement))) {
+            return error.UndefinedVariable;
+        }
     }
 
     fn evaluateObjectBlock(
@@ -1581,6 +2105,17 @@ const Engine = struct {
         var implicit_result: ?*const native_value.Value = null;
         for (statements) |statement_id| {
             const statement = try self.document.get(statement_id);
+            if (statement.kind == .expression and statement.text != null and
+                try self.executeBlockInsertion(
+                    statement.text.?,
+                    scope.*,
+                    output,
+                    allow_return,
+                ))
+            {
+                previous_condition = null;
+                continue;
+            }
             if ((statement.kind == .variable or statement.kind == .return_statement) and
                 statement.text != null)
             {
@@ -1819,6 +2354,14 @@ const Engine = struct {
                         .value = try self.ownValue(text, .{ .null_value = {} }),
                         .explicit = true,
                     };
+                    if (std.mem.eql(u8, expression, "@block")) return .{
+                        .value = try self.ownBlockValue(
+                            text,
+                            try self.statementBlock(statement_id),
+                            scope.*,
+                        ),
+                        .explicit = true,
+                    };
                     return .{
                         .value = try self.evaluateValue(text, expression, scope.*, 0),
                         .explicit = true,
@@ -1832,6 +2375,37 @@ const Engine = struct {
             if (implicit_result) |value| return .{ .value = value, .explicit = false };
         }
         return null;
+    }
+
+    fn executeBlockInsertion(
+        self: *Engine,
+        span: native_source.Span,
+        scope: native_environment.ScopeId,
+        output: ?RuleOutput,
+        allow_return: bool,
+    ) Error!bool {
+        const raw = std.mem.trim(u8, try self.sources.slice(span), " \t\r\n\x0c;");
+        if (raw.len < 3 or raw[0] != '{' or matchingCurly(raw, 0) != raw.len - 1) {
+            return false;
+        }
+        const inner = std.mem.trim(u8, raw[1 .. raw.len - 1], " \t\r\n\x0c");
+        if (inner.len == 0) return false;
+        const value = try self.evaluateValue(span, inner, scope, 0);
+        const block_value = self.blockValue(value) orelse return false;
+        const block = try self.document.get(block_value.block_id);
+        if (block.kind != .block) return error.InvalidDocument;
+        var block_scope = block_value.scope;
+        const returned = try self.executeStatements(
+            try self.document.children(block_value.block_id),
+            &block_scope,
+            output,
+            allow_return,
+        );
+        if (returned != null) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        return true;
     }
 
     fn statementBlock(
@@ -4125,6 +4699,10 @@ const Engine = struct {
         context: RenderContext,
         span: native_source.Span,
     ) Error![]u8 {
+        if (self.blockValue(input) != null) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
         var output: std.ArrayList(u8) = .empty;
         errdefer output.deinit(self.allocator);
         switch (input.*) {
@@ -5755,6 +6333,75 @@ fn parseAssignment(raw_input: []const u8) ?Assignment {
         };
     }
     return null;
+}
+
+fn parseMemberAssignment(raw_input: []const u8) ?MemberAssignment {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    var equals: ?usize = null;
+    for (raw, 0..) |byte, index| {
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            '=' => if (depth == 0) {
+                equals = index;
+                break;
+            },
+            else => {},
+        }
+    }
+    const separator = equals orelse return null;
+    const left = std.mem.trim(u8, raw[0..separator], " \t\r\n\x0c");
+    const value = std.mem.trim(u8, raw[separator + 1 ..], " \t\r\n\x0c");
+    if (left.len < 3) return null;
+    if (!isNameStart(left, 0)) return null;
+    const base_end = nameEnd(left, 0);
+    const base = left[0..base_end];
+    if (!validVariableName(base) or base_end >= left.len) return null;
+
+    if (left[base_end] == '.') {
+        const key = left[base_end + 1 ..];
+        if (!validVariableName(key)) return null;
+        return .{
+            .base = base,
+            .member = .{ .key = key },
+            .value_empty = value.len == 0,
+        };
+    }
+    if (left[base_end] != '[' or left[left.len - 1] != ']') return null;
+    const raw_key = std.mem.trim(u8, left[base_end + 1 .. left.len - 1], " \t\r\n\x0c");
+    if (raw_key.len >= 2 and
+        ((raw_key[0] == '\'' and raw_key[raw_key.len - 1] == '\'') or
+            (raw_key[0] == '"' and raw_key[raw_key.len - 1] == '"')))
+    {
+        return .{
+            .base = base,
+            .member = .{ .key = raw_key[1 .. raw_key.len - 1] },
+            .value_empty = value.len == 0,
+        };
+    }
+    const index = std.fmt.parseUnsigned(usize, raw_key, 10) catch return null;
+    return .{
+        .base = base,
+        .member = .{ .index = index },
+        .value_empty = value.len == 0,
+    };
 }
 
 fn validVariableName(name: []const u8) bool {
