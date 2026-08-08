@@ -1701,6 +1701,12 @@ const NestedRule = struct {
     id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
     class_prefix: ?[]const u8 = null,
+    active_callables: []const []const u8 = &.{},
+
+    fn deinit(self: *NestedRule, allocator: std.mem.Allocator) void {
+        allocator.free(self.active_callables);
+        self.* = undefined;
+    }
 };
 
 const CacheSelector = struct {
@@ -1826,7 +1832,9 @@ const CachedRule = struct {
     fn deinit(self: *CachedRule, allocator: std.mem.Allocator) void {
         for (self.declarations.items) |*declaration| declaration.deinit(allocator);
         self.declarations.deinit(allocator);
+        for (self.nested.items) |*child| child.deinit(allocator);
         self.nested.deinit(allocator);
+        for (self.at_rules.items) |*child| child.deinit(allocator);
         self.at_rules.deinit(allocator);
         self.* = undefined;
     }
@@ -1891,6 +1899,7 @@ const Engine = struct {
     pending_content_block: ?*const native_value.Value = null,
     active_keyframe_header: ?[]const u8 = null,
     active_rule_selector: ?[]const u8 = null,
+    active_selector_identity: ?[]const u8 = null,
     active_rule_orders: ?[]const u64 = null,
     global_scope: ?*native_environment.ScopeId = null,
     cache_context_depth: u16 = 0,
@@ -2488,14 +2497,30 @@ const Engine = struct {
             const block_node = try self.document.get(children[1]);
             if (selector_node.kind != .selector or selector_node.text == null or block_node.kind != .block) continue;
             const raw_selector = try self.sources.slice(selector_node.text.?);
-            const normalized = try self.normalizeSelectorLines(selector_node.text.?, raw_selector);
+            const rendered = try self.renderStaticSelectorOwned(
+                selector_node.text.?,
+                raw_selector,
+                parent_selector,
+            );
+            defer self.allocator.free(rendered);
+            const normalized = try self.normalizeSelectorLines(selector_node.text.?, rendered);
             defer self.allocator.free(normalized);
             const saved_selector_count = self.selector_count;
-            const full_selector = try self.combineSelectorsLiteral(
-                parent_selector,
-                normalized,
-                selector_node.text.?,
-            );
+            const full_selector = if (std.mem.startsWith(
+                u8,
+                std.mem.trim(u8, normalized, " \t\r\n\x0c"),
+                "/",
+            ))
+                try self.resolveSelectorBranchOwned(
+                    selector_node.text.?,
+                    std.mem.trim(u8, normalized, " \t\r\n\x0c"),
+                )
+            else
+                try self.combineSelectorsLiteral(
+                    parent_selector,
+                    normalized,
+                    selector_node.text.?,
+                );
             self.selector_count = saved_selector_count;
             defer self.allocator.free(full_selector);
 
@@ -2533,6 +2558,40 @@ const Engine = struct {
         }
     }
 
+    fn renderStaticSelectorOwned(
+        self: *Engine,
+        span: native_source.Span,
+        selector: []const u8,
+        parent_selector: ?[]const u8,
+    ) Error![]u8 {
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var cursor: usize = 0;
+        while (cursor < selector.len) {
+            const opening = std.mem.indexOfScalarPos(u8, selector, cursor, '{') orelse {
+                try self.appendTemporary(&output, span, selector[cursor..]);
+                break;
+            };
+            try self.appendTemporary(&output, span, selector[cursor..opening]);
+            const closing = matchingCurly(selector, opening) orelse {
+                try self.appendTemporary(&output, span, selector[opening..]);
+                break;
+            };
+            const expression = std.mem.trim(
+                u8,
+                selector[opening + 1 .. closing],
+                " \t\r\n\x0c",
+            );
+            if (std.mem.eql(u8, expression, "selector()")) {
+                try self.appendTemporary(&output, span, parent_selector orelse "&");
+            } else {
+                try self.appendTemporary(&output, span, selector[opening .. closing + 1]);
+            }
+            cursor = closing + 1;
+        }
+        return output.toOwnedSlice(self.allocator);
+    }
+
     fn expandExtendedSelectorOwned(
         self: *Engine,
         span: native_source.Span,
@@ -2547,7 +2606,9 @@ const Engine = struct {
             var changed = false;
             for (self.extensions.items) |extension| {
                 const current_len = selectors.items.len;
-                for (selectors.items[0..current_len]) |candidate| {
+                var candidate_index: usize = 0;
+                while (candidate_index < current_len) : (candidate_index += 1) {
+                    const candidate = selectors.items[candidate_index];
                     const marker = selectorTokenIndex(candidate, extension.target) orelse continue;
                     var extenders = try splitTopLevel(self.allocator, extension.extender, ',');
                     defer extenders.deinit(self.allocator);
@@ -2657,10 +2718,109 @@ const Engine = struct {
         const previous_prefix = self.active_class_prefix;
         self.active_class_prefix = child.class_prefix;
         defer self.active_class_prefix = previous_prefix;
+        const callable_count = self.active_callables.items.len;
+        try self.active_callables.appendSlice(self.allocator, child.active_callables);
+        defer self.active_callables.shrinkRetainingCapacity(callable_count);
         if (at_rule) {
             try self.emitAtRule(child.id, child.scope, parent_selector);
         } else {
             try self.emitRule(child.id, child.scope, parent_selector);
+        }
+    }
+
+    fn replayNestedSelectorMemberAssignments(
+        self: *Engine,
+        rule_id: native_syntax.NodeId,
+        parent_scope: native_environment.ScopeId,
+        parent_selector: ?[]const u8,
+    ) Error!void {
+        const children = try self.document.children(rule_id);
+        if (children.len != 2) return;
+        const selector_node = try self.document.get(children[0]);
+        const block_node = try self.document.get(children[1]);
+        if (selector_node.kind != .selector or selector_node.text == null or
+            block_node.kind != .block)
+        {
+            return;
+        }
+        const statements = try self.document.children(children[1]);
+        var owns_selector_assignment = false;
+        for (statements) |statement_id| {
+            const statement = try self.document.get(statement_id);
+            if (statement.kind != .variable or statement.text == null) continue;
+            const assignment = parseMemberAssignment(
+                try self.sources.slice(statement.text.?),
+            ) orelse continue;
+            if (std.mem.eql(
+                u8,
+                std.mem.trim(u8, assignment.value, " \t\r\n\x0c"),
+                "selector()",
+            )) {
+                owns_selector_assignment = true;
+                break;
+            }
+        }
+        if (!owns_selector_assignment) return;
+
+        const rendered = try self.renderTextOwned(
+            selector_node.text.?,
+            parent_scope,
+            .selector,
+            0,
+        );
+        defer self.allocator.free(rendered);
+        const normalized = try self.normalizeSelectorLines(selector_node.text.?, rendered);
+        defer self.allocator.free(normalized);
+        const prefixed = if (self.active_class_prefix) |prefix|
+            if (prefix.len > 0)
+                try self.prefixClassSelectorsOwned(selector_node.text.?, normalized, prefix)
+            else
+                null
+        else
+            null;
+        defer if (prefixed) |owned| self.allocator.free(owned);
+        const scoped = prefixed orelse normalized;
+        const selector = try self.combineSelectors(parent_selector, scoped, selector_node.text.?);
+        defer self.allocator.free(selector);
+
+        const previous_rule_selector = self.active_rule_selector;
+        const previous_selector_identity = self.active_selector_identity;
+        self.active_rule_selector = selector;
+        self.active_selector_identity = selector;
+        defer {
+            self.active_rule_selector = previous_rule_selector;
+            self.active_selector_identity = previous_selector_identity;
+        }
+        const selector_part = try self.selectorPartOwned(
+            selector_node.text.?,
+            scoped,
+            parent_selector != null,
+        );
+        self.selector_parts.append(self.allocator, selector_part) catch |failure| {
+            self.allocator.free(selector_part);
+            return failure;
+        };
+        defer self.allocator.free(self.selector_parts.pop().?);
+
+        var assignment_scope = self.environment.push(parent_scope) catch |failure| {
+            try self.reportResource(
+                block_node.span,
+                "native Stylus lexical scope limit exceeded",
+            );
+            return failure;
+        };
+        for (statements) |statement_id| {
+            const statement = try self.document.get(statement_id);
+            if (statement.kind != .variable or statement.text == null) continue;
+            const assignment = parseMemberAssignment(
+                try self.sources.slice(statement.text.?),
+            ) orelse continue;
+            if (!std.mem.eql(
+                u8,
+                std.mem.trim(u8, assignment.value, " \t\r\n\x0c"),
+                "selector()",
+            )) continue;
+            try self.assign(statement_id, &assignment_scope);
         }
     }
 
@@ -2714,14 +2874,18 @@ const Engine = struct {
         defer self.allocator.free(base_selector);
         const selector = try self.expandExtendedSelectorOwned(selector_node.text.?, base_selector);
         defer self.allocator.free(selector);
+        if (std.mem.trim(u8, selector, " \t\r\n\x0c").len == 0) return;
         const selector_orders = try self.selectorOrdersOwned(parent_selector, selector);
         defer self.allocator.free(selector_orders);
         const previous_rule_selector = self.active_rule_selector;
+        const previous_selector_identity = self.active_selector_identity;
         const previous_rule_orders = self.active_rule_orders;
         self.active_rule_selector = selector;
+        self.active_selector_identity = base_selector;
         self.active_rule_orders = selector_orders;
         defer {
             self.active_rule_selector = previous_rule_selector;
+            self.active_selector_identity = previous_selector_identity;
             self.active_rule_orders = previous_rule_orders;
         }
         const selector_part = try self.selectorPartOwned(
@@ -2747,9 +2911,15 @@ const Engine = struct {
             declarations.deinit(self.allocator);
         }
         var nested: std.ArrayList(NestedRule) = .empty;
-        defer nested.deinit(self.allocator);
+        defer {
+            for (nested.items) |*child| child.deinit(self.allocator);
+            nested.deinit(self.allocator);
+        }
         var at_rules: std.ArrayList(NestedRule) = .empty;
-        defer at_rules.deinit(self.allocator);
+        defer {
+            for (at_rules.items) |*child| child.deinit(self.allocator);
+            at_rules.deinit(self.allocator);
+        }
         var cached: std.ArrayList(CachedRule) = .empty;
         defer {
             for (cached.items) |*item| item.deinit(self.allocator);
@@ -2975,9 +3145,15 @@ const Engine = struct {
             declarations.deinit(self.allocator);
         }
         var nested: std.ArrayList(NestedRule) = .empty;
-        defer nested.deinit(self.allocator);
+        defer {
+            for (nested.items) |*child| child.deinit(self.allocator);
+            nested.deinit(self.allocator);
+        }
         var at_rules: std.ArrayList(NestedRule) = .empty;
-        defer at_rules.deinit(self.allocator);
+        defer {
+            for (at_rules.items) |*child| child.deinit(self.allocator);
+            at_rules.deinit(self.allocator);
+        }
         var cached: std.ArrayList(CachedRule) = .empty;
         defer {
             for (cached.items) |*item| item.deinit(self.allocator);
@@ -3261,14 +3437,24 @@ const Engine = struct {
                         try self.emitRule(statement_id, scope.*, self.active_selector_scope);
                         continue;
                     };
-                    try destination.nested.append(
-                        self.allocator,
-                        .{
-                            .id = statement_id,
-                            .scope = scope.*,
-                            .class_prefix = self.active_class_prefix,
-                        },
+                    try self.replayNestedSelectorMemberAssignments(
+                        statement_id,
+                        scope.*,
+                        self.active_selector_identity,
                     );
+                    const active_callables = try self.allocator.dupe(
+                        []const u8,
+                        self.active_callables.items,
+                    );
+                    destination.nested.append(self.allocator, .{
+                        .id = statement_id,
+                        .scope = scope.*,
+                        .class_prefix = self.active_class_prefix,
+                        .active_callables = active_callables,
+                    }) catch |failure| {
+                        self.allocator.free(active_callables);
+                        return failure;
+                    };
                 },
                 .at_rule => {
                     previous_condition = null;
@@ -3293,14 +3479,19 @@ const Engine = struct {
                         try self.emitAtRule(statement_id, scope.*, self.active_selector_scope);
                         continue;
                     };
-                    try destination.at_rules.append(
-                        self.allocator,
-                        .{
-                            .id = statement_id,
-                            .scope = scope.*,
-                            .class_prefix = self.active_class_prefix,
-                        },
+                    const active_callables = try self.allocator.dupe(
+                        []const u8,
+                        self.active_callables.items,
                     );
+                    destination.at_rules.append(self.allocator, .{
+                        .id = statement_id,
+                        .scope = scope.*,
+                        .class_prefix = self.active_class_prefix,
+                        .active_callables = active_callables,
+                    }) catch |failure| {
+                        self.allocator.free(active_callables);
+                        return failure;
+                    };
                 },
                 .expression => {
                     previous_condition = null;
@@ -3316,7 +3507,27 @@ const Engine = struct {
                         implicit_result = try self.evaluateValue(text, raw, scope.*, 0);
                     } else {
                         const text = statement.text orelse return error.InvalidDocument;
-                        _ = try self.evaluateValue(text, try self.sources.slice(text), scope.*, 0);
+                        const raw = std.mem.trim(
+                            u8,
+                            try self.sources.slice(text),
+                            " \t\r\n\x0c;",
+                        );
+                        const call = parseCall(raw) orelse parseBareCall(raw);
+                        if (call != null and
+                            self.findCallable(raw[call.?.name.start..call.?.name.end]) != null)
+                        {
+                            const returned = try self.invokeUserCallable(
+                                text,
+                                raw,
+                                call.?,
+                                scope.*,
+                                null,
+                                false,
+                            );
+                            if (returned != null) return error.InvalidDocument;
+                        } else {
+                            _ = try self.evaluateValue(text, raw, scope.*, 0);
+                        }
                     }
                 },
                 .conditional => {
@@ -5009,6 +5220,9 @@ const Engine = struct {
         scope: native_environment.ScopeId,
     ) Error!?*const native_value.Value {
         const name = raw[call.name.start..call.name.end];
+        if (nameEql(name, "selector")) {
+            return try self.evaluateSelectorBuiltin(span, raw, call, scope);
+        }
         if (nameEql(name, "prefix-classes")) {
             try self.transaction.report(
                 .err,
@@ -6660,6 +6874,126 @@ const Engine = struct {
         return output;
     }
 
+    fn evaluateSelectorBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        var arguments = try self.evaluateCallArguments(span, raw, call, scope);
+        defer arguments.deinit(self.allocator);
+        if (arguments.items.len == 0) {
+            return self.ownStringResult(
+                span,
+                self.active_selector_identity orelse self.active_rule_selector orelse "&",
+                true,
+            );
+        }
+
+        if (arguments.items.len == 1 and
+            (arguments.items[0].* == .string or arguments.items[0].* == .selector))
+        {
+            const string = switch (arguments.items[0].*) {
+                .string => |value| value,
+                .selector => |value| value,
+                else => unreachable,
+            };
+            if (!selectorStringNeedsStack(string.bytes)) {
+                return self.ownStringResult(span, string.bytes, true);
+            }
+        }
+
+        var parts: std.ArrayList([]u8) = .empty;
+        defer {
+            for (parts.items) |part| self.allocator.free(part);
+            parts.deinit(self.allocator);
+        }
+        if (arguments.items.len == 1 and arguments.items[0].* == .list) {
+            const list = arguments.items[0].list;
+            if (list.items.len == 0) return self.invalidBuiltinArguments(span);
+            if (list.separator == .comma) {
+                for (list.items) |*item| {
+                    try self.appendSelectorArgumentPart(span, &parts, item);
+                }
+            } else {
+                var joined: std.ArrayList(u8) = .empty;
+                defer joined.deinit(self.allocator);
+                for (list.items, 0..) |*item, index| {
+                    const bytes = selectorArgumentBytes(item) orelse
+                        return self.invalidBuiltinArguments(span);
+                    if (index > 0) try self.appendTemporary(&joined, span, " ");
+                    try self.appendTemporary(&joined, span, bytes);
+                }
+                const owned = try joined.toOwnedSlice(self.allocator);
+                parts.append(self.allocator, owned) catch |failure| {
+                    self.allocator.free(owned);
+                    return failure;
+                };
+            }
+        } else {
+            for (arguments.items) |argument| {
+                const item = if (argument.* == .list and argument.list.items.len > 0)
+                    &argument.list.items[0]
+                else
+                    argument;
+                try self.appendSelectorArgumentPart(span, &parts, item);
+            }
+        }
+        if (parts.items.len == 0) return self.invalidBuiltinArguments(span);
+
+        const compiled = try self.compileSelectorPartsOwned(span, parts.items);
+        defer self.allocator.free(compiled);
+        return self.ownStringResult(span, compiled, true);
+    }
+
+    fn appendSelectorArgumentPart(
+        self: *Engine,
+        span: native_source.Span,
+        parts: *std.ArrayList([]u8),
+        argument: *const native_value.Value,
+    ) Error!void {
+        const bytes = selectorArgumentBytes(argument) orelse
+            return self.invalidBuiltinArguments(span);
+        try self.reserveTemporary(span, bytes.len);
+        try self.transaction.consumeOperations(@intCast(bytes.len));
+        const owned = try self.allocator.dupe(u8, bytes);
+        parts.append(self.allocator, owned) catch |failure| {
+            self.allocator.free(owned);
+            return failure;
+        };
+    }
+
+    fn compileSelectorPartsOwned(
+        self: *Engine,
+        span: native_source.Span,
+        parts: []const []u8,
+    ) Error![]u8 {
+        const original_part_count = self.selector_parts.items.len;
+        defer while (self.selector_parts.items.len > original_part_count) {
+            self.allocator.free(self.selector_parts.pop().?);
+        };
+
+        var current: ?[]u8 = if (self.active_selector_identity) |selector|
+            try self.allocator.dupe(u8, selector)
+        else
+            null;
+        errdefer if (current) |owned| self.allocator.free(owned);
+        for (parts) |part| {
+            const nested = current != null;
+            const combined = try self.combineSelectors(current, part, span);
+            if (current) |owned| self.allocator.free(owned);
+            current = combined;
+
+            const stack_part = try self.selectorPartOwned(span, part, nested);
+            self.selector_parts.append(self.allocator, stack_part) catch |failure| {
+                self.allocator.free(stack_part);
+                return failure;
+            };
+        }
+        return current orelse self.allocator.dupe(u8, "&");
+    }
+
     fn evaluateJoinCallArguments(
         self: *Engine,
         span: native_source.Span,
@@ -7764,58 +8098,169 @@ const Engine = struct {
         child_selector: []const u8,
         span: native_source.Span,
     ) Error![]u8 {
-        if (try self.resolveSelectorReferenceOwned(span, child_selector)) |resolved| {
-            return resolved;
+        var branches = try splitTopLevel(self.allocator, child_selector, ',');
+        defer branches.deinit(self.allocator);
+        var owns_special_branch = false;
+        for (branches.items) |range| {
+            const branch = std.mem.trim(
+                u8,
+                child_selector[range.start..range.end],
+                " \t\r\n\x0c",
+            );
+            if (selectorBranchNeedsResolution(branch) or
+                (parent_selector == null and std.mem.indexOfScalar(u8, branch, '&') != null))
+            {
+                owns_special_branch = true;
+                break;
+            }
         }
-        return self.combineSelectorsLiteral(parent_selector, child_selector, span);
+        if (!owns_special_branch) {
+            return self.combineSelectorsLiteral(parent_selector, child_selector, span);
+        }
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (branches.items) |range| {
+            const branch = std.mem.trim(
+                u8,
+                child_selector[range.start..range.end],
+                " \t\r\n\x0c",
+            );
+            if (branch.len == 0) return error.InvalidDocument;
+            const resolved = if (selectorBranchNeedsResolution(branch))
+                try self.resolveSelectorBranchOwned(span, branch)
+            else
+                try self.combineSelectorsLiteral(parent_selector, branch, span);
+            defer self.allocator.free(resolved);
+            if (resolved.len == 0) continue;
+            if (output.items.len > 0) try self.appendTemporary(&output, span, ",");
+            try self.appendTemporary(&output, span, resolved);
+        }
+        return output.toOwnedSlice(self.allocator);
     }
 
-    fn resolveSelectorReferenceOwned(
+    fn resolveSelectorBranchOwned(
         self: *Engine,
         span: native_source.Span,
-        child_selector: []const u8,
-    ) Error!?[]u8 {
-        const child = std.mem.trim(u8, child_selector, " \t\r\n\x0c");
-        var selected_parts: []const []u8 = &.{};
-        var remainder: []const u8 = "";
+        branch: []const u8,
+    ) Error![]u8 {
+        if (branch[0] == '/' and !std.mem.startsWith(u8, branch, "/deep")) {
+            const absolute = std.mem.trimLeft(u8, branch[1..], " \t\r\n\x0c");
+            if (absolute.len == 0) {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            }
+            var output: std.ArrayList(u8) = .empty;
+            errdefer output.deinit(self.allocator);
+            try self.appendTemporary(&output, span, absolute);
+            return output.toOwnedSlice(self.allocator);
+        }
 
         var relative_cursor: usize = 0;
         var relative_hops: usize = 0;
-        while (std.mem.startsWith(u8, child[relative_cursor..], "../")) {
+        while (std.mem.startsWith(u8, branch[relative_cursor..], "../")) {
             relative_hops += 1;
             relative_cursor += 3;
         }
         if (relative_hops > 0) {
-            remainder = std.mem.trim(u8, child[relative_cursor..], " \t\r\n\x0c");
-            if (remainder.len == 0 or relative_hops >= self.selector_parts.items.len) {
+            const separated = relative_cursor < branch.len and
+                std.ascii.isWhitespace(branch[relative_cursor]);
+            const remainder = std.mem.trim(u8, branch[relative_cursor..], " \t\r\n\x0c");
+            if (relative_hops >= self.selector_parts.items.len) {
                 try self.reportInvalidOperation(span);
                 return error.InvalidOperation;
             }
-            selected_parts = self.selector_parts.items[0 .. self.selector_parts.items.len - relative_hops];
-        } else if (std.mem.startsWith(u8, child, "^[")) {
-            const closing = std.mem.indexOfScalarPos(u8, child, 2, ']') orelse {
-                try self.reportInvalidOperation(span);
-                return error.InvalidOperation;
-            };
-            const range = parseSelectorSlice(child[2..closing], self.selector_parts.items.len) orelse {
-                try self.reportInvalidOperation(span);
-                return error.InvalidOperation;
-            };
-            remainder = std.mem.trim(u8, child[closing + 1 ..], " \t\r\n\x0c");
-            if (remainder.len == 0) {
-                try self.reportInvalidOperation(span);
-                return error.InvalidOperation;
+            const saved_selector_count = self.selector_count;
+            const base = try self.selectorFromPartsOwned(
+                span,
+                self.selector_parts.items[0 .. self.selector_parts.items.len - relative_hops],
+            );
+            self.selector_count = saved_selector_count;
+            if (remainder.len == 0) return base;
+            defer self.allocator.free(base);
+            if (separated) {
+                return self.combineSelectorsLiteral(base, remainder, span);
             }
-            selected_parts = self.selector_parts.items[range.start .. range.end + 1];
-        } else {
-            return null;
+            return self.appendSelectorSuffixOwned(span, base, remainder);
         }
 
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var cursor: usize = 0;
+        var found_reference = false;
+        while (cursor < branch.len) {
+            const marker = std.mem.indexOfPos(u8, branch, cursor, "^[") orelse {
+                try self.appendTemporary(&output, span, branch[cursor..]);
+                break;
+            };
+            try self.appendTemporary(&output, span, branch[cursor..marker]);
+            const closing = std.mem.indexOfScalarPos(u8, branch, marker + 2, ']') orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+            const expansion = try self.selectorReferenceExpansionOwned(
+                span,
+                branch[marker + 2 .. closing],
+            );
+            defer self.allocator.free(expansion);
+            try self.appendTemporary(&output, span, expansion);
+            found_reference = true;
+            cursor = closing + 1;
+        }
+        if (!found_reference) return error.InvalidDocument;
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn selectorReferenceExpansionOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+    ) Error![]u8 {
+        if (self.selector_parts.items.len == 0) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        const selected_parts = if (std.mem.indexOf(u8, raw, "..") != null) blk: {
+            const range = parseSelectorSlice(raw, self.selector_parts.items.len) orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+            break :blk self.selector_parts.items[range.start .. range.end + 1];
+        } else blk: {
+            const index = selectorSliceIndex(
+                std.mem.trim(u8, raw, " \t\r\n\x0c"),
+                self.selector_parts.items.len,
+            ) orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+            break :blk self.selector_parts.items[0 .. index + 1];
+        };
         const saved_selector_count = self.selector_count;
-        const base = try self.selectorFromPartsOwned(span, selected_parts);
-        self.selector_count = saved_selector_count;
-        defer self.allocator.free(base);
-        return try self.combineSelectorsLiteral(base, remainder, span);
+        defer self.selector_count = saved_selector_count;
+        return self.selectorFromPartsOwned(span, selected_parts);
+    }
+
+    fn appendSelectorSuffixOwned(
+        self: *Engine,
+        span: native_source.Span,
+        selector: []const u8,
+        suffix: []const u8,
+    ) Error![]u8 {
+        var selectors = try splitTopLevel(self.allocator, selector, ',');
+        defer selectors.deinit(self.allocator);
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (selectors.items) |range| {
+            if (output.items.len > 0) try self.appendTemporary(&output, span, ",");
+            try self.appendTemporary(
+                &output,
+                span,
+                std.mem.trim(u8, selector[range.start..range.end], " \t\r\n\x0c"),
+            );
+            try self.appendTemporary(&output, span, suffix);
+        }
+        return output.toOwnedSlice(self.allocator);
     }
 
     fn selectorFromPartsOwned(
@@ -7826,6 +8271,9 @@ const Engine = struct {
         if (parts.len == 0) return error.InvalidDocument;
         var first = std.mem.trim(u8, parts[0], " \t\r\n\x0c");
         if (first.len > 0 and first[0] == '&') {
+            first = std.mem.trimLeft(u8, first[1..], " \t\r\n\x0c");
+        }
+        if (first.len > 0 and std.mem.indexOfScalar(u8, ">+~", first[0]) != null) {
             first = std.mem.trimLeft(u8, first[1..], " \t\r\n\x0c");
         }
         if (first.len == 0) return error.InvalidDocument;
@@ -7878,8 +8326,8 @@ const Engine = struct {
             );
             if (child.len == 0) return error.InvalidDocument;
             for (parents.items) |parent_range| {
-                if (output.items.len > 0) try self.appendTemporary(&output, span, ",");
                 if (parent_selector) |parent_raw| {
+                    if (output.items.len > 0) try self.appendTemporary(&output, span, ",");
                     const parent = std.mem.trim(
                         u8,
                         parent_raw[parent_range.start..parent_range.end],
@@ -7893,7 +8341,22 @@ const Engine = struct {
                         try self.appendTemporary(&output, span, child);
                     }
                 } else {
-                    try self.appendTemporary(&output, span, child);
+                    var root: std.ArrayList(u8) = .empty;
+                    defer root.deinit(self.allocator);
+                    try self.appendReplacingAmpersands(&root, span, child, "");
+                    var normalized = std.mem.trim(u8, root.items, " \t\r\n\x0c");
+                    if (normalized.len > 0 and
+                        std.mem.indexOfScalar(u8, ">+~", normalized[0]) != null)
+                    {
+                        normalized = std.mem.trimLeft(
+                            u8,
+                            normalized[1..],
+                            " \t\r\n\x0c",
+                        );
+                    }
+                    if (normalized.len == 0) continue;
+                    if (output.items.len > 0) try self.appendTemporary(&output, span, ",");
+                    try self.appendTemporary(&output, span, normalized);
                 }
             }
         }
@@ -9173,7 +9636,7 @@ fn isBuiltinCallableName(name: []const u8) bool {
         "rgb",     "rgba",   "hsl",      "hsla",       "type", "length",  "ceil",               "floor",      "round",
         "sin",     "cos",    "tan",      "first",      "last", "index",   "percentage",         "fade-in",    "fade-out",
         "lighten", "darken", "saturate", "desaturate", "mix",  "tint",    "shade",              "complement", "grayscale",
-        "invert",  "split",  "substr",   "slice",      "join", "unquote", "percent-to-decimal",
+        "invert",  "split",  "substr",   "slice",      "join", "unquote", "percent-to-decimal", "selector",
     }) |builtin| if (nameEql(name, builtin)) return true;
     return false;
 }
@@ -9994,6 +10457,32 @@ fn selectorTokenIndex(selector: []const u8, target: []const u8) ?usize {
     return null;
 }
 
+fn selectorArgumentBytes(value: *const native_value.Value) ?[]const u8 {
+    return switch (value.*) {
+        .string => |string| string.bytes,
+        .selector => |selector| selector.bytes,
+        else => null,
+    };
+}
+
+fn selectorStringNeedsStack(selector: []const u8) bool {
+    const trimmed = std.mem.trim(u8, selector, " \t\r\n\x0c");
+    return std.mem.indexOfScalar(u8, trimmed, '&') != null or
+        std.mem.indexOf(u8, trimmed, "^[") != null or
+        std.mem.startsWith(u8, trimmed, "../") or
+        std.mem.startsWith(u8, trimmed, "~/") or
+        (std.mem.startsWith(u8, trimmed, "/") and
+            !std.mem.startsWith(u8, trimmed, "/deep"));
+}
+
+fn selectorBranchNeedsResolution(selector: []const u8) bool {
+    return std.mem.indexOf(u8, selector, "^[") != null or
+        std.mem.startsWith(u8, selector, "../") or
+        std.mem.startsWith(u8, selector, "~/") or
+        (std.mem.startsWith(u8, selector, "/") and
+            !std.mem.startsWith(u8, selector, "/deep"));
+}
+
 const SelectorSlice = struct {
     start: usize,
     end: usize,
@@ -10005,10 +10494,12 @@ fn parseSelectorSlice(raw: []const u8, part_count: usize) ?SelectorSlice {
     const start_raw = std.mem.trim(u8, raw[0..separator], " \t\r\n\x0c");
     const end_raw = std.mem.trim(u8, raw[separator + 2 ..], " \t\r\n\x0c");
     if (start_raw.len == 0 or end_raw.len == 0) return null;
-    const start = selectorSliceIndex(start_raw, part_count) orelse return null;
-    const end = selectorSliceIndex(end_raw, part_count) orelse return null;
-    if (start > end) return null;
-    return .{ .start = start, .end = end };
+    const first = selectorSliceIndex(start_raw, part_count) orelse return null;
+    const second = selectorSliceIndex(end_raw, part_count) orelse return null;
+    return .{
+        .start = @min(first, second),
+        .end = @max(first, second),
+    };
 }
 
 fn selectorSliceIndex(raw: []const u8, part_count: usize) ?usize {

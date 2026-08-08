@@ -647,6 +647,59 @@ test "native Stylus preserves relative saturation endpoints alpha and CSS fallba
     try std.testing.expect(compiled.map() != null);
 }
 
+test "native Stylus reflects composes and lists selector identity" {
+    const input =
+        \\.foo
+        \\  .bar
+        \\    current: selector()
+        \\    explicit: selector('&:focus')
+        \\    root: selector('^[0]:active')
+        \\    parent: selector('../:hover')
+        \\.foo,
+        \\.bar
+        \\  list: selector('&:hover, &:active')
+        \\  absolute: selector('li a')
+        \\wrap()
+        \\  {selector()}
+        \\    inside: selector('&__item')
+        \\.host
+        \\  wrap()
+        \\selector-list = '.a', '.b', '.c, .d'
+        \\{selector(selector-list)}
+        \\  terminal: selector()
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".foo .bar{current:'.foo .bar';explicit:'.foo .bar:focus';" ++
+            "root:'.foo:active';parent:'.foo:hover'}" ++
+            ".foo,.bar{list:'.foo:hover,.bar:hover,.foo:active,.bar:active';" ++
+            "absolute:'li a'}" ++
+            ".host .host{inside:'.host .host__item'}" ++
+            ".a .b .c,.a .b .d{terminal:'.a .b .c,.a .b .d'}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const invalid =
+        \\.probe
+        \\  value: selector(1)
+    ;
+    try expectSemanticRejection(
+        invalid,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid, "selector").?),
+    );
+}
+
 test "native Stylus evaluates the finite contrast result object and CSS fallback" {
     const input =
         \\.probe

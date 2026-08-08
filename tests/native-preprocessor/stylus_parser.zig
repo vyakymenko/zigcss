@@ -227,6 +227,97 @@ test "native Stylus parser keeps declarations separate from a following nested s
     try std.testing.expectEqualStrings("&__child", try sources.slice(child_rule.text.?));
 }
 
+test "native Stylus parser preserves multiline ancestry selector lists" {
+    const input =
+        \\.root
+        \\  & > .child
+        \\    ^[0] ^[1..1],
+        \\    ^[1..1]
+        \\      value: selector('^[1..1]')
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("ancestry-list.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const root_rule_children = try document.children(root_children[0]);
+    const root_block = root_rule_children[root_rule_children.len - 1];
+    const root_block_children = try document.children(root_block);
+    try std.testing.expectEqual(@as(usize, 1), root_block_children.len);
+    const child_rule_children = try document.children(root_block_children[0]);
+    const child_block = child_rule_children[child_rule_children.len - 1];
+    const child_block_children = try document.children(child_block);
+    try std.testing.expectEqual(@as(usize, 1), child_block_children.len);
+    const ancestry_rule = try document.get(child_block_children[0]);
+    try std.testing.expectEqual(syntax.Kind.rule, ancestry_rule.kind);
+    try std.testing.expectEqualStrings(
+        "^[0] ^[1..1],\n    ^[1..1]",
+        try sources.slice(ancestry_rule.text.?),
+    );
+    const ancestry_children = try document.children(child_block_children[0]);
+    const ancestry_block = ancestry_children[ancestry_children.len - 1];
+    const declarations = try document.children(ancestry_block);
+    try std.testing.expectEqual(@as(usize, 1), declarations.len);
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(declarations[0])).kind,
+    );
+}
+
+test "native Stylus parser keeps quoted selector references inside interpolation braces" {
+    const input =
+        \\{selector('.a', '.b', '^[0]:hover .e, ^[1]:hover .f')}
+        \\  color: green
+        \\{selector('.a' '.b' '.c')}
+        \\  color: blue
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("selector-interpolation.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root_children.len);
+    for (root_children) |rule_id| {
+        const rule = try document.get(rule_id);
+        try std.testing.expectEqual(syntax.Kind.rule, rule.kind);
+        const children = try document.children(rule_id);
+        try std.testing.expectEqual(@as(usize, 2), children.len);
+        try std.testing.expectEqual(syntax.Kind.selector, (try document.get(children[0])).kind);
+        const block_children = try document.children(children[1]);
+        try std.testing.expectEqual(@as(usize, 1), block_children.len);
+        try std.testing.expectEqual(
+            syntax.Kind.declaration,
+            (try document.get(block_children[0])).kind,
+        );
+    }
+    const first_children = try document.children(root_children[0]);
+    try std.testing.expectEqualStrings(
+        "{selector('.a', '.b', '^[0]:hover .e, ^[1]:hover .f')}",
+        try sources.slice((try document.get(first_children[0])).text.?),
+    );
+}
+
 test "native Stylus parser keeps property assignment expressions as declarations" {
     const input =
         \\values = 1

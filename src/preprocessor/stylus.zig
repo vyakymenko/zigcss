@@ -431,7 +431,7 @@ pub const Parser = struct {
                 const interpolation_prefix = opening == segment_start or
                     !isHorizontalWhitespace(previous);
                 if (interpolation_prefix and
-                    std.mem.indexOfAny(u8, interior, ":;") == null)
+                    !containsUnquotedAny(interior, ":;"))
                 {
                     return false;
                 }
@@ -525,8 +525,9 @@ pub const Parser = struct {
         for (lines[start .. end + 1]) |candidate| {
             const raw = self.lineBytes(candidate);
             const bare_selector = std.mem.indexOfAny(u8, raw, " \t(){}=;") == null;
+            const ancestry_selector = std.mem.startsWith(u8, raw, "^[");
             if (isComment(raw) or raw[0] == '@' or
-                looksLikeDeclaration(raw, false) or
+                (looksLikeDeclaration(raw, false) and !ancestry_selector) or
                 (!looksLikeSelector(raw) and !bare_selector) or
                 self.findAssignment(candidate) != null or
                 startsDirective(raw, "@import") or startsDirective(raw, "@require") or
@@ -638,6 +639,7 @@ pub const Parser = struct {
             return .function;
         }
         if (!has_children and looksLikeAdjacentCall(raw)) return .expression;
+        if (has_children and std.mem.startsWith(u8, raw, "^[")) return .rule;
         if (looksLikeDeclaration(raw, has_children)) return .declaration;
         if (has_children or looksLikeSelector(raw)) return .rule;
         return .expression;
@@ -981,6 +983,31 @@ fn startsSelectorPunctuation(raw: []const u8) bool {
         '.', '#', '&', '[', '/', '>', '+', '~' => true,
         else => false,
     };
+}
+
+fn containsUnquotedAny(raw: []const u8, needles: []const u8) bool {
+    var quote: u8 = 0;
+    var escaped = false;
+    for (raw) |byte| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote != 0) {
+            if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (std.mem.indexOfScalar(u8, needles, byte) != null) return true;
+    }
+    return false;
 }
 
 fn looksLikeDeclaration(raw: []const u8, has_children: bool) bool {
