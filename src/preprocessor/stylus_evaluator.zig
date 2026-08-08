@@ -1879,6 +1879,8 @@ const Engine = struct {
     current_property_bindings: std.ArrayList(CurrentPropertyBinding) = .empty,
     json_local_names: std.ArrayList([]const u8) = .empty,
     selector_parts: std.ArrayList([]u8) = .empty,
+    selector_identities: std.StringHashMapUnmanaged(void) = .empty,
+    selector_identity_storage: std.ArrayList([]u8) = .empty,
     media_stack: std.ArrayList([]u8) = .empty,
     cache_seen: std.ArrayList([]const u8) = .empty,
     extensions: std.ArrayList(StaticExtension) = .empty,
@@ -1938,6 +1940,9 @@ const Engine = struct {
         if (self.active_selector_scope) |selector| self.allocator.free(selector);
         for (self.selector_parts.items) |part| self.allocator.free(part);
         self.selector_parts.deinit(self.allocator);
+        self.selector_identities.deinit(self.allocator);
+        for (self.selector_identity_storage.items) |selector| self.allocator.free(selector);
+        self.selector_identity_storage.deinit(self.allocator);
         for (self.media_stack.items) |media| self.allocator.free(media);
         self.media_stack.deinit(self.allocator);
         self.cache_seen.deinit(self.allocator);
@@ -2872,15 +2877,18 @@ const Engine = struct {
             selector_node.text.?,
         );
         defer self.allocator.free(base_selector);
+        try self.registerSelectorIdentities(selector_node.text.?, base_selector);
         const selector = try self.expandExtendedSelectorOwned(selector_node.text.?, base_selector);
         defer self.allocator.free(selector);
         if (std.mem.trim(u8, selector, " \t\r\n\x0c").len == 0) return;
+        const visible_selector = try self.visibleSelectorOwned(selector_node.text.?, selector);
+        defer self.allocator.free(visible_selector);
         const selector_orders = try self.selectorOrdersOwned(parent_selector, selector);
         defer self.allocator.free(selector_orders);
         const previous_rule_selector = self.active_rule_selector;
         const previous_selector_identity = self.active_selector_identity;
         const previous_rule_orders = self.active_rule_orders;
-        self.active_rule_selector = selector;
+        self.active_rule_selector = visible_selector;
         self.active_selector_identity = base_selector;
         self.active_rule_orders = selector_orders;
         defer {
@@ -2939,8 +2947,8 @@ const Engine = struct {
         );
         if (returned != null) return error.InvalidDocument;
 
-        if (declarations.items.len > 0) {
-            try self.emitMapped(selector_node.text.?, null, selector);
+        if (declarations.items.len > 0 and visible_selector.len > 0) {
+            try self.emitMapped(selector_node.text.?, null, visible_selector);
             try self.emit(if (self.emittingOKeyframes()) " {\n    " else "{");
             for (declarations.items, 0..) |declaration, declaration_index| {
                 try self.emitMapped(declaration.span, null, declaration.property);
@@ -2960,6 +2968,29 @@ const Engine = struct {
             try self.emitNestedOutput(child, selector, true);
         }
         for (cached.items) |*item| try self.emitCachedRule(item);
+    }
+
+    fn visibleSelectorOwned(
+        self: *Engine,
+        span: native_source.Span,
+        selector: []const u8,
+    ) Error![]u8 {
+        var branches = try splitTopLevel(self.allocator, selector, ',');
+        defer branches.deinit(self.allocator);
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (branches.items) |range| {
+            const branch = std.mem.trim(
+                u8,
+                selector[range.start..range.end],
+                " \t\r\n\x0c",
+            );
+            if (branch.len == 0) return error.InvalidDocument;
+            if (selectorBranchContainsPlaceholder(branch)) continue;
+            if (output.items.len > 0) try self.appendTemporary(&output, span, ",");
+            try self.appendTemporary(&output, span, branch);
+        }
+        return output.toOwnedSlice(self.allocator);
     }
 
     fn emitCachedRule(self: *Engine, cached: *const CachedRule) Error!void {
@@ -5223,6 +5254,9 @@ const Engine = struct {
         if (nameEql(name, "selector")) {
             return try self.evaluateSelectorBuiltin(span, raw, call, scope);
         }
+        if (nameEql(name, "selector-exists")) {
+            return try self.evaluateSelectorExistsBuiltin(span, raw, call, scope);
+        }
         if (nameEql(name, "prefix-classes")) {
             try self.transaction.report(
                 .err,
@@ -6947,6 +6981,90 @@ const Engine = struct {
         return self.ownStringResult(span, compiled, true);
     }
 
+    fn evaluateSelectorExistsBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        var ranges = try splitTopLevel(
+            self.allocator,
+            raw[call.arguments.start..call.arguments.end],
+            ',',
+        );
+        defer ranges.deinit(self.allocator);
+        if (call.arguments.start == call.arguments.end) ranges.clearRetainingCapacity();
+        if (ranges.items.len != 1) return self.invalidBuiltinArguments(span);
+
+        const range = ranges.items[0];
+        const argument = std.mem.trim(
+            u8,
+            raw[call.arguments.start + range.start .. call.arguments.start + range.end],
+            " \t\r\n\x0c",
+        );
+        if (argument.len == 0) return self.invalidBuiltinArguments(span);
+
+        var rendered_query: ?[]u8 = null;
+        defer if (rendered_query) |owned| self.allocator.free(owned);
+        const query = if (argument.len >= 2 and
+            (argument[0] == '\'' or argument[0] == '"') and
+            closingQuote(argument, 0) == argument.len - 1)
+        blk: {
+            const value = try self.evaluateValue(span, argument, scope, 0);
+            break :blk stringBytes(value.*) orelse
+                return self.invalidBuiltinArguments(span);
+        } else if (validVariableName(argument) and
+            try self.lookupBinding(scope, argument) != null)
+        blk: {
+            const value = try self.evaluateValue(span, argument, scope, 0);
+            break :blk stringBytes(value.*) orelse
+                return self.invalidBuiltinArguments(span);
+        } else blk: {
+            const rendered = try self.renderRawOwned(span, argument, scope, .selector, 0);
+            rendered_query = rendered;
+            const trimmed = std.mem.trim(u8, rendered, " \t\r\n\x0c");
+            if (!selectorExistsQueryIsStringLike(trimmed)) {
+                return self.invalidBuiltinArguments(span);
+            }
+            break :blk trimmed;
+        };
+        if (query.len == 0) return self.invalidBuiltinArguments(span);
+        try self.transaction.consumeOperations(1);
+        return self.ownValue(span, .{ .boolean = self.selector_identities.contains(query) });
+    }
+
+    fn registerSelectorIdentities(
+        self: *Engine,
+        span: native_source.Span,
+        selector: []const u8,
+    ) Error!void {
+        var branches = try splitTopLevel(self.allocator, selector, ',');
+        defer branches.deinit(self.allocator);
+        for (branches.items) |range| {
+            const identity = std.mem.trim(
+                u8,
+                selector[range.start..range.end],
+                " \t\r\n\x0c",
+            );
+            if (identity.len == 0) continue;
+            if (self.selector_identities.contains(identity)) continue;
+            if (self.selector_identity_storage.items.len >= self.limits.max_selectors) {
+                try self.reportSelectorLimit(span);
+                return error.SelectorLimitExceeded;
+            }
+            const owned = try self.allocator.dupe(u8, identity);
+            self.selector_identity_storage.append(self.allocator, owned) catch |failure| {
+                self.allocator.free(owned);
+                return failure;
+            };
+            self.selector_identities.put(self.allocator, owned, {}) catch |failure| {
+                self.allocator.free(self.selector_identity_storage.pop().?);
+                return failure;
+            };
+        }
+    }
+
     fn appendSelectorArgumentPart(
         self: *Engine,
         span: native_source.Span,
@@ -7708,6 +7826,17 @@ const Engine = struct {
                 return false;
             }
             return native_value.eql(needle.*, haystack.*);
+        }
+        if (parseCall(source_condition)) |call| {
+            const name = source_condition[call.name.start..call.name.end];
+            if (nameEql(name, "selector-exists") and self.findCallable(name) == null) {
+                return isTruthy(try self.evaluateSelectorExistsBuiltin(
+                    span,
+                    source_condition,
+                    call,
+                    scope,
+                ));
+            }
         }
         const rendered = try self.renderRawOwned(span, raw, scope, .value, 0);
         defer self.allocator.free(rendered);
@@ -10165,6 +10294,36 @@ fn validVariableName(name: []const u8) bool {
     return true;
 }
 
+fn selectorBranchContainsPlaceholder(selector: []const u8) bool {
+    var quote: u8 = 0;
+    var escaped = false;
+    for (selector, 0..) |byte, index| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote != 0) {
+            if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '$' and index + 1 < selector.len and
+            (std.ascii.isAlphabetic(selector[index + 1]) or
+                selector[index + 1] == '_' or selector[index + 1] == '-'))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 fn splitDeclaration(raw: []const u8) ?[2]ByteRange {
     const bounds = trimRange(raw, .{ .start = 0, .end = raw.len });
     var quote: u8 = 0;
@@ -10463,6 +10622,18 @@ fn selectorArgumentBytes(value: *const native_value.Value) ?[]const u8 {
         .selector => |selector| selector.bytes,
         else => null,
     };
+}
+
+fn selectorExistsQueryIsStringLike(query: []const u8) bool {
+    if (query.len == 0 or looksNumeric(query) or
+        std.ascii.eqlIgnoreCase(query, "true") or
+        std.ascii.eqlIgnoreCase(query, "false") or
+        std.ascii.eqlIgnoreCase(query, "null") or
+        native_color.parseLiteral(query) != null)
+    {
+        return false;
+    }
+    return !(query.len >= 2 and query[0] == '{' and query[query.len - 1] == '}');
 }
 
 fn selectorStringNeedsStack(selector: []const u8) bool {

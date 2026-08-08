@@ -700,6 +700,60 @@ test "native Stylus reflects composes and lists selector identity" {
     );
 }
 
+test "native Stylus queries previously evaluated selector identity" {
+    const input =
+        \\$test
+        \\  a
+        \\    color red
+        \\class
+        \\  if selector-exists($test a)
+        \\    color #fff
+        \\  if selector-exists('$test')
+        \\    border #fff
+        \\  if selector-exists('$test li')
+        \\    font-size 12px
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "class{color:#fff;border:#fff}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const lower =
+        \\class
+        \\  if selector-exists()
+        \\    color red
+    ;
+    try expectSemanticRejection(
+        lower,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, lower, "if selector-exists").?),
+    );
+
+    const over =
+        \\class
+        \\  if selector-exists('class', '$test')
+        \\    color red
+    ;
+    try expectSemanticRejection(
+        over,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, over, "if selector-exists").?),
+    );
+}
+
 test "native Stylus evaluates the finite contrast result object and CSS fallback" {
     const input =
         \\.probe
