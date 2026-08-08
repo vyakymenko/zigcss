@@ -4969,9 +4969,13 @@ const Engine = struct {
             const count: usize = if (arguments.items.len == 0)
                 0
             else switch (arguments.items[0].*) {
-                .null_value => 0,
                 .list => |list| list.items.len,
                 .map => |map| map.entries.len,
+                .string => |string| if (string.quoted)
+                    std.unicode.calcUtf16LeLen(string.bytes) catch
+                        return self.invalidBuiltinArguments(span)
+                else
+                    1,
                 else => 1,
             };
             return try self.ownUnitlessNumber(span, @floatFromInt(count));

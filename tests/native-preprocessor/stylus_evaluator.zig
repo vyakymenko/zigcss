@@ -750,6 +750,45 @@ test "native Stylus join preserves nested lists and HSL string identity" {
     );
 }
 
+test "native Stylus length preserves provider scalar list and string semantics" {
+    const input =
+        \\args(n = null)
+        \\  length(n)
+        \\
+        \\vargs(args...)
+        \\  length(args)
+        \\
+        \\argument-count()
+        \\  length(arguments)
+        \\
+        \\body
+        \\  zero length()
+        \\  null-value length(null)
+        \\  identifier length(foo)
+        \\  empty-string length('')
+        \\  returned-scalar length(args())
+        \\  scalar length(1)
+        \\  nested length((1 2) (3 4))
+        \\  flat length(1 2 3)
+        \\  ascii length("hey")
+        \\  bmp length("hé")
+        \\  astral length("hé😊")
+        \\  rest vargs(1, 2, 3, 4)
+        \\  default-list args(1 2 3 4 5)
+        \\  implicit argument-count(1, 2, 3, 4, 5, 6)
+    ;
+    var compiled = try compile(std.testing.allocator, input, .{});
+    defer compiled.deinit();
+    try std.testing.expectEqualStrings(
+        "body{zero:0;null-value:1;identifier:1;empty-string:0;" ++
+            "returned-scalar:1;scalar:1;nested:2;flat:3;ascii:3;" ++
+            "bmp:2;astral:4;rest:4;default-list:5;implicit:6}",
+        compiled.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), compiled.nativeDiagnostics().len);
+    try std.testing.expect(compiled.map() != null);
+}
+
 test "native Stylus invokes a provider-prefixed root block mixin" {
     const input =
         \\wrapper()
