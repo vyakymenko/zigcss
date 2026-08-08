@@ -871,6 +871,40 @@ test "native Stylus evaluates URL expressions without loading assets" {
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
 }
 
+test "native Stylus preserves finite declaration comment boundaries" {
+    const input =
+        \\/*
+        \\.hidden
+        \\  color blue
+        \\*/
+        \\.probe
+        \\  font-family: "DIN Alternate"
+        \\  background: // ignored,
+        \\    url("img.png") 8px 8px no-repeat,
+        \\    rgba(0, 0, 0, .41)
+        \\  shadow: 1px 0 0 white, /* keep */ 2px 0 0 black
+        \\  sources: url("a") format("x"), /* dropped */
+        \\           url("b") format("y") /* terminal */
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".probe{font-family:\"DIN Alternate\";" ++
+            "background:url(\"img.png\") 8px 8px no-repeat, rgba(0,0,0,0.41);" ++
+            "shadow:1px 0 0 #fff, /* keep */ 2px 0 0 #000;" ++
+            "sources:url(\"a\") format(\"x\"), url(\"b\") format(\"y\") /* terminal */}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus evaluates the finite contrast result object and CSS fallback" {
     const input =
         \\.probe

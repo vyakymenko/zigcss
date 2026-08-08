@@ -225,6 +225,7 @@ pub const Parser = struct {
         var line_start: usize = 0;
         var token_cursor: usize = 0;
         var explicit_depth: u32 = 0;
+        var block_comment = false;
         while (line_start < self.source_bytes.len) {
             var line_end = line_start;
             while (line_end < self.source_bytes.len and
@@ -255,34 +256,64 @@ pub const Parser = struct {
                 content_start += 1;
             }
             var segment_start = content_start;
+            var segment_visible = false;
             var cursor = content_start;
             var quote: u8 = 0;
             var escaped = false;
             var paren_depth: usize = 0;
             var square_depth: usize = 0;
-            while (cursor < line_end) : (cursor += 1) {
+            while (cursor < line_end) {
                 const byte = self.source_bytes[cursor];
+                if (block_comment) {
+                    if (byte == '*' and cursor + 1 < line_end and
+                        self.source_bytes[cursor + 1] == '/')
+                    {
+                        block_comment = false;
+                        cursor += 2;
+                    } else {
+                        cursor += 1;
+                    }
+                    continue;
+                }
                 if (escaped) {
                     escaped = false;
+                    segment_visible = true;
+                    cursor += 1;
                     continue;
                 }
                 if (byte == '\\') {
                     escaped = true;
+                    segment_visible = true;
+                    cursor += 1;
                     continue;
                 }
                 if (quote != 0) {
                     if (byte == quote) quote = 0;
+                    segment_visible = true;
+                    cursor += 1;
                     continue;
                 }
                 if (byte == '\'' or byte == '"') {
                     quote = byte;
+                    segment_visible = true;
+                    cursor += 1;
                     continue;
                 }
                 if (byte == '/' and cursor + 1 < line_end and
                     self.source_bytes[cursor + 1] == '/')
                 {
+                    segment_visible = true;
                     break;
                 }
+                if (byte == '/' and cursor + 1 < line_end and
+                    self.source_bytes[cursor + 1] == '*')
+                {
+                    segment_visible = true;
+                    block_comment = true;
+                    cursor += 2;
+                    continue;
+                }
+                if (!isHorizontalWhitespace(byte)) segment_visible = true;
                 switch (byte) {
                     '(' => paren_depth += 1,
                     ')' => paren_depth -|= 1,
@@ -290,10 +321,40 @@ pub const Parser = struct {
                     ']' => square_depth -|= 1,
                     else => {},
                 }
-                if (paren_depth != 0 or square_depth != 0) continue;
+                if (paren_depth != 0 or square_depth != 0) {
+                    cursor += 1;
+                    continue;
+                }
 
                 if (byte == '{') {
                     if (self.isBlockOpeningBrace(segment_start, cursor, line_end)) {
+                        if (segment_visible) {
+                            try self.appendLineSegment(
+                                lines,
+                                line_start,
+                                line_end,
+                                segment_start,
+                                cursor,
+                                indent + explicit_depth * self.limits.lexer.tab_width,
+                                &token_cursor,
+                            );
+                        }
+                        explicit_depth += 1;
+                        segment_start = cursor + 1;
+                        segment_visible = false;
+                    } else if (std.mem.indexOfScalarPos(
+                        u8,
+                        self.source_bytes,
+                        cursor + 1,
+                        '}',
+                    )) |closing| {
+                        cursor = closing;
+                    }
+                    cursor += 1;
+                    continue;
+                }
+                if (byte == '}') {
+                    if (segment_visible) {
                         try self.appendLineSegment(
                             lines,
                             line_start,
@@ -303,54 +364,41 @@ pub const Parser = struct {
                             indent + explicit_depth * self.limits.lexer.tab_width,
                             &token_cursor,
                         );
-                        explicit_depth += 1;
-                        segment_start = cursor + 1;
-                    } else if (std.mem.indexOfScalarPos(
-                        u8,
-                        self.source_bytes,
-                        cursor + 1,
-                        '}',
-                    )) |closing| {
-                        cursor = closing;
                     }
-                    continue;
-                }
-                if (byte == '}') {
-                    try self.appendLineSegment(
-                        lines,
-                        line_start,
-                        line_end,
-                        segment_start,
-                        cursor,
-                        indent + explicit_depth * self.limits.lexer.tab_width,
-                        &token_cursor,
-                    );
                     explicit_depth -|= 1;
                     segment_start = cursor + 1;
+                    segment_visible = false;
+                    cursor += 1;
                     continue;
                 }
                 if (byte == ';') {
-                    try self.appendLineSegment(
-                        lines,
-                        line_start,
-                        line_end,
-                        segment_start,
-                        cursor + 1,
-                        indent + explicit_depth * self.limits.lexer.tab_width,
-                        &token_cursor,
-                    );
+                    if (segment_visible) {
+                        try self.appendLineSegment(
+                            lines,
+                            line_start,
+                            line_end,
+                            segment_start,
+                            cursor + 1,
+                            indent + explicit_depth * self.limits.lexer.tab_width,
+                            &token_cursor,
+                        );
+                    }
                     segment_start = cursor + 1;
+                    segment_visible = false;
                 }
+                cursor += 1;
             }
-            try self.appendLineSegment(
-                lines,
-                line_start,
-                line_end,
-                segment_start,
-                line_end,
-                indent + explicit_depth * self.limits.lexer.tab_width,
-                &token_cursor,
-            );
+            if (segment_visible) {
+                try self.appendLineSegment(
+                    lines,
+                    line_start,
+                    line_end,
+                    segment_start,
+                    line_end,
+                    indent + explicit_depth * self.limits.lexer.tab_width,
+                    &token_cursor,
+                );
+            }
 
             if (line_end >= self.source_bytes.len) break;
             if (self.source_bytes[line_end] == '\r' and
@@ -492,7 +540,12 @@ pub const Parser = struct {
     ) Error!void {
         while (cursor.* < lines.len and lines[cursor.*].indent == indent) {
             var line = lines[cursor.*];
-            if (self.selectorGroupEnd(lines, cursor.*)) |group_end| {
+            if (self.declarationContinuationEnd(lines, cursor.*)) |continuation_end| {
+                line.end = lines[continuation_end].end;
+                line.content_end = lines[continuation_end].content_end;
+                line.token_end = lines[continuation_end].token_end;
+                cursor.* = continuation_end;
+            } else if (self.selectorGroupEnd(lines, cursor.*)) |group_end| {
                 line.end = lines[group_end].end;
                 line.content_end = lines[group_end].content_end;
                 line.token_end = lines[group_end].token_end;
@@ -509,6 +562,40 @@ pub const Parser = struct {
             const built = try self.buildLine(line, nested.items);
             try output.append(self.allocator, built);
         }
+    }
+
+    fn declarationContinuationEnd(
+        self: *const Parser,
+        lines: []const Line,
+        start: usize,
+    ) ?usize {
+        if (start + 1 >= lines.len or lines[start + 1].indent <= lines[start].indent or
+            !looksLikeDeclaration(self.lineBytes(lines[start]), true))
+        {
+            return null;
+        }
+
+        var last_significant: ?native_lexer.Kind = null;
+        var trailing_comment = false;
+        for (self.tokens[lines[start].token_start..lines[start].token_end]) |token| {
+            switch (token.kind) {
+                .comment => trailing_comment = last_significant != null,
+                .whitespace, .newline, .indent, .dedent, .eof => continue,
+                else => {
+                    last_significant = token.kind;
+                    trailing_comment = false;
+                },
+            }
+        }
+        const terminal = last_significant orelse return null;
+        if (terminal != .colon and terminal != .comma) return null;
+        if (terminal == .colon and !trailing_comment) return null;
+
+        var end = start + 1;
+        while (end + 1 < lines.len and lines[end + 1].indent > lines[start].indent) {
+            end += 1;
+        }
+        return end;
     }
 
     fn selectorGroupEnd(

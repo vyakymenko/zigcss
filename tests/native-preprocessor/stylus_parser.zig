@@ -347,6 +347,67 @@ test "native Stylus parser keeps property assignment expressions as declarations
     );
 }
 
+test "native Stylus parser keeps multiline block comments opaque" {
+    const input =
+        \\/*
+        \\body
+        \\  color blue
+        \\*/
+        \\.actual
+        \\  color red
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("multiline-comment.styl", input);
+    var parser = try stylus.Parser.init(std.testing.allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root_children.len);
+    const comment = try document.get(root_children[0]);
+    try std.testing.expectEqual(syntax.Kind.comment, comment.kind);
+    try std.testing.expectEqual(@as(usize, 0), (try document.children(root_children[0])).len);
+    try std.testing.expectEqual(@as(usize, 1), countKind(&document, .rule));
+    try std.testing.expectEqual(
+        syntax.Kind.rule,
+        (try document.get(root_children[1])).kind,
+    );
+}
+
+test "native Stylus parser owns comment-led declaration continuations" {
+    const input =
+        \\.root
+        \\  background: // ignored,
+        \\    url("img.png") 8px 8px no-repeat,
+        \\    rgba(0, 0, 0, .41)
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("comment-continuation.styl", input);
+    var parser = try stylus.Parser.init(std.testing.allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    const rule_children = try document.children(root_children[0]);
+    const block_children = try document.children(rule_children[rule_children.len - 1]);
+    try std.testing.expectEqual(@as(usize, 1), block_children.len);
+    const declaration = try document.get(block_children[0]);
+    try std.testing.expectEqual(syntax.Kind.declaration, declaration.kind);
+    try std.testing.expectEqualStrings(
+        "background: // ignored,\n    url(\"img.png\") 8px 8px no-repeat,\n    rgba(0, 0, 0, .41)",
+        try sources.slice(declaration.text.?),
+    );
+    try std.testing.expectEqual(@as(usize, 1), (try document.children(block_children[0])).len);
+    try std.testing.expectEqual(
+        syntax.Kind.expression,
+        (try document.get((try document.children(block_children[0]))[0])).kind,
+    );
+}
+
 test "native parser rejects every pinned Stylus parser error" {
     const NegativeCase = struct {
         id: []const u8,

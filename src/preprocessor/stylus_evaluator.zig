@@ -1691,6 +1691,21 @@ const RenderedDeclaration = struct {
     }
 };
 
+const InlineCommentAnchor = struct {
+    start: usize,
+    end: usize,
+    leaf_count: usize,
+    comma_count: usize,
+    after_comma: bool,
+    leading_space: bool,
+    trailing_space: bool,
+};
+
+const CommentedDeclarationValue = struct {
+    bytes: []u8,
+    semantic: *const native_value.Value,
+};
+
 const ActiveProperty = struct {
     property: []const u8,
     value_span: native_source.Span,
@@ -4565,7 +4580,37 @@ const Engine = struct {
             self.active_property_value = previous_property_value;
             self.current_property_bindings.shrinkRetainingCapacity(property_binding_start);
         }
-        const value = try self.evaluateValue(value_span, raw[parts[1].start..parts[1].end], scope, 0);
+        const value_raw = raw[parts[1].start..parts[1].end];
+        if (sourceQuotedValue(value_raw)) |quote| {
+            const semantic = try self.evaluateValue(value_span, value_raw, scope, 0);
+            if (semantic.* != .string or !semantic.string.quoted) return error.InvalidDocument;
+            var quoted: std.ArrayList(u8) = .empty;
+            errdefer quoted.deinit(self.allocator);
+            try self.appendTemporary(&quoted, value_span, &.{quote});
+            try self.appendTemporary(&quoted, value_span, semantic.string.bytes);
+            try self.appendTemporary(&quoted, value_span, &.{quote});
+            return .{
+                .span = declaration.span,
+                .property = property,
+                .value = try quoted.toOwnedSlice(self.allocator),
+                .semantic_value = semantic,
+                .side_effect = false,
+            };
+        }
+        if (try self.renderCommentedDeclarationValueOwned(
+            value_span,
+            value_raw,
+            scope,
+        )) |commented| {
+            return .{
+                .span = declaration.span,
+                .property = property,
+                .value = commented.bytes,
+                .semantic_value = commented.semantic,
+                .side_effect = false,
+            };
+        }
+        const value = try self.evaluateValue(value_span, value_raw, scope, 0);
         const serialized = try self.serializeValueOwned(value, .value, value_span);
         return .{
             .span = declaration.span,
@@ -4574,6 +4619,139 @@ const Engine = struct {
             .semantic_value = value,
             .side_effect = false,
         };
+    }
+
+    fn renderCommentedDeclarationValueOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!?CommentedDeclarationValue {
+        if (std.mem.indexOfScalar(u8, raw, '/') == null) return null;
+
+        try self.transaction.consumeOperations(@intCast(raw.len));
+        try self.reserveTemporary(span, raw.len);
+        const sanitized = try self.allocator.dupe(u8, raw);
+        defer self.allocator.free(sanitized);
+        var anchors: std.ArrayList(InlineCommentAnchor) = .empty;
+        defer anchors.deinit(self.allocator);
+
+        var lexer = try native_lexer.Lexer.init(raw, .stylus, .{});
+        var depth: usize = 0;
+        var leaf_count: usize = 0;
+        var comma_count: usize = 0;
+        var in_item = false;
+        var last_significant: ?native_lexer.Kind = null;
+        var saw_comment = false;
+        while (true) {
+            const token = try lexer.next();
+            if (token.kind == .eof) break;
+            const start: usize = @intCast(token.span.start);
+            const end: usize = @intCast(token.span.end);
+            switch (token.kind) {
+                .comment => {
+                    saw_comment = true;
+                    @memset(sanitized[start..end], ' ');
+                    if (depth == 0) in_item = false;
+                    const comment = raw[start..end];
+                    if (depth == 0 and std.mem.startsWith(u8, comment, "/*") and
+                        !(last_significant == .comma and commentEndsContinuedLine(raw, end)))
+                    {
+                        try anchors.append(self.allocator, .{
+                            .start = start,
+                            .end = end,
+                            .leaf_count = leaf_count,
+                            .comma_count = comma_count,
+                            .after_comma = last_significant == .comma,
+                            .leading_space = start > 0 and std.ascii.isWhitespace(raw[start - 1]),
+                            .trailing_space = end < raw.len and std.ascii.isWhitespace(raw[end]),
+                        });
+                    }
+                },
+                .whitespace, .newline, .indent, .dedent => {
+                    if (depth == 0) in_item = false;
+                },
+                .open_paren, .open_square, .open_curly, .interpolation_start => {
+                    if (depth == 0 and !in_item) {
+                        leaf_count += 1;
+                        in_item = true;
+                    }
+                    depth += 1;
+                    if (depth == 1) last_significant = token.kind;
+                },
+                .close_paren, .close_square, .close_curly, .interpolation_end => {
+                    depth -|= 1;
+                    if (depth == 0) {
+                        in_item = true;
+                        last_significant = token.kind;
+                    }
+                },
+                .comma => if (depth == 0) {
+                    comma_count += 1;
+                    in_item = false;
+                    last_significant = .comma;
+                },
+                else => if (depth == 0) {
+                    if (!in_item) {
+                        leaf_count += 1;
+                        in_item = true;
+                    }
+                    last_significant = token.kind;
+                },
+            }
+        }
+        if (!saw_comment) return null;
+
+        const semantic = try self.evaluateValue(span, sanitized, scope, 0);
+        const serialized = try self.serializeValueOwned(semantic, .value, span);
+        if (anchors.items.len == 0) return .{ .bytes = serialized, .semantic = semantic };
+        defer self.allocator.free(serialized);
+
+        var leaf_ends: std.ArrayList(usize) = .empty;
+        defer leaf_ends.deinit(self.allocator);
+        var comma_ends: std.ArrayList(usize) = .empty;
+        defer comma_ends.deinit(self.allocator);
+        try collectSerializedValueBoundaries(
+            self.allocator,
+            serialized,
+            &leaf_ends,
+            &comma_ends,
+        );
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var serialized_cursor: usize = 0;
+        for (anchors.items) |anchor| {
+            const insertion = if (anchor.after_comma) blk: {
+                if (anchor.comma_count == 0 or anchor.comma_count > comma_ends.items.len) {
+                    return error.InvalidDocument;
+                }
+                break :blk comma_ends.items[anchor.comma_count - 1];
+            } else if (anchor.leaf_count == 0)
+                0
+            else blk: {
+                if (anchor.leaf_count > leaf_ends.items.len) return error.InvalidDocument;
+                break :blk leaf_ends.items[anchor.leaf_count - 1];
+            };
+            if (insertion < serialized_cursor or insertion > serialized.len) {
+                return error.InvalidDocument;
+            }
+            try self.appendTemporary(&output, span, serialized[serialized_cursor..insertion]);
+            if (anchor.leading_space and output.items.len > 0 and
+                !std.ascii.isWhitespace(output.items[output.items.len - 1]))
+            {
+                try self.appendTemporary(&output, span, " ");
+            }
+            try self.appendTemporary(&output, span, raw[anchor.start..anchor.end]);
+            if (anchor.trailing_space and
+                (insertion == serialized.len or !std.ascii.isWhitespace(serialized[insertion])))
+            {
+                try self.appendTemporary(&output, span, " ");
+            }
+            serialized_cursor = insertion;
+        }
+        try self.appendTemporary(&output, span, serialized[serialized_cursor..]);
+        return .{ .bytes = try output.toOwnedSlice(self.allocator), .semantic = semantic };
     }
 
     fn evaluateValue(
@@ -9295,6 +9473,28 @@ fn closingQuote(raw: []const u8, opening: usize) ?usize {
     return null;
 }
 
+fn sourceQuotedValue(raw: []const u8) ?u8 {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+    if (trimmed.len < 2 or (trimmed[0] != '\'' and trimmed[0] != '"') or
+        closingQuote(trimmed, 0) != trimmed.len - 1)
+    {
+        return null;
+    }
+    return trimmed[0];
+}
+
+fn commentEndsContinuedLine(raw: []const u8, comment_end: usize) bool {
+    var cursor = comment_end;
+    while (cursor < raw.len and
+        (raw[cursor] == ' ' or raw[cursor] == '\t' or raw[cursor] == '\x0c'))
+    {
+        cursor += 1;
+    }
+    if (cursor >= raw.len or (raw[cursor] != '\r' and raw[cursor] != '\n')) return false;
+    while (cursor < raw.len and std.ascii.isWhitespace(raw[cursor])) cursor += 1;
+    return cursor < raw.len;
+}
+
 fn splitTopLevelWhitespace(
     allocator: std.mem.Allocator,
     raw: []const u8,
@@ -9340,6 +9540,80 @@ fn splitTopLevelWhitespace(
         try output.append(allocator, .{ .start = item_start, .end = raw.len });
     }
     return output;
+}
+
+fn collectSerializedValueBoundaries(
+    allocator: std.mem.Allocator,
+    serialized: []const u8,
+    leaf_ends: *std.ArrayList(usize),
+    comma_ends: *std.ArrayList(usize),
+) std.mem.Allocator.Error!void {
+    var index: usize = 0;
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    var in_item = false;
+    while (index < serialized.len) {
+        const byte = serialized[index];
+        if (escaped) {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        if (byte == '\\') {
+            if (depth == 0 and !in_item) in_item = true;
+            escaped = true;
+            index += 1;
+            continue;
+        }
+        if (quote != 0) {
+            if (byte == quote) quote = 0;
+            index += 1;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            if (depth == 0 and !in_item) in_item = true;
+            quote = byte;
+            index += 1;
+            continue;
+        }
+        if (byte == '(' or byte == '[' or byte == '{') {
+            if (depth == 0 and !in_item) in_item = true;
+            depth += 1;
+            index += 1;
+            continue;
+        }
+        if (byte == ')' or byte == ']' or byte == '}') {
+            depth -|= 1;
+            index += 1;
+            continue;
+        }
+        if (depth == 0 and byte == ',') {
+            if (in_item) {
+                try leaf_ends.append(allocator, index);
+                in_item = false;
+            }
+            index += 1;
+            while (index < serialized.len and std.ascii.isWhitespace(serialized[index])) {
+                index += 1;
+            }
+            try comma_ends.append(allocator, index);
+            continue;
+        }
+        if (depth == 0 and std.ascii.isWhitespace(byte)) {
+            if (in_item) {
+                try leaf_ends.append(allocator, index);
+                in_item = false;
+            }
+            while (index < serialized.len and std.ascii.isWhitespace(serialized[index])) {
+                index += 1;
+            }
+            continue;
+        }
+        if (depth == 0 and !in_item) in_item = true;
+        index += 1;
+    }
+    if (in_item) try leaf_ends.append(allocator, serialized.len);
 }
 
 fn joinArgumentIsOperation(raw: []const u8) bool {
