@@ -157,6 +157,43 @@ const multiple_definition_extension_input =
 const multiple_definition_extension_css = ".error,.serious-error{font-size:bold}" ++
     ".error,.serious-error{color:#f00}.serious-error{font-size:18px}";
 
+const multiple_selector_extension_input =
+    \\.a
+    \\  color: red
+    \\.b
+    \\  width: 100px
+    \\.c
+    \\  @extend .a, .b
+    \\  height: 200px
+    \\.d
+    \\  @extend .b,.c
+    \\.d[data-prop*='\,']
+    \\  color: blue
+    \\.d-1
+    \\  width: 100%
+    \\$cf
+    \\  &:before
+    \\  &:after
+    \\    content: ' '
+    \\    clear: both
+    \\    display: table
+    \\    font: 0/0 a
+    \\    visibility: hidden
+    \\$ib
+    \\  display: inline-block
+    \\.foo
+    \\  @extend .d[data-prop*=','], $cf, $ib
+    \\$i = 1
+    \\.e
+    \\  @extend .d-{$i}, $cf, $ib
+;
+
+const multiple_selector_extension_css = ".a,.c,.d{color:#f00}" ++
+    ".b,.c,.d{width:100px}.c,.d{height:200px}" ++
+    ".d[data-prop*=\",\"],.foo{color:#00f}.d-1,.e{width:100%}" ++
+    ".foo::before,.e::before,.foo::after,.e::after{content:' ';clear:both;" ++
+    "display:table;font:0/0 a;visibility:hidden}.foo,.e{display:inline-block}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2614,6 +2651,56 @@ test "native Stylus plural extension aliases cover each prior matching definitio
     );
 }
 
+test "native Stylus multiple selector extensions retain bounded target ownership" {
+    const lower_input =
+        \\.a
+        \\  color: red
+        \\.b[data-prop*='\,']
+        \\  width: 1px
+        \\.c
+        \\  @extend .a, .b[data-prop*=',']
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 5;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        ".a,.c{color:#f00}.b[data-prop*=\",\"],.c{width:1px}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 27;
+    var first = try compile(
+        std.testing.allocator,
+        multiple_selector_extension_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        multiple_selector_extension_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(multiple_selector_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 26;
+    try expectSemanticRejectionWithLimits(
+        multiple_selector_extension_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.lastIndexOf(u8, multiple_selector_extension_input, ".e").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3137,6 +3224,12 @@ fn exerciseMultipleDefinitionExtensionAllocationFailures(allocator: std.mem.Allo
     try std.testing.expectEqualStrings(multiple_definition_extension_css, result.css());
 }
 
+fn exerciseMultipleSelectorExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, multiple_selector_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(multiple_selector_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3285,6 +3378,14 @@ test "native Stylus multiple definition extensions handle every allocation failu
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMultipleDefinitionExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus multiple selector extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMultipleSelectorExtensionAllocationFailures,
         .{},
     );
 }

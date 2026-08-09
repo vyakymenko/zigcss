@@ -280,7 +280,13 @@ pub fn evaluateWithOptions(
             try active_document.children(active_document.root),
             false,
         );
-    if (contains_loop_extension or contains_callable_extension) {
+    const contains_runtime_extension = try containsRuntimeExtensionCandidate(
+        sources,
+        active_document,
+    );
+    if (contains_loop_extension or contains_callable_extension or
+        contains_runtime_extension)
+    {
         var discovery = try Engine.init(
             transaction.allocator,
             sources,
@@ -682,6 +688,71 @@ fn containsExtensionDirective(
             " \t\r\n\x0c;",
         );
         if (parseExtendDirective(raw) != null) return true;
+    }
+    return false;
+}
+
+fn containsRuntimeExtensionCandidate(
+    sources: *const native_source.Table,
+    document: *const native_syntax.Document,
+) Error!bool {
+    for (document.nodes()) |node| {
+        if (node.kind != .at_rule or node.text == null) continue;
+        const raw = std.mem.trim(
+            u8,
+            try sources.slice(node.text.?),
+            " \t\r\n\x0c;",
+        );
+        const directive = parseExtendDirective(raw) orelse continue;
+        if (multipleExtensionTargetsNeedRuntimeRendering(directive.targets)) return true;
+    }
+    return false;
+}
+
+fn multipleExtensionTargetsNeedRuntimeRendering(raw: []const u8) bool {
+    return findTopLevelScalar(raw, ',') != null and
+        extensionTargetNeedsRuntimeRendering(raw);
+}
+
+fn extensionTargetNeedsRuntimeRendering(raw: []const u8) bool {
+    var escaped = false;
+    var line_comment = false;
+    var block_comment = false;
+    var index: usize = 0;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (line_comment) {
+            if (byte == '\n' or byte == '\r' or byte == '\x0c') line_comment = false;
+            continue;
+        }
+        if (block_comment) {
+            if (byte == '*' and index + 1 < raw.len and raw[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len) {
+            if (raw[index + 1] == '/') {
+                line_comment = true;
+                index += 1;
+                continue;
+            }
+            if (raw[index + 1] == '*') {
+                block_comment = true;
+                index += 1;
+                continue;
+            }
+        }
+        if (byte == '{') return true;
     }
     return false;
 }
@@ -2972,8 +3043,6 @@ const Engine = struct {
     ) Error!bool {
         if (self.mode != .discover_extensions) return false;
         const plan = self.dynamic_extension_plan orelse return false;
-        if (self.static_extension_directives.contains(statement_id.value)) return false;
-        if (self.active_loop_depth == 0 and self.active_callables.items.len == 0) return false;
         const extender = self.active_selector_identity orelse return false;
         var targets_raw = directive.targets;
         if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
@@ -2984,6 +3053,58 @@ const Engine = struct {
             );
         }
         if (targets_raw.len == 0) return false;
+        const statically_collected = self.static_extension_directives.contains(
+            statement_id.value,
+        );
+        const nested = self.selector_parts.items.len > 1;
+        if (statically_collected) {
+            if (!multipleExtensionTargetsNeedRuntimeRendering(targets_raw) or
+                directive.plural)
+            {
+                return false;
+            }
+            var original_targets = try splitTopLevel(self.allocator, targets_raw, ',');
+            defer original_targets.deinit(self.allocator);
+            var appended = false;
+            for (original_targets.items) |range| {
+                const original_target = std.mem.trim(
+                    u8,
+                    targets_raw[range.start..range.end],
+                    " \t\r\n\x0c;",
+                );
+                if (!extensionTargetNeedsRuntimeRendering(original_target)) continue;
+                const rendered = try self.renderRawOwned(
+                    span,
+                    original_target,
+                    scope,
+                    .selector,
+                    0,
+                );
+                defer self.allocator.free(rendered);
+                const normalized = try self.normalizeSelectorLines(span, rendered);
+                defer self.allocator.free(normalized);
+                var rendered_targets = try splitTopLevel(self.allocator, normalized, ',');
+                defer rendered_targets.deinit(self.allocator);
+                for (rendered_targets.items) |rendered_range| {
+                    const target = std.mem.trim(
+                        u8,
+                        normalized[rendered_range.start..rendered_range.end],
+                        " \t\r\n\x0c;",
+                    );
+                    if (try self.appendDiscoveredExtension(
+                        plan,
+                        span,
+                        target,
+                        extender,
+                        nested,
+                    )) appended = true;
+                }
+            }
+            if (appended) try plan.directives.put(self.allocator, statement_id.value, {});
+            return appended;
+        }
+        if (self.active_loop_depth == 0 and self.active_callables.items.len == 0) return false;
+
         const rendered_targets = try self.renderRawOwned(
             span,
             targets_raw,
@@ -2996,7 +3117,6 @@ const Engine = struct {
         defer self.allocator.free(normalized_targets);
         var targets = try splitTopLevel(self.allocator, normalized_targets, ',');
         defer targets.deinit(self.allocator);
-        const nested = self.selector_parts.items.len > 1;
         if (directive.plural) {
             if (nested or targets.items.len != 1 or
                 !selectorHasTopLevelCombinator(normalized_targets))
@@ -3015,35 +3135,50 @@ const Engine = struct {
                 normalized_targets[range.start..range.end],
                 " \t\r\n\x0c;",
             );
-            if (target.len == 0 or std.mem.indexOfScalar(u8, target, '{') != null) continue;
-            if (plan.extensions.items.len >= self.limits.max_selectors) {
-                try self.reportSelectorLimit(span);
-                return error.SelectorLimitExceeded;
-            }
-            const owned_target = try self.allocator.dupe(u8, target);
-            const owned_extender = self.allocator.dupe(u8, extender) catch |failure| {
-                self.allocator.free(owned_target);
-                return failure;
-            };
-            plan.extensions.append(self.allocator, .{
-                .target = owned_target,
-                .extender = owned_extender,
-                .directive_order = if (self.active_rule_group_order) |order|
-                    order + 1
-                else
-                    self.static_group_count,
-                .prefixed_target = nested,
-            }) catch |failure| {
-                self.allocator.free(owned_target);
-                self.allocator.free(owned_extender);
-                return failure;
-            };
-            appended = true;
+            if (try self.appendDiscoveredExtension(
+                plan,
+                span,
+                target,
+                extender,
+                nested,
+            )) appended = true;
         }
-        if (appended) {
-            try plan.directives.put(self.allocator, statement_id.value, {});
-        }
+        if (appended) try plan.directives.put(self.allocator, statement_id.value, {});
         return appended;
+    }
+
+    fn appendDiscoveredExtension(
+        self: *Engine,
+        plan: *DynamicExtensionPlan,
+        span: native_source.Span,
+        target: []const u8,
+        extender: []const u8,
+        nested: bool,
+    ) Error!bool {
+        if (target.len == 0 or std.mem.indexOfScalar(u8, target, '{') != null) return false;
+        if (plan.extensions.items.len >= self.limits.max_selectors) {
+            try self.reportSelectorLimit(span);
+            return error.SelectorLimitExceeded;
+        }
+        const owned_target = try self.allocator.dupe(u8, target);
+        const owned_extender = self.allocator.dupe(u8, extender) catch |failure| {
+            self.allocator.free(owned_target);
+            return failure;
+        };
+        plan.extensions.append(self.allocator, .{
+            .target = owned_target,
+            .extender = owned_extender,
+            .directive_order = if (self.active_rule_group_order) |order|
+                order + 1
+            else
+                self.static_group_count,
+            .prefixed_target = nested,
+        }) catch |failure| {
+            self.allocator.free(owned_target);
+            self.allocator.free(owned_extender);
+            return failure;
+        };
+        return true;
     }
 
     fn renderStaticSelectorOwned(
@@ -3103,11 +3238,25 @@ const Engine = struct {
                 var candidate_index: usize = 0;
                 while (candidate_index < current_len) : (candidate_index += 1) {
                     const candidate = selectors.items[candidate_index];
-                    const marker: usize = if (candidate_index < original_selector_count) blk: {
-                        if (std.mem.eql(u8, candidate, extension.target)) break :blk 0;
-                        if (!extension.prefixed_target) continue;
-                        break :blk selectorTokenIndex(candidate, extension.target) orelse continue;
-                    } else selectorTokenIndex(candidate, extension.target) orelse continue;
+                    const match: ByteRange = if (std.mem.eql(
+                        u8,
+                        candidate,
+                        extension.target,
+                    ) or selectorsEqualForExtension(candidate, extension.target))
+                        .{ .start = 0, .end = candidate.len }
+                    else if (candidate_index < original_selector_count and
+                        !extension.prefixed_target)
+                        continue
+                    else blk: {
+                        const marker = selectorTokenIndex(
+                            candidate,
+                            extension.target,
+                        ) orelse continue;
+                        break :blk .{
+                            .start = marker,
+                            .end = marker + extension.target.len,
+                        };
+                    };
                     var extenders = try splitTopLevel(self.allocator, extension.extender, ',');
                     defer extenders.deinit(self.allocator);
                     for (extenders.items) |range| {
@@ -3116,8 +3265,8 @@ const Engine = struct {
                             extension.extender[range.start..range.end],
                             " \t\r\n\x0c",
                         );
-                        const prefix = candidate[0..marker];
-                        const suffix = candidate[marker + extension.target.len ..];
+                        const prefix = candidate[0..match.start];
+                        const suffix = candidate[match.end..];
                         const prefix_bytes = if (prefix.len > 0 and
                             std.mem.startsWith(u8, extender, prefix)) 0 else prefix.len;
                         const replacement_len = std.math.add(
@@ -12296,6 +12445,65 @@ fn foldStylusMatchByte(byte: u8, ignore_case: bool) u8 {
 
 fn quotedMatchValue(bytes: []const u8) native_value.Value {
     return .{ .string = .{ .bytes = bytes, .quoted = true } };
+}
+
+const QuotedSelectorUnit = union(enum) {
+    byte: u8,
+    closing_quote,
+};
+
+fn nextQuotedSelectorUnit(
+    raw: []const u8,
+    index: *usize,
+    quote: u8,
+) ?QuotedSelectorUnit {
+    if (index.* >= raw.len) return null;
+    const byte = raw[index.*];
+    if (byte == quote) {
+        index.* += 1;
+        return .closing_quote;
+    }
+    if (byte == '\\' and index.* + 1 < raw.len) {
+        const escaped = raw[index.* + 1];
+        if (!std.ascii.isHex(escaped) and escaped != '\n' and escaped != '\r' and
+            escaped != '\x0c')
+        {
+            index.* += 2;
+            return .{ .byte = escaped };
+        }
+    }
+    index.* += 1;
+    return .{ .byte = byte };
+}
+
+fn selectorsEqualForExtension(left: []const u8, right: []const u8) bool {
+    var left_index: usize = 0;
+    var right_index: usize = 0;
+    var quote: u8 = 0;
+    while (left_index < left.len and right_index < right.len) {
+        if (quote == 0) {
+            const left_byte = left[left_index];
+            if (left_byte != right[right_index]) return false;
+            left_index += 1;
+            right_index += 1;
+            if (left_byte == '\'' or left_byte == '"') quote = left_byte;
+            continue;
+        }
+        const left_unit = nextQuotedSelectorUnit(left, &left_index, quote) orelse
+            return false;
+        const right_unit = nextQuotedSelectorUnit(right, &right_index, quote) orelse
+            return false;
+        switch (left_unit) {
+            .closing_quote => if (right_unit == .closing_quote) {
+                quote = 0;
+            } else return false,
+            .byte => |left_byte| switch (right_unit) {
+                .byte => |right_byte| if (left_byte != right_byte) return false,
+                .closing_quote => return false,
+            },
+        }
+    }
+    return left_index == left.len and right_index == right.len and quote == 0;
 }
 
 fn selectorTokenIndex(selector: []const u8, target: []const u8) ?usize {
