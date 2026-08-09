@@ -63,9 +63,15 @@ const Line = struct {
     content_start: u32,
     content_end: u32,
     indent: u32,
+    physical_indent: u32,
     explicit_depth: u32,
     token_start: usize,
     token_end: usize,
+};
+
+const ExplicitOwner = struct {
+    physical_indent: u32,
+    logical_indent: u32,
 };
 
 const Built = struct {
@@ -200,6 +206,7 @@ pub const Parser = struct {
         var lines: std.ArrayList(Line) = .empty;
         defer lines.deinit(self.allocator);
         try self.collectLines(&lines);
+        self.normalizeExplicitIndentation(lines.items);
         try self.validateLines(lines.items);
 
         var children: std.ArrayList(Built) = .empty;
@@ -459,11 +466,84 @@ pub const Parser = struct {
             .content_start = @intCast(content_start),
             .content_end = @intCast(content_end),
             .indent = indent,
+            .physical_indent = indent - explicit_depth * self.limits.lexer.tab_width,
             .explicit_depth = explicit_depth,
             .token_start = token_start,
             .token_end = token_end,
         });
         token_cursor.* = token_end;
+    }
+
+    fn normalizeExplicitIndentation(self: *const Parser, lines: []Line) void {
+        for (lines, 0..) |line, index| {
+            if (line.explicit_depth == 0 or
+                (index > 0 and lines[index - 1].explicit_depth >= line.explicit_depth))
+            {
+                continue;
+            }
+
+            var end = index + 1;
+            while (end < lines.len and
+                lines[end].explicit_depth >= line.explicit_depth)
+            {
+                end += 1;
+            }
+            self.normalizeExplicitBlock(lines, index, end, line.explicit_depth);
+        }
+    }
+
+    fn normalizeExplicitBlock(
+        self: *const Parser,
+        lines: []Line,
+        start: usize,
+        end: usize,
+        explicit_depth: u32,
+    ) void {
+        var minimum_physical_indent: u32 = std.math.maxInt(u32);
+        for (lines[start..end]) |line| {
+            if (line.explicit_depth == explicit_depth) {
+                minimum_physical_indent = @min(
+                    minimum_physical_indent,
+                    line.physical_indent,
+                );
+            }
+        }
+        if (minimum_physical_indent == std.math.maxInt(u32)) return;
+
+        const width = self.limits.lexer.tab_width;
+        var direct_indent = minimum_physical_indent + explicit_depth * width;
+        if (start > 0) direct_indent = @max(direct_indent, lines[start - 1].indent + width);
+
+        var owners: [65]ExplicitOwner = undefined;
+        var owners_len: usize = 0;
+        var index = start;
+        while (index < end) : (index += 1) {
+            if (lines[index].explicit_depth != explicit_depth) continue;
+            const physical_indent = lines[index].physical_indent;
+            while (owners_len > 0 and
+                physical_indent <= owners[owners_len - 1].physical_indent)
+            {
+                owners_len -= 1;
+            }
+            lines[index].indent = if (owners_len == 0)
+                direct_indent
+            else
+                owners[owners_len - 1].logical_indent + width;
+
+            if (index + 1 >= end or
+                lines[index + 1].explicit_depth != explicit_depth or
+                lines[index + 1].physical_indent <= physical_indent or
+                endsWithSemicolon(self.lineBytes(lines[index])))
+            {
+                continue;
+            }
+            std.debug.assert(owners_len < owners.len);
+            owners[owners_len] = .{
+                .physical_indent = physical_indent,
+                .logical_indent = lines[index].indent,
+            };
+            owners_len += 1;
+        }
     }
 
     fn isBlockOpeningBrace(

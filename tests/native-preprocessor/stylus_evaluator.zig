@@ -341,6 +341,31 @@ test "native Stylus evaluates explicit CSS nested selectors deterministically" {
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
 }
 
+test "native Stylus normalizes explicit brace whitespace without flattening indentation owners" {
+    const input =
+        \\body {
+        \\     padding: 5px;
+        \\  margin: 0;
+        \\  article
+        \\    color: red;
+        \\}
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{padding:5px;margin:0}body article{color:#f00}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus permanently rejects use plugins without partial CSS" {
     const official_use = try std.fs.cwd().readFileAlloc(
         std.testing.allocator,
@@ -2533,6 +2558,19 @@ fn exerciseExplicitCssNestedSelectorAllocationFailures(allocator: std.mem.Alloca
     );
 }
 
+fn exerciseExplicitWhitespaceAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "body {\n     padding: 5px;\n  margin: 0;\n  article\n    color: red;\n}\n",
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body{padding:5px;margin:0}body article{color:#f00}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2601,6 +2639,14 @@ test "native Stylus explicit CSS nested selector transaction handles every alloc
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseExplicitCssNestedSelectorAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus explicit brace whitespace transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseExplicitWhitespaceAllocationFailures,
         .{},
     );
 }

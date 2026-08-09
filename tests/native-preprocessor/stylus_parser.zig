@@ -466,6 +466,81 @@ test "native Stylus parser preserves the pinned explicit CSS selector tree" {
     }
 }
 
+test "native Stylus parser preserves the pinned CSS whitespace rule tree" {
+    const input = try std.fs.cwd().readFileAlloc(
+        std.testing.allocator,
+        "tests/preprocessors/stylus/corpus/files/upstream/cases/css.whitespace.styl",
+        1024 * 1024,
+    );
+    defer std.testing.allocator.free(input);
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("css.whitespace.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const expected = [_][]const u8{
+        "body",
+        "body",
+        "body",
+        "body",
+        "body",
+        "body",
+        "body",
+        "ul",
+        "body",
+        "foo",
+    };
+    const expected_block_children = [_]usize{ 1, 1, 2, 2, 2, 2, 1, 1, 1, 2 };
+    const root_children = try document.children(document.root);
+    if (root_children.len != expected.len) {
+        std.debug.print(
+            "\nnative Stylus CSS whitespace root count: expected {d}, actual {d}\n",
+            .{ expected.len, root_children.len },
+        );
+        for (root_children, 0..) |node_id, index| {
+            const node = try document.get(node_id);
+            const raw = if (node.text) |text| try sources.slice(text) else "<no text>";
+            std.debug.print("root[{d}] {s}: {s}\n", .{ index, @tagName(node.kind), raw });
+        }
+    }
+    try std.testing.expectEqual(expected.len, root_children.len);
+    for (root_children, expected, 0..) |rule_id, expected_selector, index| {
+        const rule = try document.get(rule_id);
+        if (rule.kind != .rule) {
+            const raw = if (rule.text) |text| try sources.slice(text) else "<no text>";
+            std.debug.print(
+                "\nnative Stylus CSS whitespace root[{d}] is {s}: {s}\n",
+                .{ index, @tagName(rule.kind), raw },
+            );
+        }
+        try std.testing.expectEqual(syntax.Kind.rule, rule.kind);
+        const children = try document.children(rule_id);
+        try std.testing.expectEqual(@as(usize, 2), children.len);
+        const selector = try document.get(children[0]);
+        try std.testing.expectEqual(syntax.Kind.selector, selector.kind);
+        try std.testing.expectEqualStrings(expected_selector, try sources.slice(selector.text.?));
+        try std.testing.expectEqual(syntax.Kind.block, (try document.get(children[1])).kind);
+        const block_children = try document.children(children[1]);
+        try std.testing.expectEqual(expected_block_children[index], block_children.len);
+        const expected_kind: syntax.Kind = if (index == 7 or index == 9)
+            .rule
+        else
+            .declaration;
+        for (block_children) |child_id| {
+            try std.testing.expectEqual(expected_kind, (try document.get(child_id)).kind);
+        }
+    }
+}
+
 test "native Stylus parser keeps quoted selector references inside interpolation braces" {
     const input =
         \\{selector('.a', '.b', '^[0]:hover .e, ^[1]:hover .f')}
@@ -893,6 +968,27 @@ fn exerciseExplicitCssSelectorTreeAllocationFailures(allocator: std.mem.Allocato
     try std.testing.expectEqual(@as(usize, 2), (try document.children(document.root)).len);
 }
 
+fn exerciseExplicitWhitespaceAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(
+        "explicit-whitespace.styl",
+        "body {\n     padding: 5px;\n  margin: 0;\n  article\n    color: red;\n}\n",
+    );
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const rule_children = try document.children(root_children[0]);
+    const block_children = try document.children(rule_children[rule_children.len - 1]);
+    try std.testing.expectEqual(@as(usize, 3), block_children.len);
+    try std.testing.expectEqual(syntax.Kind.declaration, (try document.get(block_children[0])).kind);
+    try std.testing.expectEqual(syntax.Kind.declaration, (try document.get(block_children[1])).kind);
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(block_children[2])).kind);
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -929,6 +1025,14 @@ test "native Stylus explicit CSS selector tree handles every allocation failure"
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseExplicitCssSelectorTreeAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus explicit brace whitespace handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseExplicitWhitespaceAllocationFailures,
         .{},
     );
 }
