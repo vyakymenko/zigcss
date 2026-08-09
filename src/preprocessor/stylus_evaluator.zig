@@ -797,7 +797,8 @@ fn containsCallableExtensionCandidate(
     for (statements) |statement_id| {
         const statement = try document.get(statement_id);
         const descendant_inside_callable = inside_callable or
-            statement.kind == .function or statement.kind == .mixin;
+            statement.kind == .function or statement.kind == .mixin or
+            try isBlockMixinRule(sources, document, statement_id);
         if (descendant_inside_callable and
             statement.kind == .at_rule and statement.text != null)
         {
@@ -819,6 +820,34 @@ fn containsCallableExtensionCandidate(
         }
     }
     return false;
+}
+
+fn isBlockMixinRule(
+    sources: *const native_source.Table,
+    document: *const native_syntax.Document,
+    statement_id: native_syntax.NodeId,
+) Error!bool {
+    const statement = try document.get(statement_id);
+    if (statement.kind != .rule) return false;
+    const children = try document.children(statement_id);
+    if (children.len != 2) return false;
+    const selector = try document.get(children[0]);
+    const block = try document.get(children[1]);
+    if (selector.kind != .selector or selector.text == null or block.kind != .block) {
+        return false;
+    }
+    const raw_selector = std.mem.trim(
+        u8,
+        try sources.slice(selector.text.?),
+        " \t\r\n\x0c;",
+    );
+    if (raw_selector.len < 2 or raw_selector[0] != '+' or
+        std.ascii.isWhitespace(raw_selector[1]))
+    {
+        return false;
+    }
+    const raw_call = std.mem.trimLeft(u8, raw_selector[1..], " \t");
+    return parseCall(raw_call) != null or parseBareCall(raw_call) != null;
 }
 
 fn validateLimits(limits: Limits) Error!void {
@@ -2559,14 +2588,23 @@ const Engine = struct {
     }
 
     fn blockValue(self: *const Engine, value: *const native_value.Value) ?BlockValue {
-        if (value.* != .string or value.string.quoted or
-            !std.mem.startsWith(u8, value.string.bytes, block_value_prefix))
+        var candidate = value;
+        var depth: u16 = 0;
+        while (candidate.* == .list) {
+            if (candidate.list.items.len != 1 or depth >= self.limits.values.max_depth) {
+                return null;
+            }
+            candidate = &candidate.list.items[0];
+            depth += 1;
+        }
+        if (candidate.* != .string or candidate.string.quoted or
+            !std.mem.startsWith(u8, candidate.string.bytes, block_value_prefix))
         {
             return null;
         }
         const index = std.fmt.parseUnsigned(
             usize,
-            value.string.bytes[block_value_prefix.len..],
+            candidate.string.bytes[block_value_prefix.len..],
             10,
         ) catch return null;
         if (index >= self.block_values.items.len) return null;
@@ -2708,14 +2746,18 @@ const Engine = struct {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 }
-                if (index >= current.list.items.len) {
+                if (index > current.list.items.len) {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 }
                 var items: std.ArrayList(native_value.Value) = .empty;
                 defer items.deinit(self.allocator);
                 try items.appendSlice(self.allocator, current.list.items);
-                items.items[index] = value.*;
+                if (index == items.items.len) {
+                    try items.append(self.allocator, value.*);
+                } else {
+                    items.items[index] = value.*;
+                }
                 break :blk try self.ownValue(span, .{ .list = .{
                     .items = items.items,
                     .separator = current.list.separator,
@@ -3028,18 +3070,19 @@ const Engine = struct {
             }
             previous_condition = .none;
             if (statement.kind != .rule) continue;
-            try self.static_group_orders.put(
-                self.allocator,
-                statement_id.value,
-                self.static_group_count,
-            );
-            self.static_group_count += 1;
             const children = try self.document.children(statement_id);
             if (children.len != 2) continue;
             const selector_node = try self.document.get(children[0]);
             const block_node = try self.document.get(children[1]);
             if (selector_node.kind != .selector or selector_node.text == null or block_node.kind != .block) continue;
             const raw_selector = try self.sources.slice(selector_node.text.?);
+            if (try isBlockMixinRule(self.sources, self.document, statement_id)) continue;
+            try self.static_group_orders.put(
+                self.allocator,
+                statement_id.value,
+                self.static_group_count,
+            );
+            self.static_group_count += 1;
             const rendered = try self.renderStaticSelectorOwned(
                 selector_node.text.?,
                 raw_selector,
@@ -3873,6 +3916,11 @@ const Engine = struct {
             null;
         defer if (spaced_media_header) |owned| self.allocator.free(owned);
         const final_header = spaced_media_header orelse emitted_header;
+        const retains_parent_selector = !startsWordAscii(final_header, "@font-face");
+        const content_parent_selector = if (retains_parent_selector)
+            parent_selector
+        else
+            null;
         const media_checkpoint = if (is_media and self.mode == .emit)
             try self.transaction.stagingCheckpoint()
         else
@@ -3937,7 +3985,7 @@ const Engine = struct {
         else
             null;
         if (declarations.items.len > 0) {
-            if (parent_selector) |selector| {
+            if (content_parent_selector) |selector| {
                 try self.emit(selector);
                 try self.emit("{");
             }
@@ -3947,13 +3995,13 @@ const Engine = struct {
                 try self.emitMapped(declaration.span, null, declaration.value);
                 try self.emit(";");
             }
-            if (parent_selector != null) try self.emit("}");
+            if (content_parent_selector != null) try self.emit("}");
         }
         for (nested.items) |child| {
-            try self.emitNestedOutput(child, parent_selector, false);
+            try self.emitNestedOutput(child, content_parent_selector, false);
         }
         for (at_rules.items) |child| {
-            try self.emitNestedOutput(child, parent_selector, true);
+            try self.emitNestedOutput(child, content_parent_selector, true);
         }
         for (cached.items) |*item| try self.emitCachedRule(item);
         if (media_checkpoint) |checkpoint_value| {
@@ -4562,7 +4610,10 @@ const Engine = struct {
         const inner = std.mem.trim(u8, raw[1 .. raw.len - 1], " \t\r\n\x0c");
         if (inner.len == 0) return false;
         const value = try self.evaluateValue(span, inner, scope, 0);
-        const block_value = self.blockValue(value) orelse return false;
+        const block_value = self.blockValue(value) orelse {
+            if (value.* == .map) return self.executeMapInsertion(span, value.map, output);
+            return false;
+        };
         const block = try self.document.get(block_value.block_id);
         if (block.kind != .block) return error.InvalidDocument;
         var block_scope = block_value.scope;
@@ -4604,6 +4655,35 @@ const Engine = struct {
                     duplicates.clearRetainingCapacity();
                 }
             }
+        }
+        return true;
+    }
+
+    fn executeMapInsertion(
+        self: *Engine,
+        span: native_source.Span,
+        map: native_value.Map,
+        output: ?RuleOutput,
+    ) Error!bool {
+        const destination = output orelse return false;
+        for (map.entries) |*entry| {
+            try self.transaction.consumeOperations(1);
+            if (entry.key != .string or entry.key.string.bytes.len == 0) {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            }
+            try self.reserveTemporary(span, entry.key.string.bytes.len);
+            const property = try self.allocator.dupe(u8, entry.key.string.bytes);
+            errdefer self.allocator.free(property);
+            const rendered_value = try self.serializeValueOwned(&entry.value, .value, span);
+            errdefer self.allocator.free(rendered_value);
+            try destination.declarations.append(self.allocator, .{
+                .span = span,
+                .property = property,
+                .value = rendered_value,
+                .semantic_value = &entry.value,
+                .side_effect = false,
+            });
         }
         return true;
     }
@@ -5005,6 +5085,7 @@ const Engine = struct {
         defer argument_used.deinit(self.allocator);
         var default_argument_values: std.ArrayList(native_value.Value) = .empty;
         defer default_argument_values.deinit(self.allocator);
+        var content_parameter_used = false;
         try argument_values.ensureTotalCapacity(self.allocator, arguments.items.len);
         try argument_names.ensureTotalCapacity(self.allocator, arguments.items.len);
         try argument_used.ensureTotalCapacity(self.allocator, arguments.items.len);
@@ -5111,6 +5192,11 @@ const Engine = struct {
                     });
                 }
                 break :blk argument_values.items[index];
+            } else if (!content_parameter_used and content_block != null and
+                std.mem.eql(u8, parameter.name, "block"))
+            blk: {
+                content_parameter_used = true;
+                break :blk content_block.?;
             } else if (parameter.default_value) |default_value| blk: {
                 const default_argument = try self.evaluateValue(
                     definition_span,
@@ -5648,12 +5734,16 @@ const Engine = struct {
                 .side_effect = false,
             };
         }
-        const value = try self.evaluateDeclarationValue(
+        var value = try self.evaluateDeclarationValue(
             value_span,
             value_raw,
             scope,
             0,
         );
+        const trimmed_value = std.mem.trim(u8, value_raw, " \t\r\n\x0c;");
+        if (self.blockValue(value) != null and std.mem.eql(u8, trimmed_value, "block")) {
+            value = try self.ownValue(value_span, .{ .string = .{ .bytes = trimmed_value } });
+        }
         const serialized = try self.serializeDeclarationValueOwned(
             value,
             value_span,

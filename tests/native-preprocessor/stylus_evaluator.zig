@@ -373,6 +373,60 @@ const anonymous_functions_input =
 
 const anonymous_functions_css = "body{width:25}";
 
+const call_mixin_block_transport_input =
+    \\size()
+    \\  10px
+    \\blocks = ()
+    \\capture()
+    \\  display block
+    \\  blocks[0] = block
+    \\  {blocks}
+    \\body
+    \\  +capture()
+    \\    width size()
+;
+
+const call_mixin_block_transport_css = "body{display:block;width:10px}";
+
+const call_mixin_default_block_input =
+    \\wrap(block = { height: 10px })
+    \\  .inner
+    \\    {block}
+    \\.outer
+    \\  +wrap()
+    \\    width 20px
+    \\.fallback
+    \\  wrap()
+;
+
+const call_mixin_default_block_css =
+    ".outer .inner{width:20px}.fallback .inner{height:10px}";
+
+const call_mixin_nested_context_input =
+    \\passthrough()
+    \\  {block}
+    \\.base
+    \\  color red
+    \\.alias
+    \\  +passthrough()
+    \\    @extend .base
+    \\.target
+    \\  color blue
+    \\.parent
+    \\  + article
+    \\    @extend .target
+    \\emit-font()
+    \\  @font-face
+    \\    {block}
+    \\.owner
+    \\  +emit-font()
+    \\    width 20px
+;
+
+const call_mixin_nested_context_css =
+    ".base,.alias{color:#f00}.target,.parent+article{color:#00f}" ++
+    "@font-face{width:20px}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -3192,6 +3246,83 @@ test "native Stylus anonymous functions preserve lexical callbacks within the ca
     );
 }
 
+test "native Stylus call mixins transport a content block through an empty list" {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var first = try compile(
+        std.testing.allocator,
+        call_mixin_block_transport_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        call_mixin_block_transport_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(call_mixin_block_transport_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_call_depth = 1;
+    try expectSemanticRejectionWithLimits(
+        call_mixin_block_transport_input,
+        over_limit,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.lastIndexOf(u8, call_mixin_block_transport_input, "size()").?),
+    );
+}
+
+test "native Stylus call mixins prefer content over a default inline block" {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    var first = try compile(
+        std.testing.allocator,
+        call_mixin_default_block_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        call_mixin_default_block_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(call_mixin_default_block_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+}
+
+test "native Stylus call mixins retain caller extensions and declaration at-rule context" {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    var first = try compile(
+        std.testing.allocator,
+        call_mixin_nested_context_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        call_mixin_nested_context_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(call_mixin_nested_context_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3781,6 +3912,34 @@ fn exerciseAnonymousFunctionsAllocationFailures(allocator: std.mem.Allocator) !v
     try std.testing.expectEqualStrings(anonymous_functions_css, result.css());
 }
 
+fn exerciseCallMixinAllocationFailures(allocator: std.mem.Allocator) !void {
+    var nested_limits = stylus_evaluator.Limits{};
+    nested_limits.max_call_depth = 2;
+    var transported = try compile(
+        allocator,
+        call_mixin_block_transport_input,
+        nested_limits,
+    );
+    defer transported.deinit();
+    try std.testing.expectEqualStrings(call_mixin_block_transport_css, transported.css());
+
+    var defaulted = try compile(
+        allocator,
+        call_mixin_default_block_input,
+        .{},
+    );
+    defer defaulted.deinit();
+    try std.testing.expectEqualStrings(call_mixin_default_block_css, defaulted.css());
+
+    var contextual = try compile(
+        allocator,
+        call_mixin_nested_context_input,
+        .{},
+    );
+    defer contextual.deinit();
+    try std.testing.expectEqualStrings(call_mixin_nested_context_css, contextual.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3993,6 +4152,14 @@ test "native Stylus anonymous functions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAnonymousFunctionsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus call mixins handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCallMixinAllocationFailures,
         .{},
     );
 }
