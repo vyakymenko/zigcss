@@ -95,6 +95,33 @@ const media_query_extension_input =
 const media_query_extension_css =
     "@media (min-width: 40em){.test,.test-extend{width:100%}}";
 
+const mixin_extension_input =
+    \\.c4
+    \\  width 50%
+    \\
+    \\column()
+    \\  @extend .c4
+    \\
+    \\#col3
+    \\  column 4
+    \\
+    \\grid($namespace='')
+    \\  .{$namespace}one-half
+    \\    width 50%
+    \\
+    \\  .{$namespace}two-quarters
+    \\    @extend .{$namespace}one-half
+    \\
+    \\grid()
+    \\
+    \\@media test-media
+    \\  grid('test-')
+;
+
+const mixin_extension_css = ".c4,#col3{width:50%}" ++
+    ".one-half,.two-quarters{width:50%}" ++
+    "@media test-media{.test-one-half,.test-two-quarters{width:50%}}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2419,6 +2446,44 @@ test "native Stylus media query extensions retain bounded selector ownership" {
     );
 }
 
+test "native Stylus direct mixin extensions retain bounded invocation ownership" {
+    const lower_input =
+        \\.base
+        \\  width 1px
+        \\extend-base()
+        \\  @extend .base
+        \\.derived
+        \\  extend-base()
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".base,.derived{width:1px}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    terminal.max_selectors = 9;
+    var first = try compile(std.testing.allocator, mixin_extension_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, mixin_extension_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(mixin_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 7;
+    try expectSemanticRejectionWithLimits(
+        mixin_extension_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, mixin_extension_input, ".{$namespace}one-half").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -2924,6 +2989,12 @@ fn exerciseMediaQueryExtensionAllocationFailures(allocator: std.mem.Allocator) !
     try std.testing.expectEqualStrings(media_query_extension_css, result.css());
 }
 
+fn exerciseMixinExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, mixin_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(mixin_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3048,6 +3119,14 @@ test "native Stylus media query extensions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMediaQueryExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus direct mixin extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMixinExtensionAllocationFailures,
         .{},
     );
 }

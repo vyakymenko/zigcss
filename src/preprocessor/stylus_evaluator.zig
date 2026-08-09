@@ -265,12 +265,22 @@ pub fn evaluateWithOptions(
 
     var dynamic_extension_plan: DynamicExtensionPlan = .{};
     defer dynamic_extension_plan.deinit(transaction.allocator);
-    if (try containsLoopExtensionCandidate(
+    const contains_loop_extension = try containsLoopExtensionCandidate(
         sources,
         active_document,
         try active_document.children(active_document.root),
         false,
-    )) {
+    );
+    const contains_callable_extension = if (contains_loop_extension)
+        false
+    else
+        try containsCallableExtensionCandidate(
+            sources,
+            active_document,
+            try active_document.children(active_document.root),
+            false,
+        );
+    if (contains_loop_extension or contains_callable_extension) {
         var discovery = try Engine.init(
             transaction.allocator,
             sources,
@@ -287,6 +297,13 @@ pub fn evaluateWithOptions(
         try discovery.run();
     }
 
+    const dynamic_extension_checkpoint = if (dynamic_extension_plan.extensions.items.len > 0)
+        try transaction.stagingCheckpoint()
+    else
+        null;
+    errdefer if (dynamic_extension_checkpoint) |checkpoint_value| {
+        transaction.restoreStaging(checkpoint_value) catch {};
+    };
     var engine = try Engine.init(
         transaction.allocator,
         sources,
@@ -686,6 +703,39 @@ fn containsLoopExtensionCandidate(
                 document,
                 try document.children(child_id),
                 descendant_inside_loop,
+            )) return true;
+        }
+    }
+    return false;
+}
+
+fn containsCallableExtensionCandidate(
+    sources: *const native_source.Table,
+    document: *const native_syntax.Document,
+    statements: []const native_syntax.NodeId,
+    inside_callable: bool,
+) Error!bool {
+    for (statements) |statement_id| {
+        const statement = try document.get(statement_id);
+        const descendant_inside_callable = inside_callable or
+            statement.kind == .function or statement.kind == .mixin;
+        if (descendant_inside_callable and
+            statement.kind == .at_rule and statement.text != null)
+        {
+            const raw = std.mem.trim(
+                u8,
+                try sources.slice(statement.text.?),
+                " \t\r\n\x0c;",
+            );
+            if (parseExtendDirective(raw) != null) return true;
+        }
+        for (try document.children(statement_id)) |child_id| {
+            const child = try document.get(child_id);
+            if (child.kind == .block and try containsCallableExtensionCandidate(
+                sources,
+                document,
+                try document.children(child_id),
+                descendant_inside_callable,
             )) return true;
         }
     }
@@ -2047,6 +2097,7 @@ const Engine = struct {
     dynamic_extension_plan: ?*DynamicExtensionPlan,
     call_depth: u16 = 0,
     loop_iterations: usize = 0,
+    active_loop_depth: usize = 0,
     selector_count: usize = 0,
     selector_order: u64 = 0,
     static_group_count: usize = 0,
@@ -2907,6 +2958,7 @@ const Engine = struct {
         if (self.mode != .discover_extensions) return false;
         const plan = self.dynamic_extension_plan orelse return false;
         if (self.static_extension_directives.contains(statement_id.value)) return false;
+        if (self.active_loop_depth == 0 and self.active_callables.items.len != 1) return false;
         const extender = self.active_selector_identity orelse return false;
         var targets_raw = directive.targets;
         if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
@@ -4862,6 +4914,8 @@ const Engine = struct {
         };
         const block = try self.statementBlock(statement_id);
         var implicit_result: ?StatementResult = null;
+        self.active_loop_depth += 1;
+        defer self.active_loop_depth -= 1;
         for (0..item_count) |index| {
             if (self.loop_iterations >= self.limits.max_loop_iterations) {
                 try self.transaction.report(
