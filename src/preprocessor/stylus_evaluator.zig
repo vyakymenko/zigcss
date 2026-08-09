@@ -205,7 +205,7 @@ pub fn evaluateWithOptions(
     try transaction.consumeOperations(@intCast(active_document.nodes().len));
     try rejectUsePlugins(sources, base_root.span, base_input, transaction);
     const semantic = normalized_document != null or expanded_document != null or
-        try requiresSemanticEvaluation(active_document, base_input);
+        try requiresSemanticEvaluation(sources, active_document, base_input);
     try preflightStatements(
         active_document,
         try active_document.children(active_document.root),
@@ -712,6 +712,7 @@ fn rejectUsePlugins(
 }
 
 fn requiresSemanticEvaluation(
+    sources: *const native_source.Table,
     document: *const native_syntax.Document,
     input: []const u8,
 ) Error!bool {
@@ -719,6 +720,23 @@ fn requiresSemanticEvaluation(
     if (inputContainsBuiltinCall(input)) return true;
     if (std.mem.indexOf(u8, input, "@extend") != null) return true;
     for (document.nodes(), 0..) |node, index| {
+        if (node.kind == .declaration and node.text != null) {
+            const raw = std.mem.trim(
+                u8,
+                try sources.slice(node.text.?),
+                " \t\r\n\x0c;",
+            );
+            if (splitDeclaration(raw)) |parts| {
+                const separator = raw[parts[0].end..parts[1].start];
+                if (std.mem.indexOfScalar(u8, separator, ':')) |colon| {
+                    if (colon + 1 == separator.len or
+                        !std.ascii.isWhitespace(separator[colon + 1]))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
         if (node.kind != .rule) continue;
         const children = try document.children(.{ .value = @intCast(index) });
         if (children.len <= 1 or node.text == null) continue;
@@ -4635,7 +4653,11 @@ const Engine = struct {
             };
         }
         const value = try self.evaluateValue(value_span, value_raw, scope, 0);
-        const serialized = try self.serializeValueOwned(value, .value, value_span);
+        const serialized = try self.serializeDeclarationValueOwned(
+            value,
+            value_span,
+            value_raw,
+        );
         return .{
             .span = declaration.span,
             .property = property,
@@ -8343,6 +8365,53 @@ const Engine = struct {
             span,
             self.options.output_style,
         );
+    }
+
+    fn serializeDeclarationValueOwned(
+        self: *Engine,
+        input: *const native_value.Value,
+        span: native_source.Span,
+        raw: []const u8,
+    ) Error![]u8 {
+        const source_value = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+        if (input.* == .string and input.string.quoted) {
+            if (sourceQuotedValue(source_value)) |quote| {
+                var output: std.ArrayList(u8) = .empty;
+                errdefer output.deinit(self.allocator);
+                try self.appendTemporary(&output, span, &.{quote});
+                try self.appendTemporary(&output, span, input.string.bytes);
+                try self.appendTemporary(&output, span, &.{quote});
+                return output.toOwnedSlice(self.allocator);
+            }
+        }
+        if (input.* != .list or input.list.bracketed) {
+            return self.serializeValueOwned(input, .value, span);
+        }
+
+        var ranges: std.ArrayList(ByteRange) = switch (input.list.separator) {
+            .comma => try splitTopLevel(self.allocator, source_value, ','),
+            .space => try splitTopLevelWhitespace(self.allocator, source_value),
+            else => return self.serializeValueOwned(input, .value, span),
+        };
+        defer ranges.deinit(self.allocator);
+        if (ranges.items.len != input.list.items.len) {
+            return self.serializeValueOwned(input, .value, span);
+        }
+
+        const separator = if (input.list.separator == .comma) ", " else " ";
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (input.list.items, ranges.items, 0..) |*item, range, index| {
+            if (index > 0) try self.appendTemporary(&output, span, separator);
+            const serialized = try self.serializeDeclarationValueOwned(
+                item,
+                span,
+                source_value[range.start..range.end],
+            );
+            defer self.allocator.free(serialized);
+            try self.appendTemporary(&output, span, serialized);
+        }
+        return output.toOwnedSlice(self.allocator);
     }
 
     fn serializeValueForStyleOwned(

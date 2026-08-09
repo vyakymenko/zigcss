@@ -1106,14 +1106,49 @@ fn looksLikeDeclaration(raw: []const u8, has_children: bool) bool {
         return false;
     }
 
-    var colon = std.mem.indexOfScalar(u8, raw, ':');
-    while (colon) |index| {
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    for (raw, 0..) |byte, index| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote != 0) {
+            if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (byte != ':' or depth != 0) continue;
         if (index > 0 and index + 1 < raw.len and isHorizontalWhitespace(raw[index + 1]) and
             !isHorizontalWhitespace(raw[index - 1]))
         {
             return true;
         }
-        colon = std.mem.indexOfScalarPos(u8, raw, index + 1, ':');
+        if (!has_children and index > 0 and index + 1 < raw.len and
+            raw[index - 1] != ':' and raw[index + 1] != ':' and
+            !isHorizontalWhitespace(raw[index - 1]))
+        {
+            var value_end = raw.len;
+            while (value_end > index + 1 and
+                (isHorizontalWhitespace(raw[value_end - 1]) or raw[value_end - 1] == ';'))
+            {
+                value_end -= 1;
+            }
+            if (value_end > index + 1) return true;
+        }
     }
     if (has_children) return false;
     const whitespace = std.mem.indexOfAny(u8, raw, " \t") orelse return false;

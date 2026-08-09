@@ -931,6 +931,38 @@ test "native Stylus evaluates URL expressions without loading assets" {
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
 }
 
+test "native Stylus evaluates compact declaration values inside explicit CSS blocks" {
+    const input =
+        \\body {background:white;font-size:.8em;background-image:url(src/grid.png);border-color:#e5eCf9;quotes:"" "";content:'';font-family:"Helvetica Neue",Arial;}
+    ;
+    var first = try compileWithOptions(
+        std.testing.allocator,
+        input,
+        .{ .output_style = .expanded },
+        .{},
+    );
+    defer first.deinit();
+    var second = try compileWithOptions(
+        std.testing.allocator,
+        input,
+        .{ .output_style = .expanded },
+        .{},
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{background:#fff;font-size:0.8em;background-image:url(\"src/grid.png\");" ++
+            "border-color:#e5ecf9;quotes:\"\" \"\";content:'';" ++
+            "font-family:\"Helvetica Neue\", Arial}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus preserves finite declaration comment boundaries" {
     const input =
         \\/*
@@ -2212,6 +2244,24 @@ fn exerciseImportAllocationFailures(allocator: std.mem.Allocator) !void {
     );
 }
 
+fn exerciseCompactDeclarationAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compileWithOptions(
+        allocator,
+        "body {background:white;font-size:.8em;background-image:url(src/grid.png);" ++
+            "border-color:#e5eCf9;quotes:\"\" \"\";content:'';" ++
+            "font-family:\"Helvetica Neue\",Arial;}\n",
+        .{ .output_style = .expanded },
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body{background:#fff;font-size:0.8em;background-image:url(\"src/grid.png\");" ++
+            "border-color:#e5ecf9;quotes:\"\" \"\";content:'';" ++
+            "font-family:\"Helvetica Neue\", Arial}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2224,6 +2274,14 @@ test "native Stylus import transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseImportAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus compact declaration transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCompactDeclarationAllocationFailures,
         .{},
     );
 }

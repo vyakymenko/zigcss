@@ -78,6 +78,50 @@ test "native Stylus parser preserves indentation optional punctuation and syntax
     try std.testing.expect(countKind(&document, .call) >= 1);
 }
 
+test "native Stylus parser classifies compact declarations inside explicit CSS blocks" {
+    const input =
+        \\html {margin:0;padding:0;border:0;}
+        \\a:hover {background:url(http://example.test/a:b);}
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("compact-declarations.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root_children.len);
+
+    const reset_children = try document.children(root_children[0]);
+    try std.testing.expectEqual(@as(usize, 2), reset_children.len);
+    try std.testing.expectEqual(syntax.Kind.selector, (try document.get(reset_children[0])).kind);
+    const reset_declarations = try document.children(reset_children[1]);
+    try std.testing.expectEqual(@as(usize, 3), reset_declarations.len);
+    for (reset_declarations) |declaration_id| {
+        try std.testing.expectEqual(syntax.Kind.declaration, (try document.get(declaration_id)).kind);
+    }
+
+    const link_children = try document.children(root_children[1]);
+    try std.testing.expectEqualStrings(
+        "a:hover",
+        try sources.slice((try document.get(link_children[0])).text.?),
+    );
+    const link_declarations = try document.children(link_children[1]);
+    try std.testing.expectEqual(@as(usize, 1), link_declarations.len);
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(link_declarations[0])).kind,
+    );
+}
+
 test "native parser accepts every pinned Stylus success entry" {
     const CorpusCase = struct {
         id: []const u8,
