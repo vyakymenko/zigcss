@@ -691,7 +691,12 @@ pub const Parser = struct {
     ) Error!void {
         while (cursor.* < lines.len and lines[cursor.*].indent == indent) {
             var line = lines[cursor.*];
-            if (self.declarationContinuationEnd(lines, cursor.*)) |continuation_end| {
+            if (self.explicitEolContinuationEnd(lines, cursor.*)) |continuation_end| {
+                line.end = lines[continuation_end].end;
+                line.content_end = lines[continuation_end].content_end;
+                line.token_end = lines[continuation_end].token_end;
+                cursor.* = continuation_end;
+            } else if (self.declarationContinuationEnd(lines, cursor.*)) |continuation_end| {
                 line.end = lines[continuation_end].end;
                 line.content_end = lines[continuation_end].content_end;
                 line.token_end = lines[continuation_end].token_end;
@@ -746,6 +751,42 @@ pub const Parser = struct {
             lines[next_index + 1].indent > lines[next_index].indent;
         return next_has_children and
             self.classifyLine(lines[next_index], true) == .rule;
+    }
+
+    fn explicitEolContinuationEnd(
+        self: *const Parser,
+        lines: []const Line,
+        start: usize,
+    ) ?usize {
+        if (!endsWithEolEscape(self.lineBytes(lines[start]))) return null;
+
+        var end = start;
+        while (end + 1 < lines.len and
+            self.linesArePhysicallyAdjacent(lines[end], lines[end + 1]))
+        {
+            end += 1;
+            if (!endsWithEolEscape(self.lineBytes(lines[end]))) return end;
+        }
+        return if (end > start) end else null;
+    }
+
+    fn linesArePhysicallyAdjacent(
+        self: *const Parser,
+        current: Line,
+        next: Line,
+    ) bool {
+        const current_end: usize = @intCast(current.end);
+        if (current_end >= self.source_bytes.len) return false;
+        const next_start = if (self.source_bytes[current_end] == '\r' and
+            current_end + 1 < self.source_bytes.len and
+            self.source_bytes[current_end + 1] == '\n')
+            current_end + 2
+        else if (self.source_bytes[current_end] == '\r' or
+            self.source_bytes[current_end] == '\n')
+            current_end + 1
+        else
+            return false;
+        return next.start == next_start;
     }
 
     fn declarationContinuationEnd(
@@ -1262,6 +1303,49 @@ fn endsWithSignificant(raw: []const u8, byte: u8) bool {
 fn endsWithSemicolon(raw: []const u8) bool {
     const trimmed = std.mem.trimRight(u8, raw, " \t\r\n\x0c");
     return trimmed.len > 0 and trimmed[trimmed.len - 1] == ';';
+}
+
+fn endsWithEolEscape(raw: []const u8) bool {
+    const trimmed = std.mem.trimRight(u8, raw, " \t\x0c");
+    if (trimmed.len == 0 or trimmed[trimmed.len - 1] != '\\') return false;
+
+    var slash_start = trimmed.len - 1;
+    while (slash_start > 0 and trimmed[slash_start - 1] == '\\') slash_start -= 1;
+    if ((trimmed.len - slash_start) % 2 == 0) return false;
+
+    var quote: u8 = 0;
+    var escaped = false;
+    var block_comment = false;
+    var index: usize = 0;
+    while (index < slash_start) : (index += 1) {
+        const byte = trimmed[index];
+        if (block_comment) {
+            if (byte == '*' and index + 1 < slash_start and trimmed[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+        } else if (byte == '/' and index + 1 < slash_start and trimmed[index + 1] == '/') {
+            return false;
+        } else if (byte == '/' and index + 1 < slash_start and trimmed[index + 1] == '*') {
+            block_comment = true;
+            index += 1;
+        }
+    }
+    return !block_comment;
 }
 
 fn startsSelectorPunctuation(raw: []const u8) bool {

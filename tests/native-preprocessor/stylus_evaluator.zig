@@ -7,6 +7,34 @@ const source = preprocessor.source;
 const stylus = preprocessor.stylus;
 const stylus_evaluator = preprocessor.stylus_evaluator;
 
+const eol_escape_input =
+    "\nlist = foo \\\n" ++
+    "       bar \\\n" ++
+    "       baz\n\n" ++
+    "map = (one 1) \\\n" ++
+    "      (two 2) \\\n" ++
+    "      (three 3)\n\n" ++
+    "body\n" ++
+    "  foo: list\n" ++
+    "  for val, key in map\n" ++
+    "    {val}: key\n\n" ++
+    "foo( \\\n" ++
+    "  a, \\\n" ++
+    "  b)\n" ++
+    "  padding: unit(a, px) \\\n" ++
+    "           unit(b, px)\n\n" ++
+    "button\n" ++
+    "  foo: 1 2\n" ++
+    "  box-shadow: \\\n" ++
+    "    0 -2px 2px red, \\  \n" ++
+    "    0 0 2px red, \\\n" ++
+    "    0 0 5px red\n" ++
+    "  color: red";
+
+const eol_escape_css = "body{foo:foo bar baz;one:0;two:1;three:2}" ++
+    "button{padding:1px 2px;box-shadow:0 -2px 2px #f00, 0 0 2px #f00," ++
+    " 0 0 5px #f00;color:#f00}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -1629,6 +1657,32 @@ test "native Stylus evaluates filtered postfix declaration loops" {
     );
 }
 
+test "native Stylus evaluates explicit end-of-line escapes" {
+    var first = try compile(std.testing.allocator, eol_escape_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, eol_escape_input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(eol_escape_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const over_limit_input = "list = red \\\n  blue";
+    var over_limit = stylus_evaluator.Limits{};
+    over_limit.max_temporary_bytes = 1;
+    try expectSemanticRejectionWithLimits(
+        over_limit_input,
+        over_limit,
+        error.TemporaryLimitExceeded,
+        .resource_limit,
+        "native Stylus temporary byte limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus evaluates single-line implicit-return functions with postfix guards" {
     const input =
         \\large(n){ n > 100 }
@@ -2647,6 +2701,12 @@ fn exercisePostfixDeclarationLoopAllocationFailures(allocator: std.mem.Allocator
     );
 }
 
+fn exerciseEolEscapeAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, eol_escape_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(eol_escape_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2731,6 +2791,14 @@ test "native Stylus postfix declaration loops handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exercisePostfixDeclarationLoopAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus end-of-line escapes handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseEolEscapeAllocationFailures,
         .{},
     );
 }

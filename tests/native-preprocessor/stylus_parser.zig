@@ -720,6 +720,63 @@ test "native Stylus parser owns comment-led declaration continuations" {
     );
 }
 
+test "native Stylus parser owns explicit end-of-line escapes" {
+    const input =
+        "list = foo \\\n" ++
+        "       bar \\\n" ++
+        "       baz\n" ++
+        "foo( \\\n" ++
+        "  a, \\\n" ++
+        "  b)\n" ++
+        "  padding: unit(a, px) \\\n" ++
+        "           unit(b, px)\n" ++
+        "button\n" ++
+        "  foo: 1 2\n" ++
+        "  box-shadow: \\\n" ++
+        "    0 0 2px red, \\  \n" ++
+        "    0 0 5px blue\n";
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("eol-escape.styl", input);
+    var parser = try stylus.Parser.init(std.testing.allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 3), root_children.len);
+    const variable = try document.get(root_children[0]);
+    try std.testing.expectEqual(syntax.Kind.variable, variable.kind);
+    try std.testing.expectEqualStrings(
+        "list = foo \\\n       bar \\\n       baz",
+        try sources.slice(variable.text.?),
+    );
+
+    const function = try document.get(root_children[1]);
+    try std.testing.expectEqual(syntax.Kind.function, function.kind);
+    try std.testing.expectEqualStrings(
+        "foo( \\\n  a, \\\n  b)",
+        try sources.slice(function.text.?),
+    );
+    const function_children = try document.children(root_children[1]);
+    const function_block = function_children[function_children.len - 1];
+    const function_statements = try document.children(function_block);
+    try std.testing.expectEqual(@as(usize, 1), function_statements.len);
+    try std.testing.expectEqualStrings(
+        "padding: unit(a, px) \\\n           unit(b, px)",
+        try sources.slice((try document.get(function_statements[0])).text.?),
+    );
+
+    const rule_children = try document.children(root_children[2]);
+    const rule_block = rule_children[rule_children.len - 1];
+    const rule_statements = try document.children(rule_block);
+    try std.testing.expectEqual(@as(usize, 2), rule_statements.len);
+    try std.testing.expectEqualStrings(
+        "box-shadow: \\\n    0 0 2px red, \\  \n    0 0 5px blue",
+        try sources.slice((try document.get(rule_statements[1])).text.?),
+    );
+}
+
 test "native parser rejects every pinned Stylus parser error" {
     const NegativeCase = struct {
         id: []const u8,
@@ -989,6 +1046,22 @@ fn exerciseExplicitWhitespaceAllocationFailures(allocator: std.mem.Allocator) !v
     try std.testing.expectEqual(syntax.Kind.rule, (try document.get(block_children[2])).kind);
 }
 
+fn exerciseEolEscapeAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input = "list = foo \\\n  bar \\\n  baz\n" ++
+        "foo( \\\n  a, \\\n  b)\n  padding: unit(a, px) \\\n           unit(b, px)\n";
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("eol-escape.styl", input);
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root_children.len);
+    try std.testing.expectEqual(syntax.Kind.variable, (try document.get(root_children[0])).kind);
+    try std.testing.expectEqual(syntax.Kind.function, (try document.get(root_children[1])).kind);
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -1033,6 +1106,14 @@ test "native Stylus explicit brace whitespace handles every allocation failure" 
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseExplicitWhitespaceAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus end-of-line escapes handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseEolEscapeAllocationFailures,
         .{},
     );
 }

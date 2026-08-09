@@ -1624,6 +1624,7 @@ const RenderContext = enum {
     property,
     value,
     interpolation,
+    identifier_interpolation,
 };
 
 const ByteRange = struct {
@@ -2093,7 +2094,10 @@ const Engine = struct {
         const node = try self.document.get(node_id);
         const text = node.text orelse return error.InvalidDocument;
         const raw = try self.sources.slice(text);
-        const definition = parseDefinition(raw) orelse {
+        const normalized = try self.normalizeEolEscapesOwned(text, raw);
+        defer if (normalized) |owned| self.allocator.free(owned);
+        const definition_raw = normalized orelse raw;
+        const definition = parseDefinition(definition_raw) orelse {
             try self.reportInvalidArguments(text);
             return error.InvalidArguments;
         };
@@ -4228,7 +4232,13 @@ const Engine = struct {
 
         const definition_node = try self.document.get(resolved_callable.node_id);
         const definition_span = definition_node.text orelse return error.InvalidDocument;
-        const definition_raw = try self.sources.slice(definition_span);
+        const source_definition_raw = try self.sources.slice(definition_span);
+        const normalized_definition = try self.normalizeEolEscapesOwned(
+            definition_span,
+            source_definition_raw,
+        );
+        defer if (normalized_definition) |owned| self.allocator.free(owned);
+        const definition_raw = normalized_definition orelse source_definition_raw;
         const definition = parseDefinition(definition_raw) orelse return error.InvalidDocument;
         var parameters = try splitTopLevel(
             self.allocator,
@@ -5035,6 +5045,10 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         depth: u16,
     ) Error!*const native_value.Value {
+        if (try self.normalizeEolEscapesOwned(span, raw)) |normalized| {
+            defer self.allocator.free(normalized);
+            return self.evaluateValue(span, normalized, scope, depth);
+        }
         if (depth >= self.limits.max_expression_depth) {
             try self.reportExpressionDepth(span);
             return error.ExpressionDepthExceeded;
@@ -8526,6 +8540,10 @@ const Engine = struct {
                 continue;
             }
             if (byte == '\\') {
+                if (eolEscapeEnd(raw, index)) |escape_end| {
+                    index = escape_end;
+                    continue;
+                }
                 escaped = true;
                 index += 1;
                 continue;
@@ -8551,7 +8569,10 @@ const Engine = struct {
                     );
                     const replacement = try self.serializeValueOwned(
                         inner,
-                        .interpolation,
+                        if (context == .selector or context == .property)
+                            .identifier_interpolation
+                        else
+                            .interpolation,
                         inner_span,
                     );
                     defer self.allocator.free(replacement);
@@ -8590,7 +8611,10 @@ const Engine = struct {
                 );
                 const replacement = try self.serializeValueOwned(
                     inner,
-                    .interpolation,
+                    if (context == .selector or context == .property)
+                        .identifier_interpolation
+                    else
+                        .interpolation,
                     inner_span,
                 );
                 defer self.allocator.free(replacement);
@@ -8667,6 +8691,79 @@ const Engine = struct {
         }
         if (escaped) try self.appendTemporary(&output, span, "\\");
         return output.toOwnedSlice(self.allocator);
+    }
+
+    fn normalizeEolEscapesOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+    ) Error!?[]u8 {
+        var normalized: ?[]u8 = null;
+        errdefer if (normalized) |owned| self.allocator.free(owned);
+        var quote: u8 = 0;
+        var block_comment = false;
+        var line_comment = false;
+        var index: usize = 0;
+        while (index < raw.len) {
+            const byte = raw[index];
+            if (line_comment) {
+                if (byte == '\n' or byte == '\r') line_comment = false;
+                index += 1;
+                continue;
+            }
+            if (block_comment) {
+                if (byte == '*' and index + 1 < raw.len and raw[index + 1] == '/') {
+                    block_comment = false;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+                continue;
+            }
+            if (quote != 0) {
+                if (byte == '\\') {
+                    if (eolEscapeEnd(raw, index)) |escape_end| {
+                        index = escape_end;
+                    } else {
+                        index += @min(@as(usize, 2), raw.len - index);
+                    }
+                } else {
+                    if (byte == quote) quote = 0;
+                    index += 1;
+                }
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                quote = byte;
+                index += 1;
+                continue;
+            }
+            if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '/') {
+                line_comment = true;
+                index += 2;
+                continue;
+            }
+            if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '*') {
+                block_comment = true;
+                index += 2;
+                continue;
+            }
+            if (byte == '\\') {
+                if (eolEscapeEnd(raw, index)) |escape_end| {
+                    if (normalized == null) {
+                        try self.reserveTemporary(span, raw.len);
+                        normalized = try self.allocator.dupe(u8, raw);
+                    }
+                    @memset(normalized.?[index..escape_end], ' ');
+                    index = escape_end;
+                } else {
+                    index += @min(@as(usize, 2), raw.len - index);
+                }
+                continue;
+            }
+            index += 1;
+        }
+        return normalized;
     }
 
     fn serializeValueOwned(
@@ -8813,26 +8910,39 @@ const Engine = struct {
                 }
             },
             .list => |list| {
-                const separator: []const u8 = switch (list.separator) {
-                    .comma => ", ",
-                    .slash, .legacy_slash => "/",
-                    else => " ",
-                };
-                if (list.bracketed) try self.appendTemporary(&output, span, "[");
-                for (list.items, 0..) |*item, index| {
-                    if (index > 0 and !literalSlashAdjacent(list.items, index)) {
-                        try self.appendTemporary(&output, span, separator);
+                if (context == .identifier_interpolation) {
+                    if (list.items.len > 0) {
+                        const serialized = try self.serializeValueForStyleOwned(
+                            &list.items[0],
+                            context,
+                            span,
+                            output_style,
+                        );
+                        defer self.allocator.free(serialized);
+                        try self.appendTemporary(&output, span, serialized);
                     }
-                    const serialized = try self.serializeValueForStyleOwned(
-                        item,
-                        context,
-                        span,
-                        output_style,
-                    );
-                    defer self.allocator.free(serialized);
-                    try self.appendTemporary(&output, span, serialized);
+                } else {
+                    const separator: []const u8 = switch (list.separator) {
+                        .comma => ", ",
+                        .slash, .legacy_slash => "/",
+                        else => " ",
+                    };
+                    if (list.bracketed) try self.appendTemporary(&output, span, "[");
+                    for (list.items, 0..) |*item, index| {
+                        if (index > 0 and !literalSlashAdjacent(list.items, index)) {
+                            try self.appendTemporary(&output, span, separator);
+                        }
+                        const serialized = try self.serializeValueForStyleOwned(
+                            item,
+                            context,
+                            span,
+                            output_style,
+                        );
+                        defer self.allocator.free(serialized);
+                        try self.appendTemporary(&output, span, serialized);
+                    }
+                    if (list.bracketed) try self.appendTemporary(&output, span, "]");
                 }
-                if (list.bracketed) try self.appendTemporary(&output, span, "]");
             },
             else => return error.InvalidDocument,
         }
@@ -9556,6 +9666,23 @@ const Engine = struct {
         );
     }
 };
+
+fn eolEscapeEnd(raw: []const u8, opening: usize) ?usize {
+    if (opening >= raw.len or raw[opening] != '\\') return null;
+    var cursor = opening + 1;
+    while (cursor < raw.len and
+        (raw[cursor] == ' ' or raw[cursor] == '\t' or raw[cursor] == '\x0c'))
+    {
+        cursor += 1;
+    }
+    if (cursor >= raw.len) return null;
+    if (raw[cursor] == '\n') return cursor + 1;
+    if (raw[cursor] != '\r') return null;
+    return if (cursor + 1 < raw.len and raw[cursor + 1] == '\n')
+        cursor + 2
+    else
+        cursor + 1;
+}
 
 const ConditionHeader = struct {
     expression: []const u8,
