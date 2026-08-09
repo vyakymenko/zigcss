@@ -3512,6 +3512,14 @@ const Engine = struct {
                     };
                     const text = statement.text orelse return error.InvalidDocument;
                     const raw = std.mem.trim(u8, try self.sources.slice(text), " \t\r\n\x0c;");
+                    if (parsePostfixLoop(raw) != null) {
+                        try self.executePostfixDeclaration(
+                            statement_id,
+                            scope,
+                            destination,
+                        );
+                        continue;
+                    }
                     if (parseDeclarationCall(raw)) |call| {
                         const name = raw[call.name.start..call.name.end];
                         if (self.findCallable(name) != null and !self.isActiveCallable(name)) {
@@ -4544,6 +4552,10 @@ const Engine = struct {
                     span,
                 );
             }
+            if (!try self.postfixLoopSelected(span, postfix.conditions, loop_scope)) {
+                parent_scope.* = loop_scope;
+                continue;
+            }
 
             const is_return = startsWordAscii(postfix.expression, "return");
             const candidate = if (is_return)
@@ -4591,6 +4603,117 @@ const Engine = struct {
         return last;
     }
 
+    fn postfixLoopSelected(
+        self: *Engine,
+        span: native_source.Span,
+        conditions: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!bool {
+        var remaining = conditions;
+        while (std.mem.trim(u8, remaining, " \t\r\n\x0c;").len != 0) {
+            const condition = parsePostfixLoopCondition(remaining) orelse {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+            var selected = try self.evaluateCondition(
+                span,
+                condition.expression,
+                scope,
+            );
+            if (condition.negated) selected = !selected;
+            if (!selected) return false;
+            remaining = condition.remaining;
+        }
+        return true;
+    }
+
+    fn executePostfixDeclaration(
+        self: *Engine,
+        declaration_id: native_syntax.NodeId,
+        parent_scope: *native_environment.ScopeId,
+        output: RuleOutput,
+    ) Error!void {
+        const declaration = try self.document.get(declaration_id);
+        const text = declaration.text orelse return error.InvalidDocument;
+        const raw = try self.sources.slice(text);
+        const postfix = parsePostfixLoop(raw) orelse return error.InvalidDocument;
+        const expression_start = @intFromPtr(postfix.expression.ptr) - @intFromPtr(raw.ptr);
+        const expression_span = try self.relativeSpan(text, .{
+            .start = expression_start,
+            .end = expression_start + postfix.expression.len,
+        });
+        const collection = try self.evaluateValue(
+            text,
+            postfix.header.items,
+            parent_scope.*,
+            0,
+        );
+        const items = if (collection.* == .list)
+            collection.list.items
+        else
+            @as([]const native_value.Value, &.{collection.*});
+        for (items, 0..) |item, item_index| {
+            if (self.loop_iterations >= self.limits.max_loop_iterations) {
+                try self.transaction.report(
+                    .err,
+                    .loop_limit,
+                    text,
+                    "native Stylus loop iteration limit exceeded",
+                    &.{},
+                );
+                return error.LoopLimitExceeded;
+            }
+            self.loop_iterations += 1;
+            try self.transaction.consumeLoopIterations(1);
+            var loop_scope = self.environment.push(parent_scope.*) catch |failure| {
+                try self.reportResource(text, "native Stylus lexical scope limit exceeded");
+                return failure;
+            };
+            loop_scope = try self.setBinding(
+                loop_scope,
+                postfix.header.name,
+                try self.ownValue(text, item),
+                text,
+            );
+            if (postfix.header.index_name) |index_name| {
+                loop_scope = try self.setBinding(
+                    loop_scope,
+                    index_name,
+                    try self.ownUnitlessNumber(text, @floatFromInt(item_index)),
+                    text,
+                );
+            }
+            if (!try self.postfixLoopSelected(text, postfix.conditions, loop_scope)) {
+                parent_scope.* = loop_scope;
+                continue;
+            }
+
+            var rendered = (try self.renderDeclarationText(
+                expression_span,
+                declaration.span,
+                loop_scope,
+            )) orelse {
+                parent_scope.* = loop_scope;
+                continue;
+            };
+            errdefer rendered.deinit(self.allocator);
+            const reference_name = try std.fmt.allocPrint(
+                self.allocator,
+                "@{s}",
+                .{rendered.property},
+            );
+            defer self.allocator.free(reference_name);
+            loop_scope = try self.setBinding(
+                loop_scope,
+                reference_name,
+                rendered.semantic_value,
+                rendered.span,
+            );
+            try output.declarations.append(self.allocator, rendered);
+            parent_scope.* = loop_scope;
+        }
+    }
+
     fn executePostfixMixin(
         self: *Engine,
         span: native_source.Span,
@@ -4623,6 +4746,10 @@ const Engine = struct {
                     span,
                 );
             }
+            if (!try self.postfixLoopSelected(span, postfix.conditions, loop_scope)) {
+                parent_scope.* = loop_scope;
+                continue;
+            }
             const expression = std.mem.trim(u8, postfix.expression, " \t\r\n\x0c;");
             const call = parseCall(expression) orelse parseBareCall(expression) orelse {
                 try self.reportUndefinedCallable(span);
@@ -4648,6 +4775,15 @@ const Engine = struct {
     ) Error!?RenderedDeclaration {
         const declaration = try self.document.get(declaration_id);
         const text = declaration.text orelse return error.InvalidDocument;
+        return self.renderDeclarationText(text, declaration.span, scope);
+    }
+
+    fn renderDeclarationText(
+        self: *Engine,
+        text: native_source.Span,
+        declaration_span: native_source.Span,
+        scope: native_environment.ScopeId,
+    ) Error!?RenderedDeclaration {
         const raw = try self.sources.slice(text);
         const postfix_split = splitPostfixCondition(raw);
         if (postfix_split.condition) |postfix| {
@@ -4688,7 +4824,7 @@ const Engine = struct {
         if (std.ascii.eqlIgnoreCase(std.fs.path.extension(source_file.name), ".css")) {
             const value = try self.renderTextOwned(value_span, scope, .value, 0);
             return .{
-                .span = declaration.span,
+                .span = declaration_span,
                 .property = property,
                 .value = value,
                 .semantic_value = try self.ownValue(value_span, .{ .string = .{ .bytes = value } }),
@@ -4719,7 +4855,7 @@ const Engine = struct {
             try self.appendTemporary(&quoted, value_span, semantic.string.bytes);
             try self.appendTemporary(&quoted, value_span, &.{quote});
             return .{
-                .span = declaration.span,
+                .span = declaration_span,
                 .property = property,
                 .value = try quoted.toOwnedSlice(self.allocator),
                 .semantic_value = semantic,
@@ -4732,7 +4868,7 @@ const Engine = struct {
             scope,
         )) |commented| {
             return .{
-                .span = declaration.span,
+                .span = declaration_span,
                 .property = property,
                 .value = commented.bytes,
                 .semantic_value = commented.semantic,
@@ -4751,7 +4887,7 @@ const Engine = struct {
             value_raw,
         );
         return .{
-            .span = declaration.span,
+            .span = declaration_span,
             .property = property,
             .value = serialized,
             .semantic_value = value,
@@ -9445,6 +9581,19 @@ const LoopHeader = struct {
 const PostfixLoop = struct {
     expression: []const u8,
     header: LoopHeader,
+    conditions: []const u8 = "",
+};
+
+const PostfixLoopCondition = struct {
+    expression: []const u8,
+    remaining: []const u8,
+    negated: bool,
+};
+
+const PostfixConditionMarker = struct {
+    start: usize,
+    end: usize,
+    negated: bool,
 };
 
 const ComparisonOperator = enum {
@@ -9629,6 +9778,65 @@ fn parseConditionHeader(raw: []const u8) ?ConditionHeader {
     };
 }
 
+fn findFirstPostfixConditionMarker(
+    raw: []const u8,
+    minimum_start: usize,
+) ?PostfixConditionMarker {
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    for (raw, 0..) |byte, index| {
+        if (quote != 0) {
+            if (escaped) escaped = false else if (byte == '\\') escaped = true else if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (depth != 0 or index < minimum_start or
+            (index != 0 and !std.ascii.isWhitespace(raw[index - 1])))
+        {
+            continue;
+        }
+        const words = [_]struct { text: []const u8, negated: bool }{
+            .{ .text = "if", .negated = false },
+            .{ .text = "unless", .negated = true },
+        };
+        for (words) |word| {
+            if (word.text.len >= raw.len - index) continue;
+            const end = index + word.text.len;
+            if (std.ascii.eqlIgnoreCase(raw[index..end], word.text) and
+                std.ascii.isWhitespace(raw[end]))
+            {
+                return .{ .start = index, .end = end, .negated = word.negated };
+            }
+        }
+    }
+    return null;
+}
+
+fn parsePostfixLoopCondition(raw_input: []const u8) ?PostfixLoopCondition {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    const marker = findFirstPostfixConditionMarker(raw, 0) orelse return null;
+    if (marker.start != 0) return null;
+    const body = std.mem.trimLeft(u8, raw[marker.end..], " \t\r\n\x0c");
+    const next = findFirstPostfixConditionMarker(body, 0);
+    const expression_end = if (next) |found| found.start else body.len;
+    const expression = std.mem.trim(u8, body[0..expression_end], " \t\r\n\x0c;");
+    if (expression.len == 0) return null;
+    return .{
+        .expression = expression,
+        .remaining = if (next) |found| body[found.start..] else "",
+        .negated = marker.negated,
+    };
+}
+
 fn splitPostfixCondition(raw: []const u8) PostfixSplit {
     var quote: u8 = 0;
     var escaped = false;
@@ -9745,7 +9953,20 @@ fn parsePostfixLoop(raw_input: []const u8) ?PostfixLoop {
     const expression = std.mem.trim(u8, raw[0..marker], " \t\r\n\x0c;");
     const header_raw = std.mem.trim(u8, raw[marker + 1 ..], " \t\r\n\x0c;");
     if (expression.len == 0) return null;
-    return .{ .expression = expression, .header = parseLoop(header_raw) orelse return null };
+    var header = parseLoop(header_raw) orelse return null;
+    var conditions: []const u8 = "";
+    if (findFirstPostfixConditionMarker(header.items, 0)) |condition| {
+        if (condition.start == 0) return null;
+        conditions = std.mem.trim(u8, header.items[condition.start..], " \t\r\n\x0c;");
+        header.items = std.mem.trim(u8, header.items[0..condition.start], " \t\r\n\x0c;");
+        if (header.items.len == 0) return null;
+        var remaining = conditions;
+        while (std.mem.trim(u8, remaining, " \t\r\n\x0c;").len != 0) {
+            const parsed = parsePostfixLoopCondition(remaining) orelse return null;
+            remaining = parsed.remaining;
+        }
+    }
+    return .{ .expression = expression, .header = header, .conditions = conditions };
 }
 
 fn startsWordAscii(raw: []const u8, expected: []const u8) bool {

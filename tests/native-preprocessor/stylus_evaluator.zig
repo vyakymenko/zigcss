@@ -1574,6 +1574,61 @@ test "native Stylus evaluates the fixed callable control operator builtin slice"
     try std.testing.expect(first.map().?.segments().len >= 7);
 }
 
+test "native Stylus evaluates filtered postfix declaration loops" {
+    const input =
+        \\list = red green blue
+        \\no-colors = false
+        \\
+        \\body
+        \\  color: color for color in list if length(list) > 2 unless no-colors
+        \\
+        \\mixin()
+        \\  color: color for color in list if length(list) > 2 unless no-colors
+        \\
+        \\body
+        \\  mixin()
+        \\
+        \\short-list = red
+        \\.blocked-by-length
+        \\  color: color for color in short-list if length(short-list) > 2 unless no-colors
+        \\
+        \\no-colors = true
+        \\.blocked-by-unless
+        \\  color: color for color in list if length(list) > 2 unless no-colors
+    ;
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 10;
+    var first = try compile(std.testing.allocator, input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, terminal);
+    defer second.deinit();
+
+    const expected = "body{color:#f00;color:#008000;color:#00f}" ++
+        "body{color:#f00;color:#008000;color:#00f}";
+    try std.testing.expectEqualStrings(expected, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const limit_input =
+        \\list = red green blue
+        \\body
+        \\  color: color for color in list
+    ;
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 2;
+    try expectSemanticRejectionWithLimits(
+        limit_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(u8, limit_input, "color: color for").?),
+    );
+}
+
 test "native Stylus evaluates single-line implicit-return functions with postfix guards" {
     const input =
         \\large(n){ n > 100 }
@@ -2571,6 +2626,27 @@ fn exerciseExplicitWhitespaceAllocationFailures(allocator: std.mem.Allocator) !v
     );
 }
 
+fn exercisePostfixDeclarationLoopAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "list = red green blue\n" ++
+            "no-colors = false\n" ++
+            "body\n" ++
+            "  color: color for color in list if length(list) > 2 unless no-colors\n" ++
+            "mixin()\n" ++
+            "  color: color for color in list if length(list) > 2 unless no-colors\n" ++
+            "body\n" ++
+            "  mixin()\n",
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body{color:#f00;color:#008000;color:#00f}" ++
+            "body{color:#f00;color:#008000;color:#00f}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2647,6 +2723,14 @@ test "native Stylus explicit brace whitespace transaction handles every allocati
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseExplicitWhitespaceAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus postfix declaration loops handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exercisePostfixDeclarationLoopAllocationFailures,
         .{},
     );
 }
