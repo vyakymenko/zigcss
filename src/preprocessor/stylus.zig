@@ -668,13 +668,23 @@ pub const Parser = struct {
         if (end == start or end + 1 >= lines.len or lines[end + 1].indent <= indent) {
             return null;
         }
-        for (lines[start .. end + 1]) |candidate| {
+        const candidates = lines[start .. end + 1];
+        const comma_led = blk: {
+            if (endsWithSignificant(self.lineBytes(candidates[candidates.len - 1]), ',')) {
+                break :blk false;
+            }
+            for (candidates[0 .. candidates.len - 1]) |candidate| {
+                if (!endsWithSignificant(self.lineBytes(candidate), ',')) break :blk false;
+            }
+            break :blk true;
+        };
+        for (candidates) |candidate| {
             const raw = self.lineBytes(candidate);
             const bare_selector = std.mem.indexOfAny(u8, raw, " \t(){}=;") == null;
             const ancestry_selector = std.mem.startsWith(u8, raw, "^[");
             if (isComment(raw) or raw[0] == '@' or
-                (looksLikeDeclaration(raw, false) and !ancestry_selector) or
-                (!looksLikeSelector(raw) and !bare_selector) or
+                (looksLikeDeclaration(raw, false) and !ancestry_selector and !comma_led) or
+                (!looksLikeSelector(raw) and !bare_selector and !comma_led) or
                 self.findAssignment(candidate) != null or
                 startsDirective(raw, "@import") or startsDirective(raw, "@require") or
                 startsWord(raw, "return") or startsWord(raw, "if") or

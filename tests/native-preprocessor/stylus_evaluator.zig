@@ -977,6 +977,29 @@ test "native Stylus evaluates compact declaration values inside explicit CSS blo
     );
 }
 
+test "native Stylus treats top-level property slashes as CSS separators" {
+    const input =
+        \\size = 14px
+        \\height = 1.4
+        \\body { font: size / height "Helvetica Neue", Arial; ratio: ((14px) / (2)); path: url(a/b); tokens: foo / bar; }
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{font:14px/1.4 \"Helvetica Neue\", Arial;ratio:7px;" ++
+            "path:url(\"a/b\");tokens:foo/bar}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus preserves finite declaration comment boundaries" {
     const input =
         \\/*
@@ -2354,6 +2377,19 @@ fn exerciseKeyframeVendorAllocationFailures(allocator: std.mem.Allocator) !void 
     );
 }
 
+fn exercisePropertySlashAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "size = 14px\nheight = 1.4\nbody { font: size / height \"Helvetica Neue\", Arial; }\n",
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body{font:14px/1.4 \"Helvetica Neue\", Arial}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2390,6 +2426,14 @@ test "native Stylus keyframe vendor transaction handles every allocation failure
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseKeyframeVendorAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus property slash transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exercisePropertySlashAllocationFailures,
         .{},
     );
 }

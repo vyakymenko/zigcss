@@ -344,6 +344,45 @@ test "native Stylus parser preserves multiline ancestry selector lists" {
     );
 }
 
+test "native Stylus parser preserves comma-led multiline descendant selector groups" {
+    const input =
+        \\h1 a,
+        \\h2 a,
+        \\h3 a {
+        \\  color: red;
+        \\}
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("descendant-selector-group.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const rule = try document.get(root_children[0]);
+    try std.testing.expectEqual(syntax.Kind.rule, rule.kind);
+    const rule_children = try document.children(root_children[0]);
+    try std.testing.expectEqualStrings(
+        "h1 a,\nh2 a,\nh3 a",
+        try sources.slice((try document.get(rule_children[0])).text.?),
+    );
+    const declarations = try document.children(rule_children[rule_children.len - 1]);
+    try std.testing.expectEqual(@as(usize, 1), declarations.len);
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(declarations[0])).kind,
+    );
+}
+
 test "native Stylus parser keeps quoted selector references inside interpolation braces" {
     const input =
         \\{selector('.a', '.b', '^[0]:hover .e, ^[1]:hover .f')}
@@ -663,10 +702,32 @@ fn exerciseAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(usize, 2), (try document.children(document.root)).len);
 }
 
+fn exerciseSelectorGroupAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(
+        "selector-group.styl",
+        "h1 a,\nh2 a,\nh3 a {\n  color: red;\n}\n",
+    );
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 1), (try document.children(document.root)).len);
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus comma-led selector group handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseSelectorGroupAllocationFailures,
         .{},
     );
 }

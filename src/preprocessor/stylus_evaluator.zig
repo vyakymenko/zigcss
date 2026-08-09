@@ -4736,7 +4736,12 @@ const Engine = struct {
                 .side_effect = false,
             };
         }
-        const value = try self.evaluateValue(value_span, value_raw, scope, 0);
+        const value = try self.evaluateDeclarationValue(
+            value_span,
+            value_raw,
+            scope,
+            0,
+        );
         const serialized = try self.serializeDeclarationValueOwned(
             value,
             value_span,
@@ -5368,6 +5373,86 @@ const Engine = struct {
         return self.ownValue(span, .{ .list = .{
             .items = items.items,
             .separator = separator,
+        } });
+    }
+
+    fn evaluateDeclarationValue(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        var slash_parts = try splitTopLevel(self.allocator, raw, '/');
+        defer slash_parts.deinit(self.allocator);
+        if (slash_parts.items.len == 1) {
+            return self.evaluateValue(span, raw, scope, depth);
+        }
+
+        var comma_parts = try splitTopLevel(self.allocator, raw, ',');
+        defer comma_parts.deinit(self.allocator);
+        if (comma_parts.items.len == 1) {
+            return self.evaluatePropertySlashGroup(span, raw, scope, depth + 1);
+        }
+
+        var items: std.ArrayList(native_value.Value) = .empty;
+        defer items.deinit(self.allocator);
+        try items.ensureTotalCapacity(self.allocator, comma_parts.items.len);
+        for (comma_parts.items) |range| {
+            const item = try self.evaluatePropertySlashGroup(
+                span,
+                raw[range.start..range.end],
+                scope,
+                depth + 1,
+            );
+            items.appendAssumeCapacity(item.*);
+        }
+        return self.ownValue(span, .{ .list = .{
+            .items = items.items,
+            .separator = .comma,
+        } });
+    }
+
+    fn evaluatePropertySlashGroup(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        var parts = try splitTopLevel(self.allocator, raw, '/');
+        defer parts.deinit(self.allocator);
+        if (parts.items.len == 1) {
+            return self.evaluateValue(span, raw, scope, depth);
+        }
+
+        var items: std.ArrayList(native_value.Value) = .empty;
+        defer items.deinit(self.allocator);
+        for (parts.items, 0..) |range, index| {
+            const item_raw = std.mem.trim(
+                u8,
+                raw[range.start..range.end],
+                " \t\r\n\x0c",
+            );
+            if (item_raw.len == 0) {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            }
+            const item = try self.evaluateValue(span, item_raw, scope, depth + 1);
+            if (item.* == .list and item.list.separator == .space and
+                !item.list.bracketed)
+            {
+                try items.appendSlice(self.allocator, item.list.items);
+            } else {
+                try items.append(self.allocator, item.*);
+            }
+            if (index + 1 < parts.items.len) {
+                try items.append(self.allocator, .{ .string = .{ .bytes = "/" } });
+            }
+        }
+        return self.ownValue(span, .{ .list = .{
+            .items = items.items,
+            .separator = .space,
         } });
     }
 
@@ -8482,7 +8567,10 @@ const Engine = struct {
 
         var ranges: std.ArrayList(ByteRange) = switch (input.list.separator) {
             .comma => try splitTopLevel(self.allocator, source_value, ','),
-            .space => try splitTopLevelWhitespace(self.allocator, source_value),
+            .space => if (listContainsLiteralSlash(input.list.items))
+                try splitTopLevelPropertyItems(self.allocator, source_value)
+            else
+                try splitTopLevelWhitespace(self.allocator, source_value),
             else => return self.serializeValueOwned(input, .value, span),
         };
         defer ranges.deinit(self.allocator);
@@ -8494,7 +8582,9 @@ const Engine = struct {
         var output: std.ArrayList(u8) = .empty;
         errdefer output.deinit(self.allocator);
         for (input.list.items, ranges.items, 0..) |*item, range, index| {
-            if (index > 0) try self.appendTemporary(&output, span, separator);
+            if (index > 0 and !literalSlashAdjacent(input.list.items, index)) {
+                try self.appendTemporary(&output, span, separator);
+            }
             const serialized = try self.serializeDeclarationValueOwned(
                 item,
                 span,
@@ -8591,7 +8681,9 @@ const Engine = struct {
                 };
                 if (list.bracketed) try self.appendTemporary(&output, span, "[");
                 for (list.items, 0..) |*item, index| {
-                    if (index > 0) try self.appendTemporary(&output, span, separator);
+                    if (index > 0 and !literalSlashAdjacent(list.items, index)) {
+                        try self.appendTemporary(&output, span, separator);
+                    }
                     const serialized = try self.serializeValueForStyleOwned(
                         item,
                         context,
@@ -9776,6 +9868,77 @@ fn splitTopLevelWhitespace(
         try output.append(allocator, .{ .start = item_start, .end = raw.len });
     }
     return output;
+}
+
+fn splitTopLevelPropertyItems(
+    allocator: std.mem.Allocator,
+    raw: []const u8,
+) std.mem.Allocator.Error!std.ArrayList(ByteRange) {
+    var output: std.ArrayList(ByteRange) = .empty;
+    errdefer output.deinit(allocator);
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    var start: ?usize = null;
+    for (raw, 0..) |byte, index| {
+        if (escaped) {
+            escaped = false;
+            if (start == null) start = index;
+            continue;
+        }
+        if (byte == '\\') {
+            if (start == null) start = index;
+            escaped = true;
+            continue;
+        }
+        if (quote != 0) {
+            if (byte == quote) quote = 0;
+            if (start == null) start = index;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            if (start == null) start = index;
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (depth == 0 and (std.ascii.isWhitespace(byte) or byte == '/')) {
+            if (start) |item_start| {
+                try output.append(allocator, .{ .start = item_start, .end = index });
+                start = null;
+            }
+            if (byte == '/') {
+                try output.append(allocator, .{ .start = index, .end = index + 1 });
+            }
+            continue;
+        }
+        if (start == null) start = index;
+    }
+    if (start) |item_start| {
+        try output.append(allocator, .{ .start = item_start, .end = raw.len });
+    }
+    return output;
+}
+
+fn isLiteralSlash(value: native_value.Value) bool {
+    return switch (value) {
+        .string, .selector => |item| !item.quoted and std.mem.eql(u8, item.bytes, "/"),
+        else => false,
+    };
+}
+
+fn listContainsLiteralSlash(items: []const native_value.Value) bool {
+    for (items) |item| if (isLiteralSlash(item)) return true;
+    return false;
+}
+
+fn literalSlashAdjacent(items: []const native_value.Value, index: usize) bool {
+    return index > 0 and index < items.len and
+        (isLiteralSlash(items[index - 1]) or isLiteralSlash(items[index]));
 }
 
 fn collectSerializedValueBoundaries(
