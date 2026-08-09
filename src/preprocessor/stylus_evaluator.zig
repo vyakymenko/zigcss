@@ -241,6 +241,7 @@ pub fn evaluateWithOptions(
                 .discover_cache,
                 &cache_seed,
                 &discovered,
+                null,
             );
             defer discovery.deinit();
             try discovery.run();
@@ -262,6 +263,30 @@ pub fn evaluateWithOptions(
         }
     }
 
+    var dynamic_extension_plan: DynamicExtensionPlan = .{};
+    defer dynamic_extension_plan.deinit(transaction.allocator);
+    if (try containsStaticTargetLoopExtension(
+        sources,
+        active_document,
+        try active_document.children(active_document.root),
+        false,
+    )) {
+        var discovery = try Engine.init(
+            transaction.allocator,
+            sources,
+            active_document,
+            transaction,
+            limits,
+            options,
+            .discover_extensions,
+            &cache_plan,
+            null,
+            &dynamic_extension_plan,
+        );
+        defer discovery.deinit();
+        try discovery.run();
+    }
+
     var engine = try Engine.init(
         transaction.allocator,
         sources,
@@ -272,6 +297,7 @@ pub fn evaluateWithOptions(
         .emit,
         &cache_plan,
         null,
+        &dynamic_extension_plan,
     );
     defer engine.deinit();
     try engine.run();
@@ -622,6 +648,48 @@ fn containsCacheBlock(
         const raw_call = std.mem.trimLeft(u8, raw_selector[1..], " \t");
         const call = parseCall(raw_call) orelse parseBareCall(raw_call) orelse continue;
         if (nameEql(raw_call[call.name.start..call.name.end], "cache")) return true;
+    }
+    return false;
+}
+
+fn containsStaticTargetLoopExtension(
+    sources: *const native_source.Table,
+    document: *const native_syntax.Document,
+    statements: []const native_syntax.NodeId,
+    inside_loop: bool,
+) Error!bool {
+    for (statements) |statement_id| {
+        const statement = try document.get(statement_id);
+        const descendant_inside_loop = inside_loop or statement.kind == .loop;
+        if (descendant_inside_loop and statement.kind == .at_rule and statement.text != null) {
+            const raw = std.mem.trim(
+                u8,
+                try sources.slice(statement.text.?),
+                " \t\r\n\x0c;",
+            );
+            if (parseExtendDirective(raw)) |directive| {
+                var targets = directive.targets;
+                if (std.mem.indexOf(u8, targets, " !optional")) |optional| {
+                    targets = std.mem.trimRight(
+                        u8,
+                        targets[0..optional],
+                        " \t\r\n\x0c;",
+                    );
+                }
+                if (targets.len > 0 and std.mem.indexOfScalar(u8, targets, '{') == null) {
+                    return true;
+                }
+            }
+        }
+        for (try document.children(statement_id)) |child_id| {
+            const child = try document.get(child_id);
+            if (child.kind == .block and try containsStaticTargetLoopExtension(
+                sources,
+                document,
+                try document.children(child_id),
+                descendant_inside_loop,
+            )) return true;
+        }
     }
     return false;
 }
@@ -1722,6 +1790,21 @@ const StaticExtension = struct {
     prefixed_target: bool,
 };
 
+const DynamicExtensionPlan = struct {
+    extensions: std.ArrayList(StaticExtension) = .empty,
+    directives: std.AutoHashMapUnmanaged(u32, void) = .empty,
+
+    fn deinit(self: *DynamicExtensionPlan, allocator: std.mem.Allocator) void {
+        for (self.extensions.items) |extension| {
+            allocator.free(extension.target);
+            allocator.free(extension.extender);
+        }
+        self.extensions.deinit(allocator);
+        self.directives.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
 const ExtendDirective = struct {
     targets: []const u8,
     plural: bool,
@@ -1932,6 +2015,7 @@ const BlockValue = struct {
 
 const EngineMode = enum {
     discover_cache,
+    discover_extensions,
     emit,
 };
 
@@ -1962,6 +2046,7 @@ const Engine = struct {
     mode: EngineMode,
     cache_seed: *const CachePlan,
     cache_discovered: ?*CachePlan,
+    dynamic_extension_plan: ?*DynamicExtensionPlan,
     call_depth: u16 = 0,
     loop_iterations: usize = 0,
     selector_count: usize = 0,
@@ -1979,6 +2064,7 @@ const Engine = struct {
     active_rule_selector: ?[]const u8 = null,
     active_selector_identity: ?[]const u8 = null,
     active_rule_orders: ?[]const u64 = null,
+    active_rule_group_order: ?usize = null,
     global_scope: ?*native_environment.ScopeId = null,
     cache_context_depth: u16 = 0,
 
@@ -1992,6 +2078,7 @@ const Engine = struct {
         mode: EngineMode,
         cache_seed: *const CachePlan,
         cache_discovered: ?*CachePlan,
+        dynamic_extension_plan: ?*DynamicExtensionPlan,
     ) Error!Engine {
         var values = native_value.Store.init(allocator, limits.values);
         errdefer values.deinit();
@@ -2009,6 +2096,7 @@ const Engine = struct {
             .mode = mode,
             .cache_seed = cache_seed,
             .cache_discovered = cache_discovered,
+            .dynamic_extension_plan = dynamic_extension_plan,
             .values = values,
             .environment = environment,
         };
@@ -2065,6 +2153,7 @@ const Engine = struct {
         self.global_scope = &scope;
         defer self.global_scope = null;
         const root_statements = try self.document.children(self.document.root);
+        if (self.mode == .emit) try self.seedDynamicExtensions();
         try self.collectStaticExtensions(root_statements, null, false);
         var ordinary: std.ArrayList(native_syntax.NodeId) = .empty;
         defer ordinary.deinit(self.allocator);
@@ -2102,6 +2191,35 @@ const Engine = struct {
             if (startsWordAscii(raw, "@keyframes")) {
                 try self.emitAtRule(statement_id, scope, null);
             }
+        }
+    }
+
+    fn seedDynamicExtensions(self: *Engine) Error!void {
+        const plan = self.dynamic_extension_plan orelse return;
+        for (plan.extensions.items) |extension| {
+            const owned_target = try self.allocator.dupe(u8, extension.target);
+            const owned_extender = self.allocator.dupe(u8, extension.extender) catch |failure| {
+                self.allocator.free(owned_target);
+                return failure;
+            };
+            self.extensions.append(self.allocator, .{
+                .target = owned_target,
+                .extender = owned_extender,
+                .directive_order = extension.directive_order,
+                .prefixed_target = extension.prefixed_target,
+            }) catch |failure| {
+                self.allocator.free(owned_target);
+                self.allocator.free(owned_extender);
+                return failure;
+            };
+        }
+        var directive_iterator = plan.directives.keyIterator();
+        while (directive_iterator.next()) |directive_id| {
+            try self.static_extension_directives.put(
+                self.allocator,
+                directive_id.*,
+                {},
+            );
         }
     }
 
@@ -2691,6 +2809,14 @@ const Engine = struct {
                 }
                 continue;
             }
+            if (statement.kind == .loop) {
+                previous_condition = .none;
+                const block = try self.statementBlock(statement_id);
+                for (try self.document.children(block)) |child_id| {
+                    try self.indexLoopRuleGroups(child_id);
+                }
+                continue;
+            }
             previous_condition = .none;
             if (statement.kind != .rule) continue;
             try self.static_group_orders.put(
@@ -2739,6 +2865,107 @@ const Engine = struct {
                 parent_selector != null,
             );
         }
+    }
+
+    fn indexLoopRuleGroups(
+        self: *Engine,
+        node_id: native_syntax.NodeId,
+    ) Error!void {
+        const node = try self.document.get(node_id);
+        if (node.kind == .rule and !self.static_group_orders.contains(node_id.value)) {
+            try self.static_group_orders.put(
+                self.allocator,
+                node_id.value,
+                self.static_group_count,
+            );
+            self.static_group_count += 1;
+        }
+        for (try self.document.children(node_id)) |child_id| {
+            try self.indexLoopRuleGroups(child_id);
+        }
+    }
+
+    fn discoverDynamicExtension(
+        self: *Engine,
+        statement_id: native_syntax.NodeId,
+        span: native_source.Span,
+        directive: ExtendDirective,
+        scope: native_environment.ScopeId,
+    ) Error!bool {
+        if (self.mode != .discover_extensions) return false;
+        const plan = self.dynamic_extension_plan orelse return false;
+        if (self.static_extension_directives.contains(statement_id.value)) return false;
+        const extender = self.active_selector_identity orelse return false;
+        var targets_raw = directive.targets;
+        if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
+            targets_raw = std.mem.trimRight(
+                u8,
+                targets_raw[0..optional],
+                " \t\r\n\x0c;",
+            );
+        }
+        if (targets_raw.len == 0) return false;
+        if (std.mem.indexOfScalar(u8, targets_raw, '{') != null) return false;
+        const rendered_targets = try self.renderRawOwned(
+            span,
+            targets_raw,
+            scope,
+            .selector,
+            0,
+        );
+        defer self.allocator.free(rendered_targets);
+        const normalized_targets = try self.normalizeSelectorLines(span, rendered_targets);
+        defer self.allocator.free(normalized_targets);
+        var targets = try splitTopLevel(self.allocator, normalized_targets, ',');
+        defer targets.deinit(self.allocator);
+        const nested = self.selector_parts.items.len > 1;
+        if (directive.plural) {
+            if (nested or targets.items.len != 1 or
+                !selectorHasTopLevelCombinator(normalized_targets))
+            {
+                return false;
+            }
+            var extenders = try splitTopLevel(self.allocator, extender, ',');
+            defer extenders.deinit(self.allocator);
+            if (extenders.items.len != 1) return false;
+        }
+
+        var appended = false;
+        for (targets.items) |range| {
+            const target = std.mem.trim(
+                u8,
+                normalized_targets[range.start..range.end],
+                " \t\r\n\x0c;",
+            );
+            if (target.len == 0 or std.mem.indexOfScalar(u8, target, '{') != null) continue;
+            if (plan.extensions.items.len >= self.limits.max_selectors) {
+                try self.reportSelectorLimit(span);
+                return error.SelectorLimitExceeded;
+            }
+            const owned_target = try self.allocator.dupe(u8, target);
+            const owned_extender = self.allocator.dupe(u8, extender) catch |failure| {
+                self.allocator.free(owned_target);
+                return failure;
+            };
+            plan.extensions.append(self.allocator, .{
+                .target = owned_target,
+                .extender = owned_extender,
+                .directive_order = if (self.active_rule_group_order) |order|
+                    order + 1
+                else
+                    self.static_group_count,
+                .prefixed_target = nested,
+            }) catch |failure| {
+                self.allocator.free(owned_target);
+                self.allocator.free(owned_extender);
+                return failure;
+            };
+            appended = true;
+        }
+        if (appended) {
+            try plan.directives.put(self.allocator, statement_id.value, {});
+        }
+        return appended;
     }
 
     fn renderStaticSelectorOwned(
@@ -3080,13 +3307,16 @@ const Engine = struct {
         const previous_rule_selector = self.active_rule_selector;
         const previous_selector_identity = self.active_selector_identity;
         const previous_rule_orders = self.active_rule_orders;
+        const previous_rule_group_order = self.active_rule_group_order;
         self.active_rule_selector = visible_selector;
         self.active_selector_identity = base_selector;
         self.active_rule_orders = selector_orders;
+        self.active_rule_group_order = self.static_group_orders.get(rule_id.value);
         defer {
             self.active_rule_selector = previous_rule_selector;
             self.active_selector_identity = previous_selector_identity;
             self.active_rule_orders = previous_rule_orders;
+            self.active_rule_group_order = previous_rule_group_order;
         }
         const selector_part = try self.selectorPartOwned(
             selector_node.text.?,
@@ -3747,6 +3977,12 @@ const Engine = struct {
                     const raw = std.mem.trim(u8, try self.sources.slice(text), " \t\r\n\x0c;");
                     if (output != null) {
                         if (parseExtendDirective(raw)) |directive| {
+                            if (try self.discoverDynamicExtension(
+                                statement_id,
+                                text,
+                                directive,
+                                scope.*,
+                            )) continue;
                             if (!directive.plural or
                                 self.static_extension_directives.contains(statement_id.value))
                             {
@@ -7993,7 +8229,16 @@ const Engine = struct {
         while ((step > 0 and current <= arguments[1].number.value) or
             (step < 0 and current >= arguments[1].number.value))
         {
-            if (values.items.len >= self.limits.max_loop_iterations) return error.LoopLimitExceeded;
+            if (values.items.len >= self.limits.max_loop_iterations) {
+                try self.transaction.report(
+                    .err,
+                    .loop_limit,
+                    span,
+                    "native Stylus loop iteration limit exceeded",
+                    &.{},
+                );
+                return error.LoopLimitExceeded;
+            }
             const item = if (unit) |item_unit|
                 try self.ownNumberWithUnit(span, current, item_unit)
             else

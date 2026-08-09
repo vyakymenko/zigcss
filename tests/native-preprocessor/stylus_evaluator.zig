@@ -60,6 +60,16 @@ const complex_extension_css = "form button,a.button{padding:10px}" ++
     "form button,a.button button{color:#f00}" ++
     "body,form,a.button{width:75%}";
 
+const loop_extension_input =
+    \\.span
+    \\  width 100%
+    \\for i in 1..4
+    \\  .span{i}
+    \\    @extend .span
+;
+
+const loop_extension_css = ".span,.span1,.span2,.span3,.span4{width:100%}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2263,6 +2273,48 @@ test "native Stylus complex extension aliases preserve selected branch and nesti
     try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
 }
 
+test "native Stylus loop extensions use rendered iteration selectors deterministically" {
+    var first = try compile(std.testing.allocator, loop_extension_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, loop_extension_input, .{});
+    defer second.deinit();
+    try std.testing.expectEqualStrings(loop_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+}
+
+test "native Stylus loop extension discovery retains finite iteration ceilings" {
+    const lower_input =
+        \\.span
+        \\  width 100%
+        \\for i in 1..1
+        \\  .span{i}
+        \\    @extend .span
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".span,.span1{width:100%}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 4;
+    var terminal_result = try compile(std.testing.allocator, loop_extension_input, terminal);
+    defer terminal_result.deinit();
+    try std.testing.expectEqualStrings(loop_extension_css, terminal_result.css());
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 3;
+    try expectSemanticRejectionWithLimits(
+        loop_extension_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(u8, loop_extension_input, "for i").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -2750,6 +2802,12 @@ fn exerciseComplexExtensionAllocationFailures(allocator: std.mem.Allocator) !voi
     try std.testing.expectEqualStrings(complex_extension_css, result.css());
 }
 
+fn exerciseLoopExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, loop_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(loop_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2850,6 +2908,14 @@ test "native Stylus complex extensions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseComplexExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus loop extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLoopExtensionAllocationFailures,
         .{},
     );
 }
