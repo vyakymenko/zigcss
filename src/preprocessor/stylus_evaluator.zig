@@ -2853,12 +2853,17 @@ const Engine = struct {
                 var targets = try splitTopLevel(self.allocator, targets_raw, ',');
                 defer targets.deinit(self.allocator);
                 if (directive.plural) {
-                    if (current_selector_nested or targets.items.len != 1) {
-                        continue;
-                    }
+                    if (targets.items.len != 1) continue;
+                    const plural_target = stripOptionalExtensionModifier(
+                        targets_raw[targets.items[0].start..targets.items[0].end],
+                    );
+                    const placeholder_target = selectorBranchContainsPlaceholder(
+                        plural_target,
+                    );
+                    if (current_selector_nested and !placeholder_target) continue;
                     var extenders = try splitTopLevel(self.allocator, extender, ',');
                     defer extenders.deinit(self.allocator);
-                    if (extenders.items.len != 1) continue;
+                    if (extenders.items.len != 1 and !placeholder_target) continue;
                 }
                 try self.static_extension_directives.put(
                     self.allocator,

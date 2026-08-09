@@ -234,6 +234,51 @@ const callable_optional_extension_input =
 const callable_optional_extension_css =
     ".base,.end{width:1px}.end{height:2px}.end{display:block}";
 
+const placeholder_chain_extension_input =
+    \\$base
+    \\  width 1px
+    \\$variant
+    \\  @extend $base
+    \\  height 2px
+    \\make-slots()
+    \\  for i in 1..3
+    \\    $slot_{i}
+    \\      margin 10px*i
+    \\make-slots()
+    \\extend-slot($index)
+    \\  @extend $slot_{$index}
+    \\.visible
+    \\  @extend $variant
+    \\  extend-slot(2)
+;
+
+const placeholder_chain_extension_css =
+    ".visible{width:1px}.visible{height:2px}.visible{margin:20px}";
+
+const placeholder_plural_extension_input =
+    \\$nested-base
+    \\  width 1px
+    \\.shell
+    \\  .item
+    \\    @extends $nested-base
+    \\$complex-base
+    \\  .leaf
+    \\    height 2px
+    \\.one,
+    \\.two
+    \\  @extends $complex-base .leaf
+    \\$media-base
+    \\  color red
+    \\@media screen
+    \\  .media
+    \\    .item
+    \\      @extends $media-base
+;
+
+const placeholder_plural_extension_css =
+    ".shell .item{width:1px}.one,.two{height:2px}" ++
+    ".media .item{color:#f00}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2834,6 +2879,61 @@ test "native Stylus optional extension targets retain bounded list ownership" {
     );
 }
 
+test "native Stylus placeholder extensions retain bounded chain and plural ownership" {
+    var first = try compile(
+        std.testing.allocator,
+        placeholder_chain_extension_input,
+        .{},
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        placeholder_chain_extension_input,
+        .{},
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(placeholder_chain_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 14;
+    var plural = try compile(
+        std.testing.allocator,
+        placeholder_plural_extension_input,
+        terminal,
+    );
+    defer plural.deinit();
+    var plural_again = try compile(
+        std.testing.allocator,
+        placeholder_plural_extension_input,
+        terminal,
+    );
+    defer plural_again.deinit();
+    try std.testing.expectEqualStrings(placeholder_plural_extension_css, plural.css());
+    try std.testing.expectEqualStrings(plural.css(), plural_again.css());
+    try std.testing.expectEqualSlices(
+        u8,
+        plural.sourceMap().?,
+        plural_again.sourceMap().?,
+    );
+    try std.testing.expectEqual(@as(usize, 0), plural.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), plural.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 13;
+    try expectSemanticRejectionWithLimits(
+        placeholder_plural_extension_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.lastIndexOf(u8, placeholder_plural_extension_input, ".item").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3379,6 +3479,18 @@ fn exerciseOptionalExtensionAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(optional_extension_css, result.css());
 }
 
+fn exercisePlaceholderExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var chain = try compile(allocator, placeholder_chain_extension_input, .{});
+    defer chain.deinit();
+    try std.testing.expectEqualStrings(placeholder_chain_extension_css, chain.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 14;
+    var plural = try compile(allocator, placeholder_plural_extension_input, terminal);
+    defer plural.deinit();
+    try std.testing.expectEqualStrings(placeholder_plural_extension_css, plural.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3551,6 +3663,14 @@ test "native Stylus optional extension targets handle every allocation failure" 
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseOptionalExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus placeholder extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exercisePlaceholderExtensionAllocationFailures,
         .{},
     );
 }
