@@ -1060,7 +1060,9 @@ pub const Parser = struct {
             return .loop;
         }
         if (self.findAssignment(line)) |assignment_index| {
-            if (self.assignmentFollowsDeclarationColon(line, assignment_index)) {
+            if (self.assignmentFollowsDeclarationColon(line, assignment_index) or
+                self.assignmentIsUnpunctuatedDeclarationValue(line, assignment_index))
+            {
                 return .declaration;
             }
             return .variable;
@@ -1131,6 +1133,25 @@ pub const Parser = struct {
             }
         }
         return false;
+    }
+
+    fn assignmentIsUnpunctuatedDeclarationValue(
+        self: *const Parser,
+        line: Line,
+        assignment_index: usize,
+    ) bool {
+        const assignment = self.tokens[assignment_index];
+        if (!std.mem.eql(u8, assignment.raw(self.source_bytes), "=")) return false;
+        const assignment_start: usize = @intCast(assignment.span.start);
+        const line_start: usize = @intCast(line.content_start);
+        if (assignment_start <= line_start) return false;
+
+        const prefix = trimAscii(self.source_bytes[line_start..assignment_start]);
+        if (!looksLikeDeclaration(prefix, false)) return false;
+        const separator = std.mem.lastIndexOfAny(u8, prefix, " \t\x0c") orelse return false;
+        const property = trimAscii(prefix[0..separator]);
+        const binding = trimAscii(prefix[separator + 1 ..]);
+        return property.len > 0 and validBindingName(binding);
     }
 
     fn collectFragments(
@@ -1615,6 +1636,23 @@ fn looksLikeAdjacentCall(raw: []const u8) bool {
         end += 1;
     }
     return end < raw.len and raw[end] == '(';
+}
+
+fn validBindingName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    var index: usize = if (name[0] == '$') 1 else 0;
+    if (index >= name.len or
+        (!std.ascii.isAlphabetic(name[index]) and name[index] != '_' and name[index] != '-'))
+    {
+        return false;
+    }
+    index += 1;
+    while (index < name.len) : (index += 1) {
+        if (!std.ascii.isAlphanumeric(name[index]) and name[index] != '_' and name[index] != '-') {
+            return false;
+        }
+    }
+    return true;
 }
 
 fn isAssignmentOperator(raw: []const u8) bool {

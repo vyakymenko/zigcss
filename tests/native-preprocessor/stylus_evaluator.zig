@@ -439,6 +439,31 @@ const call_to_string_input =
 const call_to_string_css = "a{lower:'foo()';source:foo bar(baz, buz, 1);" ++
     "terminal:'foo bar(baz, buz, 1)';prefixed:'pre-foo bar(baz, buz, 1)'}";
 
+const multiple_call_assignment_input =
+    \\pad(y = 100px)
+    \\  padding unit(y, 'px')
+    \\body
+    \\  pad(5px)
+    \\  pad()
+    \\  pad(10px)
+    \\pad-x(n)
+    \\  n = unit(n, 'px')
+    \\  padding-left n
+    \\  padding-right n
+    \\pad-y(y)
+    \\  padding-top n = unit(y, 'px')
+    \\  padding-bottom n
+    \\pad(x, y)
+    \\  pad-x(x)
+    \\  pad-y(y)
+    \\form
+    \\  pad(5, 10)
+;
+
+const multiple_call_assignment_css =
+    "body{padding:5px;padding:100px;padding:10px}" ++
+    "form{padding-left:5px;padding-right:5px;padding-top:10px;padding-bottom:10px}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -3258,6 +3283,53 @@ test "native Stylus anonymous functions preserve lexical callbacks within the ca
     );
 }
 
+test "native Stylus declaration assignments persist across repeated callable output" {
+    const lower_input =
+        \\persist(value)
+        \\  first local = unit(value, 'px')
+        \\  second local
+        \\lower
+        \\  persist(2)
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_call_depth = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("lower{first:2px;second:2px}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var first = try compile(
+        std.testing.allocator,
+        multiple_call_assignment_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        multiple_call_assignment_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(multiple_call_assignment_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_call_depth = 1;
+    try expectSemanticRejectionWithLimits(
+        multiple_call_assignment_input,
+        over_limit,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.indexOf(u8, multiple_call_assignment_input, "pad-x(x)").?),
+    );
+}
+
 test "native Stylus call mixins transport a content block through an empty list" {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 2;
@@ -3996,6 +4068,21 @@ fn exerciseCallToStringAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(call_to_string_css, result.css());
 }
 
+fn exerciseMultipleCallAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\persist(value)
+        \\  first local = unit(value, 'px')
+        \\  second local
+        \\body
+        \\  persist(2)
+    ;
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    var result = try compile(allocator, input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings("body{first:2px;second:2px}", result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -4224,6 +4311,14 @@ test "native Stylus call expression string coercion handles every allocation fai
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCallToStringAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus declaration assignment callables handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMultipleCallAssignmentAllocationFailures,
         .{},
     );
 }

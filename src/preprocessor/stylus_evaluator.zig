@@ -4296,7 +4296,7 @@ const Engine = struct {
                             continue;
                         }
                     }
-                    var declaration = (try self.renderDeclaration(statement_id, scope.*)) orelse continue;
+                    var declaration = (try self.renderDeclaration(statement_id, scope)) orelse continue;
                     errdefer declaration.deinit(self.allocator);
                     const reference_name = try std.fmt.allocPrint(self.allocator, "@{s}", .{declaration.property});
                     defer self.allocator.free(reference_name);
@@ -5549,7 +5549,7 @@ const Engine = struct {
             var rendered = (try self.renderDeclarationText(
                 expression_span,
                 declaration.span,
-                loop_scope,
+                &loop_scope,
             )) orelse {
                 parent_scope.* = loop_scope;
                 continue;
@@ -5630,7 +5630,7 @@ const Engine = struct {
     fn renderDeclaration(
         self: *Engine,
         declaration_id: native_syntax.NodeId,
-        scope: native_environment.ScopeId,
+        scope: *native_environment.ScopeId,
     ) Error!?RenderedDeclaration {
         const declaration = try self.document.get(declaration_id);
         const text = declaration.text orelse return error.InvalidDocument;
@@ -5641,7 +5641,7 @@ const Engine = struct {
         self: *Engine,
         text: native_source.Span,
         declaration_span: native_source.Span,
-        scope: native_environment.ScopeId,
+        scope: *native_environment.ScopeId,
     ) Error!?RenderedDeclaration {
         const raw = try self.sources.slice(text);
         const postfix_split = splitPostfixCondition(raw);
@@ -5649,7 +5649,7 @@ const Engine = struct {
             var selected = try self.evaluateCondition(
                 text,
                 raw[postfix.expression.start..postfix.expression.end],
-                scope,
+                scope.*,
             );
             if (postfix.negated) selected = !selected;
             if (!selected) return null;
@@ -5677,11 +5677,11 @@ const Engine = struct {
         };
         const property_span = try self.relativeSpan(text, parts[0]);
         const value_span = try self.relativeSpan(text, parts[1]);
-        const property = try self.renderTextOwned(property_span, scope, .property, 0);
+        const property = try self.renderTextOwned(property_span, scope.*, .property, 0);
         errdefer self.allocator.free(property);
         const source_file = try self.sources.get(text.source);
         if (std.ascii.eqlIgnoreCase(std.fs.path.extension(source_file.name), ".css")) {
-            const value = try self.renderTextOwned(value_span, scope, .value, 0);
+            const value = try self.renderTextOwned(value_span, scope.*, .value, 0);
             return .{
                 .span = declaration_span,
                 .property = property,
@@ -5696,7 +5696,7 @@ const Engine = struct {
         self.active_property = .{
             .property = property,
             .value_span = value_span,
-            .scope = scope,
+            .scope = scope.*,
         };
         self.active_property_value = null;
         defer {
@@ -5705,8 +5705,30 @@ const Engine = struct {
             self.current_property_bindings.shrinkRetainingCapacity(property_binding_start);
         }
         const value_raw = raw[parts[1].start..parts[1].end];
+        if (parseAssignment(value_raw)) |assignment| {
+            if (assignment.value.len == 0) {
+                try self.reportInvalidOperation(value_span);
+                return error.InvalidOperation;
+            }
+            const value = try self.evaluateDeclarationAssignment(
+                value_span,
+                assignment,
+                scope,
+            );
+            return .{
+                .span = declaration_span,
+                .property = property,
+                .value = try self.serializeDeclarationValueOwned(
+                    value,
+                    value_span,
+                    assignment.value,
+                ),
+                .semantic_value = value,
+                .side_effect = false,
+            };
+        }
         if (sourceQuotedValue(value_raw)) |quote| {
-            const semantic = try self.evaluateValue(value_span, value_raw, scope, 0);
+            const semantic = try self.evaluateValue(value_span, value_raw, scope.*, 0);
             if (semantic.* != .string or !semantic.string.quoted) return error.InvalidDocument;
             var quoted: std.ArrayList(u8) = .empty;
             errdefer quoted.deinit(self.allocator);
@@ -5724,7 +5746,7 @@ const Engine = struct {
         if (try self.renderCommentedDeclarationValueOwned(
             value_span,
             value_raw,
-            scope,
+            scope.*,
         )) |commented| {
             return .{
                 .span = declaration_span,
@@ -5737,7 +5759,7 @@ const Engine = struct {
         var value = try self.evaluateDeclarationValue(
             value_span,
             value_raw,
-            scope,
+            scope.*,
             0,
         );
         const trimmed_value = std.mem.trim(u8, value_raw, " \t\r\n\x0c;");
@@ -5756,6 +5778,58 @@ const Engine = struct {
             .semantic_value = value,
             .side_effect = false,
         };
+    }
+
+    fn evaluateDeclarationAssignment(
+        self: *Engine,
+        span: native_source.Span,
+        assignment: Assignment,
+        scope: *native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        if (assignment.conditional) {
+            if (try self.lookupBinding(scope.*, assignment.name)) |existing| return existing;
+        }
+
+        var map_alias_name: ?[]const u8 = null;
+        var value = alias: {
+            if (assignment.operator == null and validVariableName(assignment.value)) {
+                if (try self.lookupBinding(scope.*, assignment.value)) |candidate| {
+                    if (candidate.* == .map) {
+                        map_alias_name = assignment.value;
+                        break :alias candidate;
+                    }
+                }
+            }
+            break :alias try self.evaluateValue(span, assignment.value, scope.*, 0);
+        };
+        if (assignment.operator) |operator| {
+            const current = (try self.lookupBinding(scope.*, assignment.name)) orelse {
+                try self.reportUndefinedVariable(span);
+                return error.UndefinedVariable;
+            };
+            value = try self.evaluateGenericBinary(span, current, value, operator);
+        }
+
+        self.detachMutationAlias(assignment.name);
+        try self.detachMapBindingAliases(scope.*, assignment.name);
+        const aliases_current_property = self.active_property_value != null and
+            value == self.active_property_value.?;
+        scope.* = try self.setBinding(scope.*, assignment.name, value, span);
+        if (map_alias_name) |source_name| {
+            try self.registerMapBindingAlias(
+                scope.*,
+                assignment.name,
+                source_name,
+                span,
+            );
+        }
+        if (aliases_current_property) {
+            try self.current_property_bindings.append(self.allocator, .{
+                .scope = scope.*,
+                .name = assignment.name,
+            });
+        }
+        return value;
     }
 
     fn renderCommentedDeclarationValueOwned(

@@ -56,6 +56,14 @@ const multiline_functions_input =
     \\  pad 2 3
 ;
 
+const declaration_assignment_input =
+    \\pad-y(y)
+    \\  padding-top n = unit(y, 'px')
+    \\  padding-bottom n
+    \\form
+    \\  pad-y(10)
+;
+
 fn countKind(document: *const syntax.Document, kind: syntax.Kind) usize {
     var count: usize = 0;
     for (document.nodes()) |node| {
@@ -312,6 +320,85 @@ test "native Stylus parser owns multiline callable signatures at their closing p
     defer limited.deinit();
     try std.testing.expectError(error.StatementLimitExceeded, limited.parse());
     try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
+}
+
+test "native Stylus parser classifies an assignment value as its owning declaration" {
+    const lower_input =
+        \\value = 1
+        \\body
+        \\  width current = value
+    ;
+    var lower_sources = source.Table.init(std.testing.allocator, .{});
+    defer lower_sources.deinit();
+    const lower_source_id = try lower_sources.add("declaration-assignment-lower.styl", lower_input);
+    var lower_limits = stylus.Limits{};
+    lower_limits.max_statements = 3;
+    var lower_parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &lower_sources,
+        lower_source_id,
+        lower_limits,
+        .{},
+    );
+    defer lower_parser.deinit();
+    var lower_document = try lower_parser.parse();
+    defer lower_document.deinit();
+    const lower_root = try lower_document.children(lower_document.root);
+    const lower_rule = try lower_document.children(lower_root[1]);
+    const lower_block = try lower_document.children(lower_rule[lower_rule.len - 1]);
+    try std.testing.expectEqual(@as(usize, 1), lower_block.len);
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try lower_document.get(lower_block[0])).kind,
+    );
+
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(
+        "declaration-assignment.styl",
+        declaration_assignment_input,
+    );
+    var terminal_limits = stylus.Limits{};
+    terminal_limits.max_statements = 5;
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        terminal_limits,
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root = try document.children(document.root);
+    const function_children = try document.children(root[0]);
+    const function_block = try document.children(function_children[function_children.len - 1]);
+    try std.testing.expectEqual(@as(usize, 2), function_block.len);
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(function_block[0])).kind,
+    );
+    try std.testing.expectEqualStrings(
+        "padding-top n = unit(y, 'px')",
+        try sources.slice((try document.get(function_block[0])).text.?),
+    );
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(function_block[1])).kind,
+    );
+
+    var over_limits = terminal_limits;
+    over_limits.max_statements = 4;
+    var over = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        over_limits,
+        .{},
+    );
+    defer over.deinit();
+    try std.testing.expectError(error.StatementLimitExceeded, over.parse());
+    try std.testing.expectEqual(@as(usize, 0), over.diagnostics().len);
 }
 
 test "native Stylus parser owns anonymous callback blocks without promoting calls to definitions" {
@@ -1258,6 +1345,23 @@ fn exerciseMultilineFunctionAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqual(@as(usize, 3), countKind(&document, .function));
 }
 
+fn exerciseDeclarationAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(
+        "declaration-assignment.styl",
+        declaration_assignment_input,
+    );
+    var limits = stylus.Limits{};
+    limits.max_statements = 5;
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, limits, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 1), countKind(&document, .function));
+    try std.testing.expectEqual(@as(usize, 2), countKind(&document, .declaration));
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -1326,6 +1430,14 @@ test "native Stylus multiline callable signatures handle every allocation failur
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMultilineFunctionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus declaration assignments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseDeclarationAssignmentAllocationFailures,
         .{},
     );
 }
