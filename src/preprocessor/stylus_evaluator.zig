@@ -29,6 +29,8 @@ const hard_temporary_bytes = 20 * 1024 * 1024;
 const hard_import_statements = 200_000;
 const hard_asset_load_paths = 64;
 const hard_asset_load_path_bytes = 4_096;
+// Exact default from the pinned Stylus 0.64.0 url() helper oracle.
+const embedded_asset_byte_limit = 30_000;
 const block_value_prefix = "\x1fzigcss-native-stylus-block:";
 
 pub const Limits = struct {
@@ -1088,6 +1090,7 @@ fn isDeferredBuiltin(name: []const u8) bool {
         "current-media",
         "define",
         "dirname",
+        "embedurl",
         "error",
         "extend",
         "extname",
@@ -1637,6 +1640,60 @@ fn assetCandidateUrl(
         try std.fs.path.resolve(allocator, &.{ base_directory, target });
     defer allocator.free(absolute);
     return native_resolver.pathToFileUrl(allocator, absolute);
+}
+
+const EmbeddedAssetTarget = struct {
+    path: []const u8,
+    fragment: []const u8,
+};
+
+fn parseEmbeddedAssetTarget(target: []const u8) EmbeddedAssetTarget {
+    const fragment_start = std.mem.indexOfScalar(u8, target, '#');
+    const query_start = std.mem.indexOfScalar(u8, target, '?');
+    var path_end = target.len;
+    if (query_start) |index| path_end = @min(path_end, index);
+    if (fragment_start) |index| path_end = @min(path_end, index);
+    return .{
+        .path = target[0..path_end],
+        .fragment = if (fragment_start) |index| target[index..] else "",
+    };
+}
+
+fn embeddedAssetMime(path: []const u8) ?[]const u8 {
+    const extension = std.fs.path.extension(path);
+    inline for (.{
+        .{ ".gif", "image/gif" },
+        .{ ".png", "image/png" },
+        .{ ".jpg", "image/jpeg" },
+        .{ ".jpeg", "image/jpeg" },
+        .{ ".svg", "image/svg+xml" },
+        .{ ".webp", "image/webp" },
+        .{ ".ttf", "application/x-font-ttf" },
+        .{ ".eot", "application/vnd.ms-fontobject" },
+        .{ ".woff", "application/font-woff" },
+        .{ ".woff2", "application/font-woff2" },
+    }) |entry| {
+        if (std.mem.eql(u8, extension, entry[0])) return entry[1];
+    }
+    return null;
+}
+
+fn embeddedTargetHasScheme(target: []const u8) bool {
+    if (hasNonLocalScheme(target)) return true;
+    for (target, 0..) |byte, index| {
+        if (byte == '/' or byte == '\\' or byte == '?' or byte == '#') return false;
+        if (byte != ':') continue;
+        if (index == 0 or !std.ascii.isAlphabetic(target[0])) return false;
+        for (target[1..index]) |scheme_byte| {
+            if (!std.ascii.isAlphanumeric(scheme_byte) and
+                scheme_byte != '+' and scheme_byte != '-' and scheme_byte != '.')
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
 }
 
 const ImageDimensions = struct {
@@ -6823,6 +6880,9 @@ const Engine = struct {
         scope: native_environment.ScopeId,
     ) Error!?*const native_value.Value {
         const name = raw[call.name.start..call.name.end];
+        if (nameEql(name, "embedurl")) {
+            return try self.evaluateEmbedUrlBuiltin(span, raw, call, scope);
+        }
         if (nameEql(name, "url")) {
             return try self.evaluateUrlBuiltin(span, raw, call, scope);
         }
@@ -10524,6 +10584,114 @@ const Engine = struct {
         try self.appendUrlExpression(&output, span, arguments, scope);
         try self.appendTemporary(&output, span, "\")");
         return self.ownValue(span, .{ .string = .{ .bytes = output.items } });
+    }
+
+    fn evaluateEmbedUrlBuiltin(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        call: Call,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        var arguments = try self.evaluateCallArguments(span, raw, call, scope);
+        defer arguments.deinit(self.allocator);
+        if (arguments.items.len < 1 or arguments.items.len > 2) {
+            return self.invalidBuiltinArguments(span);
+        }
+        const target = stringBytes(arguments.items[0].*) orelse
+            return self.invalidBuiltinArguments(span);
+        const utf8 = if (arguments.items.len == 2) blk: {
+            const encoding = stringBytes(arguments.items[1].*) orelse
+                return self.invalidBuiltinArguments(span);
+            break :blk std.ascii.eqlIgnoreCase(encoding, "utf8");
+        } else false;
+        const parsed = parseEmbeddedAssetTarget(target);
+        const mime = embeddedAssetMime(parsed.path) orelse
+            return self.ownUrlLiteral(span, target);
+        if (embeddedTargetHasScheme(target)) return self.ownUrlLiteral(span, target);
+
+        var loaded = (try self.loadImageAsset(span, parsed.path)) orelse
+            return self.ownUrlLiteral(span, target);
+        defer loaded.deinit();
+        try self.transaction.consumeOperations(@intCast(loaded.contents.len));
+        if (loaded.contents.len > embedded_asset_byte_limit) {
+            return self.ownUrlLiteral(span, target);
+        }
+
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, "url(\"data:");
+        try self.appendTemporary(&output, span, mime);
+        if (utf8) {
+            if (!std.unicode.utf8ValidateSlice(loaded.contents)) {
+                try self.transaction.report(
+                    .err,
+                    .invalid_operation,
+                    span,
+                    "native Stylus embedded URL asset is not valid UTF-8",
+                    &.{},
+                );
+                return error.InvalidOperation;
+            }
+            try self.appendTemporary(&output, span, ";charset=utf-8,");
+            try self.appendEmbeddedUtf8(&output, span, loaded.contents);
+        } else {
+            try self.appendTemporary(&output, span, ";base64,");
+            const encoded_size = std.base64.standard.Encoder.calcSize(loaded.contents.len);
+            const encoded = try self.allocator.alloc(u8, encoded_size);
+            defer self.allocator.free(encoded);
+            _ = std.base64.standard.Encoder.encode(encoded, loaded.contents);
+            try self.appendTemporary(&output, span, encoded);
+            try self.appendTemporary(&output, span, parsed.fragment);
+        }
+        try self.appendTemporary(&output, span, "\")");
+        return self.ownValue(span, .{ .string = .{ .bytes = output.items } });
+    }
+
+    fn ownUrlLiteral(
+        self: *Engine,
+        span: native_source.Span,
+        target: []const u8,
+    ) Error!*const native_value.Value {
+        var output: std.ArrayList(u8) = .empty;
+        defer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, "url(\"");
+        try self.appendTemporary(&output, span, target);
+        try self.appendTemporary(&output, span, "\")");
+        return self.ownValue(span, .{ .string = .{ .bytes = output.items } });
+    }
+
+    fn appendEmbeddedUtf8(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        span: native_source.Span,
+        contents: []const u8,
+    ) Error!void {
+        const hexadecimal = "0123456789ABCDEF";
+        var pending_space = false;
+        var wrote_content = false;
+        for (contents) |byte| {
+            if (std.ascii.isWhitespace(byte)) {
+                pending_space = wrote_content;
+                continue;
+            }
+            if (pending_space) {
+                try self.appendTemporary(output, span, " ");
+                pending_space = false;
+            }
+            if (std.mem.indexOfScalar(u8, "{}|\\^~[]`\"<>#%", byte) != null) {
+                const escaped = [3]u8{
+                    '%',
+                    hexadecimal[byte >> 4],
+                    hexadecimal[byte & 0x0f],
+                };
+                try self.appendTemporary(output, span, &escaped);
+            } else {
+                const literal = [1]u8{byte};
+                try self.appendTemporary(output, span, &literal);
+            }
+            wrote_content = true;
+        }
     }
 
     fn appendUrlExpression(

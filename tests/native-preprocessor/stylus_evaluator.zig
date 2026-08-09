@@ -1506,6 +1506,161 @@ test "native Stylus evaluates URL expressions without loading assets" {
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
 }
 
+fn exerciseEmbeddedUrlAllocationFailures(allocator: std.mem.Allocator) !void {
+    const asset = "<svg id=\"#x\">\n</svg>\n";
+    const files = [_]FixtureFile{.{ .path = "tiny.svg", .contents = asset }};
+    const input =
+        \\.asset
+        \\  background embedurl('tiny.svg#icon')
+    ;
+    var result = try compileFixture(allocator, input, &files, .{}, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        ".asset{background:url(\"data:image/svg+xml;base64," ++
+            "PHN2ZyBpZD0iI3giPgo8L3N2Zz4K#icon\")}",
+        result.css(),
+    );
+}
+
+test "native Stylus embeds confined URL assets across the provider byte bound" {
+    const asset = "<svg id=\"#x\">\n</svg>\n";
+    const files = [_]FixtureFile{.{ .path = "tiny.svg", .contents = asset }};
+    const input =
+        \\.base64
+        \\  background embedurl('tiny.svg')
+        \\.fragment
+        \\  background embedurl('tiny.svg#icon')
+        \\.utf8
+        \\  background embedurl('tiny.svg', 'utf8')
+        \\.query
+        \\  background embedurl('tiny.svg?v=1#query')
+    ;
+    var first = try compileFixture(std.testing.allocator, input, &files, .{}, .{});
+    defer first.deinit();
+    var second = try compileFixture(std.testing.allocator, input, &files, .{}, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".base64{background:url(\"data:image/svg+xml;base64," ++
+            "PHN2ZyBpZD0iI3giPgo8L3N2Zz4K\")}" ++
+            ".fragment{background:url(\"data:image/svg+xml;base64," ++
+            "PHN2ZyBpZD0iI3giPgo8L3N2Zz4K#icon\")}" ++
+            ".utf8{background:url(\"data:image/svg+xml;charset=utf-8," ++
+            "%3Csvg id=%22%23x%22%3E %3C/svg%3E\")}" ++
+            ".query{background:url(\"data:image/svg+xml;base64," ++
+            "PHN2ZyBpZD0iI3giPgo8L3N2Zz4K#query\")}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 1), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 1), first.edges().len);
+    try std.testing.expectEqual(resolver.DependencyKind.reference, first.dependencies()[0].kind);
+    try std.testing.expectEqualStrings("tiny.svg", std.fs.path.basename(first.dependencies()[0].url));
+
+    var terminal_asset: [30_000]u8 = undefined;
+    @memset(terminal_asset[0..], 'a');
+    const terminal_files = [_]FixtureFile{.{
+        .path = "terminal.svg",
+        .contents = terminal_asset[0..],
+    }};
+    const terminal_input = "body\n  background embedurl('terminal.svg')\n";
+    var terminal = try compileFixture(
+        std.testing.allocator,
+        terminal_input,
+        &terminal_files,
+        .{},
+        .{},
+    );
+    defer terminal.deinit();
+    const terminal_prefix = "body{background:url(\"data:image/svg+xml;base64,";
+    const terminal_suffix = "\")}";
+    try std.testing.expect(std.mem.startsWith(u8, terminal.css(), terminal_prefix));
+    try std.testing.expect(std.mem.endsWith(u8, terminal.css(), terminal_suffix));
+    try std.testing.expectEqual(
+        terminal_prefix.len + std.base64.standard.Encoder.calcSize(terminal_asset.len) +
+            terminal_suffix.len,
+        terminal.css().len,
+    );
+    try std.testing.expectEqual(@as(u64, terminal_asset.len), terminal.stats().bytes);
+    try std.testing.expectEqual(@as(usize, 1), terminal.dependencies().len);
+
+    var over_limit_asset: [30_001]u8 = undefined;
+    @memset(over_limit_asset[0..], 'a');
+    const over_limit_files = [_]FixtureFile{.{
+        .path = "over-limit.svg",
+        .contents = over_limit_asset[0..],
+    }};
+    const over_limit_input = "body\n  background embedurl('over-limit.svg')\n";
+    var over_limit = try compileFixture(
+        std.testing.allocator,
+        over_limit_input,
+        &over_limit_files,
+        .{},
+        .{},
+    );
+    defer over_limit.deinit();
+    try std.testing.expectEqualStrings(
+        "body{background:url(\"over-limit.svg\")}",
+        over_limit.css(),
+    );
+    try std.testing.expectEqual(@as(u64, over_limit_asset.len), over_limit.stats().bytes);
+    try std.testing.expectEqual(@as(usize, 1), over_limit.dependencies().len);
+
+    var remote = try compile(
+        std.testing.allocator,
+        "body\n  background embedurl('https://example.invalid/asset.svg')\n",
+        .{},
+    );
+    defer remote.deinit();
+    try std.testing.expectEqualStrings(
+        "body{background:url(\"https://example.invalid/asset.svg\")}",
+        remote.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), remote.dependencies().len);
+
+    var missing = try compile(
+        std.testing.allocator,
+        "body\n  background embedurl('missing.svg')\n",
+        .{},
+    );
+    defer missing.deinit();
+    try std.testing.expectEqualStrings(
+        "body{background:url(\"missing.svg\")}",
+        missing.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 0), missing.dependencies().len);
+
+    try expectFixtureRejection(
+        "body\n  background embedurl('../escape.svg')\n",
+        &.{},
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus image asset load was rejected",
+        0,
+        0,
+    );
+    try expectFixtureRejection(
+        "body\n  background embedurl('invalid.svg', 'utf8')\n",
+        &.{.{ .path = "invalid.svg", .contents = "\xff" }},
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus embedded URL asset is not valid UTF-8",
+        0,
+        1,
+    );
+}
+
+test "native Stylus embedded URL transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseEmbeddedUrlAllocationFailures,
+        .{},
+    );
+}
+
 test "native Stylus evaluates compact declaration values inside explicit CSS blocks" {
     const input =
         \\body {background:white;font-size:.8em;background-image:url(src/grid.png);border-color:#e5eCf9;quotes:"" "";content:'';font-family:"Helvetica Neue",Arial;}
