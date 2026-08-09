@@ -279,6 +279,20 @@ const placeholder_plural_extension_css =
     ".shell .item{width:1px}.one,.two{height:2px}" ++
     ".media .item{color:#f00}";
 
+const font_face_input =
+    \\@font-face
+    \\  font-family "Lower"
+    \\  src url("lower.woff")
+    \\@font-face
+    \\{
+    \\  font-family: 'Explicit'
+    \\}
+;
+
+const font_face_css =
+    "@font-face{font-family:\"Lower\";src:url(\"lower.woff\")}" ++
+    "@font-face{font-family:'Explicit'}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2934,6 +2948,42 @@ test "native Stylus placeholder extensions retain bounded chain and plural owner
     );
 }
 
+test "native Stylus indentation-owned font face rules are evaluated deterministically" {
+    const lower_input =
+        \\@font-face
+        \\  font-family Lower
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "@font-face{font-family:Lower}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_nodes = 17;
+    var first = try compile(std.testing.allocator, font_face_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, font_face_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(font_face_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_nodes = 16;
+    try expectSemanticRejectionWithLimits(
+        font_face_input,
+        over_limit,
+        error.NodeLimitExceeded,
+        .resource_limit,
+        "native Stylus evaluator node limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3491,6 +3541,14 @@ fn exercisePlaceholderExtensionAllocationFailures(allocator: std.mem.Allocator) 
     try std.testing.expectEqualStrings(placeholder_plural_extension_css, plural.css());
 }
 
+fn exerciseFontFaceAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_nodes = 17;
+    var result = try compile(allocator, font_face_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(font_face_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3671,6 +3729,14 @@ test "native Stylus placeholder extensions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exercisePlaceholderExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus indentation-owned font face rules handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseFontFaceAllocationFailures,
         .{},
     );
 }

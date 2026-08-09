@@ -273,12 +273,12 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
             exact_success_count += 1;
             exact_case_id_hash.update(case.id);
             exact_case_id_hash.update("\x00");
-            const became_exact_with_placeholder_extensions = std.mem.eql(
+            const became_exact_with_indentation_at_rules = std.mem.eql(
                 u8,
                 case.id,
-                "stylus-official-extend-with-placeholders",
+                "stylus-official-fontface",
             );
-            if (!became_exact_with_placeholder_extensions) {
+            if (!became_exact_with_indentation_at_rules) {
                 previous_exact_case_id_hash.update(case.id);
                 previous_exact_case_id_hash.update("\x00");
             }
@@ -289,8 +289,8 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
 
     const exact_hash = exact_case_id_hash.final();
-    if (exact_success_count != 236 or nonconforming_count != 90 or
-        exact_hash != 0xf69f62f1a1950ff8)
+    if (exact_success_count != 237 or nonconforming_count != 89 or
+        exact_hash != 0x315d3a5f03dad7b4)
     {
         std.debug.print(
             "\nnative Stylus exact inventory: {d} exact, {d} nonconforming, {x:0>16}\n",
@@ -299,15 +299,15 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
     try std.testing.expectEqual(@as(usize, 326), success_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 236), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 90), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0xf69f62f1a1950ff8), exact_hash);
+    try std.testing.expectEqual(@as(usize, 237), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 89), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0x315d3a5f03dad7b4), exact_hash);
     try std.testing.expectEqual(
-        @as(u64, 0xae5b498bf8059874),
+        @as(u64, 0xf69f62f1a1950ff8),
         previous_exact_case_id_hash.final(),
     );
     try std.testing.expectEqualStrings(
-        "stylus-official-fontface",
+        "stylus-official-for-complex",
         first_nonconforming_id.?,
     );
 }
@@ -2698,6 +2698,57 @@ test "native Stylus closes the finite placeholder extension conformance family" 
     std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
         std.debug.print(
             "\nnative Stylus placeholder extension mismatch\nexpected: {s}\nactual:   {s}\n",
+            .{ expected_css.css(), first.css() },
+        );
+        return failure;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try expectDependencyDeterminism(&first, &second);
+}
+
+test "native Stylus closes the finite font face conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(parsed.value.cases, "stylus-official-fontface");
+    try std.testing.expectEqualStrings("fontface", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+    try std.testing.expectEqualStrings("expanded", case.style);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var first = try compileNative(allocator, case, input);
+    defer first.deinit();
+    var second = try compileNative(allocator, case, input);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
+        std.debug.print(
+            "\nnative Stylus font face mismatch\nexpected: {s}\nactual:   {s}\n",
             .{ expected_css.css(), first.css() },
         );
         return failure;

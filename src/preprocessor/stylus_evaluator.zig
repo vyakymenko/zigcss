@@ -930,13 +930,17 @@ fn requiresSemanticEvaluation(
                 }
             }
         }
-        if (node.kind != .rule) continue;
+        if (node.kind != .rule and node.kind != .at_rule) continue;
         const children = try document.children(.{ .value = @intCast(index) });
         if (children.len <= 1 or node.text == null) continue;
         const block = try document.get(children[children.len - 1]);
         if (block.kind != .block or block.span.source.value != node.text.?.source.value) continue;
-        for (try document.children(children[children.len - 1])) |child_id| {
-            if ((try document.get(child_id)).kind == .rule) return true;
+        // Explicit CSS at-rules remain eligible for byte-preserving passthrough;
+        // at-rules enter the semantic path only through the indentation gap below.
+        if (node.kind == .rule) {
+            for (try document.children(children[children.len - 1])) |child_id| {
+                if ((try document.get(child_id)).kind == .rule) return true;
+            }
         }
         const gap_start: usize = @intCast(node.text.?.end);
         const gap_end: usize = @intCast(block.span.start);
