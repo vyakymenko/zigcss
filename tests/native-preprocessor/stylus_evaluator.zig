@@ -35,6 +35,31 @@ const eol_escape_css = "body{foo:foo bar baz;one:0;two:1;three:2}" ++
     "button{padding:1px 2px;box-shadow:0 -2px 2px #f00, 0 0 2px #f00," ++
     " 0 0 5px #f00;color:#f00}";
 
+const complex_extension_input =
+    \\form button
+    \\  padding 10px
+    \\a.button
+    \\  @extends form button
+    \\form
+    \\  button
+    \\    color red
+    \\body
+    \\  width 75%
+    \\form
+    \\  if true
+    \\    @extend body
+    \\a.button
+    \\  unless false
+    \\    @extend form
+    \\.nope
+    \\  if false
+    \\    @extend body
+;
+
+const complex_extension_css = "form button,a.button{padding:10px}" ++
+    "form button,a.button button{color:#f00}" ++
+    "body,form,a.button{width:75%}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2226,6 +2251,18 @@ test "native Stylus semantic values and bindings retain finite ceilings" {
     );
 }
 
+test "native Stylus complex extension aliases preserve selected branch and nesting semantics" {
+    var first = try compile(std.testing.allocator, complex_extension_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, complex_extension_input, .{});
+    defer second.deinit();
+    try std.testing.expectEqualStrings(complex_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -2707,6 +2744,12 @@ fn exerciseEolEscapeAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(eol_escape_css, result.css());
 }
 
+fn exerciseComplexExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, complex_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(complex_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2799,6 +2842,14 @@ test "native Stylus end-of-line escapes handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseEolEscapeAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus complex extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseComplexExtensionAllocationFailures,
         .{},
     );
 }

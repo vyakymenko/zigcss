@@ -1718,6 +1718,20 @@ const CurrentPropertyBinding = struct {
 const StaticExtension = struct {
     target: []u8,
     extender: []u8,
+    directive_order: usize,
+    prefixed_target: bool,
+};
+
+const ExtendDirective = struct {
+    targets: []const u8,
+    plural: bool,
+};
+
+const StaticConditionalState = enum {
+    none,
+    unknown,
+    selected,
+    not_selected,
 };
 
 const RenderedDeclaration = struct {
@@ -1943,6 +1957,8 @@ const Engine = struct {
     media_stack: std.ArrayList([]u8) = .empty,
     cache_seen: std.ArrayList([]const u8) = .empty,
     extensions: std.ArrayList(StaticExtension) = .empty,
+    static_group_orders: std.AutoHashMapUnmanaged(u32, usize) = .empty,
+    static_extension_directives: std.AutoHashMapUnmanaged(u32, void) = .empty,
     mode: EngineMode,
     cache_seed: *const CachePlan,
     cache_discovered: ?*CachePlan,
@@ -1950,6 +1966,7 @@ const Engine = struct {
     loop_iterations: usize = 0,
     selector_count: usize = 0,
     selector_order: u64 = 0,
+    static_group_count: usize = 0,
     temporary_bytes: usize = 0,
     active_selector_scope: ?[]u8 = null,
     active_class_prefix: ?[]const u8 = null,
@@ -2012,6 +2029,8 @@ const Engine = struct {
             self.allocator.free(extension.extender);
         }
         self.extensions.deinit(self.allocator);
+        self.static_group_orders.deinit(self.allocator);
+        self.static_extension_directives.deinit(self.allocator);
         self.mutation_aliases.deinit(self.allocator);
         self.map_binding_aliases.deinit(self.allocator);
         self.current_property_bindings.deinit(self.allocator);
@@ -2046,7 +2065,7 @@ const Engine = struct {
         self.global_scope = &scope;
         defer self.global_scope = null;
         const root_statements = try self.document.children(self.document.root);
-        try self.collectStaticExtensions(root_statements, null);
+        try self.collectStaticExtensions(root_statements, null, false);
         var ordinary: std.ArrayList(native_syntax.NodeId) = .empty;
         defer ordinary.deinit(self.allocator);
         for ([_][]const u8{ "@charset", "@import" }) |keyword| {
@@ -2556,10 +2575,130 @@ const Engine = struct {
         self: *Engine,
         statements: []const native_syntax.NodeId,
         parent_selector: ?[]const u8,
+        current_selector_nested: bool,
     ) Error!void {
+        var previous_condition: StaticConditionalState = .none;
         for (statements) |statement_id| {
             const statement = try self.document.get(statement_id);
+            if (statement.kind == .at_rule) {
+                previous_condition = .none;
+                const extender = parent_selector orelse continue;
+                const text = statement.text orelse continue;
+                const raw = std.mem.trim(
+                    u8,
+                    try self.sources.slice(text),
+                    " \t\r\n\x0c;",
+                );
+                const directive = parseExtendDirective(raw) orelse continue;
+                var targets_raw = directive.targets;
+                if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
+                    targets_raw = std.mem.trimRight(
+                        u8,
+                        targets_raw[0..optional],
+                        " \t\r\n\x0c;",
+                    );
+                }
+                if (targets_raw.len == 0) continue;
+                var targets = try splitTopLevel(self.allocator, targets_raw, ',');
+                defer targets.deinit(self.allocator);
+                if (directive.plural) {
+                    if (current_selector_nested or targets.items.len != 1 or
+                        !selectorHasTopLevelCombinator(targets_raw))
+                    {
+                        continue;
+                    }
+                    var extenders = try splitTopLevel(self.allocator, extender, ',');
+                    defer extenders.deinit(self.allocator);
+                    if (extenders.items.len != 1) continue;
+                }
+                try self.static_extension_directives.put(
+                    self.allocator,
+                    statement_id.value,
+                    {},
+                );
+                for (targets.items) |range| {
+                    const target = std.mem.trim(
+                        u8,
+                        targets_raw[range.start..range.end],
+                        " \t\r\n\x0c;",
+                    );
+                    if (target.len == 0 or std.mem.indexOfScalar(u8, target, '{') != null) {
+                        continue;
+                    }
+                    const owned_target = try self.allocator.dupe(u8, target);
+                    const owned_extender = self.allocator.dupe(u8, extender) catch |failure| {
+                        self.allocator.free(owned_target);
+                        return failure;
+                    };
+                    self.extensions.append(self.allocator, .{
+                        .target = owned_target,
+                        .extender = owned_extender,
+                        .directive_order = self.static_group_count,
+                        .prefixed_target = current_selector_nested,
+                    }) catch |failure| {
+                        self.allocator.free(owned_target);
+                        self.allocator.free(owned_extender);
+                        return failure;
+                    };
+                }
+                continue;
+            }
+            if (statement.kind == .conditional) {
+                const text = statement.text orelse {
+                    previous_condition = .unknown;
+                    continue;
+                };
+                const raw = std.mem.trim(
+                    u8,
+                    try self.sources.slice(text),
+                    " \t\r\n\x0c;",
+                );
+                var branch_selected = false;
+                if (startsWordAscii(raw, "else")) {
+                    const remainder = std.mem.trim(
+                        u8,
+                        raw["else".len..],
+                        " \t\r\n\x0c;",
+                    );
+                    switch (previous_condition) {
+                        .selected => previous_condition = .selected,
+                        .not_selected => {
+                            if (remainder.len == 0) {
+                                branch_selected = true;
+                                previous_condition = .selected;
+                            } else if (staticConditionSelected(remainder)) |selected| {
+                                branch_selected = selected;
+                                previous_condition = if (selected) .selected else .not_selected;
+                            } else {
+                                previous_condition = .unknown;
+                            }
+                        },
+                        .none, .unknown => previous_condition = .unknown,
+                    }
+                } else if (staticConditionSelected(raw)) |selected| {
+                    branch_selected = selected;
+                    previous_condition = if (selected) .selected else .not_selected;
+                } else {
+                    previous_condition = .unknown;
+                }
+                if (branch_selected) {
+                    const block = try self.statementBlock(statement_id);
+                    try self.collectStaticExtensions(
+                        try self.document.children(block),
+                        parent_selector,
+                        current_selector_nested,
+                    );
+                }
+                continue;
+            }
+            previous_condition = .none;
             if (statement.kind != .rule) continue;
+            try self.static_group_orders.put(
+                self.allocator,
+                statement_id.value,
+                self.static_group_count,
+            );
+            self.static_group_count += 1;
             const children = try self.document.children(statement_id);
             if (children.len != 2) continue;
             const selector_node = try self.document.get(children[0]);
@@ -2594,36 +2733,11 @@ const Engine = struct {
             defer self.allocator.free(full_selector);
 
             const block_statements = try self.document.children(children[1]);
-            for (block_statements) |child_id| {
-                const child = try self.document.get(child_id);
-                if (child.kind != .at_rule or child.text == null) continue;
-                const raw = std.mem.trim(u8, try self.sources.slice(child.text.?), " \t\r\n\x0c;");
-                if (!startsWordAscii(raw, "@extend")) continue;
-                var targets_raw = std.mem.trim(u8, raw["@extend".len..], " \t\r\n\x0c;");
-                if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
-                    targets_raw = std.mem.trimRight(u8, targets_raw[0..optional], " \t\r\n\x0c;");
-                }
-                var targets = try splitTopLevel(self.allocator, targets_raw, ',');
-                defer targets.deinit(self.allocator);
-                for (targets.items) |range| {
-                    const target = std.mem.trim(u8, targets_raw[range.start..range.end], " \t\r\n\x0c;");
-                    if (target.len == 0 or std.mem.indexOfScalar(u8, target, '{') != null) continue;
-                    const owned_target = try self.allocator.dupe(u8, target);
-                    const owned_extender = self.allocator.dupe(u8, full_selector) catch |failure| {
-                        self.allocator.free(owned_target);
-                        return failure;
-                    };
-                    self.extensions.append(self.allocator, .{
-                        .target = owned_target,
-                        .extender = owned_extender,
-                    }) catch |failure| {
-                        self.allocator.free(owned_target);
-                        self.allocator.free(owned_extender);
-                        return failure;
-                    };
-                }
-            }
-            try self.collectStaticExtensions(block_statements, full_selector);
+            try self.collectStaticExtensions(
+                block_statements,
+                full_selector,
+                parent_selector != null,
+            );
         }
     }
 
@@ -2665,20 +2779,30 @@ const Engine = struct {
         self: *Engine,
         span: native_source.Span,
         selector: []const u8,
+        rule_id: native_syntax.NodeId,
     ) Error![]u8 {
         var selectors = try splitTopLevelOwnedStrings(self.allocator, selector, ',');
         defer {
             for (selectors.items) |item| self.allocator.free(item);
             selectors.deinit(self.allocator);
         }
+        const original_selector_count = selectors.items.len;
+        const group_order = self.static_group_orders.get(rule_id.value);
         for (0..self.extensions.items.len + 1) |_| {
             var changed = false;
             for (self.extensions.items) |extension| {
+                if (group_order) |order| {
+                    if (order >= extension.directive_order) continue;
+                }
                 const current_len = selectors.items.len;
                 var candidate_index: usize = 0;
                 while (candidate_index < current_len) : (candidate_index += 1) {
                     const candidate = selectors.items[candidate_index];
-                    const marker = selectorTokenIndex(candidate, extension.target) orelse continue;
+                    const marker: usize = if (candidate_index < original_selector_count) blk: {
+                        if (std.mem.eql(u8, candidate, extension.target)) break :blk 0;
+                        if (!extension.prefixed_target) continue;
+                        break :blk selectorTokenIndex(candidate, extension.target) orelse continue;
+                    } else selectorTokenIndex(candidate, extension.target) orelse continue;
                     var extenders = try splitTopLevel(self.allocator, extension.extender, ',');
                     defer extenders.deinit(self.allocator);
                     for (extenders.items) |range| {
@@ -2942,7 +3066,11 @@ const Engine = struct {
         );
         defer self.allocator.free(base_selector);
         try self.registerSelectorIdentities(selector_node.text.?, base_selector);
-        const selector = try self.expandExtendedSelectorOwned(selector_node.text.?, base_selector);
+        const selector = try self.expandExtendedSelectorOwned(
+            selector_node.text.?,
+            base_selector,
+            rule_id,
+        );
         defer self.allocator.free(selector);
         if (std.mem.trim(u8, selector, " \t\r\n\x0c").len == 0) return;
         const visible_selector = try self.visibleSelectorOwned(selector_node.text.?, selector);
@@ -3617,7 +3745,15 @@ const Engine = struct {
                     previous_condition = null;
                     const text = statement.text orelse return error.InvalidDocument;
                     const raw = std.mem.trim(u8, try self.sources.slice(text), " \t\r\n\x0c;");
-                    if (output != null and startsWordAscii(raw, "@extend")) continue;
+                    if (output != null) {
+                        if (parseExtendDirective(raw)) |directive| {
+                            if (!directive.plural or
+                                self.static_extension_directives.contains(statement_id.value))
+                            {
+                                continue;
+                            }
+                        }
+                    }
                     if (output == null and startsWordAscii(raw, "@scope")) {
                         const selector_raw = std.mem.trim(u8, raw["@scope".len..], " \t\r\n\x0c;");
                         const scope_children = try self.document.children(statement_id);
@@ -9905,6 +10041,20 @@ fn parseConditionHeader(raw: []const u8) ?ConditionHeader {
     };
 }
 
+fn staticConditionSelected(raw: []const u8) ?bool {
+    const condition = parseConditionHeader(raw) orelse return null;
+    const expression = std.mem.trim(u8, condition.expression, " \t\r\n\x0c;");
+    var selected = if (std.ascii.eqlIgnoreCase(expression, "true"))
+        true
+    else if (std.ascii.eqlIgnoreCase(expression, "false") or
+        std.ascii.eqlIgnoreCase(expression, "null"))
+        false
+    else
+        return null;
+    if (condition.negated) selected = !selected;
+    return selected;
+}
+
 fn findFirstPostfixConditionMarker(
     raw: []const u8,
     minimum_start: usize,
@@ -10102,6 +10252,20 @@ fn startsWordAscii(raw: []const u8, expected: []const u8) bool {
     }
     return raw.len == expected.len or std.ascii.isWhitespace(raw[expected.len]) or
         raw[expected.len] == '(' or raw[expected.len] == ';';
+}
+
+fn parseExtendDirective(raw: []const u8) ?ExtendDirective {
+    const plural = startsWordAscii(raw, "@extends");
+    const keyword: []const u8 = if (plural)
+        "@extends"
+    else if (startsWordAscii(raw, "@extend"))
+        "@extend"
+    else
+        return null;
+    return .{
+        .targets = std.mem.trim(u8, raw[keyword.len..], " \t\r\n\x0c;"),
+        .plural = plural,
+    };
 }
 
 fn matchingParen(raw: []const u8, opening: usize) ?usize {
@@ -11817,6 +11981,41 @@ fn selectorTokenIndex(selector: []const u8, target: []const u8) ?usize {
         cursor = index + 1;
     }
     return null;
+}
+
+fn selectorHasTopLevelCombinator(selector: []const u8) bool {
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    for (selector) |byte| {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote != 0) {
+            if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (depth == 0 and
+            (std.ascii.isWhitespace(byte) or std.mem.indexOfScalar(u8, ">+~", byte) != null))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn selectorArgumentBytes(value: *const native_value.Value) ?[]const u8 {
