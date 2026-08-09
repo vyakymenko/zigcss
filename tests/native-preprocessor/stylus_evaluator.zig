@@ -977,6 +977,44 @@ test "native Stylus evaluates compact declaration values inside explicit CSS blo
     );
 }
 
+test "native Stylus preserves nested rules beside compact mixin declarations" {
+    const input =
+        \\hover()
+        \\  &:hover { color: white; background: black;
+        \\    em {
+        \\      color: gray;
+        \\    }
+        \\  }
+        \\  &:active { color: black; background: white; }
+        \\button(pad)
+        \\  button,
+        \\  a.button,
+        \\  input[type=submit],
+        \\  input[type=button] { padding: pad; hover(); }
+        \\button(5px 10px);
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "button,a.button,input[type=submit],input[type=button]{padding:5px 10px}" ++
+            "button:hover,a.button:hover,input[type=submit]:hover,input[type=button]:hover{" ++
+            "color:#fff;background:#000}" ++
+            "button:hover em,a.button:hover em,input[type=submit]:hover em," ++
+            "input[type=button]:hover em{color:#808080}" ++
+            "button:active,a.button:active,input[type=submit]:active," ++
+            "input[type=button]:active{color:#000;background:#fff}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus treats top-level property slashes as CSS separators" {
     const input =
         \\size = 14px
@@ -2390,6 +2428,25 @@ fn exercisePropertySlashAllocationFailures(allocator: std.mem.Allocator) !void {
     );
 }
 
+fn exerciseCompactNestedRuleAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "hover()\n" ++
+            "  &:hover { color: white; background: black;\n" ++
+            "    em {\n" ++
+            "      color: gray;\n" ++
+            "    }\n" ++
+            "  }\n" ++
+            "body { hover(); }\n",
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body:hover{color:#fff;background:#000}body:hover em{color:#808080}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2434,6 +2491,14 @@ test "native Stylus property slash transaction handles every allocation failure"
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exercisePropertySlashAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus compact nested rule transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCompactNestedRuleAllocationFailures,
         .{},
     );
 }

@@ -63,6 +63,7 @@ const Line = struct {
     content_start: u32,
     content_end: u32,
     indent: u32,
+    explicit_depth: u32,
     token_start: usize,
     token_end: usize,
 };
@@ -336,6 +337,7 @@ pub const Parser = struct {
                                 segment_start,
                                 cursor,
                                 indent + explicit_depth * self.limits.lexer.tab_width,
+                                explicit_depth,
                                 &token_cursor,
                             );
                         }
@@ -362,6 +364,7 @@ pub const Parser = struct {
                             segment_start,
                             cursor,
                             indent + explicit_depth * self.limits.lexer.tab_width,
+                            explicit_depth,
                             &token_cursor,
                         );
                     }
@@ -380,6 +383,7 @@ pub const Parser = struct {
                             segment_start,
                             cursor + 1,
                             indent + explicit_depth * self.limits.lexer.tab_width,
+                            explicit_depth,
                             &token_cursor,
                         );
                     }
@@ -396,6 +400,7 @@ pub const Parser = struct {
                     segment_start,
                     line_end,
                     indent + explicit_depth * self.limits.lexer.tab_width,
+                    explicit_depth,
                     &token_cursor,
                 );
             }
@@ -419,6 +424,7 @@ pub const Parser = struct {
         raw_start: usize,
         raw_end: usize,
         indent: u32,
+        explicit_depth: u32,
         token_cursor: *usize,
     ) Error!void {
         var content_start = raw_start;
@@ -453,6 +459,7 @@ pub const Parser = struct {
             .content_start = @intCast(content_start),
             .content_end = @intCast(content_end),
             .indent = indent,
+            .explicit_depth = explicit_depth,
             .token_start = token_start,
             .token_end = token_end,
         });
@@ -613,6 +620,20 @@ pub const Parser = struct {
             try self.consumeStatement(line);
             cursor.* += 1;
 
+            // Braces, not cosmetic indentation, own the next rule after a
+            // semicolon-complete statement in the same explicit block.
+            if (self.startsIndentedExplicitSibling(lines, cursor.*, line)) {
+                const built = try self.buildLine(line, &.{});
+                try output.append(self.allocator, built);
+                try self.parseLevel(
+                    lines,
+                    cursor,
+                    lines[cursor.*].indent,
+                    output,
+                );
+                continue;
+            }
+
             var nested: std.ArrayList(Built) = .empty;
             defer nested.deinit(self.allocator);
             if (cursor.* < lines.len and lines[cursor.*].indent > indent) {
@@ -621,6 +642,25 @@ pub const Parser = struct {
             const built = try self.buildLine(line, nested.items);
             try output.append(self.allocator, built);
         }
+    }
+
+    fn startsIndentedExplicitSibling(
+        self: *const Parser,
+        lines: []const Line,
+        next_index: usize,
+        current: Line,
+    ) bool {
+        if (next_index >= lines.len or current.explicit_depth == 0 or
+            lines[next_index].indent <= current.indent or
+            lines[next_index].explicit_depth != current.explicit_depth or
+            !endsWithSemicolon(self.lineBytes(current)))
+        {
+            return false;
+        }
+        const next_has_children = next_index + 1 < lines.len and
+            lines[next_index + 1].indent > lines[next_index].indent;
+        return next_has_children and
+            self.classifyLine(lines[next_index], true) == .rule;
     }
 
     fn declarationContinuationEnd(
@@ -1132,6 +1172,11 @@ fn endsWithSignificant(raw: []const u8, byte: u8) bool {
     var end = raw.len;
     while (end > 0 and (isHorizontalWhitespace(raw[end - 1]) or raw[end - 1] == ';')) end -= 1;
     return end > 0 and raw[end - 1] == byte;
+}
+
+fn endsWithSemicolon(raw: []const u8) bool {
+    const trimmed = std.mem.trimRight(u8, raw, " \t\r\n\x0c");
+    return trimmed.len > 0 and trimmed[trimmed.len - 1] == ';';
 }
 
 fn startsSelectorPunctuation(raw: []const u8) bool {

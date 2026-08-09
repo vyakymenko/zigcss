@@ -122,6 +122,44 @@ test "native Stylus parser classifies compact declarations inside explicit CSS b
     );
 }
 
+test "native Stylus parser keeps a nested explicit rule beside compact declarations" {
+    const input =
+        \\.root { color: red; background: black;
+        \\  em {
+        \\    color: gray;
+        \\  }
+        \\}
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("compact-nested-rule.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root_children.len);
+    const rule_children = try document.children(root_children[0]);
+    const block_children = try document.children(rule_children[rule_children.len - 1]);
+    try std.testing.expectEqual(@as(usize, 3), block_children.len);
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(block_children[0])).kind,
+    );
+    try std.testing.expectEqual(
+        syntax.Kind.declaration,
+        (try document.get(block_children[1])).kind,
+    );
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(block_children[2])).kind);
+}
+
 test "native Stylus parser owns single-line callable blocks without consuming interpolation braces" {
     const input =
         \\large(n){ n > 100 }
@@ -716,6 +754,23 @@ fn exerciseSelectorGroupAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(usize, 1), (try document.children(document.root)).len);
 }
 
+fn exerciseCompactNestedRuleAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(
+        "compact-nested-rule.styl",
+        ".root { color: red; background: black;\n  em {\n    color: gray;\n  }\n}\n",
+    );
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root_children = try document.children(document.root);
+    const rule_children = try document.children(root_children[0]);
+    const block_children = try document.children(rule_children[rule_children.len - 1]);
+    try std.testing.expectEqual(@as(usize, 3), block_children.len);
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -728,6 +783,14 @@ test "native Stylus comma-led selector group handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseSelectorGroupAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus compact nested rule handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCompactNestedRuleAllocationFailures,
         .{},
     );
 }
