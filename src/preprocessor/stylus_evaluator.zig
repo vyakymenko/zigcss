@@ -2698,13 +2698,27 @@ const Engine = struct {
             const statement = try self.document.get(statement_id);
             if (statement.kind == .at_rule) {
                 previous_condition = .none;
-                const extender = parent_selector orelse continue;
                 const text = statement.text orelse continue;
                 const raw = std.mem.trim(
                     u8,
                     try self.sources.slice(text),
                     " \t\r\n\x0c;",
                 );
+                if (startsWordAscii(raw, "@media")) {
+                    const children = try self.document.children(statement_id);
+                    if (children.len > 0) {
+                        const block_id = children[children.len - 1];
+                        if ((try self.document.get(block_id)).kind == .block) {
+                            try self.collectStaticExtensions(
+                                try self.document.children(block_id),
+                                parent_selector,
+                                current_selector_nested,
+                            );
+                        }
+                    }
+                    continue;
+                }
+                const extender = parent_selector orelse continue;
                 const directive = parseExtendDirective(raw) orelse continue;
                 var targets_raw = directive.targets;
                 if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
@@ -3572,6 +3586,9 @@ const Engine = struct {
             try self.transaction.stagingCheckpoint()
         else
             null;
+        errdefer if (media_checkpoint) |checkpoint_value| {
+            self.transaction.restoreStaging(checkpoint_value) catch {};
+        };
         try self.emitMapped(at_rule.text.?, null, final_header);
         if (block_id == null) {
             try self.emit(";");
