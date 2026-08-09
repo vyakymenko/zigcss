@@ -501,6 +501,28 @@ const nested_function_input =
 
 const nested_function_css = "body{width:3.5;height:10;min-height:0}";
 
+const logical_condition_input =
+    \\n = 75
+    \\if n < 50 or n > 50 and n < 100
+    \\  body
+    \\    selected yes
+    \\else
+    \\  body
+    \\    selected no
+    \\if false and missing > 0
+    \\  body
+    \\    and-branch unsafe
+    \\else
+    \\  body
+    \\    and-branch safe
+    \\if true or missing > 0
+    \\  body
+    \\    or-branch safe
+;
+
+const logical_condition_css =
+    "body{selected:yes}body{and-branch:safe}body{or-branch:safe}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2221,6 +2243,33 @@ test "native Stylus evaluates the fixed callable control operator builtin slice"
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
     try std.testing.expect(first.map() != null);
     try std.testing.expect(first.map().?.segments().len >= 7);
+}
+
+test "native Stylus evaluates bounded compound conditions with short circuiting" {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 3;
+    var first = try compile(std.testing.allocator, logical_condition_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, logical_condition_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(logical_condition_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 2;
+    try expectSemanticRejectionWithLimits(
+        logical_condition_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, logical_condition_input, "if n < 50").?),
+    );
 }
 
 test "native Stylus evaluates filtered postfix declaration loops" {
@@ -4371,6 +4420,14 @@ fn exerciseNestedFunctionAllocationFailures(allocator: std.mem.Allocator) !void 
     try std.testing.expectEqualStrings(nested_function_css, result.css());
 }
 
+fn exerciseLogicalConditionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 3;
+    var result = try compile(allocator, logical_condition_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(logical_condition_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -4623,6 +4680,14 @@ test "native Stylus nested functions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseNestedFunctionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus compound conditions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLogicalConditionAllocationFailures,
         .{},
     );
 }

@@ -9521,7 +9521,49 @@ const Engine = struct {
         raw: []const u8,
         scope: native_environment.ScopeId,
     ) Error!bool {
+        return self.evaluateConditionDepth(span, raw, scope, 0);
+    }
+
+    fn evaluateConditionDepth(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!bool {
+        if (depth >= self.limits.max_expression_depth) {
+            try self.reportExpressionDepth(span);
+            return error.ExpressionDepthExceeded;
+        }
         const source_condition = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+        if (findLogicalOperator(source_condition, .or_value)) |logical| {
+            if (try self.evaluateConditionDepth(
+                span,
+                source_condition[logical.left.start..logical.left.end],
+                scope,
+                depth + 1,
+            )) return true;
+            return self.evaluateConditionDepth(
+                span,
+                source_condition[logical.right.start..logical.right.end],
+                scope,
+                depth + 1,
+            );
+        }
+        if (findLogicalOperator(source_condition, .and_value)) |logical| {
+            if (!try self.evaluateConditionDepth(
+                span,
+                source_condition[logical.left.start..logical.left.end],
+                scope,
+                depth + 1,
+            )) return false;
+            return self.evaluateConditionDepth(
+                span,
+                source_condition[logical.right.start..logical.right.end],
+                scope,
+                depth + 1,
+            );
+        }
         if (findTopLevelSequence(source_condition, " is defined")) |marker| {
             if (marker + " is defined".len == source_condition.len) {
                 const name = std.mem.trim(u8, source_condition[0..marker], " \t\r\n\x0c");
