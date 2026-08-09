@@ -122,6 +122,28 @@ const mixin_extension_css = ".c4,#col3{width:50%}" ++
     ".one-half,.two-quarters{width:50%}" ++
     "@media test-media{.test-one-half,.test-two-quarters{width:50%}}";
 
+const nested_mixin_extension_input =
+    \\.class
+    \\  position absolute;
+    \\
+    \\abstract()
+    \\  evenMore()
+    \\
+    \\more()
+    \\  @extend .class
+    \\
+    \\moreAbstract()
+    \\  abstract()
+    \\
+    \\evenMore()
+    \\  more()
+    \\
+    \\.class2
+    \\  moreAbstract()
+;
+
+const nested_mixin_extension_css = ".class,.class2{position:absolute}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2484,6 +2506,47 @@ test "native Stylus direct mixin extensions retain bounded invocation ownership"
     );
 }
 
+test "native Stylus nested mixin extensions retain bounded invocation ownership" {
+    const lower_input =
+        \\.base
+        \\  width 1px
+        \\extend-base()
+        \\  @extend .base
+        \\bridge()
+        \\  extend-base()
+        \\.derived
+        \\  bridge()
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_call_depth = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".base,.derived{width:1px}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 4;
+    var first = try compile(std.testing.allocator, nested_mixin_extension_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, nested_mixin_extension_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(nested_mixin_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_call_depth = 3;
+    try expectSemanticRejectionWithLimits(
+        nested_mixin_extension_input,
+        over_limit,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.lastIndexOf(u8, nested_mixin_extension_input, "more()").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -2995,6 +3058,12 @@ fn exerciseMixinExtensionAllocationFailures(allocator: std.mem.Allocator) !void 
     try std.testing.expectEqualStrings(mixin_extension_css, result.css());
 }
 
+fn exerciseNestedMixinExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, nested_mixin_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(nested_mixin_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3127,6 +3196,14 @@ test "native Stylus direct mixin extensions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMixinExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus nested mixin extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseNestedMixinExtensionAllocationFailures,
         .{},
     );
 }

@@ -2958,7 +2958,7 @@ const Engine = struct {
         if (self.mode != .discover_extensions) return false;
         const plan = self.dynamic_extension_plan orelse return false;
         if (self.static_extension_directives.contains(statement_id.value)) return false;
-        if (self.active_loop_depth == 0 and self.active_callables.items.len != 1) return false;
+        if (self.active_loop_depth == 0 and self.active_callables.items.len == 0) return false;
         const extender = self.active_selector_identity orelse return false;
         var targets_raw = directive.targets;
         if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
