@@ -1242,6 +1242,100 @@ test "native Stylus include CSS option owns nested imports and resource boundari
     );
 }
 
+test "native Stylus dotted import basenames retain optional extension through property callables" {
+    const vendor = FixtureFile{
+        .path = "import.include.function/import.vendor.styl",
+        .contents =
+        \\border-radius()
+        \\  -moz-border-radius: arguments
+        \\  -webkit-border-radius: arguments
+        \\  border-radius: arguments
+        ,
+    };
+    const lower_input =
+        \\@import 'import.include.function/import.vendor'
+        \\$radius = 10
+        \\body
+        \\  border-radius: ($radius / 2)px
+    ;
+    var lower_resolver = resolver.Limits{};
+    lower_resolver.max_files = 1;
+    var call_terminal = stylus_evaluator.Limits{};
+    call_terminal.max_call_depth = 1;
+    var lower = try compileFixture(
+        std.testing.allocator,
+        lower_input,
+        &.{vendor},
+        lower_resolver,
+        call_terminal,
+    );
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "body{-moz-border-radius:5px;-webkit-border-radius:5px;border-radius:5px}",
+        lower.css(),
+    );
+
+    const terminal_input =
+        \\@import 'import.include.function/import.vendor'
+        \\@import 'import.include.function/import.common'
+        \\$radius = 10
+        \\body
+        \\  border-radius: ($radius / 2)px
+    ;
+    const files = [_]FixtureFile{
+        vendor,
+        .{
+            .path = "import.include.function/import.common.styl",
+            .contents = "body\n  color red\n",
+        },
+    };
+    var terminal_resolver = resolver.Limits{};
+    terminal_resolver.max_files = files.len;
+    var first = try compileFixture(
+        std.testing.allocator,
+        terminal_input,
+        &files,
+        terminal_resolver,
+        call_terminal,
+    );
+    defer first.deinit();
+    var second = try compileFixture(
+        std.testing.allocator,
+        terminal_input,
+        &files,
+        terminal_resolver,
+        call_terminal,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{color:#f00}body{-moz-border-radius:5px;" ++
+            "-webkit-border-radius:5px;border-radius:5px}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, files.len), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), first.edges().len);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal_resolver;
+    over_limit.max_files = files.len - 1;
+    try expectFixtureRejectionWithOptions(
+        terminal_input,
+        &files,
+        .{},
+        over_limit,
+        call_terminal,
+        error.FileCountExceeded,
+        .resource_limit,
+        "native Stylus import resource limit exceeded",
+        0,
+        1,
+    );
+}
+
 test "native Stylus callable dynamic imports fail closed outside their bounded contract" {
     const escaped =
         \\.before
@@ -4522,6 +4616,52 @@ fn exerciseIncludeCssAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(usize, files.len), result.edges().len);
 }
 
+fn exerciseImportedPropertyCallableUnitArithmeticAllocationFailures(
+    allocator: std.mem.Allocator,
+) !void {
+    const input =
+        \\@import 'import.include.function/import.vendor'
+        \\@import 'import.include.function/import.common'
+        \\$radius = 10
+        \\body
+        \\  border-radius: ($radius / 2)px
+    ;
+    const files = [_]FixtureFile{
+        .{
+            .path = "import.include.function/import.vendor.styl",
+            .contents =
+            \\border-radius()
+            \\  -moz-border-radius: arguments
+            \\  -webkit-border-radius: arguments
+            \\  border-radius: arguments
+            ,
+        },
+        .{
+            .path = "import.include.function/import.common.styl",
+            .contents = "body\n  color red\n",
+        },
+    };
+    var resolver_terminal = resolver.Limits{};
+    resolver_terminal.max_files = files.len;
+    var evaluator_terminal = stylus_evaluator.Limits{};
+    evaluator_terminal.max_call_depth = 1;
+    var result = try compileFixture(
+        allocator,
+        input,
+        &files,
+        resolver_terminal,
+        evaluator_terminal,
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body{color:#f00}body{-moz-border-radius:5px;" ++
+            "-webkit-border-radius:5px;border-radius:5px}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, files.len), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), result.edges().len);
+}
+
 fn exerciseCompactDeclarationAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compileWithOptions(
         allocator,
@@ -4888,6 +5028,14 @@ test "native Stylus include CSS imports handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseIncludeCssAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus dotted import property callables handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseImportedPropertyCallableUnitArithmeticAllocationFailures,
         .{},
     );
 }

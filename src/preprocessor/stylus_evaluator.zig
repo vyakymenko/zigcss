@@ -1336,7 +1336,9 @@ const ImportExpander = struct {
             candidates.deinit(self.allocator);
         }
         const extension = std.fs.path.extension(parsed.target);
-        if (extension.len > 0) {
+        const explicit_extension = std.ascii.eqlIgnoreCase(extension, ".styl") or
+            std.ascii.eqlIgnoreCase(extension, ".css");
+        if (explicit_extension) {
             try self.appendCandidate(
                 &candidates,
                 try importCandidateUrl(self.allocator, parent_url, parsed.target),
