@@ -4918,6 +4918,8 @@ const Engine = struct {
         defer argument_names.deinit(self.allocator);
         var argument_used: std.ArrayList(bool) = .empty;
         defer argument_used.deinit(self.allocator);
+        var default_argument_values: std.ArrayList(native_value.Value) = .empty;
+        defer default_argument_values.deinit(self.allocator);
         try argument_values.ensureTotalCapacity(self.allocator, arguments.items.len);
         try argument_names.ensureTotalCapacity(self.allocator, arguments.items.len);
         try argument_used.ensureTotalCapacity(self.allocator, arguments.items.len);
@@ -5013,9 +5015,16 @@ const Engine = struct {
                     });
                 }
                 break :blk argument_values.items[index];
-            } else if (parameter.default_value) |default_value|
-                try self.evaluateValue(definition_span, default_value, call_scope, 0)
-            else {
+            } else if (parameter.default_value) |default_value| blk: {
+                const default_argument = try self.evaluateValue(
+                    definition_span,
+                    default_value,
+                    call_scope,
+                    0,
+                );
+                try default_argument_values.append(self.allocator, default_argument.*);
+                break :blk default_argument;
+            } else {
                 try self.reportInvalidArguments(span);
                 return error.InvalidArguments;
             };
@@ -5023,8 +5032,12 @@ const Engine = struct {
         }
         var all_arguments: std.ArrayList(native_value.Value) = .empty;
         defer all_arguments.deinit(self.allocator);
-        try all_arguments.ensureTotalCapacity(self.allocator, argument_values.items.len);
+        try all_arguments.ensureTotalCapacity(
+            self.allocator,
+            argument_values.items.len + default_argument_values.items.len,
+        );
         for (argument_values.items) |argument| all_arguments.appendAssumeCapacity(argument.*);
+        all_arguments.appendSliceAssumeCapacity(default_argument_values.items);
         const arguments_value = try self.ownValue(span, .{ .list = .{
             .items = all_arguments.items,
             .separator = if (arguments.items.len > 1 and call.parenthesized)
@@ -6600,20 +6613,22 @@ const Engine = struct {
             return self.ownValue(span, arguments.items[0].*);
         }
         if (nameEql(name, "rgb") or nameEql(name, "rgba")) {
-            if (arguments.items.len == 2 and arguments.items[0].* == .color) {
-                const alpha = alphaScalar(arguments.items[1].*) orelse
+            var flattened = try self.flattenColorBuiltinArguments(span, arguments.items);
+            defer flattened.deinit(self.allocator);
+            if (flattened.items.len == 2 and flattened.items[0].* == .color) {
+                const alpha = alphaScalar(flattened.items[1].*) orelse
                     return self.invalidBuiltinArguments(span);
-                var color = arguments.items[0].color;
+                var color = flattened.items[0].color;
                 color.channels[3] = std.math.clamp(alpha, 0, 1);
                 return try self.ownValue(span, .{ .color = color });
             }
             const expected: usize = if (nameEql(name, "rgb")) 3 else 4;
-            if (arguments.items.len != expected) return self.invalidBuiltinArguments(span);
-            const red = channelScalar(arguments.items[0].*) orelse return self.invalidBuiltinArguments(span);
-            const green = channelScalar(arguments.items[1].*) orelse return self.invalidBuiltinArguments(span);
-            const blue = channelScalar(arguments.items[2].*) orelse return self.invalidBuiltinArguments(span);
+            if (flattened.items.len != expected) return self.invalidBuiltinArguments(span);
+            const red = channelScalar(flattened.items[0].*) orelse return self.invalidBuiltinArguments(span);
+            const green = channelScalar(flattened.items[1].*) orelse return self.invalidBuiltinArguments(span);
+            const blue = channelScalar(flattened.items[2].*) orelse return self.invalidBuiltinArguments(span);
             const alpha = if (expected == 4)
-                alphaScalar(arguments.items[3].*) orelse return self.invalidBuiltinArguments(span)
+                alphaScalar(flattened.items[3].*) orelse return self.invalidBuiltinArguments(span)
             else
                 1;
             const color = native_color.rgb(red, green, blue, alpha) catch
@@ -8133,6 +8148,29 @@ const Engine = struct {
                 return error.InvalidArguments;
             }
             output.appendAssumeCapacity(try self.evaluateValue(span, argument, scope, 0));
+        }
+        return output;
+    }
+
+    fn flattenColorBuiltinArguments(
+        self: *Engine,
+        span: native_source.Span,
+        arguments: []const *const native_value.Value,
+    ) Error!std.ArrayList(*const native_value.Value) {
+        var output: std.ArrayList(*const native_value.Value) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (arguments) |argument| {
+            const item_count = if (argument.* == .list) argument.list.items.len else 1;
+            if (item_count > self.limits.values.max_collection_items - output.items.len) {
+                try self.reportResource(span, "native Stylus value limit exceeded");
+                return error.ValueLimitExceeded;
+            }
+            try output.ensureUnusedCapacity(self.allocator, item_count);
+            if (argument.* == .list) {
+                for (argument.list.items) |*item| output.appendAssumeCapacity(item);
+            } else {
+                output.appendAssumeCapacity(argument);
+            }
         }
         return output;
     }

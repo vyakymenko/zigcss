@@ -322,6 +322,42 @@ const complex_for_css = "body{item:0 b;item:1 c}" ++
     "body{grid:0 x;grid:1 x;grid:0 y;grid:1 y}" ++
     "body{state:true}body{state:true}";
 
+const function_arguments_input =
+    \\sum()
+    \\  n = 0
+    \\  for num in arguments
+    \\    n = n + num
+    \\  n
+    \\pair(a, b)
+    \\  a = b
+    \\  (arguments[0] a)
+    \\defaults(p0 = 4px, p1 = 5px)
+    \\  p0 arguments[0]
+    \\  p1 arguments[1]
+    \\color-proxy()
+    \\  return rgba(arguments)
+    \\semi-transparent()
+    \\  return rgba(arguments, 0.5)
+    \\width()
+    \\  push(arguments, !important)
+    \\  {current-property[0]}: arguments
+    \\body
+    \\  padding sum(1, 2, 3, 4, 5)
+    \\  padding pair(1, 2)
+    \\.defaults
+    \\  defaults()
+    \\.opaque
+    \\  color color-proxy(0, 0, 0, 1)
+    \\.translucent
+    \\  color semi-transparent(0, 0, 0)
+    \\img
+    \\  width: unquote('auto')
+;
+
+const function_arguments_css = "body{padding:15;padding:1 2}" ++
+    ".defaults{p0:4px;p1:5px}.opaque{color:#000}" ++
+    ".translucent{color:rgba(0,0,0,0.5)}img{width:auto!important}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -3050,6 +3086,41 @@ test "native Stylus complex loops retain bounded range group nesting and callabl
     );
 }
 
+test "native Stylus function arguments preserve defaults forwarding and property mutation" {
+    const lower_input =
+        \\defaults(value = 4px)
+        \\  result arguments[0]
+        \\body
+        \\  defaults()
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{result:4px}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 5;
+    var first = try compile(std.testing.allocator, function_arguments_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, function_arguments_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(function_arguments_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 4;
+    try expectSemanticRejectionWithLimits(
+        function_arguments_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(u8, function_arguments_input, "for num").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3623,6 +3694,14 @@ fn exerciseComplexForAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(complex_for_css, result.css());
 }
 
+fn exerciseFunctionArgumentsAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 5;
+    var result = try compile(allocator, function_arguments_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(function_arguments_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3819,6 +3898,14 @@ test "native Stylus complex loops handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseComplexForAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus function arguments handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseFunctionArgumentsAllocationFailures,
         .{},
     );
 }
