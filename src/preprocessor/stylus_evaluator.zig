@@ -742,6 +742,9 @@ fn requiresSemanticEvaluation(
         if (children.len <= 1 or node.text == null) continue;
         const block = try document.get(children[children.len - 1]);
         if (block.kind != .block or block.span.source.value != node.text.?.source.value) continue;
+        for (try document.children(children[children.len - 1])) |child_id| {
+            if ((try document.get(child_id)).kind == .rule) return true;
+        }
         const gap_start: usize = @intCast(node.text.?.end);
         const gap_end: usize = @intCast(block.span.start);
         if (gap_start > gap_end or gap_end > input.len) continue;

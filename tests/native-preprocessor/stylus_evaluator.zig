@@ -313,6 +313,34 @@ test "native Stylus transaction preserves the finite plain CSS foundation" {
     try std.testing.expect(first.map().?.segments().len >= 1);
 }
 
+test "native Stylus evaluates explicit CSS nested selectors deterministically" {
+    const input =
+        \\body {
+        \\  margin: 0;
+        \\  ul {
+        \\    margin: 0;
+        \\    li:first-child { border-top: none; }
+        \\  }
+        \\}
+        \\ul { li { &:first-child, &:last-child { display: none; } } }
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{margin:0}body ul{margin:0}body ul li:first-child{border-top:none}" ++
+            "ul li:first-child,ul li:last-child{display:none}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus permanently rejects use plugins without partial CSS" {
     const official_use = try std.fs.cwd().readFileAlloc(
         std.testing.allocator,
@@ -2490,6 +2518,21 @@ fn exerciseSpacedSelectorInterpolationAllocationFailures(allocator: std.mem.Allo
     );
 }
 
+fn exerciseExplicitCssNestedSelectorAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "body { margin: 0; ul {\n/* test */\nmargin: 0; li { color: red; } } }\n" ++
+            "ul { li { &:first-child, &:last-child { display: none; } } }\n",
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body{margin:0}body ul{margin:0}body ul li{color:#f00}" ++
+            "ul li:first-child,ul li:last-child{display:none}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2550,6 +2593,14 @@ test "native Stylus whitespace-separated selector interpolation handles every al
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseSpacedSelectorInterpolationAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus explicit CSS nested selector transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseExplicitCssNestedSelectorAllocationFailures,
         .{},
     );
 }

@@ -421,6 +421,51 @@ test "native Stylus parser preserves comma-led multiline descendant selector gro
     );
 }
 
+test "native Stylus parser preserves the pinned explicit CSS selector tree" {
+    const input = try std.fs.cwd().readFileAlloc(
+        std.testing.allocator,
+        "tests/preprocessors/stylus/corpus/files/upstream/cases/css.selectors.styl",
+        1024 * 1024,
+    );
+    defer std.testing.allocator.free(input);
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("css.selectors.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const expected = [_][]const u8{
+        "body",
+        "ul",
+        "foo",
+        "foo bar baz",
+        "foo\nbar\nbaz",
+        "input[type=button]",
+        "button\ninput[type=button]\ninput[type=submit]\na.button",
+        ".foo",
+    };
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(expected.len, root_children.len);
+    for (root_children, expected) |rule_id, expected_selector| {
+        const rule = try document.get(rule_id);
+        try std.testing.expectEqual(syntax.Kind.rule, rule.kind);
+        const children = try document.children(rule_id);
+        try std.testing.expectEqual(@as(usize, 2), children.len);
+        const selector = try document.get(children[0]);
+        try std.testing.expectEqual(syntax.Kind.selector, selector.kind);
+        try std.testing.expectEqualStrings(expected_selector, try sources.slice(selector.text.?));
+        try std.testing.expectEqual(syntax.Kind.block, (try document.get(children[1])).kind);
+    }
+}
+
 test "native Stylus parser keeps quoted selector references inside interpolation braces" {
     const input =
         \\{selector('.a', '.b', '^[0]:hover .e, ^[1]:hover .f')}
@@ -833,6 +878,21 @@ fn exerciseSpacedSelectorInterpolationAllocationFailures(allocator: std.mem.Allo
     try std.testing.expectEqual(@as(usize, 3), (try document.children(document.root)).len);
 }
 
+fn exerciseExplicitCssSelectorTreeAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(
+        "explicit-css-selectors.styl",
+        "body { margin: 0; ul {\n/* test */\nmargin: 0; li { color: red; } } }\n" ++
+            "ul { li { &:first-child, &:last-child { display: none; } } }\n",
+    );
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 2), (try document.children(document.root)).len);
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -861,6 +921,14 @@ test "native Stylus whitespace-separated selector interpolation handles every al
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseSpacedSelectorInterpolationAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus explicit CSS selector tree handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseExplicitCssSelectorTreeAllocationFailures,
         .{},
     );
 }
