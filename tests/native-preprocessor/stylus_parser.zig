@@ -20,6 +20,19 @@ const parser_negative_ids = [_][]const u8{
     "bad-property",
 };
 
+const anonymous_functions_input =
+    \\mixin(add) {
+    \\  mul = @(c, d) {
+    \\    c * d
+    \\  }
+    \\  width: add(2, 3) + mul(4, 5)
+    \\}
+    \\body
+    \\  mixin(@(a, b) {
+    \\    return a + b;
+    \\  })
+;
+
 fn countKind(document: *const syntax.Document, kind: syntax.Kind) usize {
     var count: usize = 0;
     for (document.nodes()) |node| {
@@ -183,6 +196,48 @@ test "native Stylus parser owns single-line callable blocks without consuming in
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .function));
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .block));
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .declaration));
+}
+
+test "native Stylus parser owns anonymous callback blocks without promoting calls to definitions" {
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("anonymous-functions.styl", anonymous_functions_input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root_children.len);
+    try std.testing.expectEqual(syntax.Kind.function, (try document.get(root_children[0])).kind);
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(root_children[1])).kind);
+    try std.testing.expectEqual(@as(usize, 1), countKind(&document, .function));
+
+    const mixin_children = try document.children(root_children[0]);
+    const mixin_block = mixin_children[mixin_children.len - 1];
+    const mixin_statements = try document.children(mixin_block);
+    try std.testing.expectEqual(@as(usize, 2), mixin_statements.len);
+    try std.testing.expectEqual(syntax.Kind.variable, (try document.get(mixin_statements[0])).kind);
+
+    const body_children = try document.children(root_children[1]);
+    const body_block = body_children[body_children.len - 1];
+    const body_statements = try document.children(body_block);
+    try std.testing.expectEqual(@as(usize, 2), body_statements.len);
+    try std.testing.expectEqual(syntax.Kind.expression, (try document.get(body_statements[0])).kind);
+    try std.testing.expectEqualStrings(
+        "mixin(@(a, b)",
+        try sources.slice((try document.get(body_statements[0])).text.?),
+    );
+    try std.testing.expectEqualStrings(
+        ")",
+        try sources.slice((try document.get(body_statements[1])).text.?),
+    );
 }
 
 test "native parser accepts every pinned Stylus success entry" {
@@ -1062,6 +1117,17 @@ fn exerciseEolEscapeAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(syntax.Kind.function, (try document.get(root_children[1])).kind);
 }
 
+fn exerciseAnonymousFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("anonymous-functions.styl", anonymous_functions_input);
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 1), countKind(&document, .function));
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -1114,6 +1180,14 @@ test "native Stylus end-of-line escapes handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseEolEscapeAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus anonymous function blocks handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseAnonymousFunctionAllocationFailures,
         .{},
     );
 }

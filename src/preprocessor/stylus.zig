@@ -329,13 +329,15 @@ pub const Parser = struct {
                     ']' => square_depth -|= 1,
                     else => {},
                 }
-                if (paren_depth != 0 or square_depth != 0) {
+                const anonymous_block = byte == '{' and square_depth == 0 and
+                    self.looksLikeAnonymousFunctionLiteral(segment_start, cursor);
+                if ((paren_depth != 0 or square_depth != 0) and !anonymous_block) {
                     cursor += 1;
                     continue;
                 }
 
                 if (byte == '{') {
-                    if (self.isBlockOpeningBrace(segment_start, cursor, line_end)) {
+                    if (anonymous_block or self.isBlockOpeningBrace(segment_start, cursor, line_end)) {
                         if (segment_visible) {
                             try self.appendLineSegment(
                                 lines,
@@ -632,6 +634,60 @@ pub const Parser = struct {
                         }
                     }
                     return true;
+                },
+                else => {},
+            }
+        }
+        return false;
+    }
+
+    fn looksLikeAnonymousFunctionLiteral(
+        self: *const Parser,
+        segment_start: usize,
+        opening: usize,
+    ) bool {
+        var token_start: usize = 0;
+        while (token_start < self.tokens.len and
+            self.tokens[token_start].span.end <= segment_start)
+        {
+            token_start += 1;
+        }
+        var token_end = token_start;
+        while (token_end < self.tokens.len and
+            self.tokens[token_end].span.start < opening)
+        {
+            token_end += 1;
+        }
+        const prefix = self.tokens[token_start..token_end];
+        var cursor = prefix.len;
+        while (cursor > 0 and
+            (prefix[cursor - 1].kind == .whitespace or prefix[cursor - 1].kind == .comment))
+        {
+            cursor -= 1;
+        }
+        if (cursor == 0 or prefix[cursor - 1].kind != .close_paren) return false;
+
+        var depth: usize = 0;
+        while (cursor > 0) {
+            cursor -= 1;
+            switch (prefix[cursor].kind) {
+                .close_paren => depth += 1,
+                .open_paren => {
+                    if (depth == 0) return false;
+                    depth -= 1;
+                    if (depth != 0) continue;
+                    var marker = cursor;
+                    while (marker > 0 and
+                        (prefix[marker - 1].kind == .whitespace or
+                            prefix[marker - 1].kind == .comment))
+                    {
+                        marker -= 1;
+                    }
+                    return marker > 0 and std.mem.eql(
+                        u8,
+                        prefix[marker - 1].raw(self.source_bytes),
+                        "@",
+                    );
                 },
                 else => {},
             }
@@ -957,6 +1013,7 @@ pub const Parser = struct {
             }
             return .variable;
         }
+        if (has_children and looksLikeAnonymousCallHeader(raw)) return .expression;
         if (has_children and looksLikeFunctionDefinition(self.tokens[line.token_start..line.token_end])) {
             return .function;
         }
@@ -1455,6 +1512,42 @@ fn looksLikeFunctionDefinition(tokens: []const native_lexer.Token) bool {
     var opening = name + 1;
     while (opening < tokens.len and tokens[opening].kind == .whitespace) : (opening += 1) {}
     return opening < tokens.len and tokens[opening].kind == .open_paren;
+}
+
+fn looksLikeAnonymousCallHeader(raw: []const u8) bool {
+    if (!looksLikeAdjacentCall(raw) or !endsWithSignificant(raw, ')')) return false;
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    var found_anonymous = false;
+    for (raw, 0..) |byte, index| {
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '@' and index + 1 < raw.len and raw[index + 1] == '(') {
+            found_anonymous = true;
+        }
+        switch (byte) {
+            '(' => depth += 1,
+            ')' => {
+                if (depth == 0) return false;
+                depth -= 1;
+            },
+            else => {},
+        }
+    }
+    return quote == 0 and found_anonymous and depth == 1;
 }
 
 fn looksLikeAdjacentCall(raw: []const u8) bool {

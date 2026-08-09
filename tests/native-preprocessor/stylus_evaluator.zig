@@ -358,6 +358,21 @@ const function_arguments_css = "body{padding:15;padding:1 2}" ++
     ".defaults{p0:4px;p1:5px}.opaque{color:#000}" ++
     ".translucent{color:rgba(0,0,0,0.5)}img{width:auto!important}";
 
+const anonymous_functions_input =
+    \\mixin(add) {
+    \\  mul = @(c, d) {
+    \\    c * d
+    \\  }
+    \\  width: add(2, 3) + mul(4, 5)
+    \\}
+    \\body
+    \\  mixin(@(a, b) {
+    \\    return a + b;
+    \\  })
+;
+
+const anonymous_functions_css = "body{width:25}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -3121,6 +3136,62 @@ test "native Stylus function arguments preserve defaults forwarding and property
     );
 }
 
+test "native Stylus anonymous functions preserve lexical callbacks within the call-depth bound" {
+    const lower_input =
+        \\identity = @(value) {
+        \\  value
+        \\}
+        \\body
+        \\  width identity(3)
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_call_depth = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{width:3}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var first = try compile(std.testing.allocator, anonymous_functions_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, anonymous_functions_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(anonymous_functions_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_call_depth = 1;
+    try expectSemanticRejectionWithLimits(
+        anonymous_functions_input,
+        over_limit,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.indexOf(u8, anonymous_functions_input, "add(2, 3)").?),
+    );
+
+    const lexical_escape =
+        \\make()
+        \\  private = @(value) {
+        \\    value
+        \\  }
+        \\  private(1)
+        \\make()
+        \\body
+        \\  private(2)
+    ;
+    try expectSemanticRejection(
+        lexical_escape,
+        error.UndefinedCallable,
+        .invalid_operation,
+        "native Stylus callable is undefined",
+        @intCast(std.mem.lastIndexOf(u8, lexical_escape, "private(2)").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3702,6 +3773,14 @@ fn exerciseFunctionArgumentsAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(function_arguments_css, result.css());
 }
 
+fn exerciseAnonymousFunctionsAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var result = try compile(allocator, anonymous_functions_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(anonymous_functions_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3906,6 +3985,14 @@ test "native Stylus function arguments handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseFunctionArgumentsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus anonymous functions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseAnonymousFunctionsAllocationFailures,
         .{},
     );
 }

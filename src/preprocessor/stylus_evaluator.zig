@@ -1891,6 +1891,7 @@ const Callable = struct {
     name: []const u8,
     node_id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
+    anonymous: bool = false,
 };
 
 const MutationAlias = struct {
@@ -2378,6 +2379,40 @@ const Engine = struct {
         });
     }
 
+    fn ownAnonymousCallable(
+        self: *Engine,
+        span: native_source.Span,
+        node_id: native_syntax.NodeId,
+        scope: native_environment.ScopeId,
+        name: []const u8,
+    ) Error!*const native_value.Value {
+        const node = try self.document.get(node_id);
+        const text = node.text orelse return error.InvalidDocument;
+        const raw = try self.sources.slice(text);
+        if (parseAnonymousDefinition(raw) == null) {
+            try self.reportInvalidArguments(span);
+            return error.InvalidArguments;
+        }
+        _ = try self.statementBlock(node_id);
+        if (self.callables.items.len >= std.math.maxInt(u32)) {
+            try self.reportResource(span, "native Stylus value limit exceeded");
+            return error.ValueLimitExceeded;
+        }
+        const callable_id: u32 = @intCast(self.callables.items.len);
+        try self.callables.append(self.allocator, .{
+            .name = name,
+            .node_id = node_id,
+            .scope = scope,
+            .anonymous = true,
+        });
+        errdefer _ = self.callables.pop();
+        return self.ownValue(span, .{ .callable = .{
+            .kind = .user_function,
+            .id = callable_id,
+            .identity = @as(u64, callable_id) + 1,
+        } });
+    }
+
     fn assign(
         self: *Engine,
         node_id: native_syntax.NodeId,
@@ -2420,12 +2455,22 @@ const Engine = struct {
             return;
         }
         var map_alias_name: ?[]const u8 = null;
+        var anonymous_callable_id: ?u32 = null;
         var evaluated = if (std.mem.eql(u8, assignment.value, "@block") or
             (assignment.value.len == 0 and !try self.hasExplicitOpeningBrace(node_id)))
             try self.ownBlockValue(text, try self.statementBlock(node_id), scope.*, true)
         else if (assignment.value.len == 0)
             try self.evaluateObjectBlock(node_id, scope.*)
-        else alias: {
+        else if (assignment.operator == null and parseAnonymousLiteral(assignment.value) != null) anonymous: {
+            const value = try self.ownAnonymousCallable(
+                text,
+                node_id,
+                scope.*,
+                assignment.name,
+            );
+            anonymous_callable_id = value.callable.id;
+            break :anonymous value;
+        } else alias: {
             if (assignment.operator == null and validVariableName(assignment.value)) {
                 if (try self.lookupBinding(scope.*, assignment.value)) |candidate| {
                     if (candidate.* == .map) {
@@ -2448,6 +2493,10 @@ const Engine = struct {
         const aliases_current_property = self.active_property_value != null and
             evaluated == self.active_property_value.?;
         scope.* = try self.setBinding(scope.*, assignment.name, evaluated, text);
+        if (anonymous_callable_id) |callable_id| {
+            if (callable_id >= self.callables.items.len) return error.InvalidDocument;
+            self.callables.items[callable_id].scope = scope.*;
+        }
         if (map_alias_name) |source_name| {
             try self.registerMapBindingAlias(
                 scope.*,
@@ -4021,6 +4070,27 @@ const Engine = struct {
             }
             if (statement.kind == .expression and statement.text != null) {
                 const statement_raw = try self.sources.slice(statement.text.?);
+                if (parseAnonymousCallHeader(statement_raw)) |call| {
+                    const returned = try self.invokeUserCallable(
+                        statement.text.?,
+                        statement_raw,
+                        call,
+                        scope.*,
+                        output,
+                        false,
+                        statement_id,
+                    );
+                    if (returned != null) return error.InvalidDocument;
+                    pending_define_closing = true;
+                    previous_condition = null;
+                    if (allow_return) {
+                        implicit_result = try self.ownValue(
+                            statement.text.?,
+                            .{ .null_value = {} },
+                        );
+                    }
+                    continue;
+                }
                 if (try self.executeDefineStatement(
                     statement.text.?,
                     statement_raw,
@@ -4081,7 +4151,10 @@ const Engine = struct {
                 if (parsePostfixLoop(statement_raw)) |postfix| {
                     const expression = std.mem.trim(u8, postfix.expression, " \t\r\n\x0c;");
                     const call = parseCall(expression) orelse parseBareCall(expression);
-                    if (call == null or self.findCallable(expression[call.?.name.start..call.?.name.end]) == null) {
+                    if (call == null or try self.resolveCallable(
+                        scope.*,
+                        expression[call.?.name.start..call.?.name.end],
+                    ) == null) {
                         // Ordinary declaration postfix loops are handled by their declaration path.
                     } else {
                         try self.executePostfixMixin(statement.text.?, statement_raw, scope, output.?);
@@ -4140,7 +4213,9 @@ const Engine = struct {
                     }
                     if (parseDeclarationCall(raw)) |call| {
                         const name = raw[call.name.start..call.name.end];
-                        if (self.findCallable(name) != null and !self.isActiveCallable(name)) {
+                        if (try self.resolveCallable(scope.*, name) != null and
+                            !self.isActiveCallable(name))
+                        {
                             const previous_property = self.active_property;
                             const previous_property_value = self.active_property_value;
                             const previous_property_call_span = self.active_property_call_span;
@@ -4167,6 +4242,7 @@ const Engine = struct {
                                 scope.*,
                                 destination,
                                 false,
+                                null,
                             );
                             if (returned != null) return error.InvalidDocument;
                             continue;
@@ -4302,9 +4378,10 @@ const Engine = struct {
                             " \t\r\n\x0c;",
                         );
                         const call = parseCall(raw) orelse parseBareCall(raw);
-                        if (call != null and
-                            self.findCallable(raw[call.?.name.start..call.?.name.end]) != null)
-                        {
+                        if (call != null and try self.resolveCallable(
+                            scope.*,
+                            raw[call.?.name.start..call.?.name.end],
+                        ) != null) {
                             const returned = try self.invokeUserCallable(
                                 text,
                                 raw,
@@ -4312,6 +4389,7 @@ const Engine = struct {
                                 scope.*,
                                 null,
                                 false,
+                                null,
                             );
                             if (returned != null) return error.InvalidDocument;
                         } else {
@@ -4573,7 +4651,7 @@ const Engine = struct {
             return error.UndefinedCallable;
         };
         const name = raw[call.name.start..call.name.end];
-        if (self.findCallable(name) == null) {
+        if (try self.resolveCallable(scope.*, name) == null) {
             if (call.parenthesized and isBuiltinCallableName(name)) {
                 _ = try self.evaluateValue(text, raw, scope.*, 0);
                 return;
@@ -4581,7 +4659,15 @@ const Engine = struct {
             try self.reportUndefinedCallable(text);
             return error.UndefinedCallable;
         }
-        const returned = try self.invokeUserCallable(text, raw, call, scope.*, output, false);
+        const returned = try self.invokeUserCallable(
+            text,
+            raw,
+            call,
+            scope.*,
+            output,
+            false,
+            null,
+        );
         if (returned != null) return error.InvalidDocument;
     }
 
@@ -4626,7 +4712,7 @@ const Engine = struct {
                 destination,
             );
         }
-        if (self.findCallable(name) == null) return false;
+        if (try self.resolveCallable(scope, name) == null) return false;
 
         const content = try self.ownBlockValue(selector.text.?, children[1], scope, false);
         const previous_content = self.pending_content_block;
@@ -4639,6 +4725,7 @@ const Engine = struct {
             scope,
             output,
             false,
+            null,
         );
         if (returned != null) return error.InvalidDocument;
         return true;
@@ -4796,15 +4883,10 @@ const Engine = struct {
         caller_scope: native_environment.ScopeId,
         output: ?RuleOutput,
         require_return: bool,
+        anonymous_node_id: ?native_syntax.NodeId,
     ) Error!?*const native_value.Value {
         const name = raw[call.name.start..call.name.end];
-        var callable = self.findCallable(name);
-        if (callable == null) {
-            if (try self.lookupBinding(caller_scope, name)) |alias| {
-                if (alias.* == .string) callable = self.findCallable(alias.string.bytes);
-            }
-        }
-        const resolved_callable = callable orelse {
+        const resolved_callable = (try self.resolveCallable(caller_scope, name)) orelse {
             try self.reportUndefinedCallable(span);
             return error.UndefinedCallable;
         };
@@ -4868,7 +4950,10 @@ const Engine = struct {
         );
         defer if (normalized_definition) |owned| self.allocator.free(owned);
         const definition_raw = normalized_definition orelse source_definition_raw;
-        const definition = parseDefinition(definition_raw) orelse return error.InvalidDocument;
+        const definition = if (resolved_callable.anonymous)
+            parseAnonymousDefinition(definition_raw) orelse return error.InvalidDocument
+        else
+            parseDefinition(definition_raw) orelse return error.InvalidDocument;
         var parameters = try splitTopLevel(
             self.allocator,
             definition_raw[definition.parameters.start..definition.parameters.end],
@@ -4935,7 +5020,18 @@ const Engine = struct {
             }
             const named = splitNamedArgument(argument_text);
             const value_raw = if (named) |item| item.value else argument_text;
-            const argument = try self.evaluateValue(span, value_raw, caller_scope, 0);
+            const argument = if (parseAnonymousLiteral(value_raw) != null)
+                try self.ownAnonymousCallable(
+                    span,
+                    anonymous_node_id orelse {
+                        try self.reportInvalidArguments(span);
+                        return error.InvalidArguments;
+                    },
+                    caller_scope,
+                    "anonymous",
+                )
+            else
+                try self.evaluateValue(span, value_raw, caller_scope, 0);
             argument_values.appendAssumeCapacity(argument);
             argument_names.appendAssumeCapacity(if (named) |item| item.name else null);
             argument_used.appendAssumeCapacity(false);
@@ -5046,21 +5142,23 @@ const Engine = struct {
                 .space,
         } });
         call_scope = try self.setBinding(call_scope, "arguments", arguments_value, span);
-        const current_property = (try self.currentPropertyValue(span, caller_scope)) orelse
-            try self.ownValue(span, .{ .null_value = {} });
-        call_scope = try self.setBinding(
-            call_scope,
-            "current-property",
-            current_property,
-            span,
-        );
-        if (self.active_property_value != null and
-            current_property == self.active_property_value.?)
-        {
-            try self.current_property_bindings.append(self.allocator, .{
-                .scope = call_scope,
-                .name = "current-property",
-            });
+        if (!resolved_callable.anonymous) {
+            const current_property = (try self.currentPropertyValue(span, caller_scope)) orelse
+                try self.ownValue(span, .{ .null_value = {} });
+            call_scope = try self.setBinding(
+                call_scope,
+                "current-property",
+                current_property,
+                span,
+            );
+            if (self.active_property_value != null and
+                current_property == self.active_property_value.?)
+            {
+                try self.current_property_bindings.append(self.allocator, .{
+                    .scope = call_scope,
+                    .name = "current-property",
+                });
+            }
         }
 
         const block = try self.statementBlock(resolved_callable.node_id);
@@ -5082,11 +5180,31 @@ const Engine = struct {
         var index = self.callables.items.len;
         while (index > 0) {
             index -= 1;
-            if (std.mem.eql(u8, self.callables.items[index].name, name)) {
+            if (!self.callables.items[index].anonymous and
+                std.mem.eql(u8, self.callables.items[index].name, name))
+            {
                 return self.callables.items[index];
             }
         }
         return null;
+    }
+
+    fn resolveCallable(
+        self: *const Engine,
+        scope: native_environment.ScopeId,
+        name: []const u8,
+    ) Error!?Callable {
+        if (self.findCallable(name)) |callable| return callable;
+        const binding = (try self.lookupBinding(scope, name)) orelse return null;
+        return switch (binding.*) {
+            .string => |alias| self.findCallable(alias.bytes),
+            .callable => |callable| if (callable.kind == .user_function and
+                callable.id < self.callables.items.len)
+                self.callables.items[callable.id]
+            else
+                null,
+            else => null,
+        };
     }
 
     fn isActiveCallable(self: *const Engine, name: []const u8) bool {
@@ -5416,6 +5534,7 @@ const Engine = struct {
                 loop_scope,
                 output,
                 false,
+                null,
             );
             if (returned != null) return error.InvalidDocument;
             parent_scope.* = loop_scope;
@@ -5805,7 +5924,7 @@ const Engine = struct {
         }
         if (parseCall(source_input)) |call| {
             const name = source_input[call.name.start..call.name.end];
-            if (self.findCallable(name) != null) {
+            if (try self.resolveCallable(scope, name) != null) {
                 return (try self.invokeUserCallable(
                     span,
                     source_input,
@@ -5813,6 +5932,7 @@ const Engine = struct {
                     scope,
                     null,
                     true,
+                    null,
                 )).?;
             }
             if (try self.evaluateBuiltin(span, source_input, call, scope)) |builtin| return builtin;
@@ -6092,7 +6212,7 @@ const Engine = struct {
 
         if (parseCall(input)) |call| {
             const name = input[call.name.start..call.name.end];
-            if (self.findCallable(name) != null) {
+            if (try self.resolveCallable(scope, name) != null) {
                 return (try self.invokeUserCallable(
                     span,
                     input,
@@ -6100,6 +6220,7 @@ const Engine = struct {
                     scope,
                     null,
                     true,
+                    null,
                 )).?;
             }
             if (try self.evaluateBuiltin(span, input, call, scope)) |builtin| return builtin;
@@ -6111,7 +6232,7 @@ const Engine = struct {
         }
         if (parseBareCall(input)) |call| {
             const name = input[call.name.start..call.name.end];
-            if (self.findCallable(name) != null) {
+            if (try self.resolveCallable(scope, name) != null) {
                 return (try self.invokeUserCallable(
                     span,
                     input,
@@ -6119,6 +6240,7 @@ const Engine = struct {
                     scope,
                     null,
                     true,
+                    null,
                 )).?;
             }
         }
@@ -9336,6 +9458,36 @@ const Engine = struct {
                     (std.ascii.isDigit(raw[start - 1]) or raw[start - 1] == '.');
                 const substitute = (context == .value or context == .interpolation) and !unit_suffix;
                 if (substitute) {
+                    var opening = index;
+                    while (opening < raw.len and std.ascii.isWhitespace(raw[opening])) {
+                        opening += 1;
+                    }
+                    if (opening < raw.len and raw[opening] == '(') {
+                        const bound = try self.lookupBinding(scope, name);
+                        if (bound != null and bound.?.* == .callable) {
+                            const closing = matchingParen(raw, opening) orelse
+                                return error.InvalidDocument;
+                            const call_span = try self.relativeSpan(span, .{
+                                .start = start,
+                                .end = closing + 1,
+                            });
+                            const value = try self.evaluateValue(
+                                call_span,
+                                raw[start .. closing + 1],
+                                scope,
+                                depth + 1,
+                            );
+                            const replacement = try self.serializeValueOwned(
+                                value,
+                                context,
+                                call_span,
+                            );
+                            defer self.allocator.free(replacement);
+                            try self.appendTemporary(&output, span, replacement);
+                            index = closing + 1;
+                            continue;
+                        }
+                    }
                     if (try self.lookupBinding(scope, name) != null) {
                         const chain_end = memberChainEnd(raw, index);
                         if (chain_end > index) {
@@ -10491,6 +10643,63 @@ fn parseCall(raw_input: []const u8) ?Call {
     return .{
         .name = .{ .start = 0, .end = name_end },
         .arguments = .{ .start = opening + 1, .end = closing },
+    };
+}
+
+fn parseAnonymousDefinition(raw_input: []const u8) ?Definition {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    var quote: u8 = 0;
+    var escaped = false;
+    var index: usize = 0;
+    while (index + 1 < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte != '@' or raw[index + 1] != '(') continue;
+        const closing = matchingParen(raw, index + 1) orelse return null;
+        return .{
+            .name = .{ .start = index, .end = index + 1 },
+            .parameters = .{ .start = index + 2, .end = closing },
+        };
+    }
+    return null;
+}
+
+fn parseAnonymousLiteral(raw_input: []const u8) ?Definition {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    const definition = parseAnonymousDefinition(raw) orelse return null;
+    if (definition.name.start != 0 or definition.parameters.end + 1 != raw.len) return null;
+    return definition;
+}
+
+fn parseAnonymousCallHeader(raw_input: []const u8) ?Call {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    if (raw.len < 5 or !isNameStart(raw, 0)) return null;
+    const name_end = nameEnd(raw, 0);
+    var opening = name_end;
+    while (opening < raw.len and std.ascii.isWhitespace(raw[opening])) opening += 1;
+    if (opening >= raw.len or raw[opening] != '(' or matchingParen(raw, opening) != null) {
+        return null;
+    }
+    const definition = parseAnonymousDefinition(raw) orelse return null;
+    if (definition.name.start <= opening or definition.parameters.end + 1 != raw.len) {
+        return null;
+    }
+    return .{
+        .name = .{ .start = 0, .end = name_end },
+        .arguments = .{ .start = opening + 1, .end = raw.len },
     };
 }
 
