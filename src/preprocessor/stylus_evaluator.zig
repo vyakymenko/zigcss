@@ -3168,17 +3168,18 @@ const Engine = struct {
         const keyframes = "@keyframes";
         const is_official_keyframes = startsWordAscii(header, keyframes);
         if (is_official_keyframes and self.active_keyframe_header == null) {
-            const previous_header = self.active_keyframe_header;
-            defer self.active_keyframe_header = previous_header;
-            for ([_][]const u8{
-                "@-moz-keyframes",
-                "@-webkit-keyframes",
-                "@-o-keyframes",
-                keyframes,
-            }) |prefixed| {
-                self.active_keyframe_header = prefixed;
-                try self.emitAtRule(at_rule_id, parent_scope, parent_selector);
-            }
+            const vendors = try self.evaluateValue(
+                at_rule.text.?,
+                "vendors",
+                parent_scope,
+                0,
+            );
+            try self.emitKeyframeVariants(
+                at_rule_id,
+                parent_scope,
+                parent_selector,
+                vendors,
+            );
             return;
         }
         const prefixed_header = if (is_official_keyframes and
@@ -3292,6 +3293,55 @@ const Engine = struct {
             }
         }
         try self.emit("}");
+    }
+
+    fn emitKeyframeVariants(
+        self: *Engine,
+        at_rule_id: native_syntax.NodeId,
+        parent_scope: native_environment.ScopeId,
+        parent_selector: ?[]const u8,
+        vendors: *const native_value.Value,
+    ) Error!void {
+        switch (vendors.*) {
+            .list => |list| for (list.items) |*vendor| {
+                try self.emitKeyframeVariants(
+                    at_rule_id,
+                    parent_scope,
+                    parent_selector,
+                    vendor,
+                );
+            },
+            .string, .selector => |vendor| {
+                if (std.mem.eql(u8, vendor.bytes, "ms")) return;
+                if (vendor.bytes.len == 0 or vendor.bytes[0] == '$' or
+                    !validVariableName(vendor.bytes))
+                {
+                    const at_rule = try self.document.get(at_rule_id);
+                    try self.reportInvalidArguments(at_rule.text orelse at_rule.span);
+                    return error.InvalidArguments;
+                }
+                const header = if (std.mem.eql(u8, vendor.bytes, "official"))
+                    "@keyframes"
+                else
+                    try std.fmt.allocPrint(
+                        self.allocator,
+                        "@-{s}-keyframes",
+                        .{vendor.bytes},
+                    );
+                defer if (!std.mem.eql(u8, vendor.bytes, "official")) {
+                    self.allocator.free(header);
+                };
+                const previous_header = self.active_keyframe_header;
+                self.active_keyframe_header = header;
+                defer self.active_keyframe_header = previous_header;
+                try self.emitAtRule(at_rule_id, parent_scope, parent_selector);
+            },
+            else => {
+                const at_rule = try self.document.get(at_rule_id);
+                try self.reportInvalidArguments(at_rule.text orelse at_rule.span);
+                return error.InvalidArguments;
+            },
+        }
     }
 
     fn emittingOKeyframes(self: *const Engine) bool {
@@ -4881,6 +4931,9 @@ const Engine = struct {
                 self.ownValue(span, .{ .null_value = {} });
         }
         if (nameEql(source_input, "vendors")) {
+            if (try self.lookupBinding(scope, source_input)) |resolved| {
+                return self.ownValue(span, resolved.*);
+            }
             const items = [_]native_value.Value{
                 .{ .string = .{ .bytes = "moz" } },
                 .{ .string = .{ .bytes = "webkit" } },
@@ -6785,16 +6838,21 @@ const Engine = struct {
         if (property_bytes.len == 0) return self.invalidBuiltinArguments(span);
 
         const property = try self.allocator.dupe(u8, property_bytes);
-        errdefer self.allocator.free(property);
-        const value = try self.serializeValueOwned(arguments.items[1], .value, span);
-        errdefer self.allocator.free(value);
-        try destination.declarations.append(self.allocator, .{
+        const value = self.serializeValueOwned(arguments.items[1], .value, span) catch |failure| {
+            self.allocator.free(property);
+            return failure;
+        };
+        destination.declarations.append(self.allocator, .{
             .span = span,
             .property = property,
             .value = value,
             .semantic_value = arguments.items[1],
             .side_effect = true,
-        });
+        }) catch |failure| {
+            self.allocator.free(property);
+            self.allocator.free(value);
+            return failure;
+        };
         return self.ownValue(span, .{ .null_value = {} });
     }
 

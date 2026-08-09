@@ -961,6 +961,20 @@ test "native Stylus evaluates compact declaration values inside explicit CSS blo
     try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const invalid =
+        \\vendors = 1
+        \\@keyframes pulse
+        \\  from
+        \\    color red
+    ;
+    try expectSemanticRejection(
+        invalid,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid, "@keyframes").?),
+    );
 }
 
 test "native Stylus preserves finite declaration comment boundaries" {
@@ -1440,6 +1454,30 @@ test "native Stylus evaluates single-line implicit-return functions with postfix
 
     try std.testing.expectEqualStrings(
         "body{foo:false;foo:true}body{foo:false;foo:true;foo:}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
+test "native Stylus keyframe fabrication follows the bounded vendor value" {
+    const input =
+        \\vendors = webkit ms official
+        \\@keyframes pulse
+        \\  from
+        \\    color red
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "@-webkit-keyframes pulse{from{color:#f00}}" ++
+            "@keyframes pulse{from{color:#f00}}",
         first.css(),
     );
     try std.testing.expectEqualStrings(first.css(), second.css());
@@ -2303,6 +2341,19 @@ fn exerciseSingleLineCallableAllocationFailures(allocator: std.mem.Allocator) !v
     try std.testing.expectEqualStrings("body{foo:false;foo:}", result.css());
 }
 
+fn exerciseKeyframeVendorAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "vendors = webkit\n@keyframes pulse\n  from\n    opacity 0\n",
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "@-webkit-keyframes pulse{from{opacity:0}}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2331,6 +2382,14 @@ test "native Stylus single-line callable transaction handles every allocation fa
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseSingleLineCallableAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus keyframe vendor transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseKeyframeVendorAllocationFailures,
         .{},
     );
 }
