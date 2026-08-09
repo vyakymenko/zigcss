@@ -556,6 +556,23 @@ const commented_if_else_input =
 const commented_if_else_css =
     ".base,.alias{color:#f00}body{color:#00f;background:#fff}";
 
+const unitful_mixin_condition_input =
+    \\sign(n)
+    \\  if n < 0
+    \\    result below
+    \\  else if n > 0
+    \\    result above
+    \\  else
+    \\    result zero
+    \\body
+    \\  sign(5px)
+    \\  sign(-5px)
+    \\  sign(0px)
+;
+
+const unitful_mixin_condition_css =
+    "body{result:above;result:below;result:zero}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2317,6 +2334,34 @@ test "native Stylus preserves comment-separated conditional chains" {
     try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
+test "native Stylus compares unitful mixin arguments with unitless bounds" {
+    var first = try compile(std.testing.allocator, unitful_mixin_condition_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, unitful_mixin_condition_input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(unitful_mixin_condition_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const incompatible =
+        \\body
+        \\  before safe
+        \\  if 1px < 1s
+        \\    after unsafe
+    ;
+    try expectSemanticRejection(
+        incompatible,
+        error.InvalidOperation,
+        .invalid_operation,
+        "native Stylus expression is invalid",
+        @intCast(std.mem.indexOf(u8, incompatible, "if 1px < 1s").?),
+    );
 }
 
 test "native Stylus evaluates filtered postfix declaration loops" {
@@ -4481,6 +4526,12 @@ fn exerciseCommentedIfElseAllocationFailures(allocator: std.mem.Allocator) !void
     try std.testing.expectEqualStrings(commented_if_else_css, result.css());
 }
 
+fn exerciseUnitfulMixinConditionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, unitful_mixin_condition_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(unitful_mixin_condition_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -4749,6 +4800,14 @@ test "native Stylus comment-separated conditional chains handle every allocation
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCommentedIfElseAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus unitful mixin conditions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseUnitfulMixinConditionAllocationFailures,
         .{},
     );
 }

@@ -9639,7 +9639,18 @@ const Engine = struct {
             const equal = stylusValueEqual(left.*, right.*);
             return if (operator == .equal) equal else !equal;
         }
-        if (left.* != .number or right.* != .number or
+        if (left.* != .number or right.* != .number) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        // Pinned Stylus Unit.coerce() applies the unitful operand's unit to a
+        // unitless relational bound. Keep unrelated incompatible unit pairs
+        // fail-closed until their own finite conformance family owns them.
+        const left_unitless = left.number.numerator_units.len == 0 and
+            left.number.denominator_units.len == 0;
+        const right_unitless = right.number.numerator_units.len == 0 and
+            right.number.denominator_units.len == 0;
+        if (!left_unitless and !right_unitless and
             !numberUnitsEqual(left.number, right.number))
         {
             try self.reportInvalidOperation(span);
