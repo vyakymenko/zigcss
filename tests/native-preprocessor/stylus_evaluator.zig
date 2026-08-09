@@ -204,6 +204,36 @@ const variable_target_extension_input =
 
 const variable_target_extension_css = ".test,.test2{width:100%}";
 
+const optional_extension_input =
+    \\.tester
+    \\  color #FFF
+    \\$tester2
+    \\  font-size 12px
+    \\$tester3
+    \\  border-radius 1px
+    \\.end
+    \\  @extend .tester !optional, notExist1 !optional, $notExist2 !optional, $tester2 !optional, {'$test' + 'er3'} !optional
+    \\  border #AAA
+;
+
+const optional_extension_css = ".tester,.end{color:#fff}" ++
+    ".end{font-size:12px}.end{border-radius:1px}.end{border:#aaa}";
+
+const callable_optional_extension_input =
+    \\.base
+    \\  width 1px
+    \\$placeholder
+    \\  height 2px
+    \\extend-targets()
+    \\  @extend .base !optional, absent !optional, $placeholder !optional
+    \\.end
+    \\  extend-targets()
+    \\  display block
+;
+
+const callable_optional_extension_css =
+    ".base,.end{width:1px}.end{height:2px}.end{display:block}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2755,6 +2785,55 @@ test "native Stylus variable extension targets retain bounded lexical ownership"
     );
 }
 
+test "native Stylus optional extension targets retain bounded list ownership" {
+    const lower_input =
+        \\.base
+        \\  width 1px
+        \\$placeholder
+        \\  height 2px
+        \\.end
+        \\  @extend .base !optional, absent !optional, $placeholder !optional
+        \\  display block
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        ".base,.end{width:1px}.end{height:2px}.end{display:block}",
+        lower.css(),
+    );
+
+    var callable = try compile(
+        std.testing.allocator,
+        callable_optional_extension_input,
+        .{},
+    );
+    defer callable.deinit();
+    try std.testing.expectEqualStrings(callable_optional_extension_css, callable.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 7;
+    var first = try compile(std.testing.allocator, optional_extension_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, optional_extension_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(optional_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 6;
+    try expectSemanticRejectionWithLimits(
+        optional_extension_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, optional_extension_input, ".end").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3290,6 +3369,16 @@ fn exerciseVariableTargetExtensionAllocationFailures(allocator: std.mem.Allocato
     try std.testing.expectEqualStrings(variable_target_extension_css, result.css());
 }
 
+fn exerciseOptionalExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var callable = try compile(allocator, callable_optional_extension_input, .{});
+    defer callable.deinit();
+    try std.testing.expectEqualStrings(callable_optional_extension_css, callable.css());
+
+    var result = try compile(allocator, optional_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(optional_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3454,6 +3543,14 @@ test "native Stylus variable extension targets handle every allocation failure" 
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseVariableTargetExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus optional extension targets handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOptionalExtensionAllocationFailures,
         .{},
     );
 }

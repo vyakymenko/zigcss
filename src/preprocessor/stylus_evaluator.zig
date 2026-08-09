@@ -770,15 +770,7 @@ fn containsLoopExtensionCandidate(
                 " \t\r\n\x0c;",
             );
             if (parseExtendDirective(raw)) |directive| {
-                var targets = directive.targets;
-                if (std.mem.indexOf(u8, targets, " !optional")) |optional| {
-                    targets = std.mem.trimRight(
-                        u8,
-                        targets[0..optional],
-                        " \t\r\n\x0c;",
-                    );
-                }
-                if (targets.len > 0) return true;
+                if (stripOptionalExtensionModifier(directive.targets).len > 0) return true;
             }
         }
         for (try document.children(statement_id)) |child_id| {
@@ -2856,14 +2848,7 @@ const Engine = struct {
                 }
                 const extender = parent_selector orelse continue;
                 const directive = parseExtendDirective(raw) orelse continue;
-                var targets_raw = directive.targets;
-                if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
-                    targets_raw = std.mem.trimRight(
-                        u8,
-                        targets_raw[0..optional],
-                        " \t\r\n\x0c;",
-                    );
-                }
+                const targets_raw = directive.targets;
                 if (targets_raw.len == 0) continue;
                 var targets = try splitTopLevel(self.allocator, targets_raw, ',');
                 defer targets.deinit(self.allocator);
@@ -2881,10 +2866,8 @@ const Engine = struct {
                     {},
                 );
                 for (targets.items) |range| {
-                    const target = std.mem.trim(
-                        u8,
+                    const target = stripOptionalExtensionModifier(
                         targets_raw[range.start..range.end],
-                        " \t\r\n\x0c;",
                     );
                     if (target.len == 0 or std.mem.indexOfScalar(u8, target, '{') != null) {
                         continue;
@@ -3041,14 +3024,7 @@ const Engine = struct {
         if (self.mode != .discover_extensions) return false;
         const plan = self.dynamic_extension_plan orelse return false;
         const extender = self.active_selector_identity orelse return false;
-        var targets_raw = directive.targets;
-        if (std.mem.indexOf(u8, targets_raw, " !optional")) |optional| {
-            targets_raw = std.mem.trimRight(
-                u8,
-                targets_raw[0..optional],
-                " \t\r\n\x0c;",
-            );
-        }
+        const targets_raw = directive.targets;
         if (targets_raw.len == 0) return false;
         const statically_collected = self.static_extension_directives.contains(
             statement_id.value,
@@ -3062,10 +3038,8 @@ const Engine = struct {
             defer original_targets.deinit(self.allocator);
             var appended = false;
             for (original_targets.items) |range| {
-                const original_target = std.mem.trim(
-                    u8,
+                const original_target = stripOptionalExtensionModifier(
                     targets_raw[range.start..range.end],
-                    " \t\r\n\x0c;",
                 );
                 if (!extensionTargetNeedsRuntimeRendering(original_target)) continue;
                 const rendered = try self.renderRawOwned(
@@ -3100,9 +3074,15 @@ const Engine = struct {
         }
         if (self.active_loop_depth == 0 and self.active_callables.items.len == 0) return false;
 
-        const rendered_targets = try self.renderRawOwned(
+        const renderable_targets = try self.extensionTargetsWithoutOptionalOwned(
             span,
             targets_raw,
+        );
+        defer self.allocator.free(renderable_targets);
+        if (renderable_targets.len == 0) return false;
+        const rendered_targets = try self.renderRawOwned(
+            span,
+            renderable_targets,
             scope,
             .selector,
             0,
@@ -3140,6 +3120,26 @@ const Engine = struct {
         }
         if (appended) try plan.directives.put(self.allocator, statement_id.value, {});
         return appended;
+    }
+
+    fn extensionTargetsWithoutOptionalOwned(
+        self: *Engine,
+        span: native_source.Span,
+        targets_raw: []const u8,
+    ) Error![]u8 {
+        var targets = try splitTopLevel(self.allocator, targets_raw, ',');
+        defer targets.deinit(self.allocator);
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (targets.items) |range| {
+            const target = stripOptionalExtensionModifier(
+                targets_raw[range.start..range.end],
+            );
+            if (target.len == 0) continue;
+            if (output.items.len > 0) try self.appendTemporary(&output, span, ",");
+            try self.appendTemporary(&output, span, target);
+        }
+        return output.toOwnedSlice(self.allocator);
     }
 
     fn appendDiscoveredExtension(
@@ -10738,6 +10738,76 @@ fn parseExtendDirective(raw: []const u8) ?ExtendDirective {
         .targets = std.mem.trim(u8, raw[keyword.len..], " \t\r\n\x0c;"),
         .plural = plural,
     };
+}
+
+fn stripOptionalExtensionModifier(raw_input: []const u8) []const u8 {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    const keyword = "!optional";
+    if (raw.len <= keyword.len or !std.mem.endsWith(u8, raw, keyword)) return raw;
+    const marker = raw.len - keyword.len;
+    if (!std.ascii.isWhitespace(raw[marker - 1])) return raw;
+
+    var quote: u8 = 0;
+    var escaped = false;
+    var line_comment = false;
+    var block_comment = false;
+    var depth: usize = 0;
+    var index: usize = 0;
+    while (index < marker) : (index += 1) {
+        const byte = raw[index];
+        if (line_comment) {
+            if (byte == '\n' or byte == '\r' or byte == '\x0c') line_comment = false;
+            continue;
+        }
+        if (block_comment) {
+            if (byte == '*' and index + 1 < marker and raw[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (byte == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '/' and index + 1 < marker) {
+            if (raw[index + 1] == '/') {
+                line_comment = true;
+                index += 1;
+                continue;
+            }
+            if (raw[index + 1] == '*') {
+                block_comment = true;
+                index += 1;
+                continue;
+            }
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+    }
+    if (quote != 0 or escaped or line_comment or block_comment or depth != 0) return raw;
+    return std.mem.trimRight(u8, raw[0..marker], " \t\r\n\x0c;");
 }
 
 fn matchingParen(raw: []const u8, opening: usize) ?usize {
