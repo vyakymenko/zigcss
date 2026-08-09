@@ -53,6 +53,7 @@ pub const OutputStyle = enum {
 
 pub const Options = struct {
     output_style: OutputStyle = .expanded,
+    include_css: bool = false,
 };
 
 pub const Error = native_environment.Error ||
@@ -175,6 +176,7 @@ pub fn evaluateWithOptions(
             sources,
             transaction,
             limits,
+            options.include_css,
         );
         defer expander.deinit();
         expanded_document = expander.expand(base_document) catch |failure| switch (failure) {
@@ -1108,6 +1110,7 @@ const ImportExpander = struct {
     sources: *native_source.Table,
     transaction: *native_evaluator.Transaction,
     limits: Limits,
+    include_css: bool,
     builder: native_syntax.Builder,
     source_ids: std.StringHashMapUnmanaged(native_source.SourceId) = .empty,
     required_urls: std.StringHashMapUnmanaged(void) = .empty,
@@ -1119,12 +1122,14 @@ const ImportExpander = struct {
         sources: *native_source.Table,
         transaction: *native_evaluator.Transaction,
         limits: Limits,
+        include_css: bool,
     ) ImportExpander {
         return .{
             .allocator = allocator,
             .sources = sources,
             .transaction = transaction,
             .limits = limits,
+            .include_css = include_css,
             .builder = native_syntax.Builder.init(allocator, sources, .{
                 .max_nodes = limits.max_nodes,
             }),
@@ -1285,10 +1290,9 @@ const ImportExpander = struct {
         parent_url: []const u8,
         output: *std.ArrayList(native_syntax.NodeId),
     ) Error!void {
-        const import_basename = std.fs.path.basename(parsed.target);
-        const css_inline = import_basename.len > 0 and
-            (import_basename[0] == '_' or std.mem.indexOf(u8, import_basename, "._") != null);
-        if (std.ascii.eqlIgnoreCase(std.fs.path.extension(parsed.target), ".css") and !css_inline) {
+        if (std.ascii.eqlIgnoreCase(std.fs.path.extension(parsed.target), ".css") and
+            !self.include_css)
+        {
             if (try self.cssImportNode(parsed, text, parent_url)) |node| {
                 try output.append(self.allocator, node);
             }
@@ -4804,6 +4808,7 @@ const Engine = struct {
             self.sources,
             self.transaction,
             self.limits,
+            self.options.include_css,
         );
         defer expander.deinit();
         var imported = try expander.expandRuntime(
@@ -5979,6 +5984,7 @@ const Engine = struct {
         const source_file = try self.sources.get(text.source);
         if (std.ascii.eqlIgnoreCase(std.fs.path.extension(source_file.name), ".css")) {
             const value = try self.renderTextOwned(value_span, scope.*, .value, 0);
+            errdefer self.allocator.free(value);
             return .{
                 .span = declaration_span,
                 .property = property,

@@ -636,10 +636,29 @@ fn compileFixture(
     resolver_limits: resolver.Limits,
     evaluator_limits: stylus_evaluator.Limits,
 ) !evaluator.ValidatedCss {
-    return compileFixtureWithCancellation(
+    return compileFixtureWithOptions(
         allocator,
         input,
         files,
+        .{},
+        resolver_limits,
+        evaluator_limits,
+    );
+}
+
+fn compileFixtureWithOptions(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    files: []const FixtureFile,
+    options: stylus_evaluator.Options,
+    resolver_limits: resolver.Limits,
+    evaluator_limits: stylus_evaluator.Limits,
+) !evaluator.ValidatedCss {
+    return compileFixtureWithOptionsAndCancellation(
+        allocator,
+        input,
+        files,
+        options,
         resolver_limits,
         evaluator_limits,
         .{},
@@ -651,6 +670,28 @@ fn compileFixtureWithCancellation(
     allocator: std.mem.Allocator,
     input: []const u8,
     files: []const FixtureFile,
+    resolver_limits: resolver.Limits,
+    evaluator_limits: stylus_evaluator.Limits,
+    resolver_cancellation: resolver.Cancellation,
+    evaluator_cancellation: evaluator.Cancellation,
+) !evaluator.ValidatedCss {
+    return compileFixtureWithOptionsAndCancellation(
+        allocator,
+        input,
+        files,
+        .{},
+        resolver_limits,
+        evaluator_limits,
+        resolver_cancellation,
+        evaluator_cancellation,
+    );
+}
+
+fn compileFixtureWithOptionsAndCancellation(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    files: []const FixtureFile,
+    options: stylus_evaluator.Options,
     resolver_limits: resolver.Limits,
     evaluator_limits: stylus_evaluator.Limits,
     resolver_cancellation: resolver.Cancellation,
@@ -695,13 +736,45 @@ fn compileFixtureWithCancellation(
         evaluator_cancellation,
     );
     defer transaction.deinit();
-    try stylus_evaluator.evaluate(&sources, &document, &transaction, evaluator_limits);
+    try stylus_evaluator.evaluateWithOptions(
+        &sources,
+        &document,
+        &transaction,
+        options,
+        evaluator_limits,
+    );
     return transaction.finish(.{ .format = .minified, .source_map = true });
 }
 
 fn expectFixtureRejection(
     input: []const u8,
     files: []const FixtureFile,
+    expected_error: anyerror,
+    expected_code: diagnostics.Code,
+    expected_message: []const u8,
+    expected_source: u32,
+    expected_dependencies: usize,
+) !void {
+    return expectFixtureRejectionWithOptions(
+        input,
+        files,
+        .{},
+        .{},
+        .{},
+        expected_error,
+        expected_code,
+        expected_message,
+        expected_source,
+        expected_dependencies,
+    );
+}
+
+fn expectFixtureRejectionWithOptions(
+    input: []const u8,
+    files: []const FixtureFile,
+    options: stylus_evaluator.Options,
+    resolver_limits: resolver.Limits,
+    evaluator_limits: stylus_evaluator.Limits,
     expected_error: anyerror,
     expected_code: diagnostics.Code,
     expected_message: []const u8,
@@ -731,7 +804,11 @@ fn expectFixtureRejection(
     const entry_url = try resolver.pathToFileUrl(std.testing.allocator, entry_path);
     defer std.testing.allocator.free(entry_url);
 
-    var authority = try resolver.Resolver.init(std.testing.allocator, &.{root}, .{});
+    var authority = try resolver.Resolver.init(
+        std.testing.allocator,
+        &.{root},
+        resolver_limits,
+    );
     defer authority.deinit();
     var session = authority.createSession(std.testing.allocator, .{});
     defer session.deinit();
@@ -759,7 +836,13 @@ fn expectFixtureRejection(
 
     try std.testing.expectError(
         expected_error,
-        stylus_evaluator.evaluate(&sources, &document, &transaction, .{}),
+        stylus_evaluator.evaluateWithOptions(
+            &sources,
+            &document,
+            &transaction,
+            options,
+            evaluator_limits,
+        ),
     );
     try std.testing.expectEqual(
         evaluator.GeneratedPosition{ .line = 0, .column = 0 },
@@ -1073,6 +1156,89 @@ test "native Stylus clones callable dynamic imports for each invocation" {
             .{},
             over_limit,
         ),
+    );
+}
+
+test "native Stylus include CSS option owns nested imports and resource boundaries" {
+    var preserved = try compileFixture(
+        std.testing.allocator,
+        "@import \"theme.css\"\n",
+        &.{},
+        .{},
+        .{},
+    );
+    defer preserved.deinit();
+    try std.testing.expectEqualStrings("@import \"theme.css\";", preserved.css());
+    try std.testing.expectEqual(@as(usize, 0), preserved.dependencies().len);
+
+    const input = "@import \"chain/a\"\n";
+    const files = [_]FixtureFile{
+        .{ .path = "chain/a.styl", .contents = "@import \"nested/b\"\n" },
+        .{ .path = "chain/nested/b.styl", .contents = "@import \"c.css\"\n" },
+        .{
+            .path = "chain/nested/c.css",
+            .contents = ".c { height: 100px; background: #fff; }\n",
+        },
+    };
+    var terminal = resolver.Limits{};
+    terminal.max_files = files.len;
+    var first = try compileFixtureWithOptions(
+        std.testing.allocator,
+        input,
+        &files,
+        .{ .include_css = true },
+        terminal,
+        .{},
+    );
+    defer first.deinit();
+    var second = try compileFixtureWithOptions(
+        std.testing.allocator,
+        input,
+        &files,
+        .{ .include_css = true },
+        terminal,
+        .{},
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".c{height:100px;background:#fff}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, files.len), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), first.edges().len);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_files = files.len - 1;
+    try std.testing.expectError(
+        error.FileCountExceeded,
+        compileFixtureWithOptions(
+            std.testing.allocator,
+            input,
+            &files,
+            .{ .include_css = true },
+            over_limit,
+            .{},
+        ),
+    );
+    try expectFixtureRejectionWithOptions(
+        \\.before
+        \\  color red
+        \\@import "missing.css"
+    ,
+        &.{},
+        .{ .include_css = true },
+        .{},
+        .{},
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus import was not found",
+        0,
+        0,
     );
 }
 
@@ -4334,6 +4500,28 @@ fn exerciseCallableDynamicImportAllocationFailures(allocator: std.mem.Allocator)
     try std.testing.expectEqualStrings(".loaded{color:#00f}", result.css());
 }
 
+fn exerciseIncludeCssAllocationFailures(allocator: std.mem.Allocator) !void {
+    const files = [_]FixtureFile{
+        .{ .path = "chain/a.styl", .contents = "@import \"nested/b\"\n" },
+        .{ .path = "chain/nested/b.styl", .contents = "@import \"c.css\"\n" },
+        .{ .path = "chain/nested/c.css", .contents = ".c { color: red; }\n" },
+    };
+    var terminal = resolver.Limits{};
+    terminal.max_files = files.len;
+    var result = try compileFixtureWithOptions(
+        allocator,
+        "@import \"chain/a\"\n",
+        &files,
+        .{ .include_css = true },
+        terminal,
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".c{color:red}", result.css());
+    try std.testing.expectEqual(@as(usize, files.len), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), result.edges().len);
+}
+
 fn exerciseCompactDeclarationAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compileWithOptions(
         allocator,
@@ -4692,6 +4880,14 @@ test "native Stylus callable dynamic imports handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCallableDynamicImportAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus include CSS imports handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseIncludeCssAllocationFailures,
         .{},
     );
 }
