@@ -427,6 +427,18 @@ const call_mixin_nested_context_css =
     ".base,.alias{color:#f00}.target,.parent+article{color:#00f}" ++
     "@font-face{width:20px}";
 
+const call_to_string_input =
+    \\values = foo bar(baz, buz, 1)
+    \\a
+    \\  lower: '' + foo()
+    \\  source: values
+    \\  terminal: '' + @source
+    \\  prefixed: 'pre-' + values
+;
+
+const call_to_string_css = "a{lower:'foo()';source:foo bar(baz, buz, 1);" ++
+    "terminal:'foo bar(baz, buz, 1)';prefixed:'pre-foo bar(baz, buz, 1)'}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -3323,6 +3335,42 @@ test "native Stylus call mixins retain caller extensions and declaration at-rule
     try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
 }
 
+test "native Stylus quoted strings coerce the finite call expression contract" {
+    const lower_input =
+        \\a
+        \\  value: '' + foo()
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.values.max_depth = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("a{value:'foo()'}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.values.max_depth = 2;
+    var first = try compile(std.testing.allocator, call_to_string_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, call_to_string_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(call_to_string_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.values.max_depth = 1;
+    try expectSemanticRejectionWithLimits(
+        call_to_string_input,
+        over_limit,
+        error.ValueDepthExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        0,
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3940,6 +3988,14 @@ fn exerciseCallMixinAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(call_mixin_nested_context_css, contextual.css());
 }
 
+fn exerciseCallToStringAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.values.max_depth = 2;
+    var result = try compile(allocator, call_to_string_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(call_to_string_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -4160,6 +4216,14 @@ test "native Stylus call mixins handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCallMixinAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus call expression string coercion handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCallToStringAllocationFailures,
         .{},
     );
 }

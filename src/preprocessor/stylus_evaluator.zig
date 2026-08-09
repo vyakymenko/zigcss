@@ -6588,6 +6588,18 @@ const Engine = struct {
             if (operator == '*') number.value = roundDecimal(number.value, 15);
             return self.ownValue(span, .{ .number = number });
         }
+        // Stylus dispatches binary operators through the left node. A quoted
+        // String coerces every member of a right-hand Expression before the
+        // generic list-addition path can claim the operation.
+        if (operator == '+' and left.* == .string and left.string.quoted) {
+            const right_coerced = try self.serializeStringCoercionOwned(right, span);
+            defer self.allocator.free(right_coerced);
+            var output: std.ArrayList(u8) = .empty;
+            defer output.deinit(self.allocator);
+            try self.appendTemporary(&output, span, left.string.bytes);
+            try self.appendTemporary(&output, span, right_coerced);
+            return self.ownStringResult(span, output.items, true);
+        }
         if (operator == '+' and (left.* == .list or right.* == .list)) {
             var values: std.ArrayList(native_value.Value) = .empty;
             defer values.deinit(self.allocator);
@@ -6656,6 +6668,41 @@ const Engine = struct {
         }
         try self.reportInvalidOperation(span);
         return error.InvalidOperation;
+    }
+
+    fn serializeStringCoercionOwned(
+        self: *Engine,
+        input: *const native_value.Value,
+        span: native_source.Span,
+    ) Error![]u8 {
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendStringCoercion(&output, input, span);
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn appendStringCoercion(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        input: *const native_value.Value,
+        span: native_source.Span,
+    ) Error!void {
+        switch (input.*) {
+            .string, .selector => |item| {
+                try self.appendTemporary(output, span, item.bytes);
+            },
+            .list => |list| {
+                for (list.items, 0..) |*item, index| {
+                    if (index > 0) try self.appendTemporary(output, span, " ");
+                    try self.appendStringCoercion(output, item, span);
+                }
+            },
+            else => {
+                const serialized = try self.serializeValueOwned(input, .interpolation, span);
+                defer self.allocator.free(serialized);
+                try self.appendTemporary(output, span, serialized);
+            },
+        }
     }
 
     fn evaluateBuiltin(
