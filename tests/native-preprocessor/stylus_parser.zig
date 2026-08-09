@@ -33,6 +33,29 @@ const anonymous_functions_input =
     \\  })
 ;
 
+const multiline_functions_input =
+    \\pad(
+    \\  x = 5
+    \\, y = 10
+    \\)
+    \\  padding y x
+    \\body
+    \\  pad 1 2
+    \\pad(
+    \\    x = 5
+    \\  , y = 10
+    \\)
+    \\  padding y x
+    \\body
+    \\  pad 1 2
+    \\body
+    \\  pad(x
+    \\    , y
+    \\  )
+    \\    padding y x
+    \\  pad 2 3
+;
+
 fn countKind(document: *const syntax.Document, kind: syntax.Kind) usize {
     var count: usize = 0;
     for (document.nodes()) |node| {
@@ -196,6 +219,99 @@ test "native Stylus parser owns single-line callable blocks without consuming in
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .function));
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .block));
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .declaration));
+}
+
+test "native Stylus parser owns multiline callable signatures at their closing parenthesis" {
+    const lower_input =
+        \\pad(
+        \\  x
+        \\)
+        \\  padding x
+        \\body
+        \\  pad 1
+    ;
+    var lower_sources = source.Table.init(std.testing.allocator, .{});
+    defer lower_sources.deinit();
+    const lower_source_id = try lower_sources.add("multiline-function-lower.styl", lower_input);
+    var lower_limits = stylus.Limits{};
+    lower_limits.max_statements = 4;
+    var lower_parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &lower_sources,
+        lower_source_id,
+        lower_limits,
+        .{},
+    );
+    defer lower_parser.deinit();
+    var lower_document = try lower_parser.parse();
+    defer lower_document.deinit();
+    const lower_root = try lower_document.children(lower_document.root);
+    try std.testing.expectEqual(@as(usize, 2), lower_root.len);
+    try std.testing.expectEqual(
+        syntax.Kind.function,
+        (try lower_document.get(lower_root[0])).kind,
+    );
+    try std.testing.expectEqualStrings(
+        "pad(\n  x\n)",
+        try lower_sources.slice((try lower_document.get(lower_root[0])).text.?),
+    );
+
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("multiline-functions.styl", multiline_functions_input);
+
+    var terminal_limits = stylus.Limits{};
+    terminal_limits.max_statements = 12;
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        terminal_limits,
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 5), root_children.len);
+    try std.testing.expectEqual(syntax.Kind.function, (try document.get(root_children[0])).kind);
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(root_children[1])).kind);
+    try std.testing.expectEqual(syntax.Kind.function, (try document.get(root_children[2])).kind);
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(root_children[3])).kind);
+    try std.testing.expectEqual(syntax.Kind.rule, (try document.get(root_children[4])).kind);
+    try std.testing.expectEqual(@as(usize, 3), countKind(&document, .function));
+    try std.testing.expectEqualStrings(
+        "pad(\n  x = 5\n, y = 10\n)",
+        try sources.slice((try document.get(root_children[0])).text.?),
+    );
+    try std.testing.expectEqualStrings(
+        "pad(\n    x = 5\n  , y = 10\n)",
+        try sources.slice((try document.get(root_children[2])).text.?),
+    );
+
+    const final_rule_children = try document.children(root_children[4]);
+    const final_block = final_rule_children[final_rule_children.len - 1];
+    const final_statements = try document.children(final_block);
+    try std.testing.expectEqual(@as(usize, 2), final_statements.len);
+    try std.testing.expectEqual(syntax.Kind.function, (try document.get(final_statements[0])).kind);
+    try std.testing.expectEqualStrings(
+        "pad(x\n    , y\n  )",
+        try sources.slice((try document.get(final_statements[0])).text.?),
+    );
+
+    var over_limit = terminal_limits;
+    over_limit.max_statements = 11;
+    var limited = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        over_limit,
+        .{},
+    );
+    defer limited.deinit();
+    try std.testing.expectError(error.StatementLimitExceeded, limited.parse());
+    try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
 }
 
 test "native Stylus parser owns anonymous callback blocks without promoting calls to definitions" {
@@ -1128,6 +1244,20 @@ fn exerciseAnonymousFunctionAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqual(@as(usize, 1), countKind(&document, .function));
 }
 
+fn exerciseMultilineFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("multiline-functions.styl", multiline_functions_input);
+    var limits = stylus.Limits{};
+    limits.max_statements = 12;
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, limits, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 5), (try document.children(document.root)).len);
+    try std.testing.expectEqual(@as(usize, 3), countKind(&document, .function));
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -1188,6 +1318,14 @@ test "native Stylus anonymous function blocks handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseAnonymousFunctionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus multiline callable signatures handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMultilineFunctionAllocationFailures,
         .{},
     );
 }

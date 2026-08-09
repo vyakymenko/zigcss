@@ -752,6 +752,11 @@ pub const Parser = struct {
                 line.content_end = lines[continuation_end].content_end;
                 line.token_end = lines[continuation_end].token_end;
                 cursor.* = continuation_end;
+            } else if (self.parenthesizedContinuationEnd(lines, cursor.*)) |continuation_end| {
+                line.end = lines[continuation_end].end;
+                line.content_end = lines[continuation_end].content_end;
+                line.token_end = lines[continuation_end].token_end;
+                cursor.* = continuation_end;
             } else if (self.declarationContinuationEnd(lines, cursor.*)) |continuation_end| {
                 line.end = lines[continuation_end].end;
                 line.content_end = lines[continuation_end].content_end;
@@ -824,6 +829,53 @@ pub const Parser = struct {
             if (!endsWithEolEscape(self.lineBytes(lines[end]))) return end;
         }
         return if (end > start) end else null;
+    }
+
+    fn parenthesizedContinuationEnd(
+        self: *const Parser,
+        lines: []const Line,
+        start: usize,
+    ) ?usize {
+        // An anonymous callback header deliberately leaves its outer call open
+        // while the brace-owned callback body remains a syntax child.
+        if (start + 1 >= lines.len or
+            looksLikeAnonymousCallHeader(self.lineBytes(lines[start])))
+        {
+            return null;
+        }
+
+        var depth: usize = 0;
+        var owns_opening = false;
+        for (self.tokens[lines[start].token_start..lines[start].token_end]) |token| {
+            switch (token.kind) {
+                .open_paren => {
+                    owns_opening = true;
+                    depth += 1;
+                },
+                .close_paren => {
+                    if (depth == 0) return null;
+                    depth -= 1;
+                },
+                else => {},
+            }
+        }
+        if (!owns_opening or depth == 0) return null;
+
+        var end = start + 1;
+        while (end < lines.len) : (end += 1) {
+            for (self.tokens[lines[end].token_start..lines[end].token_end]) |token| {
+                switch (token.kind) {
+                    .open_paren => depth += 1,
+                    .close_paren => {
+                        if (depth == 0) return null;
+                        depth -= 1;
+                    },
+                    else => {},
+                }
+            }
+            if (depth == 0) return end;
+        }
+        return null;
     }
 
     fn linesArePhysicallyAdjacent(
