@@ -358,6 +358,20 @@ const function_arguments_css = "body{padding:15;padding:1 2}" ++
     ".defaults{p0:4px;p1:5px}.opaque{color:#000}" ++
     ".translucent{color:rgba(0,0,0,0.5)}img{width:auto!important}";
 
+const function_property_alias_input =
+    \\box-shadow-important()
+    \\  push(arguments, !important)
+    \\  -webkit-box-shadow arguments
+    \\  box-shadow arguments
+    \\box-shadow = box-shadow-important
+    \\p.important
+    \\  box-shadow 1px -1px 0 1px rgba(0, 0, 0, .5)
+;
+
+const function_property_alias_css =
+    "p.important{-webkit-box-shadow:1px -1px 0 1px rgba(0,0,0,0.5)!important;" ++
+    "box-shadow:1px -1px 0 1px rgba(0,0,0,0.5)!important}";
+
 const anonymous_functions_input =
     \\mixin(add) {
     \\  mul = @(c, d) {
@@ -3250,6 +3264,36 @@ test "native Stylus function arguments preserve defaults forwarding and property
     );
 }
 
+test "native Stylus property functions emit declarations through callable aliases" {
+    const lower_input =
+        \\border-radius(size)
+        \\  -webkit-border-radius size
+        \\  border-radius size
+        \\form
+        \\  border-radius 5px
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_call_depth = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "form{-webkit-border-radius:5px;border-radius:5px}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    var first = try compile(std.testing.allocator, function_property_alias_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, function_property_alias_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(function_property_alias_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+}
+
 test "native Stylus anonymous functions preserve lexical callbacks within the call-depth bound" {
     const lower_input =
         \\identity = @(value) {
@@ -4097,6 +4141,14 @@ fn exerciseFunctionArgumentsAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(function_arguments_css, result.css());
 }
 
+fn exerciseFunctionPropertyAliasAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    var result = try compile(allocator, function_property_alias_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(function_property_alias_css, result.css());
+}
+
 fn exerciseAnonymousFunctionsAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 2;
@@ -4368,6 +4420,14 @@ test "native Stylus function arguments handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseFunctionArgumentsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus property function aliases handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseFunctionPropertyAliasAllocationFailures,
         .{},
     );
 }

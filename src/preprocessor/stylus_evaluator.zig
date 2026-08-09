@@ -4287,8 +4287,9 @@ const Engine = struct {
                     }
                     if (parseDeclarationCall(raw)) |call| {
                         const name = raw[call.name.start..call.name.end];
-                        if (try self.resolveCallable(scope.*, name) != null and
-                            !self.isActiveCallable(name))
+                        const resolved_callable = try self.resolveCallable(scope.*, name);
+                        if (resolved_callable != null and
+                            !self.isActiveCallable(resolved_callable.?.name))
                         {
                             const previous_property = self.active_property;
                             const previous_property_value = self.active_property_value;
