@@ -1024,6 +1024,132 @@ test "native Stylus closes confined import require glob dependency and map seman
     try std.testing.expect(imported_segments >= 6);
 }
 
+test "native Stylus clones callable dynamic imports for each invocation" {
+    const input =
+        \\load(path)
+        \\  @import path
+        \\load('parts/a')
+        \\load('parts/b')
+    ;
+    const files = [_]FixtureFile{
+        .{
+            .path = "parts/a.styl",
+            .contents = ".a\n  color red\n@import \"shared\"\n",
+        },
+        .{
+            .path = "parts/b.styl",
+            .contents = ".b\n  color green\n@import \"shared\"\n",
+        },
+        .{ .path = "parts/shared.styl", .contents = ".shared\n  color blue\n" },
+    };
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 4;
+    var result = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        .{},
+        terminal,
+    );
+    defer result.deinit();
+
+    try std.testing.expectEqualStrings(
+        ".a{color:#f00}.shared{color:#00f}" ++
+            ".b{color:#008000}.shared{color:#00f}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, 3), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 4), result.edges().len);
+    try std.testing.expect(result.map() != null);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 3;
+    try std.testing.expectError(
+        error.SelectorLimitExceeded,
+        compileFixture(
+            std.testing.allocator,
+            input,
+            &files,
+            .{},
+            over_limit,
+        ),
+    );
+}
+
+test "native Stylus callable dynamic imports fail closed outside their bounded contract" {
+    const escaped =
+        \\.before
+        \\  color red
+        \\load(path)
+        \\  @import path
+        \\load('../outside')
+    ;
+    try expectFixtureRejection(
+        escaped,
+        &.{},
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus import load was rejected",
+        0,
+        0,
+    );
+
+    const non_string =
+        \\.before
+        \\  color red
+        \\load(path)
+        \\  @import path
+        \\load(1px)
+    ;
+    try expectFixtureRejection(
+        non_string,
+        &.{},
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus import target is invalid",
+        0,
+        0,
+    );
+
+    const nested =
+        \\.before
+        \\  color red
+        \\load(path)
+        \\  @import path
+        \\.scope
+        \\  load('part')
+    ;
+    try expectFixtureRejection(
+        nested,
+        &.{.{ .path = "part.styl", .contents = ".loaded\n  color blue\n" }},
+        error.UnsupportedFeature,
+        .unsupported_feature,
+        "native Stylus evaluated imports require a top-level callable invocation",
+        0,
+        0,
+    );
+
+    const semantic_import =
+        \\.before
+        \\  color red
+        \\load(path)
+        \\  @import path
+        \\load('semantic')
+    ;
+    try expectFixtureRejection(
+        semantic_import,
+        &.{.{
+            .path = "semantic.styl",
+            .contents = "tone = red\n.dynamic\n  color tone\n",
+        }},
+        error.UnsupportedFeature,
+        .unsupported_feature,
+        "native Stylus evaluated import requires an isolated rule closure",
+        0,
+        1,
+    );
+}
+
 test "native Stylus import failures own source diagnostics without partial CSS" {
     try expectFixtureRejection(
         "@import \"missing\"\n.safe\n  color red\n",
@@ -4194,6 +4320,20 @@ fn exerciseImportAllocationFailures(allocator: std.mem.Allocator) !void {
     );
 }
 
+fn exerciseCallableDynamicImportAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\load(path)
+        \\  @import path
+        \\load('part')
+    ;
+    const files = [_]FixtureFile{
+        .{ .path = "part.styl", .contents = ".loaded\n  color blue\n" },
+    };
+    var result = try compileFixture(allocator, input, &files, .{}, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(".loaded{color:#00f}", result.css());
+}
+
 fn exerciseCompactDeclarationAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compileWithOptions(
         allocator,
@@ -4544,6 +4684,14 @@ test "native Stylus import transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseImportAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus callable dynamic imports handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCallableDynamicImportAllocationFailures,
         .{},
     );
 }

@@ -210,12 +210,6 @@ pub fn evaluateWithOptions(
     try rejectUsePlugins(sources, base_root.span, base_input, transaction);
     const semantic = normalized_document != null or expanded_document != null or
         try requiresSemanticEvaluation(sources, active_document, base_input);
-    try preflightStatements(
-        active_document,
-        try active_document.children(active_document.root),
-        transaction,
-        semantic,
-    );
     if (!semantic) {
         try transaction.emitMapped(base_root.span, null, base_input);
         return;
@@ -1012,42 +1006,6 @@ fn containsSemanticStatement(
     return false;
 }
 
-fn preflightStatements(
-    document: *const native_syntax.Document,
-    statements: []const native_syntax.NodeId,
-    transaction: *native_evaluator.Transaction,
-    semantic: bool,
-) Error!void {
-    for (statements) |statement_id| {
-        const statement = try document.get(statement_id);
-        switch (statement.kind) {
-            .import => {
-                try transaction.report(
-                    .err,
-                    .unsupported_feature,
-                    statement.span,
-                    "native Stylus imports are not implemented in this evaluator slice",
-                    &.{},
-                );
-                return error.UnsupportedFeature;
-            },
-            else => {},
-        }
-
-        for (try document.children(statement_id)) |child_id| {
-            const child = try document.get(child_id);
-            if (child.kind == .block) {
-                try preflightStatements(
-                    document,
-                    try document.children(child_id),
-                    transaction,
-                    semantic,
-                );
-            }
-        }
-    }
-}
-
 fn rejectDeferredBuiltins(
     sources: *const native_source.Table,
     document: *const native_syntax.Document,
@@ -1213,6 +1171,38 @@ const ImportExpander = struct {
         return self.builder.finish(expanded_root);
     }
 
+    fn expandRuntime(
+        self: *ImportExpander,
+        parent_source: native_source.SourceId,
+        import_span: native_source.Span,
+        parsed: ParsedImport,
+    ) Error!native_syntax.Document {
+        const parent_file = try self.sources.get(parent_source);
+        const parent_path = native_resolver.fileUrlToPath(
+            self.allocator,
+            parent_file.name,
+        ) catch |failure| return self.failLoad(failure, import_span);
+        self.allocator.free(parent_path);
+        try self.ancestry.append(self.allocator, parent_file.name);
+        try self.source_ids.put(self.allocator, parent_file.name, parent_source);
+
+        var children: std.ArrayList(native_syntax.NodeId) = .empty;
+        defer children.deinit(self.allocator);
+        try self.expandParsedImport(
+            parsed,
+            import_span,
+            parent_file.name,
+            &children,
+        );
+        const expanded_root = try self.builder.add(
+            .stylesheet,
+            import_span,
+            null,
+            children.items,
+        );
+        return self.builder.finish(expanded_root);
+    }
+
     fn appendStatements(
         self: *ImportExpander,
         document: *const native_syntax.Document,
@@ -1274,10 +1264,27 @@ const ImportExpander = struct {
             }
         }
         const parsed = parseImportDirective(raw_directive) orelse {
+            if (parseRuntimeImportDirective(raw_directive) != null) {
+                try output.append(
+                    self.allocator,
+                    try self.cloneNode(document, import_id),
+                );
+                return;
+            }
             try self.reportImport(text, "native Stylus import syntax is unsupported");
             return error.InvalidImport;
         };
         const parent_url = self.ancestry.items[self.ancestry.items.len - 1];
+        return self.expandParsedImport(parsed, text, parent_url, output);
+    }
+
+    fn expandParsedImport(
+        self: *ImportExpander,
+        parsed: ParsedImport,
+        text: native_source.Span,
+        parent_url: []const u8,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!void {
         const import_basename = std.fs.path.basename(parsed.target);
         const css_inline = import_basename.len > 0 and
             (import_basename[0] == '_' or std.mem.indexOf(u8, import_basename, "._") != null);
@@ -1450,6 +1457,22 @@ const ImportExpander = struct {
         if (require_once and self.required_urls.contains(loaded.url)) return true;
 
         const source_id = self.source_ids.get(loaded.url) orelse source: {
+            if (try self.findSource(loaded.url)) |existing| {
+                const existing_file = try self.sources.get(existing);
+                if (!std.mem.eql(u8, existing_file.bytes, loaded.contents)) {
+                    try self.reportImport(
+                        import_span,
+                        "native Stylus import changed during evaluation",
+                    );
+                    return error.InvalidImport;
+                }
+                try self.source_ids.put(
+                    self.allocator,
+                    existing_file.name,
+                    existing,
+                );
+                break :source existing;
+            }
             const added = self.sources.add(loaded.url, loaded.contents) catch |failure| {
                 if (failure == error.OutOfMemory) return error.OutOfMemory;
                 try self.transaction.report(
@@ -1504,6 +1527,18 @@ const ImportExpander = struct {
             output,
         );
         return true;
+    }
+
+    fn findSource(
+        self: *const ImportExpander,
+        url: []const u8,
+    ) Error!?native_source.SourceId {
+        for (0..self.sources.count()) |index| {
+            const source_id = native_source.SourceId{ .value = @intCast(index) };
+            const file = try self.sources.get(source_id);
+            if (std.mem.eql(u8, file.name, url)) return source_id;
+        }
+        return null;
     }
 
     fn reportImport(
@@ -1605,6 +1640,62 @@ fn parseImportDirective(raw_input: []const u8) ?ParsedImport {
         return null;
     }
     return .{ .target = target, .require_once = require_once };
+}
+
+const RuntimeImportDirective = struct {
+    expression: []const u8,
+};
+
+fn parseRuntimeImportDirective(raw_input: []const u8) ?RuntimeImportDirective {
+    const raw = std.mem.trim(u8, raw_input, " \t\r\n\x0c;");
+    if (!startsWordAscii(raw, "@import")) return null;
+    const expression = std.mem.trim(u8, raw["@import".len..], " \t\r\n\x0c;");
+    if (expression.len == 0 or expression[0] == '\'' or expression[0] == '"' or
+        std.ascii.startsWithIgnoreCase(expression, "url("))
+    {
+        return null;
+    }
+    return .{ .expression = expression };
+}
+
+fn runtimeImportIsRuleClosure(
+    document: *const native_syntax.Document,
+) Error!bool {
+    return runtimeImportStatementsAreRuleClosure(
+        document,
+        try document.children(document.root),
+        false,
+    );
+}
+
+fn runtimeImportStatementsAreRuleClosure(
+    document: *const native_syntax.Document,
+    statements: []const native_syntax.NodeId,
+    inside_rule: bool,
+) Error!bool {
+    for (statements) |statement_id| {
+        const statement = try document.get(statement_id);
+        switch (statement.kind) {
+            .comment => {},
+            .declaration => if (!inside_rule) return false,
+            .rule => {
+                var block_count: usize = 0;
+                for (try document.children(statement_id)) |child_id| {
+                    const child = try document.get(child_id);
+                    if (child.kind != .block) continue;
+                    block_count += 1;
+                    if (block_count > 1 or !try runtimeImportStatementsAreRuleClosure(
+                        document,
+                        try document.children(child_id),
+                        true,
+                    )) return false;
+                }
+                if (block_count != 1) return false;
+            },
+            else => return false,
+        }
+    }
+    return true;
 }
 
 fn importCandidateUrl(
@@ -2240,7 +2331,7 @@ const EngineMode = enum {
 
 const Engine = struct {
     allocator: std.mem.Allocator,
-    sources: *const native_source.Table,
+    sources: *native_source.Table,
     document: *const native_syntax.Document,
     transaction: *native_evaluator.Transaction,
     limits: Limits,
@@ -2290,7 +2381,7 @@ const Engine = struct {
 
     fn init(
         allocator: std.mem.Allocator,
-        sources: *const native_source.Table,
+        sources: *native_source.Table,
         document: *const native_syntax.Document,
         transaction: *native_evaluator.Transaction,
         limits: Limits,
@@ -4644,6 +4735,16 @@ const Engine = struct {
                         .explicit = true,
                     };
                 },
+                .import => {
+                    previous_condition = null;
+                    try self.executeRuntimeImport(statement_id, scope.*, output);
+                    if (allow_return) {
+                        implicit_result = try self.ownValue(
+                            statement.span,
+                            .{ .null_value = {} },
+                        );
+                    }
+                },
                 .comment => {},
                 else => return error.InvalidDocument,
             }
@@ -4653,6 +4754,108 @@ const Engine = struct {
             if (implicit_result) |value| return .{ .value = value, .explicit = false };
         }
         return null;
+    }
+
+    fn executeRuntimeImport(
+        self: *Engine,
+        statement_id: native_syntax.NodeId,
+        scope: native_environment.ScopeId,
+        output: ?RuleOutput,
+    ) Error!void {
+        const statement = try self.document.get(statement_id);
+        const text = statement.text orelse return error.InvalidDocument;
+        const raw = try self.sources.slice(text);
+        const directive = parseRuntimeImportDirective(raw) orelse {
+            try self.reportImport(text, "native Stylus import syntax is unsupported");
+            return error.InvalidImport;
+        };
+        if (self.mode != .emit or output != null or self.active_callables.items.len == 0) {
+            try self.transaction.report(
+                .err,
+                .unsupported_feature,
+                text,
+                "native Stylus evaluated imports require a top-level callable invocation",
+                &.{},
+            );
+            return error.UnsupportedFeature;
+        }
+        const evaluated = try self.evaluateValue(
+            text,
+            directive.expression,
+            scope,
+            0,
+        );
+        const target = switch (evaluated.*) {
+            .string => |string| string.bytes,
+            else => {
+                try self.reportImport(text, "native Stylus import target is invalid");
+                return error.InvalidImport;
+            },
+        };
+        if (target.len == 0 or std.mem.indexOfAny(u8, target, "\x00\r\n") != null or
+            hasNonLocalScheme(target))
+        {
+            try self.reportImport(text, "native Stylus import target is invalid");
+            return error.InvalidImport;
+        }
+
+        var expander = ImportExpander.init(
+            self.allocator,
+            self.sources,
+            self.transaction,
+            self.limits,
+        );
+        defer expander.deinit();
+        var imported = try expander.expandRuntime(
+            text.source,
+            text,
+            .{ .target = target, .require_once = false },
+        );
+        defer imported.deinit();
+        if (!try runtimeImportIsRuleClosure(&imported)) {
+            try self.transaction.report(
+                .err,
+                .unsupported_feature,
+                text,
+                "native Stylus evaluated import requires an isolated rule closure",
+                &.{},
+            );
+            return error.UnsupportedFeature;
+        }
+
+        var cache_plan: CachePlan = .{};
+        defer cache_plan.deinit(self.allocator);
+        var extension_plan: DynamicExtensionPlan = .{};
+        defer extension_plan.deinit(self.allocator);
+        var child = try Engine.init(
+            self.allocator,
+            self.sources,
+            &imported,
+            self.transaction,
+            self.limits,
+            self.options,
+            .emit,
+            &cache_plan,
+            null,
+            &extension_plan,
+        );
+        defer child.deinit();
+        child.call_depth = self.call_depth;
+        child.loop_iterations = self.loop_iterations;
+        child.selector_count = self.selector_count;
+        child.temporary_bytes = self.temporary_bytes;
+        try child.run();
+        self.loop_iterations = child.loop_iterations;
+        self.selector_count = child.selector_count;
+        self.temporary_bytes = child.temporary_bytes;
+    }
+
+    fn reportImport(
+        self: *Engine,
+        span: native_source.Span,
+        message: []const u8,
+    ) Error!void {
+        try self.transaction.report(.err, .invalid_import, span, message, &.{});
     }
 
     fn evaluateImplicitStatement(
