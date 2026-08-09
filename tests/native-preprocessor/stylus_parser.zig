@@ -464,6 +464,52 @@ test "native Stylus parser keeps quoted selector references inside interpolation
     );
 }
 
+test "native Stylus parser keeps whitespace-separated selector interpolation" {
+    const input =
+        \\form {'input'}:last-child { display: none; }
+        \\body {form} {
+        \\  input:{last}-child { display: none; }
+        \\}
+        \\{foo} {bar} { foo: bar; }
+        \\.plain { color red }
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("spaced-selector-interpolation.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const expected = [_][]const u8{
+        "form {'input'}:last-child",
+        "body {form}",
+        "{foo} {bar}",
+        ".plain",
+    };
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(expected.len, root_children.len);
+    for (root_children, expected) |rule_id, expected_selector| {
+        const rule = try document.get(rule_id);
+        try std.testing.expectEqual(syntax.Kind.rule, rule.kind);
+        const children = try document.children(rule_id);
+        try std.testing.expectEqual(@as(usize, 2), children.len);
+        const selector = try document.get(children[0]);
+        try std.testing.expectEqual(syntax.Kind.selector, selector.kind);
+        try std.testing.expectEqualStrings(
+            expected_selector,
+            try sources.slice(selector.text.?),
+        );
+        try std.testing.expectEqual(syntax.Kind.block, (try document.get(children[1])).kind);
+    }
+}
+
 test "native Stylus parser keeps property assignment expressions as declarations" {
     const input =
         \\values = 1
@@ -771,6 +817,22 @@ fn exerciseCompactNestedRuleAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqual(@as(usize, 3), block_children.len);
 }
 
+fn exerciseSpacedSelectorInterpolationAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add(
+        "spaced-selector-interpolation.styl",
+        "form {'input'}:last-child { display: none; }\n" ++
+            "body {form} { input:{last}-child { display: none; } }\n" ++
+            ".plain { color red }\n",
+    );
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, .{}, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    try std.testing.expectEqual(@as(usize, 3), (try document.children(document.root)).len);
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -791,6 +853,14 @@ test "native Stylus compact nested rule handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCompactNestedRuleAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus whitespace-separated selector interpolation handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseSpacedSelectorInterpolationAllocationFailures,
         .{},
     );
 }

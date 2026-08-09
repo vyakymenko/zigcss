@@ -665,6 +665,34 @@ test "native Stylus applies the finite selector scope directive" {
     );
 }
 
+test "native Stylus evaluates whitespace-separated selector interpolation deterministically" {
+    const input =
+        \\pos = last
+        \\form {'input'}:nth-child({10 + 5}) { display: none; }
+        \\body {form} {
+        \\  input:{pos}-child { display: none; }
+        \\}
+        \\{foo} {bar} { foo: bar; }
+        \\.plain { color red }
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "form input:nth-child(15){display:none}" ++
+            "body form input:last-child{display:none}" ++
+            "foo bar{foo:bar}.plain{color:#f00}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus evaluates finite color component getters" {
     const input =
         \\body
@@ -2447,6 +2475,21 @@ fn exerciseCompactNestedRuleAllocationFailures(allocator: std.mem.Allocator) !vo
     );
 }
 
+fn exerciseSpacedSelectorInterpolationAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "pos = last\n" ++
+            "body {form} { input:{pos}-child { display: none; } }\n" ++
+            ".plain { color red }\n",
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body form input:last-child{display:none}.plain{color:#f00}",
+        result.css(),
+    );
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2499,6 +2542,14 @@ test "native Stylus compact nested rule transaction handles every allocation fai
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCompactNestedRuleAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus whitespace-separated selector interpolation handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseSpacedSelectorInterpolationAllocationFailures,
         .{},
     );
 }

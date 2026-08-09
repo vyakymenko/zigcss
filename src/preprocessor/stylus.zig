@@ -488,7 +488,12 @@ pub const Parser = struct {
                 const previous = if (opening > segment_start) self.source_bytes[opening - 1] else 0;
                 const interpolation_prefix = opening == segment_start or
                     !isHorizontalWhitespace(previous);
-                if (interpolation_prefix and
+                const trailing = trimAscii(self.source_bytes[end + 1 .. line_end]);
+                const interpolation_suffix = trailing.len > 0 and
+                    trailing[0] != ';' and
+                    !std.mem.startsWith(u8, trailing, "//") and
+                    !std.mem.startsWith(u8, trailing, "/*");
+                if ((interpolation_prefix or interpolation_suffix) and
                     !containsUnquotedAny(interior, ":;"))
                 {
                     return false;
