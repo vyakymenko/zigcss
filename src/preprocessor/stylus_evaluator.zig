@@ -265,7 +265,7 @@ pub fn evaluateWithOptions(
 
     var dynamic_extension_plan: DynamicExtensionPlan = .{};
     defer dynamic_extension_plan.deinit(transaction.allocator);
-    if (try containsStaticTargetLoopExtension(
+    if (try containsLoopExtensionCandidate(
         sources,
         active_document,
         try active_document.children(active_document.root),
@@ -652,7 +652,7 @@ fn containsCacheBlock(
     return false;
 }
 
-fn containsStaticTargetLoopExtension(
+fn containsLoopExtensionCandidate(
     sources: *const native_source.Table,
     document: *const native_syntax.Document,
     statements: []const native_syntax.NodeId,
@@ -676,14 +676,12 @@ fn containsStaticTargetLoopExtension(
                         " \t\r\n\x0c;",
                     );
                 }
-                if (targets.len > 0 and std.mem.indexOfScalar(u8, targets, '{') == null) {
-                    return true;
-                }
+                if (targets.len > 0) return true;
             }
         }
         for (try document.children(statement_id)) |child_id| {
             const child = try document.get(child_id);
-            if (child.kind == .block and try containsStaticTargetLoopExtension(
+            if (child.kind == .block and try containsLoopExtensionCandidate(
                 sources,
                 document,
                 try document.children(child_id),
@@ -2905,7 +2903,6 @@ const Engine = struct {
             );
         }
         if (targets_raw.len == 0) return false;
-        if (std.mem.indexOfScalar(u8, targets_raw, '{') != null) return false;
         const rendered_targets = try self.renderRawOwned(
             span,
             targets_raw,

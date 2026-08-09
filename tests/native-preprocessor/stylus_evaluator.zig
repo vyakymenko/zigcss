@@ -70,6 +70,20 @@ const loop_extension_input =
 
 const loop_extension_css = ".span,.span1,.span2,.span3,.span4{width:100%}";
 
+const loop_context_extension_input =
+    \\.tester1
+    \\  tester: 1
+    \\.tester2
+    \\  tester: 2
+    \\for i in 1..2
+    \\  .test{i}
+    \\    test{i}: i
+    \\    @extend .tester{i}
+;
+
+const loop_context_extension_css = ".tester1,.test1{tester:1}" ++
+    ".tester2,.test2{tester:2}.test1{test1:1}.test2{test2:2}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2315,6 +2329,46 @@ test "native Stylus loop extension discovery retains finite iteration ceilings" 
     );
 }
 
+test "native Stylus loop context extensions render targets within finite ceilings" {
+    const lower_input =
+        \\.tester1
+        \\  tester: 1
+        \\for i in 1..1
+        \\  .test{i}
+        \\    test{i}: i
+        \\    @extend .tester{i}
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        ".tester1,.test1{tester:1}.test1{test1:1}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 2;
+    var first = try compile(std.testing.allocator, loop_context_extension_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, loop_context_extension_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(loop_context_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 1;
+    try expectSemanticRejectionWithLimits(
+        loop_context_extension_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(u8, loop_context_extension_input, "for i").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -2808,6 +2862,12 @@ fn exerciseLoopExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(loop_extension_css, result.css());
 }
 
+fn exerciseLoopContextExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, loop_context_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(loop_context_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2916,6 +2976,14 @@ test "native Stylus loop extensions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseLoopExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus loop context extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLoopContextExtensionAllocationFailures,
         .{},
     );
 }
