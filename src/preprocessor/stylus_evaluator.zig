@@ -3007,6 +3007,7 @@ const Engine = struct {
         var previous_condition: StaticConditionalState = .none;
         for (statements) |statement_id| {
             const statement = try self.document.get(statement_id);
+            if (statement.kind == .comment) continue;
             if (statement.kind == .at_rule) {
                 previous_condition = .none;
                 const text = statement.text orelse continue;
@@ -4643,7 +4644,7 @@ const Engine = struct {
                         .explicit = true,
                     };
                 },
-                .comment => previous_condition = null,
+                .comment => {},
                 else => return error.InvalidDocument,
             }
         }

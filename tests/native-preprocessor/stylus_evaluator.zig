@@ -523,6 +523,39 @@ const logical_condition_input =
 const logical_condition_css =
     "body{selected:yes}body{and-branch:safe}body{or-branch:safe}";
 
+const commented_if_else_input =
+    \\.base
+    \\  color red
+    \\if false
+    \\  .never
+    \\    @extend .base
+    \\// preserve the root conditional chain
+    \\else if false
+    \\  .also-never
+    \\    @extend .base
+    \\// preserve the terminal root branch
+    \\else
+    \\  .alias
+    \\    @extend .base
+    \\body
+    \\  if false
+    \\    color red
+    \\  // preserve the nested conditional chain
+    \\  else if true
+    \\    color blue
+    \\  // do not select a later branch
+    \\  else
+    \\    color green
+    \\  if true
+    \\    background white
+    \\  // do not clear a selected branch
+    \\  else
+    \\    background black
+;
+
+const commented_if_else_css =
+    ".base,.alias{color:#f00}body{color:#00f;background:#fff}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2270,6 +2303,20 @@ test "native Stylus evaluates bounded compound conditions with short circuiting"
         "native Stylus expression depth exceeded",
         @intCast(std.mem.indexOf(u8, logical_condition_input, "if n < 50").?),
     );
+}
+
+test "native Stylus preserves comment-separated conditional chains" {
+    var first = try compile(std.testing.allocator, commented_if_else_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, commented_if_else_input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(commented_if_else_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
 }
 
 test "native Stylus evaluates filtered postfix declaration loops" {
@@ -4428,6 +4475,12 @@ fn exerciseLogicalConditionAllocationFailures(allocator: std.mem.Allocator) !voi
     try std.testing.expectEqualStrings(logical_condition_css, result.css());
 }
 
+fn exerciseCommentedIfElseAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, commented_if_else_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(commented_if_else_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -4688,6 +4741,14 @@ test "native Stylus compound conditions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseLogicalConditionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus comment-separated conditional chains handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseCommentedIfElseAllocationFailures,
         .{},
     );
 }
