@@ -194,6 +194,16 @@ const multiple_selector_extension_css = ".a,.c,.d{color:#f00}" ++
     ".foo::before,.e::before,.foo::after,.e::after{content:' ';clear:both;" ++
     "display:table;font:0/0 a;visibility:hidden}.foo,.e{display:inline-block}";
 
+const variable_target_extension_input =
+    \\.test
+    \\  width 100%
+    \\var = "test"
+    \\.{var}2
+    \\  @extend .{var}
+;
+
+const variable_target_extension_css = ".test,.test2{width:100%}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2701,6 +2711,50 @@ test "native Stylus multiple selector extensions retain bounded target ownership
     );
 }
 
+test "native Stylus variable extension targets retain bounded lexical ownership" {
+    const lower_input =
+        \\.base
+        \\  width 1px
+        \\target = "base"
+        \\.derived
+        \\  @extend .{target}
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".base,.derived{width:1px}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 3;
+    var first = try compile(
+        std.testing.allocator,
+        variable_target_extension_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        variable_target_extension_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(variable_target_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 2;
+    try expectSemanticRejectionWithLimits(
+        variable_target_extension_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, variable_target_extension_input, ".{var}2").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3230,6 +3284,12 @@ fn exerciseMultipleSelectorExtensionAllocationFailures(allocator: std.mem.Alloca
     try std.testing.expectEqualStrings(multiple_selector_extension_css, result.css());
 }
 
+fn exerciseVariableTargetExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, variable_target_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(variable_target_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3386,6 +3446,14 @@ test "native Stylus multiple selector extensions handle every allocation failure
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMultipleSelectorExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus variable extension targets handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseVariableTargetExtensionAllocationFailures,
         .{},
     );
 }

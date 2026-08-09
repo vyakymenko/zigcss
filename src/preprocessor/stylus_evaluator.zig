@@ -704,14 +704,11 @@ fn containsRuntimeExtensionCandidate(
             " \t\r\n\x0c;",
         );
         const directive = parseExtendDirective(raw) orelse continue;
-        if (multipleExtensionTargetsNeedRuntimeRendering(directive.targets)) return true;
+        if (!directive.plural and extensionTargetNeedsRuntimeRendering(directive.targets)) {
+            return true;
+        }
     }
     return false;
-}
-
-fn multipleExtensionTargetsNeedRuntimeRendering(raw: []const u8) bool {
-    return findTopLevelScalar(raw, ',') != null and
-        extensionTargetNeedsRuntimeRendering(raw);
 }
 
 fn extensionTargetNeedsRuntimeRendering(raw: []const u8) bool {
@@ -3058,9 +3055,7 @@ const Engine = struct {
         );
         const nested = self.selector_parts.items.len > 1;
         if (statically_collected) {
-            if (!multipleExtensionTargetsNeedRuntimeRendering(targets_raw) or
-                directive.plural)
-            {
+            if (!extensionTargetNeedsRuntimeRendering(targets_raw) or directive.plural) {
                 return false;
             }
             var original_targets = try splitTopLevel(self.allocator, targets_raw, ',');
