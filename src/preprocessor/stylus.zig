@@ -465,6 +465,9 @@ pub const Parser = struct {
         opening: usize,
         line_end: usize,
     ) bool {
+        if (self.looksLikeInlineFunctionDefinition(segment_start, opening)) {
+            return true;
+        }
         const closing = std.mem.indexOfScalarPos(u8, self.source_bytes, opening + 1, '}');
         if (closing) |end| {
             if (end < line_end) {
@@ -486,6 +489,62 @@ pub const Parser = struct {
             }
         }
         return true;
+    }
+
+    fn looksLikeInlineFunctionDefinition(
+        self: *const Parser,
+        segment_start: usize,
+        opening: usize,
+    ) bool {
+        var token_start: usize = 0;
+        while (token_start < self.tokens.len and
+            self.tokens[token_start].span.end <= segment_start)
+        {
+            token_start += 1;
+        }
+        var token_end = token_start;
+        while (token_end < self.tokens.len and
+            self.tokens[token_end].span.start < opening)
+        {
+            token_end += 1;
+        }
+        const prefix = self.tokens[token_start..token_end];
+        var name: ?usize = null;
+        for (prefix, 0..) |token, index| {
+            if (token.kind == .whitespace or token.kind == .comment) continue;
+            name = index;
+            break;
+        }
+        const name_index = name orelse return false;
+        if (prefix[name_index].kind != .identifier) return false;
+        var opening_index = name_index + 1;
+        while (opening_index < prefix.len and
+            prefix[opening_index].kind == .whitespace)
+        {
+            opening_index += 1;
+        }
+        if (opening_index >= prefix.len or prefix[opening_index].kind != .open_paren) {
+            return false;
+        }
+        var depth: usize = 0;
+        for (prefix[opening_index..], opening_index..) |token, index| {
+            switch (token.kind) {
+                .open_paren => depth += 1,
+                .close_paren => {
+                    if (depth == 0) return false;
+                    depth -= 1;
+                    if (depth != 0) continue;
+                    for (prefix[index + 1 ..]) |trailing| {
+                        if (trailing.kind != .whitespace and trailing.kind != .comment) {
+                            return false;
+                        }
+                    }
+                    return true;
+                },
+                else => {},
+            }
+        }
+        return false;
     }
 
     fn validateLines(self: *Parser, lines: []const Line) Error!void {

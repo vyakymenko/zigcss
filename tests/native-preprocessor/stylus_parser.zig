@@ -122,6 +122,31 @@ test "native Stylus parser classifies compact declarations inside explicit CSS b
     );
 }
 
+test "native Stylus parser owns single-line callable blocks without consuming interpolation braces" {
+    const input =
+        \\large(n){ n > 100 }
+        \\property(name, value)
+        \\  {name} value
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("single-line-callable.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), countKind(&document, .function));
+    try std.testing.expectEqual(@as(usize, 2), countKind(&document, .block));
+    try std.testing.expectEqual(@as(usize, 2), countKind(&document, .declaration));
+}
+
 test "native parser accepts every pinned Stylus success entry" {
     const CorpusCase = struct {
         id: []const u8,

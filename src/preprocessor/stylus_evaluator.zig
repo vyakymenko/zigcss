@@ -3450,7 +3450,11 @@ const Engine = struct {
                             try self.sources.slice(text),
                             " \t\r\n\x0c;",
                         );
-                        implicit_result = try self.evaluateValue(text, raw, scope.*, 0);
+                        implicit_result = try self.evaluateImplicitStatement(
+                            text,
+                            raw,
+                            scope.*,
+                        );
                         continue;
                     };
                     const text = statement.text orelse return error.InvalidDocument;
@@ -3592,7 +3596,11 @@ const Engine = struct {
                             try self.sources.slice(text),
                             " \t\r\n\x0c;",
                         );
-                        implicit_result = try self.evaluateValue(text, raw, scope.*, 0);
+                        implicit_result = try self.evaluateImplicitStatement(
+                            text,
+                            raw,
+                            scope.*,
+                        );
                     } else {
                         const text = statement.text orelse return error.InvalidDocument;
                         const raw = std.mem.trim(
@@ -3741,6 +3749,32 @@ const Engine = struct {
             if (implicit_result) |value| return .{ .value = value, .explicit = false };
         }
         return null;
+    }
+
+    fn evaluateImplicitStatement(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!*const native_value.Value {
+        const postfix = splitPostfixCondition(raw);
+        if (postfix.condition) |condition| {
+            var selected = try self.evaluateCondition(
+                span,
+                raw[condition.expression.start..condition.expression.end],
+                scope,
+            );
+            if (condition.negated) selected = !selected;
+            if (!selected) {
+                return self.ownValue(span, .{ .null_value = {} });
+            }
+        }
+        return self.evaluateValue(
+            span,
+            raw[postfix.declaration.start..postfix.declaration.end],
+            scope,
+            0,
+        );
     }
 
     fn executeBlockInsertion(

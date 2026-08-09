@@ -1418,6 +1418,37 @@ test "native Stylus evaluates the fixed callable control operator builtin slice"
     try std.testing.expect(first.map().?.segments().len >= 7);
 }
 
+test "native Stylus evaluates single-line implicit-return functions with postfix guards" {
+    const input =
+        \\large(n){ n > 100 }
+        \\
+        \\body
+        \\  foo large(5)
+        \\  foo large(300)
+        \\
+        \\large(n){ n > 100 if n is a 'unit' }
+        \\
+        \\body
+        \\  foo large(5)
+        \\  foo large(300)
+        \\  foo large('test')
+    ;
+    var first = try compile(std.testing.allocator, input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{foo:false;foo:true}body{foo:false;foo:true;foo:}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
 test "native Stylus add-property preserves declaration context and interpolation" {
     const input =
         \\custom(name, value)
@@ -2262,6 +2293,16 @@ fn exerciseCompactDeclarationAllocationFailures(allocator: std.mem.Allocator) !v
     );
 }
 
+fn exerciseSingleLineCallableAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(
+        allocator,
+        "large(n){ n > 100 if n is a 'unit' }\nbody\n  foo large(5)\n  foo large('test')\n",
+        .{},
+    );
+    defer result.deinit();
+    try std.testing.expectEqualStrings("body{foo:false;foo:}", result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -2282,6 +2323,14 @@ test "native Stylus compact declaration transaction handles every allocation fai
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCompactDeclarationAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus single-line callable transaction handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseSingleLineCallableAllocationFailures,
         .{},
     );
 }
