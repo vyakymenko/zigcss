@@ -94,6 +94,8 @@ pub fn evaluateWithOptions(
     limits: Limits,
 ) Error!void {
     errdefer transaction.abort();
+    const root_checkpoint = try transaction.stagingCheckpoint();
+    errdefer transaction.restoreStaging(root_checkpoint) catch {};
     try validateLimits(limits);
     try validateAssetLoadPaths(limits.asset_load_paths);
 
@@ -2797,6 +2799,26 @@ const Engine = struct {
                 const index_value = try self.evaluateValue(span, raw[cursor + 1 .. closing], scope, 0);
                 current = switch (current.*) {
                     .list => |list| blk: {
+                        if (index_value.* == .list) {
+                            var selected: std.ArrayList(native_value.Value) = .empty;
+                            defer selected.deinit(self.allocator);
+                            try selected.ensureTotalCapacity(
+                                self.allocator,
+                                index_value.list.items.len,
+                            );
+                            for (index_value.list.items) |item| {
+                                const index = integerScalar(item) orelse return null;
+                                const normalized = normalizeIndex(index, list.items.len) orelse {
+                                    selected.appendAssumeCapacity(.{ .null_value = {} });
+                                    continue;
+                                };
+                                selected.appendAssumeCapacity(list.items[normalized]);
+                            }
+                            break :blk try self.ownValue(span, .{ .list = .{
+                                .items = selected.items,
+                                .separator = index_value.list.separator,
+                            } });
+                        }
                         const index = integerScalar(index_value.*) orelse return null;
                         const normalized = normalizeIndex(index, list.items.len) orelse
                             break :blk try self.ownValue(span, .{ .null_value = {} });
@@ -4545,6 +4567,7 @@ const Engine = struct {
         const statement = try self.document.get(statement_id);
         const text = statement.text orelse return error.InvalidDocument;
         const raw = std.mem.trim(u8, try self.sources.slice(text), " \t\r\n\x0c;");
+        if (nameEql(raw, "null")) return;
         const call = parseCall(raw) orelse parseBareCall(raw) orelse {
             try self.reportUndefinedCallable(text);
             return error.UndefinedCallable;
@@ -5689,6 +5712,21 @@ const Engine = struct {
             }
         }
         const source_input = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+        if (findTopLevelSequence(source_input, " is defined")) |marker| {
+            if (marker + " is defined".len == source_input.len) {
+                const name = std.mem.trim(
+                    u8,
+                    source_input[0..marker],
+                    " \t\r\n\x0c",
+                );
+                if (validVariableName(name)) {
+                    return self.ownValue(
+                        span,
+                        .{ .boolean = try self.lookupBinding(scope, name) != null },
+                    );
+                }
+            }
+        }
         if (nameEql(source_input, "current-property")) {
             if (try self.lookupBinding(scope, "current-property")) |bound| {
                 return bound;

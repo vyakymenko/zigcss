@@ -293,6 +293,35 @@ const font_face_css =
     "@font-face{font-family:\"Lower\";src:url(\"lower.woff\")}" ++
     "@font-face{font-family:'Explicit'}";
 
+const complex_for_input =
+    \\values = a b c d
+    \\body
+    \\  for value, index in values[1..2]
+    \\    item index value
+    \\pairs = (error 'first') (error 'second')
+    \\body
+    \\  for pair in pairs
+    \\    message pair[0] pair[1]
+    \\body
+    \\  for row in x y
+    \\    for column in 0 1
+    \\      grid column row
+    \\probe()
+    \\  marker = 1
+    \\  for ignored in arguments
+    \\    null
+    \\  state marker is defined
+    \\body
+    \\  probe()
+    \\body
+    \\  probe(42)
+;
+
+const complex_for_css = "body{item:0 b;item:1 c}" ++
+    "body{message:error 'first';message:error 'second'}" ++
+    "body{grid:0 x;grid:1 x;grid:0 y;grid:1 y}" ++
+    "body{state:true}body{state:true}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2984,6 +3013,43 @@ test "native Stylus indentation-owned font face rules are evaluated deterministi
     );
 }
 
+test "native Stylus complex loops retain bounded range group nesting and callable ownership" {
+    const lower_input =
+        \\values = a b
+        \\body
+        \\  for value in values[0]
+        \\    item value
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_loop_iterations = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{item:a}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 11;
+    var first = try compile(std.testing.allocator, complex_for_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, complex_for_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(complex_for_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 10;
+    try expectSemanticRejectionWithLimits(
+        complex_for_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(u8, complex_for_input, "for ignored").?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3549,6 +3615,14 @@ fn exerciseFontFaceAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(font_face_css, result.css());
 }
 
+fn exerciseComplexForAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_loop_iterations = 11;
+    var result = try compile(allocator, complex_for_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(complex_for_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3737,6 +3811,14 @@ test "native Stylus indentation-owned font face rules handle every allocation fa
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseFontFaceAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus complex loops handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseComplexForAllocationFailures,
         .{},
     );
 }
