@@ -144,6 +144,19 @@ const nested_mixin_extension_input =
 
 const nested_mixin_extension_css = ".class,.class2{position:absolute}";
 
+const multiple_definition_extension_input =
+    \\.error
+    \\  font-size: bold
+    \\.error
+    \\  color: red
+    \\.serious-error
+    \\  @extends .error
+    \\  font-size: 18px
+;
+
+const multiple_definition_extension_css = ".error,.serious-error{font-size:bold}" ++
+    ".error,.serious-error{color:#f00}.serious-error{font-size:18px}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -2547,6 +2560,60 @@ test "native Stylus nested mixin extensions retain bounded invocation ownership"
     );
 }
 
+test "native Stylus plural extension aliases cover each prior matching definition" {
+    const lower_input =
+        \\.error
+        \\  font-size: bold
+        \\.serious-error
+        \\  @extends .error
+        \\  font-size: 18px
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 3;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        ".error,.serious-error{font-size:bold}.serious-error{font-size:18px}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 5;
+    var first = try compile(
+        std.testing.allocator,
+        multiple_definition_extension_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        multiple_definition_extension_input,
+        terminal,
+    );
+    defer second.deinit();
+    try std.testing.expectEqualStrings(multiple_definition_extension_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var over_limit = terminal;
+    over_limit.max_selectors = 3;
+    try expectSemanticRejectionWithLimits(
+        multiple_definition_extension_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOfPos(
+            u8,
+            multiple_definition_extension_input,
+            ".error".len,
+            ".error",
+        ).?),
+    );
+}
+
 test "native Stylus scalar conversion and expansion limits fail closed" {
     const bitwise_overflow =
         \\.a
@@ -3064,6 +3131,12 @@ fn exerciseNestedMixinExtensionAllocationFailures(allocator: std.mem.Allocator) 
     try std.testing.expectEqualStrings(nested_mixin_extension_css, result.css());
 }
 
+fn exerciseMultipleDefinitionExtensionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, multiple_definition_extension_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(multiple_definition_extension_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -3204,6 +3277,14 @@ test "native Stylus nested mixin extensions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseNestedMixinExtensionAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus multiple definition extensions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMultipleDefinitionExtensionAllocationFailures,
         .{},
     );
 }

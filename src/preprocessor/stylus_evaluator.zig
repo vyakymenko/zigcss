@@ -297,11 +297,12 @@ pub fn evaluateWithOptions(
         try discovery.run();
     }
 
-    const dynamic_extension_checkpoint = if (dynamic_extension_plan.extensions.items.len > 0)
+    const extension_checkpoint = if (dynamic_extension_plan.extensions.items.len > 0 or
+        try containsExtensionDirective(sources, active_document))
         try transaction.stagingCheckpoint()
     else
         null;
-    errdefer if (dynamic_extension_checkpoint) |checkpoint_value| {
+    errdefer if (extension_checkpoint) |checkpoint_value| {
         transaction.restoreStaging(checkpoint_value) catch {};
     };
     var engine = try Engine.init(
@@ -665,6 +666,22 @@ fn containsCacheBlock(
         const raw_call = std.mem.trimLeft(u8, raw_selector[1..], " \t");
         const call = parseCall(raw_call) orelse parseBareCall(raw_call) orelse continue;
         if (nameEql(raw_call[call.name.start..call.name.end], "cache")) return true;
+    }
+    return false;
+}
+
+fn containsExtensionDirective(
+    sources: *const native_source.Table,
+    document: *const native_syntax.Document,
+) Error!bool {
+    for (document.nodes()) |node| {
+        if (node.kind != .at_rule or node.text == null) continue;
+        const raw = std.mem.trim(
+            u8,
+            try sources.slice(node.text.?),
+            " \t\r\n\x0c;",
+        );
+        if (parseExtendDirective(raw) != null) return true;
     }
     return false;
 }
@@ -2783,9 +2800,7 @@ const Engine = struct {
                 var targets = try splitTopLevel(self.allocator, targets_raw, ',');
                 defer targets.deinit(self.allocator);
                 if (directive.plural) {
-                    if (current_selector_nested or targets.items.len != 1 or
-                        !selectorHasTopLevelCombinator(targets_raw))
-                    {
+                    if (current_selector_nested or targets.items.len != 1) {
                         continue;
                     }
                     var extenders = try splitTopLevel(self.allocator, extender, ',');
