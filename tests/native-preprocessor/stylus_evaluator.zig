@@ -464,6 +464,29 @@ const multiple_call_assignment_css =
     "body{padding:5px;padding:100px;padding:10px}" ++
     "form{padding-left:5px;padding-right:5px;padding-top:10px;padding-bottom:10px}";
 
+const nested_function_input =
+    \\outer(a, b)
+    \\  half()
+    \\    b / 2
+    \\  a + half()
+    \\factory(name)
+    \\  if name == 'add'
+    \\    add(a, b)
+    \\      a + b
+    \\  else
+    \\    sub(a, b)
+    \\      a - b
+    \\body
+    \\  width outer(1, 5)
+    \\  fn = factory('add')
+    \\  height fn(5, 5)
+    \\  fn = factory('sub')
+    \\  fn2 = fn
+    \\  min-height fn2(5, 5)
+;
+
+const nested_function_css = "body{width:3.5;height:10;min-height:0}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -3330,6 +3353,56 @@ test "native Stylus declaration assignments persist across repeated callable out
     );
 }
 
+test "native Stylus nested functions return bounded callable values without leaking names" {
+    const lower_input =
+        \\outer(a, b)
+        \\  half()
+        \\    b / 2
+        \\  a + half()
+        \\body
+        \\  width outer(1, 5)
+    ;
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var lower = try compile(std.testing.allocator, lower_input, terminal);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{width:3.5}", lower.css());
+
+    var first = try compile(std.testing.allocator, nested_function_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, nested_function_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(nested_function_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_call_depth = 1;
+    try expectSemanticRejectionWithLimits(
+        nested_function_input,
+        over_limit,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.lastIndexOf(u8, nested_function_input, "half()").?),
+    );
+
+    const leak_input =
+        \\factory()
+        \\  hidden(value)
+        \\    value + 1
+        \\body
+        \\  factory()
+        \\  width hidden(1)
+    ;
+    var leak = try compile(std.testing.allocator, leak_input, terminal);
+    defer leak.deinit();
+    try std.testing.expectEqualStrings("body{width:hidden(1)}", leak.css());
+}
+
 test "native Stylus call mixins transport a content block through an empty list" {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 2;
@@ -4083,6 +4156,14 @@ fn exerciseMultipleCallAssignmentAllocationFailures(allocator: std.mem.Allocator
     try std.testing.expectEqualStrings("body{first:2px;second:2px}", result.css());
 }
 
+fn exerciseNestedFunctionAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var result = try compile(allocator, nested_function_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(nested_function_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -4319,6 +4400,14 @@ test "native Stylus declaration assignment callables handle every allocation fai
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMultipleCallAssignmentAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus nested functions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseNestedFunctionAllocationFailures,
         .{},
     );
 }

@@ -1921,6 +1921,7 @@ const Callable = struct {
     node_id: native_syntax.NodeId,
     scope: native_environment.ScopeId,
     anonymous: bool = false,
+    local: bool = false,
 };
 
 const MutationAlias = struct {
@@ -2389,7 +2390,8 @@ const Engine = struct {
         self: *Engine,
         node_id: native_syntax.NodeId,
         scope: native_environment.ScopeId,
-    ) Error!void {
+        local: bool,
+    ) Error!u32 {
         const node = try self.document.get(node_id);
         const text = node.text orelse return error.InvalidDocument;
         const raw = try self.sources.slice(text);
@@ -2401,11 +2403,18 @@ const Engine = struct {
             return error.InvalidArguments;
         };
         const name = raw[definition.name.start..definition.name.end];
+        if (self.callables.items.len >= std.math.maxInt(u32)) {
+            try self.reportResource(text, "native Stylus value limit exceeded");
+            return error.ValueLimitExceeded;
+        }
+        const callable_id: u32 = @intCast(self.callables.items.len);
         try self.callables.append(self.allocator, .{
             .name = name,
             .node_id = node_id,
             .scope = scope,
+            .local = local,
         });
+        return callable_id;
     }
 
     fn ownAnonymousCallable(
@@ -4230,7 +4239,24 @@ const Engine = struct {
                 },
                 .function, .mixin => {
                     previous_condition = null;
-                    try self.registerCallable(statement_id, scope.*);
+                    const local = allow_return and statement.kind == .function;
+                    const callable_id = try self.registerCallable(
+                        statement_id,
+                        scope.*,
+                        local,
+                    );
+                    if (local) {
+                        const text = statement.text orelse return error.InvalidDocument;
+                        const callable = try self.ownValue(text, .{ .callable = .{
+                            .kind = .user_function,
+                            .id = callable_id,
+                            .identity = @as(u64, callable_id) + 1,
+                        } });
+                        const name = self.callables.items[callable_id].name;
+                        scope.* = try self.setBinding(scope.*, name, callable, text);
+                        self.callables.items[callable_id].scope = scope.*;
+                        implicit_result = callable;
+                    }
                 },
                 .declaration => {
                     previous_condition = null;
@@ -5267,6 +5293,7 @@ const Engine = struct {
         while (index > 0) {
             index -= 1;
             if (!self.callables.items[index].anonymous and
+                !self.callables.items[index].local and
                 std.mem.eql(u8, self.callables.items[index].name, name))
             {
                 return self.callables.items[index];
@@ -5280,6 +5307,14 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         name: []const u8,
     ) Error!?Callable {
+        if (try self.environment.lookupNonGlobal(scope, name)) |binding| {
+            if (binding.* == .callable and
+                binding.callable.kind == .user_function and
+                binding.callable.id < self.callables.items.len)
+            {
+                return self.callables.items[binding.callable.id];
+            }
+        }
         if (self.findCallable(name)) |callable| return callable;
         const binding = (try self.lookupBinding(scope, name)) orelse return null;
         return switch (binding.*) {
