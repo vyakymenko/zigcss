@@ -4175,7 +4175,20 @@ const Engine = struct {
         if (returned != null) return error.InvalidDocument;
 
         if (declarations.items.len > 0 and visible_selector.len > 0) {
-            try self.emitMapped(selector_node.text.?, null, visible_selector);
+            // The recovery-disabled CSS core preserves this raw vendor body
+            // in expanded output, including the provider's comma spacing.
+            const opera_selector = if (self.options.output_style == .expanded and
+                self.emittingOKeyframes() and
+                std.mem.indexOfScalar(u8, visible_selector, ',') != null)
+                try self.spaceSelectorCommasOwned(selector_node.text.?, visible_selector)
+            else
+                null;
+            defer if (opera_selector) |owned| self.allocator.free(owned);
+            try self.emitMapped(
+                selector_node.text.?,
+                null,
+                opera_selector orelse visible_selector,
+            );
             try self.emit(if (self.emittingOKeyframes()) " {\n    " else "{");
             for (declarations.items, 0..) |declaration, declaration_index| {
                 try self.emitMapped(declaration.span, null, declaration.property);
@@ -4215,6 +4228,28 @@ const Engine = struct {
             if (branch.len == 0) return error.InvalidDocument;
             if (selectorBranchContainsPlaceholder(branch)) continue;
             if (output.items.len > 0) try self.appendTemporary(&output, span, ",");
+            try self.appendTemporary(&output, span, branch);
+        }
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn spaceSelectorCommasOwned(
+        self: *Engine,
+        span: native_source.Span,
+        selector: []const u8,
+    ) Error![]u8 {
+        var branches = try splitTopLevel(self.allocator, selector, ',');
+        defer branches.deinit(self.allocator);
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (branches.items, 0..) |range, index| {
+            const branch = std.mem.trim(
+                u8,
+                selector[range.start..range.end],
+                " \t\r\n\x0c",
+            );
+            if (branch.len == 0) return error.InvalidDocument;
+            if (index > 0) try self.appendTemporary(&output, span, ", ");
             try self.appendTemporary(&output, span, branch);
         }
         return output.toOwnedSlice(self.allocator);

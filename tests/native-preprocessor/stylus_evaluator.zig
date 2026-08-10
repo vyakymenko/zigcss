@@ -3290,6 +3290,76 @@ test "native Stylus keyframe fabrication owns the provider default terminal cont
     );
 }
 
+test "native Stylus newline keyframe selectors own the finite terminal contract" {
+    const lower_input =
+        \\vendors = o
+        \\@keyframes pulse
+        \\  0%
+        \\  100%
+        \\    opacity 1
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "@-o-keyframes pulse{ 0%, 100% { opacity: 1; } }",
+        lower.css(),
+    );
+    var compressed = try compileWithOptions(
+        std.testing.allocator,
+        lower_input,
+        .{ .output_style = .compressed },
+        lower_limits,
+    );
+    defer compressed.deinit();
+    try std.testing.expectEqual(
+        @as(?usize, null),
+        std.mem.indexOf(u8, compressed.css(), "%, "),
+    );
+
+    const terminal_input =
+        \\@keyframes pulse
+        \\  0%
+        \\  50%
+        \\  100%
+        \\    opacity 1
+        \\  to
+        \\    opacity 0
+    ;
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_selectors = 16;
+    var first = try compile(std.testing.allocator, terminal_input, terminal_limits);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, terminal_input, terminal_limits);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "@-moz-keyframes pulse{0%,50%,100%{opacity:1}to{opacity:0}}" ++
+            "@-webkit-keyframes pulse{0%,50%,100%{opacity:1}to{opacity:0}}" ++
+            "@-o-keyframes pulse{ 0%, 50%, 100% { opacity: 1; } " ++
+            "to { opacity: 0; } }" ++
+            "@keyframes pulse{0%,50%,100%{opacity:1}to{opacity:0}}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.max_selectors = 15;
+    try expectSemanticRejectionWithLimits(
+        terminal_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, terminal_input, "to").?),
+    );
+}
+
 test "native Stylus add-property preserves declaration context and interpolation" {
     const input =
         \\custom(name, value)
@@ -5279,6 +5349,17 @@ fn exerciseKeyframeVendorAllocationFailures(allocator: std.mem.Allocator) !void 
             "@-o-keyframes pulse{ from { color: #000; } to { color: #fff; } }" ++
             "@keyframes pulse{from{color:#000}to{color:#fff}}",
         defaults.css(),
+    );
+
+    var newlines = try compile(
+        allocator,
+        "vendors = o\n@keyframes pulse\n  0%\n  100%\n    opacity 1\n",
+        .{},
+    );
+    defer newlines.deinit();
+    try std.testing.expectEqualStrings(
+        "@-o-keyframes pulse{ 0%, 100% { opacity: 1; } }",
+        newlines.css(),
     );
 }
 
