@@ -1453,6 +1453,105 @@ test "native Stylus import lookup owns bounded directory and package resolution"
     );
 }
 
+test "native Stylus computed top-level imports preserve source ordering and bounds" {
+    const two = FixtureFile{
+        .path = "import.ordering/two.styl",
+        .contents = "two\n  foo bar\n",
+    };
+    var lower_limits = resolver.Limits{};
+    lower_limits.max_files = 1;
+    var lower = try compileFixture(
+        std.testing.allocator,
+        "dir = 'import.ordering'\n@import dir + \"/two\"\n",
+        &.{two},
+        lower_limits,
+        .{},
+    );
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("two{foo:bar}", lower.css());
+    try std.testing.expectEqual(@as(usize, 1), lower.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 1), lower.edges().len);
+
+    const input =
+        \\dir = 'import.ordering'
+        \\one
+        \\  foo bar
+        \\@import dir + "/two"
+        \\three
+        \\  foo bar
+        \\@import dir + '/four'
+    ;
+    const files = [_]FixtureFile{
+        two,
+        .{
+            .path = "import.ordering/four.styl",
+            .contents = "four\n  foo bar\n@import \"import.ordering/five\"\n",
+        },
+        .{
+            .path = "import.ordering/five.styl",
+            .contents = "five\n  foo bar\n",
+        },
+    };
+    var terminal_limits = resolver.Limits{};
+    terminal_limits.max_files = files.len;
+    var first = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        terminal_limits,
+        .{},
+    );
+    defer first.deinit();
+    var second = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        terminal_limits,
+        .{},
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "one{foo:bar}two{foo:bar}three{foo:bar}four{foo:bar}five{foo:bar}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, files.len), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), first.edges().len);
+    for ([_][]const u8{ "two.styl", "four.styl", "five.styl" }, 0..) |basename, index| {
+        try std.testing.expectEqual(resolver.DependencyKind.import, first.dependencies()[index].kind);
+        try std.testing.expectEqualStrings(basename, std.fs.path.basename(first.dependencies()[index].url));
+    }
+    try std.testing.expectEqualStrings("input.styl", std.fs.path.basename(first.edges()[0].parent_url.?));
+    try std.testing.expectEqualStrings("input.styl", std.fs.path.basename(first.edges()[1].parent_url.?));
+    try std.testing.expectEqualStrings("four.styl", std.fs.path.basename(first.edges()[2].parent_url.?));
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    var imported_segments: usize = 0;
+    for (first.map().?.segments()) |segment| {
+        if (segment.source_id) |source_id| {
+            imported_segments += @intFromBool(source_id.value != 0);
+        }
+    }
+    try std.testing.expect(imported_segments >= 3);
+
+    var over_limit = terminal_limits;
+    over_limit.max_files = files.len - 1;
+    try expectFixtureRejectionWithOptions(
+        input,
+        &files,
+        .{},
+        over_limit,
+        .{},
+        error.FileCountExceeded,
+        .resource_limit,
+        "native Stylus import resource limit exceeded",
+        2,
+        files.len - 1,
+    );
+}
+
 test "native Stylus callable dynamic imports fail closed outside their bounded contract" {
     const escaped =
         \\.before
@@ -1501,7 +1600,7 @@ test "native Stylus callable dynamic imports fail closed outside their bounded c
         &.{.{ .path = "part.styl", .contents = ".loaded\n  color blue\n" }},
         error.UnsupportedFeature,
         .unsupported_feature,
-        "native Stylus evaluated imports require a top-level callable invocation",
+        "native Stylus evaluated imports require a top-level evaluation context",
         0,
         0,
     );
@@ -4815,6 +4914,42 @@ fn exerciseImportLookupAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(usize, files.len), result.edges().len);
 }
 
+fn exerciseComputedTopLevelImportAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\dir = 'import.ordering'
+        \\one
+        \\  foo bar
+        \\@import dir + "/two"
+        \\three
+        \\  foo bar
+        \\@import dir + '/four'
+    ;
+    const files = [_]FixtureFile{
+        .{
+            .path = "import.ordering/two.styl",
+            .contents = "two\n  foo bar\n",
+        },
+        .{
+            .path = "import.ordering/four.styl",
+            .contents = "four\n  foo bar\n@import \"import.ordering/five\"\n",
+        },
+        .{
+            .path = "import.ordering/five.styl",
+            .contents = "five\n  foo bar\n",
+        },
+    };
+    var terminal = resolver.Limits{};
+    terminal.max_files = files.len;
+    var result = try compileFixture(allocator, input, &files, terminal, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "one{foo:bar}two{foo:bar}three{foo:bar}four{foo:bar}five{foo:bar}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, files.len), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), result.edges().len);
+}
+
 fn exerciseCompactDeclarationAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compileWithOptions(
         allocator,
@@ -5197,6 +5332,14 @@ test "native Stylus import lookup handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseImportLookupAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus computed top-level imports handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseComputedTopLevelImportAllocationFailures,
         .{},
     );
 }

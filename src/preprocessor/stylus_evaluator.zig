@@ -1340,33 +1340,23 @@ const ImportExpander = struct {
         const explicit_extension = std.ascii.eqlIgnoreCase(extension, ".styl") or
             std.ascii.eqlIgnoreCase(extension, ".css");
         if (explicit_extension) {
-            try self.appendCandidate(
-                &candidates,
-                try importCandidateUrl(self.allocator, parent_url, parsed.target),
-            );
+            try self.appendSearchCandidates(&candidates, parsed.target);
         } else {
-            const direct = try importCandidateUrl(self.allocator, parent_url, parsed.target);
-            try self.appendCandidate(&candidates, direct);
+            try self.appendSearchCandidates(&candidates, parsed.target);
             const with_extension = try std.fmt.allocPrint(
                 self.allocator,
                 "{s}.styl",
                 .{parsed.target},
             );
             defer self.allocator.free(with_extension);
-            try self.appendCandidate(
-                &candidates,
-                try importCandidateUrl(self.allocator, parent_url, with_extension),
-            );
+            try self.appendSearchCandidates(&candidates, with_extension);
             const basename = std.fs.path.basename(parsed.target);
             const index_target = try std.fs.path.join(
                 self.allocator,
                 &.{ parsed.target, "index.styl" },
             );
             defer self.allocator.free(index_target);
-            try self.appendCandidate(
-                &candidates,
-                try importCandidateUrl(self.allocator, parent_url, index_target),
-            );
+            try self.appendSearchCandidates(&candidates, index_target);
             if (basename.len > 0) {
                 const named_file = try std.fmt.allocPrint(
                     self.allocator,
@@ -1379,10 +1369,7 @@ const ImportExpander = struct {
                     &.{ parsed.target, named_file },
                 );
                 defer self.allocator.free(named_target);
-                try self.appendCandidate(
-                    &candidates,
-                    try importCandidateUrl(self.allocator, parent_url, named_target),
-                );
+                try self.appendSearchCandidates(&candidates, named_target);
             }
         }
         for (candidates.items) |candidate_url| {
@@ -1450,6 +1437,26 @@ const ImportExpander = struct {
     ) Error!void {
         errdefer self.allocator.free(candidate);
         try candidates.append(self.allocator, candidate);
+    }
+
+    fn appendSearchCandidates(
+        self: *ImportExpander,
+        candidates: *std.ArrayList([]u8),
+        target: []const u8,
+    ) Error!void {
+        var index = self.ancestry.items.len;
+        while (index > 0) {
+            index -= 1;
+            try self.appendCandidate(
+                candidates,
+                try importCandidateUrl(
+                    self.allocator,
+                    self.ancestry.items[index],
+                    target,
+                ),
+            );
+            if (std.fs.path.isAbsolute(target)) return;
+        }
     }
 
     fn loadPackageImport(
@@ -4994,12 +5001,12 @@ const Engine = struct {
             try self.reportImport(text, "native Stylus import syntax is unsupported");
             return error.InvalidImport;
         };
-        if (self.mode != .emit or output != null or self.active_callables.items.len == 0) {
+        if (self.mode != .emit or output != null) {
             try self.transaction.report(
                 .err,
                 .unsupported_feature,
                 text,
-                "native Stylus evaluated imports require a top-level callable invocation",
+                "native Stylus evaluated imports require a top-level evaluation context",
                 &.{},
             );
             return error.UnsupportedFeature;
