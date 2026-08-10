@@ -245,6 +245,7 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     var first_nonconforming_id: ?[]const u8 = null;
     var exact_case_id_hash = std.hash.Wyhash.init(0);
     var prior_exact_case_id_hash = std.hash.Wyhash.init(0);
+    var pre_object_complex_case_id_hash = std.hash.Wyhash.init(0);
     var pre_multiline_case_id_hash = std.hash.Wyhash.init(0);
     var pre_mixins_complex_case_id_hash = std.hash.Wyhash.init(0);
     var pre_media_complex_case_id_hash = std.hash.Wyhash.init(0);
@@ -300,11 +301,18 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
             include_css_exact_count += @intFromBool(case.providerOptions.includeCss);
             exact_case_id_hash.update(case.id);
             exact_case_id_hash.update("\x00");
-            const became_exact_with_object_complex =
-                std.mem.eql(u8, case.id, "stylus-official-object-complex");
-            if (!became_exact_with_object_complex) {
+            const became_exact_with_object_mixin =
+                std.mem.eql(u8, case.id, "stylus-official-object-mixin");
+            if (!became_exact_with_object_mixin) {
                 prior_exact_case_id_hash.update(case.id);
                 prior_exact_case_id_hash.update("\x00");
+            }
+            const became_exact_with_object_complex =
+                std.mem.eql(u8, case.id, "stylus-official-object-complex") or
+                became_exact_with_object_mixin;
+            if (!became_exact_with_object_complex) {
+                pre_object_complex_case_id_hash.update(case.id);
+                pre_object_complex_case_id_hash.update("\x00");
             }
             const became_exact_with_multiline =
                 std.mem.eql(u8, case.id, "stylus-official-multiline") or
@@ -347,8 +355,8 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     }
 
     const exact_hash = exact_case_id_hash.final();
-    if (exact_success_count != 279 or nonconforming_count != 47 or
-        exact_hash != 0xe4c57f83224c7462)
+    if (exact_success_count != 280 or nonconforming_count != 46 or
+        exact_hash != 0xe311f0398c17d8fe)
     {
         std.debug.print(
             "\nnative Stylus exact inventory: {d} exact, {d} nonconforming, " ++
@@ -365,12 +373,16 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
     try std.testing.expectEqual(@as(usize, 7), include_css_success_count);
     try std.testing.expectEqual(@as(usize, 7), include_css_exact_count);
     try std.testing.expectEqual(@as(usize, 0), nondeterministic_count);
-    try std.testing.expectEqual(@as(usize, 279), exact_success_count);
-    try std.testing.expectEqual(@as(usize, 47), nonconforming_count);
-    try std.testing.expectEqual(@as(u64, 0xe4c57f83224c7462), exact_hash);
+    try std.testing.expectEqual(@as(usize, 280), exact_success_count);
+    try std.testing.expectEqual(@as(usize, 46), nonconforming_count);
+    try std.testing.expectEqual(@as(u64, 0xe311f0398c17d8fe), exact_hash);
+    try std.testing.expectEqual(
+        @as(u64, 0xe4c57f83224c7462),
+        prior_exact_case_id_hash.final(),
+    );
     try std.testing.expectEqual(
         @as(u64, 0xecd638eb43f8a071),
-        prior_exact_case_id_hash.final(),
+        pre_object_complex_case_id_hash.final(),
     );
     try std.testing.expectEqual(
         @as(u64, 0xb61c2417bc249721),
@@ -389,7 +401,7 @@ test "native Stylus measures the finite pinned success corpus without ordinal ex
         pre_media_bubble_case_id_hash.final(),
     );
     try std.testing.expectEqualStrings(
-        "stylus-official-object-mixin",
+        "stylus-official-operator-range",
         first_nonconforming_id.?,
     );
 }
@@ -2710,6 +2722,59 @@ test "native Stylus closes the finite object complex conformance family" {
     std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
         std.debug.print(
             "\nnative Stylus object complex mismatch\nexpected: {s}\nactual:   {s}\n",
+            .{ expected_css.css(), first.css() },
+        );
+        return failure;
+    };
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, 0), first.edges().len);
+    try expectDependencyDeterminism(&first, &second);
+}
+
+test "native Stylus closes the finite object mixin conformance family" {
+    const allocator = std.testing.allocator;
+    const manifest_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        "tests/preprocessors/stylus/corpus/manifest.json",
+        2 * 1024 * 1024,
+    );
+    defer allocator.free(manifest_bytes);
+    var parsed = try std.json.parseFromSlice(
+        Manifest,
+        allocator,
+        manifest_bytes,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+
+    const case = try findCase(parsed.value.cases, "stylus-official-object-mixin");
+    try std.testing.expectEqualStrings("object", case.feature);
+    try std.testing.expectEqualStrings("success", case.outcome);
+    try std.testing.expectEqualStrings("expanded", case.style);
+
+    const input_path = try fixturePath(allocator, case.entry);
+    defer allocator.free(input_path);
+    const expected_path = try fixturePath(allocator, try expectedPath(case));
+    defer allocator.free(expected_path);
+    const input = try std.fs.cwd().readFileAlloc(allocator, input_path, max_fixture_bytes);
+    defer allocator.free(input);
+    const expected = try std.fs.cwd().readFileAlloc(allocator, expected_path, max_fixture_bytes);
+    defer allocator.free(expected);
+
+    var expected_css = try compileExpectedCss(allocator, expected);
+    defer expected_css.deinit();
+    var first = try compileNative(allocator, case, input);
+    defer first.deinit();
+    var second = try compileNative(allocator, case, input);
+    defer second.deinit();
+
+    std.testing.expectEqualStrings(expected_css.css(), first.css()) catch |failure| {
+        std.debug.print(
+            "\nnative Stylus object mixin mismatch\nexpected: {s}\nactual:   {s}\n",
             .{ expected_css.css(), first.css() },
         );
         return failure;

@@ -825,6 +825,32 @@ const nested_object_member_css =
     "body{first:10px;second:20px;third:30px;fourth:400px;" ++
     "assigned:100px;observed:100px;comparison:true}";
 
+const object_mixin_input =
+    \\decorate()
+    \\  border arguments
+    \\reset-shadow()
+    \\  box-shadow none
+    \\theme = {
+    \\  color: red
+    \\  decorate: 1px solid blue
+    \\  reset-shadow: null
+    \\  '&:hover': {
+    \\    color: lime
+    \\  }
+    \\  '@media print': {
+    \\    '.child': {
+    \\      width: 2px
+    \\    }
+    \\  }
+    \\}
+    \\.host
+    \\  {theme}
+;
+
+const object_mixin_css =
+    ".host{color:#f00;border:1px solid #00f;box-shadow:none}" ++
+    ".host:hover{color:#0f0}@media print{.host .child{width:2px}}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -3057,6 +3083,57 @@ test "native Stylus nested object members own the finite mutation depth contract
         .resource_limit,
         "native Stylus value limit exceeded",
         @intCast(std.mem.indexOf(u8, nested_object_member_input, "root['branch']").?),
+    );
+}
+
+test "native Stylus object mixins own the finite structural insertion contract" {
+    const lower_input =
+        \\theme = { width: 1px }
+        \\.host
+        \\  {theme}
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_selectors = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".host{width:1px}", lower.css());
+
+    const pseudo_input =
+        \\theme = {
+        \\  ':root': {
+        \\    width: 1px
+        \\  }
+        \\}
+        \\{theme}
+    ;
+    var pseudo_limits = stylus_evaluator.Limits{};
+    pseudo_limits.max_selectors = 1;
+    var pseudo = try compile(std.testing.allocator, pseudo_input, pseudo_limits);
+    defer pseudo.deinit();
+    try std.testing.expectEqualStrings(":root{width:1px}", pseudo.css());
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_selectors = 3;
+    var first = try compile(std.testing.allocator, object_mixin_input, terminal_limits);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, object_mixin_input, terminal_limits);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(object_mixin_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.max_selectors = 2;
+    try expectSemanticRejectionWithLimits(
+        object_mixin_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.indexOf(u8, object_mixin_input, "{theme}").?),
     );
 }
 
@@ -6346,6 +6423,14 @@ fn exerciseNestedObjectMemberAllocationFailures(allocator: std.mem.Allocator) !v
     try std.testing.expectEqualStrings(nested_object_member_css, result.css());
 }
 
+fn exerciseObjectMixinAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 3;
+    var result = try compile(allocator, object_mixin_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(object_mixin_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -6654,6 +6739,14 @@ test "native Stylus nested object members handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseNestedObjectMemberAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus object mixins handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseObjectMixinAllocationFailures,
         .{},
     );
 }
