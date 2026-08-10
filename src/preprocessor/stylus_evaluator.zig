@@ -949,6 +949,7 @@ fn requiresSemanticEvaluation(
                 try sources.slice(node.text.?),
                 " \t\r\n\x0c;",
             );
+            if (isCssLiteralHeader(header)) return true;
             // The pinned Stylus evaluator fabricates an official keyframes
             // node from the lexical `vendors` value even when its source uses
             // otherwise byte-preservable explicit CSS braces.
@@ -4365,6 +4366,15 @@ const Engine = struct {
         const at_rule = try self.document.get(at_rule_id);
         if (at_rule.kind != .at_rule or at_rule.text == null) return error.InvalidDocument;
         const children = try self.document.children(at_rule_id);
+        const raw_header = std.mem.trim(
+            u8,
+            try self.sources.slice(at_rule.text.?),
+            " \t\r\n\x0c;",
+        );
+        if (isCssLiteralHeader(raw_header)) {
+            try self.emitCssLiteralBlock(at_rule);
+            return;
+        }
         const header_owned = try self.renderTextOwned(at_rule.text.?, parent_scope, .interpolation, 0);
         defer self.allocator.free(header_owned);
         const normalized_header = try self.normalizeUrlQuotesOwned(at_rule.text.?, header_owned);
@@ -4508,6 +4518,105 @@ const Engine = struct {
             }
         }
         try self.emit("}");
+    }
+
+    fn emitCssLiteralBlock(
+        self: *Engine,
+        at_rule: *const native_syntax.Node,
+    ) Error!void {
+        const text = at_rule.text orelse return error.InvalidDocument;
+        const file = try self.sources.get(text.source);
+        var cursor: usize = @intCast(text.end);
+        while (cursor < file.bytes.len and
+            (file.bytes[cursor] == ' ' or file.bytes[cursor] == '\t' or
+                file.bytes[cursor] == '\x0c'))
+        {
+            cursor += 1;
+        }
+        if (cursor >= file.bytes.len or file.bytes[cursor] != '{') {
+            return self.invalidCssLiteralBlock(text);
+        }
+
+        const content_start = cursor + 1;
+        cursor = content_start;
+        var depth: usize = 1;
+        var quote: u8 = 0;
+        var escaped = false;
+        var block_comment = false;
+        while (cursor < file.bytes.len) : (cursor += 1) {
+            const byte = file.bytes[cursor];
+            if (block_comment) {
+                if (byte == '*' and cursor + 1 < file.bytes.len and
+                    file.bytes[cursor + 1] == '/')
+                {
+                    block_comment = false;
+                    cursor += 1;
+                }
+                continue;
+            }
+            if (quote != 0) {
+                if (escaped) {
+                    escaped = false;
+                } else if (byte == '\\') {
+                    escaped = true;
+                } else if (byte == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (byte == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (byte == '/' and cursor + 1 < file.bytes.len and
+                file.bytes[cursor + 1] == '*')
+            {
+                block_comment = true;
+                cursor += 1;
+                continue;
+            }
+            if (byte == '\'' or byte == '"') {
+                quote = byte;
+                continue;
+            }
+            if (byte == '{') {
+                depth = std.math.add(usize, depth, 1) catch
+                    return self.invalidCssLiteralBlock(text);
+                continue;
+            }
+            if (byte != '}') continue;
+            depth -= 1;
+            if (depth != 0) continue;
+
+            const content_end = cursor;
+            const content_span = try self.sources.span(
+                text.source,
+                @intCast(content_start),
+                @intCast(content_end),
+            );
+            try self.reserveTemporary(text, content_end - content_start);
+            try self.emitMapped(content_span, null, file.bytes[content_start..content_end]);
+            return;
+        }
+        return self.invalidCssLiteralBlock(text);
+    }
+
+    fn invalidCssLiteralBlock(
+        self: *Engine,
+        span: native_source.Span,
+    ) Error {
+        self.transaction.report(
+            .err,
+            .invalid_operation,
+            span,
+            "native Stylus literal CSS block is invalid",
+            &.{},
+        ) catch |failure| return failure;
+        return error.InvalidDocument;
     }
 
     fn emitKeyframeVariants(
@@ -12390,6 +12499,13 @@ fn startsWordAscii(raw: []const u8, expected: []const u8) bool {
     }
     return raw.len == expected.len or std.ascii.isWhitespace(raw[expected.len]) or
         raw[expected.len] == '(' or raw[expected.len] == ';';
+}
+
+fn isCssLiteralHeader(raw: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(
+        std.mem.trim(u8, raw, " \t\r\n\x0c;"),
+        "@css",
+    );
 }
 
 fn parseExtendDirective(raw: []const u8) ?ExtendDirective {

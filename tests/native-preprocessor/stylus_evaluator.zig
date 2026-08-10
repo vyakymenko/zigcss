@@ -416,6 +416,18 @@ const keyword_arguments_css = "body{padding-top:15px;padding-bottom:100px;" ++
     "quotient:5;joined:'1|2|3';spread:'1|2|3';" ++
     "tint:rgba(100,50,10,0.5)}";
 
+const literal_css_input =
+    \\@css {
+    \\  body {
+    \\    font: 14px;
+    \\  }
+    \\
+    \\  a { text-decoration: none; }
+    \\}
+;
+
+const literal_css_output = "body{font:14px}a{text-decoration:none}";
+
 const function_property_alias_input =
     \\box-shadow-important()
     \\  push(arguments, !important)
@@ -4615,6 +4627,63 @@ test "native Stylus keyword arguments bind builtins and user callables determini
     );
 }
 
+test "native Stylus literal CSS blocks preserve bounded raw root and nested content" {
+    const lower_input = "@css { .icon::before { content: \"}\"; } /* { */ }";
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".icon::before{content:\"}\"}", lower.css());
+
+    const opening = std.mem.indexOfScalar(u8, literal_css_input, '{').?;
+    const closing = std.mem.lastIndexOfScalar(u8, literal_css_input, '}').?;
+    const literal_bytes = closing - opening - 1;
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_temporary_bytes = literal_bytes;
+    var first = try compile(std.testing.allocator, literal_css_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, literal_css_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(literal_css_output, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const nested_input =
+        \\@media print
+        \\  @css {
+        \\    body { color: red }
+        \\  }
+    ;
+    var nested = try compileWithOptions(
+        std.testing.allocator,
+        nested_input,
+        .{ .output_style = .compressed },
+        .{},
+    );
+    defer nested.deinit();
+    try std.testing.expectEqualStrings("@media print{body{color:red}}", nested.css());
+
+    var over_limit = terminal;
+    over_limit.max_temporary_bytes = literal_bytes - 1;
+    try expectSemanticRejectionWithLimits(
+        literal_css_input,
+        over_limit,
+        error.TemporaryLimitExceeded,
+        .resource_limit,
+        "native Stylus temporary byte limit exceeded",
+        0,
+    );
+
+    try expectSemanticRejection(
+        "@css",
+        error.InvalidDocument,
+        .invalid_operation,
+        "native Stylus literal CSS block is invalid",
+        0,
+    );
+}
+
 test "native Stylus property functions emit declarations through callable aliases" {
     const lower_input =
         \\border-radius(size)
@@ -5689,6 +5758,12 @@ fn exerciseKeywordArgumentsAllocationFailures(allocator: std.mem.Allocator) !voi
     try std.testing.expectEqualStrings(keyword_arguments_css, result.css());
 }
 
+fn exerciseLiteralCssAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, literal_css_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(literal_css_output, result.css());
+}
+
 fn exerciseFunctionPropertyAliasAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 1;
@@ -6060,6 +6135,14 @@ test "native Stylus keyword arguments handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseKeywordArgumentsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus literal CSS blocks handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLiteralCssAllocationFailures,
         .{},
     );
 }
