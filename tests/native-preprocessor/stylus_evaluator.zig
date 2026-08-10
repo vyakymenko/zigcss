@@ -511,6 +511,27 @@ const media_complex_css =
     "@media (min-width: 67.5em) and (min-height: 43.875em){.foo{font-size:0.9em}}" ++
     "@media (min-width: 75em) and (min-height: 48.75em){.foo{font-size:1em}}";
 
+const mixin_caller_scope_input =
+    \\global = 12
+    \\inner(value = global)
+    \\  push(items, 3)
+    \\  lexical value
+    \\  seen-first first
+    \\  seen-second second
+    \\  seen-items items
+    \\outer()
+    \\  global = 99
+    \\  first = 1
+    \\  second = 2
+    \\  items = 1 2
+    \\  inner()
+    \\body
+    \\  outer()
+;
+
+const mixin_caller_scope_css =
+    "body{lexical:12;seen-first:1;seen-second:2;seen-items:1 2 3}";
+
 const function_property_alias_input =
     \\box-shadow-important()
     \\  push(arguments, !important)
@@ -4918,6 +4939,47 @@ test "native Stylus complex media expressions own the finite semantic contract" 
     );
 }
 
+test "native Stylus nested mixins own the finite caller scope contract" {
+    const lower_input =
+        \\inner()
+        \\  seen local
+        \\outer()
+        \\  local = 1
+        \\  inner()
+        \\body
+        \\  outer()
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_call_depth = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{seen:1}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var first = try compile(std.testing.allocator, mixin_caller_scope_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, mixin_caller_scope_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(mixin_caller_scope_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_call_depth = 1;
+    try expectSemanticRejectionWithLimits(
+        mixin_caller_scope_input,
+        over_limit,
+        error.CallDepthExceeded,
+        .call_limit,
+        "native Stylus call depth exceeded",
+        @intCast(std.mem.lastIndexOf(u8, mixin_caller_scope_input, "inner()").?),
+    );
+}
+
 test "native Stylus property functions emit declarations through callable aliases" {
     const lower_input =
         \\border-radius(size)
@@ -6022,6 +6084,14 @@ fn exerciseMediaComplexAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(media_complex_css, result.css());
 }
 
+fn exerciseMixinCallerScopeAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 2;
+    var result = try compile(allocator, mixin_caller_scope_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(mixin_caller_scope_css, result.css());
+}
+
 fn exerciseFunctionPropertyAliasAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 1;
@@ -6425,6 +6495,14 @@ test "native Stylus complex media expressions handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMediaComplexAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus nested mixin caller scope handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMixinCallerScopeAllocationFailures,
         .{},
     );
 }

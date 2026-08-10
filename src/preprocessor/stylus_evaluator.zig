@@ -2617,6 +2617,7 @@ const Engine = struct {
     callables: std.ArrayList(Callable) = .empty,
     block_values: std.ArrayList(BlockValue) = .empty,
     active_callables: std.ArrayList([]const u8) = .empty,
+    caller_scopes: std.ArrayList(native_environment.ScopeId) = .empty,
     mutation_aliases: std.ArrayList(MutationAlias) = .empty,
     map_binding_aliases: std.ArrayList(BindingReference) = .empty,
     current_property_bindings: std.ArrayList(CurrentPropertyBinding) = .empty,
@@ -2715,6 +2716,7 @@ const Engine = struct {
         for (self.json_local_names.items) |name| self.allocator.free(name);
         self.json_local_names.deinit(self.allocator);
         self.block_values.deinit(self.allocator);
+        self.caller_scopes.deinit(self.allocator);
         self.active_callables.deinit(self.allocator);
         self.callables.deinit(self.allocator);
         self.environment.deinit();
@@ -5945,12 +5947,19 @@ const Engine = struct {
             self.call_depth -= 1;
             return failure;
         };
+        self.caller_scopes.append(self.allocator, caller_scope) catch |failure| {
+            _ = self.active_callables.pop();
+            self.call_depth -= 1;
+            return failure;
+        };
         self.transaction.enterCall() catch |failure| {
+            _ = self.caller_scopes.pop();
             _ = self.active_callables.pop();
             self.call_depth -= 1;
             return failure;
         };
         defer {
+            _ = self.caller_scopes.pop();
             _ = self.active_callables.pop();
             self.call_depth -= 1;
             self.transaction.leaveCall() catch {};
@@ -12500,8 +12509,21 @@ const Engine = struct {
     ) Error!?*const native_value.Value {
         if (try self.environment.lookup(scope, name)) |value| return value;
         const global_scope = self.global_scope orelse return null;
-        if (global_scope.value == scope.value) return null;
-        return self.environment.lookup(global_scope.*, name);
+        if (global_scope.value != scope.value) {
+            if (try self.environment.lookup(global_scope.*, name)) |value| return value;
+        }
+        var index = self.caller_scopes.items.len;
+        while (index > 0) {
+            index -= 1;
+            const caller_scope = self.caller_scopes.items[index];
+            if (caller_scope.value == scope.value or
+                caller_scope.value == global_scope.value)
+            {
+                continue;
+            }
+            if (try self.environment.lookup(caller_scope, name)) |value| return value;
+        }
+        return null;
     }
 
     fn updateBinding(
@@ -12512,8 +12534,23 @@ const Engine = struct {
     ) Error!bool {
         if (try self.environment.update(scope, name, value)) return true;
         const global_scope = self.global_scope orelse return false;
-        if (global_scope.value == scope.value) return false;
-        return self.environment.update(global_scope.*, name, value);
+        if (global_scope.value != scope.value and
+            try self.environment.update(global_scope.*, name, value))
+        {
+            return true;
+        }
+        var index = self.caller_scopes.items.len;
+        while (index > 0) {
+            index -= 1;
+            const caller_scope = self.caller_scopes.items[index];
+            if (caller_scope.value == scope.value or
+                caller_scope.value == global_scope.value)
+            {
+                continue;
+            }
+            if (try self.environment.update(caller_scope, name, value)) return true;
+        }
+        return false;
     }
 
     fn setBinding(
