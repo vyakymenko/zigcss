@@ -8236,6 +8236,13 @@ const Engine = struct {
         if (parseStylusColorLiteral(input)) |color| {
             return self.ownValue(span, .{ .color = color });
         }
+        if (stylusColorTokenPrefixEnd(input)) |color_end| {
+            const items = [_]ByteRange{
+                .{ .start = 0, .end = color_end },
+                .{ .start = color_end, .end = input.len },
+            };
+            return self.evaluateList(span, input, &items, .space, scope, depth + 1);
+        }
 
         if (parseCall(input)) |call| {
             const name = input[call.name.start..call.name.end];
@@ -15869,6 +15876,24 @@ fn parseStylusColorLiteral(input: []const u8) ?native_value.Color {
         return native_color.parseLiteral(expanded[0..]);
     }
     return native_color.parseLiteral(input);
+}
+
+fn stylusColorTokenPrefixEnd(input: []const u8) ?usize {
+    if (input.len < 3 or input[0] != '#') return null;
+    var hex_digits: usize = 0;
+    while (hex_digits + 1 < input.len and std.ascii.isHex(input[hex_digits + 1])) {
+        hex_digits += 1;
+    }
+    if (hex_digits + 1 != input.len) return null;
+
+    // Stylus 0.64.0 tries its exact color token widths in this order and does
+    // not require an identifier boundary. A nonterminal hex run therefore
+    // becomes the longest admitted color followed by another expression item.
+    const provider_widths = [_]usize{ 8, 6, 4, 3, 2, 1 };
+    for (provider_widths) |width| {
+        if (hex_digits > width) return width + 1;
+    }
+    return null;
 }
 
 fn optionalUnitEqual(left: ?[]const u8, right: ?[]const u8) bool {
