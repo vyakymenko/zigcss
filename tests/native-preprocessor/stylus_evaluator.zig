@@ -812,6 +812,21 @@ const operator_semantics_css =
     "invalid-left:false;lexical:false;parse-float-prefix:false;arithmetic:true;" ++
     "assigned:'bar';width:'em'}";
 
+const complex_operator_precedence_input =
+    \\ensure-unit(n)
+    \\  n is a 'unit'
+    \\a = 15
+    \\b = 15
+    \\body
+    \\  nested a == b and (b == 15 ? 1 : 0) ? yes : no
+    \\  adjacent 15px is a 'unit' and #fff is a 'color'?yay:nah
+    \\  false-branch 15px is a 'color' and #fff is a 'color'?yay:nah
+    \\  callable ensure-unit(15)
+;
+
+const complex_operator_precedence_css =
+    "body{nested:yes;adjacent:yay;false-branch:nah;callable:true}";
+
 const commented_if_else_input =
     \\.base
     \\  color red
@@ -3492,6 +3507,51 @@ test "native Stylus operators own the finite coercion and precedence contract" {
         .resource_limit,
         "native Stylus expression depth exceeded",
         @intCast(std.mem.indexOf(u8, operator_semantics_input, "(1 2)").?),
+    );
+}
+
+test "native Stylus complex operators own the finite ternary precedence contract" {
+    const lower_input =
+        \\body
+        \\  selected true and true?yes:no
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_expression_depth = 3;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{selected:yes}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 4;
+    var first = try compile(
+        std.testing.allocator,
+        complex_operator_precedence_input,
+        terminal,
+    );
+    defer first.deinit();
+    var second = try compile(
+        std.testing.allocator,
+        complex_operator_precedence_input,
+        terminal,
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(complex_operator_precedence_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 3;
+    try expectSemanticRejectionWithLimits(
+        complex_operator_precedence_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, complex_operator_precedence_input, "(b == 15").?),
     );
 }
 
@@ -6643,6 +6703,14 @@ fn exerciseOperatorSemanticsAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqualStrings(operator_semantics_css, result.css());
 }
 
+fn exerciseComplexOperatorPrecedenceAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 4;
+    var result = try compile(allocator, complex_operator_precedence_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(complex_operator_precedence_css, result.css());
+}
+
 fn exerciseRootConditionalAssignmentAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.environment.max_bindings = 3;
@@ -6983,6 +7051,14 @@ test "native Stylus operators handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseOperatorSemanticsAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus complex operators handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseComplexOperatorPrecedenceAllocationFailures,
         .{},
     );
 }

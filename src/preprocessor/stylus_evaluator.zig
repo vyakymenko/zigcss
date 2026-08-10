@@ -7697,6 +7697,23 @@ const Engine = struct {
                 return error.InvalidArguments;
             }
         }
+        if (parseGenericTernary(source_input)) |ternary| {
+            const condition = source_input[ternary.condition.start..ternary.condition.end];
+            const selected = if (try self.evaluateCondition(
+                try self.relativeSpan(span, ternary.condition),
+                condition,
+                scope,
+            ))
+                ternary.when_true
+            else
+                ternary.when_false;
+            return self.evaluateValue(
+                try self.relativeSpan(span, selected),
+                source_input[selected.start..selected.end],
+                scope,
+                depth + 1,
+            );
+        }
         // Preserve null operands until logical fallback runs. Rendering first
         // intentionally omits null bytes, which would erase the left operand.
         if (std.mem.indexOf(u8, source_input, "||") != null) {
