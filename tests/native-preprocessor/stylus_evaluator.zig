@@ -3238,6 +3238,58 @@ test "native Stylus keyframe fabrication follows the bounded vendor value" {
     try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
 }
 
+test "native Stylus keyframe fabrication owns the provider default terminal contract" {
+    const lower_input =
+        \\vendors = official
+        \\@keyframes pulse { from { color: red; } }
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.values.max_collection_items = 1;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "@keyframes pulse{from{color:#f00}}",
+        lower.css(),
+    );
+
+    const terminal_input =
+        \\@keyframes pulse {
+        \\  from { color: black; }
+        \\  to { color: white; }
+        \\}
+    ;
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.values.max_collection_items = 5;
+    var first = try compile(std.testing.allocator, terminal_input, terminal_limits);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, terminal_input, terminal_limits);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "@-moz-keyframes pulse{from{color:#000}to{color:#fff}}" ++
+            "@-webkit-keyframes pulse{from{color:#000}to{color:#fff}}" ++
+            "@-o-keyframes pulse{ from { color: #000; } to { color: #fff; } }" ++
+            "@keyframes pulse{from{color:#000}to{color:#fff}}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal_limits;
+    over_limit.values.max_collection_items = 4;
+    try expectSemanticRejectionWithLimits(
+        terminal_input,
+        over_limit,
+        error.ValueLimitExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.indexOf(u8, terminal_input, "@keyframes").?),
+    );
+}
+
 test "native Stylus add-property preserves declaration context and interpolation" {
     const input =
         \\custom(name, value)
@@ -5213,6 +5265,20 @@ fn exerciseKeyframeVendorAllocationFailures(allocator: std.mem.Allocator) !void 
     try std.testing.expectEqualStrings(
         "@-webkit-keyframes pulse{from{opacity:0}}",
         result.css(),
+    );
+
+    var defaults = try compile(
+        allocator,
+        "@keyframes pulse { from { color: black; } to { color: white; } }\n",
+        .{},
+    );
+    defer defaults.deinit();
+    try std.testing.expectEqualStrings(
+        "@-moz-keyframes pulse{from{color:#000}to{color:#fff}}" ++
+            "@-webkit-keyframes pulse{from{color:#000}to{color:#fff}}" ++
+            "@-o-keyframes pulse{ from { color: #000; } to { color: #fff; } }" ++
+            "@keyframes pulse{from{color:#000}to{color:#fff}}",
+        defaults.css(),
     );
 }
 

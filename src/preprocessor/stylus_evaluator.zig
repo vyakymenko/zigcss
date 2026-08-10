@@ -943,6 +943,17 @@ fn requiresSemanticEvaluation(
     if (inputContainsBuiltinCall(input)) return true;
     if (std.mem.indexOf(u8, input, "@extend") != null) return true;
     for (document.nodes(), 0..) |node, index| {
+        if (node.kind == .at_rule and node.text != null) {
+            const header = std.mem.trim(
+                u8,
+                try sources.slice(node.text.?),
+                " \t\r\n\x0c;",
+            );
+            // The pinned Stylus evaluator fabricates an official keyframes
+            // node from the lexical `vendors` value even when its source uses
+            // otherwise byte-preservable explicit CSS braces.
+            if (startsWordAscii(header, "@keyframes")) return true;
+        }
         if (node.kind == .declaration and node.text != null) {
             const raw = std.mem.trim(
                 u8,
