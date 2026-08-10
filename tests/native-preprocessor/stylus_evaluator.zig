@@ -452,6 +452,20 @@ const literal_color_css = "body{color:#eee;color:#efefef;color:#fc0;" ++
     "color:rgba(50,50,50,0.75);color:rgba(50,50,50,0.75);" ++
     "color:rgba(50,50,50,0.75)}";
 
+const media_bubble_input =
+    \\@media (max-width: 640px), (max-height: 320px)
+    \\  .logo
+    \\    width 42px
+    \\    @media all and (-webkit-min-device-pixel-ratio: 1.5)
+    \\      background-size 42px 42px
+;
+
+const media_bubble_css =
+    "@media (max-width: 640px), (max-height: 320px){.logo{width:42px}}" ++
+    "@media all and (max-width: 640px) and (-webkit-min-device-pixel-ratio: 1.5), " ++
+    "all and (max-height: 320px) and (-webkit-min-device-pixel-ratio: 1.5)" ++
+    "{.logo{background-size:42px 42px}}";
+
 const function_property_alias_input =
     \\box-shadow-important()
     \\  push(arguments, !important)
@@ -4770,6 +4784,54 @@ test "native Stylus literal colors own the finite lexical and callable terminal 
     );
 }
 
+test "native Stylus media bubbling owns the finite query product contract" {
+    const lower_input =
+        \\@media (min-width: 1px)
+        \\  @media screen and (orientation: landscape)
+        \\    body
+        \\      color red
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "@media screen and (min-width: 1px) and (orientation: landscape)" ++
+            "{body{color:#f00}}",
+        lower.css(),
+    );
+
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.max_selectors = 2;
+    var first = try compile(std.testing.allocator, media_bubble_input, terminal_limits);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, media_bubble_input, terminal_limits);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(media_bubble_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var incompatible = try compile(
+        std.testing.allocator,
+        "@media screen\n  @media print\n    body\n      color red\n",
+        .{},
+    );
+    defer incompatible.deinit();
+    try std.testing.expectEqualStrings("", incompatible.css());
+
+    var over_limit = terminal_limits;
+    over_limit.max_selectors = 1;
+    try expectSemanticRejectionWithLimits(
+        media_bubble_input,
+        over_limit,
+        error.SelectorLimitExceeded,
+        .resource_limit,
+        "native Stylus selector limit exceeded",
+        @intCast(std.mem.lastIndexOf(u8, media_bubble_input, "@media").?),
+    );
+}
+
 test "native Stylus property functions emit declarations through callable aliases" {
     const lower_input =
         \\border-radius(size)
@@ -5856,6 +5918,14 @@ fn exerciseLiteralColorAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(literal_color_css, result.css());
 }
 
+fn exerciseMediaBubbleAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_selectors = 2;
+    var result = try compile(allocator, media_bubble_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(media_bubble_css, result.css());
+}
+
 fn exerciseFunctionPropertyAliasAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 1;
@@ -6243,6 +6313,14 @@ test "native Stylus literal colors handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseLiteralColorAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus media bubbling handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMediaBubbleAllocationFailures,
         .{},
     );
 }

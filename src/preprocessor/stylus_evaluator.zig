@@ -2423,6 +2423,28 @@ const NestedRule = struct {
     }
 };
 
+const PendingBubbledMedia = struct {
+    id: native_syntax.NodeId,
+    scope: native_environment.ScopeId,
+    header: []u8,
+    parent_selector: ?[]u8,
+    class_prefix: ?[]const u8,
+    active_callables: []const []const u8,
+
+    fn deinit(self: *PendingBubbledMedia, allocator: std.mem.Allocator) void {
+        allocator.free(self.header);
+        if (self.parent_selector) |selector| allocator.free(selector);
+        allocator.free(self.active_callables);
+        self.* = undefined;
+    }
+};
+
+const MediaQueryParts = struct {
+    predicate: ?[]const u8 = null,
+    media_type: ?[]const u8 = null,
+    features: []const u8 = "",
+};
+
 const CacheSelector = struct {
     bytes: []u8,
     order: u64,
@@ -2598,6 +2620,8 @@ const Engine = struct {
     selector_identities: std.StringHashMapUnmanaged(void) = .empty,
     selector_identity_storage: std.ArrayList([]u8) = .empty,
     media_stack: std.ArrayList([]u8) = .empty,
+    active_media_bubbles: ?*std.ArrayList(PendingBubbledMedia) = null,
+    active_media_header: ?[]const u8 = null,
     cache_seen: std.ArrayList([]const u8) = .empty,
     extensions: std.ArrayList(StaticExtension) = .empty,
     static_group_orders: std.AutoHashMapUnmanaged(u32, usize) = .empty,
@@ -2610,6 +2634,7 @@ const Engine = struct {
     loop_iterations: usize = 0,
     active_loop_depth: usize = 0,
     selector_count: usize = 0,
+    media_query_count: usize = 0,
     selector_order: u64 = 0,
     static_group_count: usize = 0,
     temporary_bytes: usize = 0,
@@ -4363,6 +4388,21 @@ const Engine = struct {
         parent_scope: native_environment.ScopeId,
         parent_selector: ?[]const u8,
     ) Error!void {
+        return self.emitAtRuleWithHeader(
+            at_rule_id,
+            parent_scope,
+            parent_selector,
+            null,
+        );
+    }
+
+    fn emitAtRuleWithHeader(
+        self: *Engine,
+        at_rule_id: native_syntax.NodeId,
+        parent_scope: native_environment.ScopeId,
+        parent_selector: ?[]const u8,
+        header_override: ?[]const u8,
+    ) Error!void {
         const at_rule = try self.document.get(at_rule_id);
         if (at_rule.kind != .at_rule or at_rule.text == null) return error.InvalidDocument;
         const children = try self.document.children(at_rule_id);
@@ -4375,11 +4415,20 @@ const Engine = struct {
             try self.emitCssLiteralBlock(at_rule);
             return;
         }
-        const header_owned = try self.renderTextOwned(at_rule.text.?, parent_scope, .interpolation, 0);
-        defer self.allocator.free(header_owned);
-        const normalized_header = try self.normalizeUrlQuotesOwned(at_rule.text.?, header_owned);
-        defer self.allocator.free(normalized_header);
-        const header = std.mem.trimRight(u8, normalized_header, " \t\r\n\x0c;");
+        const header_owned = if (header_override == null)
+            try self.renderTextOwned(at_rule.text.?, parent_scope, .interpolation, 0)
+        else
+            null;
+        defer if (header_owned) |owned| self.allocator.free(owned);
+        const normalized_header = if (header_owned) |owned|
+            try self.normalizeUrlQuotesOwned(at_rule.text.?, owned)
+        else
+            null;
+        defer if (normalized_header) |owned| self.allocator.free(owned);
+        const header = if (header_override) |override|
+            override
+        else
+            std.mem.trimRight(u8, normalized_header.?, " \t\r\n\x0c;");
         const keyframes = "@keyframes";
         const is_official_keyframes = startsWordAscii(header, keyframes);
         if (is_official_keyframes and self.active_keyframe_header == null) {
@@ -4422,6 +4471,41 @@ const Engine = struct {
         defer if (spaced_media_header) |owned| self.allocator.free(owned);
         const final_header = spaced_media_header orelse emitted_header;
         const is_keyframes = isKeyframesHeader(final_header);
+        if (is_media and self.active_media_bubbles != null) {
+            const combined_header = (try self.mergeMediaHeadersOwned(
+                at_rule.text.?,
+                self.active_media_header orelse return error.InvalidDocument,
+                final_header,
+            )) orelse return;
+            const parent_selector_owned = if (parent_selector) |selector|
+                self.allocator.dupe(u8, selector) catch |failure| {
+                    self.allocator.free(combined_header);
+                    return failure;
+                }
+            else
+                null;
+            const active_callables = self.allocator.dupe(
+                []const u8,
+                self.active_callables.items,
+            ) catch |failure| {
+                self.allocator.free(combined_header);
+                if (parent_selector_owned) |selector| self.allocator.free(selector);
+                return failure;
+            };
+            var pending = PendingBubbledMedia{
+                .id = at_rule_id,
+                .scope = parent_scope,
+                .header = combined_header,
+                .parent_selector = parent_selector_owned,
+                .class_prefix = self.active_class_prefix,
+                .active_callables = active_callables,
+            };
+            self.active_media_bubbles.?.append(self.allocator, pending) catch |failure| {
+                pending.deinit(self.allocator);
+                return failure;
+            };
+            return;
+        }
         const retains_parent_selector = !startsWordAscii(final_header, "@font-face") and
             !is_keyframes;
         const content_parent_selector = if (retains_parent_selector)
@@ -4473,6 +4557,11 @@ const Engine = struct {
             for (cached.items) |*item| item.deinit(self.allocator);
             cached.deinit(self.allocator);
         }
+        var bubbled_media: std.ArrayList(PendingBubbledMedia) = .empty;
+        defer {
+            for (bubbled_media.items) |*pending| pending.deinit(self.allocator);
+            bubbled_media.deinit(self.allocator);
+        }
         const returned = try self.executeStatements(
             try self.document.children(block_id.?),
             &scope,
@@ -4491,33 +4580,67 @@ const Engine = struct {
             self.transaction.position()
         else
             null;
-        if (declarations.items.len > 0) {
-            if (content_parent_selector) |selector| {
-                try self.emit(selector);
-                try self.emit("{");
+        {
+            const previous_media_bubbles = self.active_media_bubbles;
+            const previous_media_header = self.active_media_header;
+            if (is_media) {
+                self.active_media_bubbles = &bubbled_media;
+                self.active_media_header = final_header;
             }
-            for (declarations.items) |declaration| {
-                try self.emitMapped(declaration.span, null, declaration.property);
-                try self.emit(":");
-                try self.emitMapped(declaration.span, null, declaration.value);
-                try self.emit(";");
+            defer {
+                self.active_media_bubbles = previous_media_bubbles;
+                self.active_media_header = previous_media_header;
             }
-            if (content_parent_selector != null) try self.emit("}");
+            if (declarations.items.len > 0) {
+                if (content_parent_selector) |selector| {
+                    try self.emit(selector);
+                    try self.emit("{");
+                }
+                for (declarations.items) |declaration| {
+                    try self.emitMapped(declaration.span, null, declaration.property);
+                    try self.emit(":");
+                    try self.emitMapped(declaration.span, null, declaration.value);
+                    try self.emit(";");
+                }
+                if (content_parent_selector != null) try self.emit("}");
+            }
+            for (nested.items) |child| {
+                try self.emitNestedOutput(child, content_parent_selector, false);
+            }
+            for (at_rules.items) |child| {
+                try self.emitNestedOutput(child, content_parent_selector, true);
+            }
+            for (cached.items) |*item| try self.emitCachedRule(item);
         }
-        for (nested.items) |child| {
-            try self.emitNestedOutput(child, content_parent_selector, false);
-        }
-        for (at_rules.items) |child| {
-            try self.emitNestedOutput(child, content_parent_selector, true);
-        }
-        for (cached.items) |*item| try self.emitCachedRule(item);
+        var retained_wrapper = true;
         if (content_checkpoint) |checkpoint_value| {
             if (std.meta.eql(content_start.?, self.transaction.position())) {
                 try self.transaction.restoreStaging(checkpoint_value);
-                return;
+                retained_wrapper = false;
             }
         }
-        try self.emit("}");
+        if (retained_wrapper) try self.emit("}");
+        for (bubbled_media.items) |*pending| {
+            try self.emitPendingBubbledMedia(pending);
+        }
+    }
+
+    fn emitPendingBubbledMedia(
+        self: *Engine,
+        pending: *const PendingBubbledMedia,
+    ) Error!void {
+        const previous_prefix = self.active_class_prefix;
+        self.active_class_prefix = pending.class_prefix;
+        defer self.active_class_prefix = previous_prefix;
+        const callable_count = self.active_callables.items.len;
+        try self.active_callables.appendSlice(self.allocator, pending.active_callables);
+        defer self.active_callables.shrinkRetainingCapacity(callable_count);
+        try self.emitAtRuleWithHeader(
+            pending.id,
+            pending.scope,
+            pending.parent_selector,
+            pending.header,
+        );
     }
 
     fn emitCssLiteralBlock(
@@ -11525,6 +11648,183 @@ const Engine = struct {
         return output.toOwnedSlice(self.allocator);
     }
 
+    fn mergeMediaHeadersOwned(
+        self: *Engine,
+        span: native_source.Span,
+        outer_header: []const u8,
+        inner_header: []const u8,
+    ) Error!?[]u8 {
+        const outer_body = mediaHeaderBody(outer_header) orelse
+            return error.InvalidDocument;
+        const inner_body = mediaHeaderBody(inner_header) orelse
+            return error.InvalidDocument;
+        var outer_queries = try splitTopLevel(self.allocator, outer_body, ',');
+        defer outer_queries.deinit(self.allocator);
+        var inner_queries = try splitTopLevel(self.allocator, inner_body, ',');
+        defer inner_queries.deinit(self.allocator);
+        const product = std.math.mul(
+            usize,
+            outer_queries.items.len,
+            inner_queries.items.len,
+        ) catch {
+            try self.reportSelectorLimit(span);
+            return error.SelectorLimitExceeded;
+        };
+        if (product == 0 or
+            product > self.limits.max_selectors -| self.media_query_count)
+        {
+            try self.reportSelectorLimit(span);
+            return error.SelectorLimitExceeded;
+        }
+        self.media_query_count += product;
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var merged_count: usize = 0;
+        try self.appendTemporary(&output, span, "@media ");
+        for (outer_queries.items) |outer_range| {
+            const outer = try self.parseMediaQueryParts(
+                outer_body[outer_range.start..outer_range.end],
+            );
+            for (inner_queries.items) |inner_range| {
+                const inner = try self.parseMediaQueryParts(
+                    inner_body[inner_range.start..inner_range.end],
+                );
+                const checkpoint = output.items.len;
+                if (merged_count > 0) {
+                    try self.appendTemporary(
+                        &output,
+                        span,
+                        if (self.options.output_style == .expanded) ", " else ",",
+                    );
+                }
+                if (!try self.appendMergedMediaQuery(&output, span, outer, inner)) {
+                    output.shrinkRetainingCapacity(checkpoint);
+                    continue;
+                }
+                merged_count += 1;
+            }
+        }
+        if (merged_count == 0) {
+            output.deinit(self.allocator);
+            return null;
+        }
+        return try output.toOwnedSlice(self.allocator);
+    }
+
+    fn parseMediaQueryParts(
+        self: *Engine,
+        raw: []const u8,
+    ) Error!MediaQueryParts {
+        const query = std.mem.trim(u8, raw, " \t\r\n\x0c");
+        if (query.len == 0) return error.InvalidDocument;
+        var tokens = try splitTopLevelWhitespace(self.allocator, query);
+        defer tokens.deinit(self.allocator);
+        if (tokens.items.len == 0) return error.InvalidDocument;
+
+        var feature_index = tokens.items.len;
+        for (tokens.items, 0..) |range, index| {
+            const token = query[range.start..range.end];
+            if (token.len > 0 and token[0] == '(') {
+                feature_index = index;
+                break;
+            }
+        }
+        var prefix_count = feature_index;
+        if (feature_index < tokens.items.len and prefix_count > 0) {
+            const separator = query[tokens.items[prefix_count - 1].start..tokens.items[prefix_count - 1].end];
+            if (!std.ascii.eqlIgnoreCase(separator, "and")) {
+                return error.InvalidDocument;
+            }
+            prefix_count -= 1;
+        }
+        if (prefix_count > 2 or
+            (feature_index == tokens.items.len and prefix_count != tokens.items.len))
+        {
+            return error.InvalidDocument;
+        }
+
+        var parts = MediaQueryParts{};
+        if (prefix_count == 1) {
+            const range = tokens.items[0];
+            parts.media_type = query[range.start..range.end];
+        } else if (prefix_count == 2) {
+            const predicate = tokens.items[0];
+            const media_type = tokens.items[1];
+            parts.predicate = query[predicate.start..predicate.end];
+            parts.media_type = query[media_type.start..media_type.end];
+        }
+        if (feature_index < tokens.items.len) {
+            parts.features = std.mem.trim(
+                u8,
+                query[tokens.items[feature_index].start..],
+                " \t\r\n\x0c",
+            );
+        }
+        if (parts.media_type == null and parts.features.len == 0) {
+            return error.InvalidDocument;
+        }
+        return parts;
+    }
+
+    fn appendMergedMediaQuery(
+        self: *Engine,
+        output: *std.ArrayList(u8),
+        span: native_source.Span,
+        outer: MediaQueryParts,
+        inner: MediaQueryParts,
+    ) Error!bool {
+        const outer_type = outer.media_type orelse inner.media_type;
+        const inner_type = inner.media_type orelse outer_type;
+        const outer_not = if (outer.predicate) |predicate|
+            std.ascii.eqlIgnoreCase(predicate, "not")
+        else
+            false;
+        const inner_not = if (inner.predicate) |predicate|
+            std.ascii.eqlIgnoreCase(predicate, "not")
+        else
+            false;
+        const same_type = optionalMediaWordEqual(outer_type, inner_type);
+
+        var media_type: ?[]const u8 = null;
+        var predicate: ?[]const u8 = null;
+        if (outer_not != inner_not) {
+            if (same_type) return false;
+            if (outer_not) {
+                media_type = inner_type;
+                predicate = inner.predicate;
+            } else {
+                media_type = outer_type;
+                predicate = outer.predicate;
+            }
+        } else if (outer_not and inner_not) {
+            if (!same_type) return false;
+            media_type = outer_type;
+            predicate = outer.predicate;
+        } else {
+            if (!same_type) return false;
+            media_type = outer_type;
+            predicate = outer.predicate orelse inner.predicate;
+        }
+
+        if (predicate) |value| {
+            try self.appendTemporary(output, span, value);
+            try self.appendTemporary(output, span, " ");
+        }
+        if (media_type) |value| try self.appendTemporary(output, span, value);
+        if (outer.features.len > 0) {
+            if (media_type != null) try self.appendTemporary(output, span, " and ");
+            try self.appendTemporary(output, span, outer.features);
+        }
+        if (inner.features.len > 0) {
+            if (media_type != null or outer.features.len > 0) {
+                try self.appendTemporary(output, span, " and ");
+            }
+            try self.appendTemporary(output, span, inner.features);
+        }
+        return true;
+    }
+
     fn formatCurrentMediaOwned(
         self: *Engine,
         span: native_source.Span,
@@ -12508,6 +12808,13 @@ fn startsWordAscii(raw: []const u8, expected: []const u8) bool {
     }
     return raw.len == expected.len or std.ascii.isWhitespace(raw[expected.len]) or
         raw[expected.len] == '(' or raw[expected.len] == ';';
+}
+
+fn mediaHeaderBody(header: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, header, " \t\r\n\x0c;");
+    if (!startsWordAscii(trimmed, "@media")) return null;
+    const body = std.mem.trim(u8, trimmed["@media".len..], " \t\r\n\x0c;");
+    return if (body.len > 0) body else null;
 }
 
 fn isCssLiteralHeader(raw: []const u8) bool {
@@ -13589,6 +13896,11 @@ fn parseStylusColorLiteral(input: []const u8) ?native_value.Color {
 fn optionalUnitEqual(left: ?[]const u8, right: ?[]const u8) bool {
     if (left == null or right == null) return left == null and right == null;
     return std.mem.eql(u8, left.?, right.?);
+}
+
+fn optionalMediaWordEqual(left: ?[]const u8, right: ?[]const u8) bool {
+    if (left == null or right == null) return left == null and right == null;
+    return std.ascii.eqlIgnoreCase(left.?, right.?);
 }
 
 fn normalizeSliceBound(index: i64, length: usize) usize {
