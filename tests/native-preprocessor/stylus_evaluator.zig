@@ -1336,6 +1336,123 @@ test "native Stylus dotted import basenames retain optional extension through pr
     );
 }
 
+test "native Stylus import lookup owns bounded directory and package resolution" {
+    const directory_file = FixtureFile{
+        .path = "lookup-a/lookup-a.styl",
+        .contents = "body\n  content 'a'\n",
+    };
+    var lower_limits = resolver.Limits{};
+    lower_limits.max_files = 1;
+    var lower = try compileFixture(
+        std.testing.allocator,
+        "@import 'lookup-a'\n",
+        &.{directory_file},
+        lower_limits,
+        .{},
+    );
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{content:'a'}", lower.css());
+    try std.testing.expectEqual(@as(usize, 1), lower.dependencies().len);
+    try std.testing.expectEqual(resolver.DependencyKind.import, lower.dependencies()[0].kind);
+
+    const input =
+        \\@import 'lookup-a'
+        \\@import 'lookup-b'
+        \\@import 'lookup-c'
+    ;
+    const files = [_]FixtureFile{
+        directory_file,
+        .{
+            .path = "node_modules/lookup-b/package.json",
+            .contents = "{\n  \"main\": \"test.styl\"\n}\n",
+        },
+        .{
+            .path = "node_modules/lookup-b/test.styl",
+            .contents = "body\n  content 'b'\n",
+        },
+        .{
+            .path = "node_modules/lookup-c.styl/index.styl",
+            .contents = "body\n  content 'c'\n",
+        },
+    };
+    var terminal_limits = resolver.Limits{};
+    terminal_limits.max_files = files.len;
+    var first = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        terminal_limits,
+        .{},
+    );
+    defer first.deinit();
+    var second = try compileFixture(
+        std.testing.allocator,
+        input,
+        &files,
+        terminal_limits,
+        .{},
+    );
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(
+        "body{content:'a'}body{content:'b'}body{content:'c'}",
+        first.css(),
+    );
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, files.len), first.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), first.edges().len);
+    try std.testing.expectEqual(resolver.DependencyKind.import, first.dependencies()[0].kind);
+    try std.testing.expectEqual(resolver.DependencyKind.reference, first.dependencies()[1].kind);
+    try std.testing.expectEqual(resolver.DependencyKind.import, first.dependencies()[2].kind);
+    try std.testing.expectEqual(resolver.DependencyKind.import, first.dependencies()[3].kind);
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        first.dependencies()[1].url,
+        "/node_modules/lookup-b/package.json",
+    ));
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+
+    var imported_segments: usize = 0;
+    for (first.map().?.segments()) |segment| {
+        if (segment.source_id) |source_id| {
+            imported_segments += @intFromBool(source_id.value != 0);
+        }
+    }
+    try std.testing.expect(imported_segments >= 3);
+
+    var over_limit = terminal_limits;
+    over_limit.max_files = files.len - 1;
+    try expectFixtureRejectionWithOptions(
+        input,
+        &files,
+        .{},
+        over_limit,
+        .{},
+        error.FileCountExceeded,
+        .resource_limit,
+        "native Stylus import resource limit exceeded",
+        0,
+        files.len - 1,
+    );
+    try expectFixtureRejection(
+        \\.before
+        \\  color red
+        \\@import 'invalid-package'
+    ,
+        &.{.{
+            .path = "node_modules/invalid-package/package.json",
+            .contents = "{\"main\":\"https://example.invalid/theme.styl\"}\n",
+        }},
+        error.InvalidImport,
+        .invalid_import,
+        "native Stylus package manifest is invalid",
+        0,
+        1,
+    );
+}
+
 test "native Stylus callable dynamic imports fail closed outside their bounded contract" {
     const escaped =
         \\.before
@@ -4662,6 +4779,42 @@ fn exerciseImportedPropertyCallableUnitArithmeticAllocationFailures(
     try std.testing.expectEqual(@as(usize, files.len), result.edges().len);
 }
 
+fn exerciseImportLookupAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input =
+        \\@import 'lookup-a'
+        \\@import 'lookup-b'
+        \\@import 'lookup-c'
+    ;
+    const files = [_]FixtureFile{
+        .{
+            .path = "lookup-a/lookup-a.styl",
+            .contents = "body\n  content 'a'\n",
+        },
+        .{
+            .path = "node_modules/lookup-b/package.json",
+            .contents = "{\n  \"main\": \"test.styl\"\n}\n",
+        },
+        .{
+            .path = "node_modules/lookup-b/test.styl",
+            .contents = "body\n  content 'b'\n",
+        },
+        .{
+            .path = "node_modules/lookup-c.styl/index.styl",
+            .contents = "body\n  content 'c'\n",
+        },
+    };
+    var terminal = resolver.Limits{};
+    terminal.max_files = files.len;
+    var result = try compileFixture(allocator, input, &files, terminal, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(
+        "body{content:'a'}body{content:'b'}body{content:'c'}",
+        result.css(),
+    );
+    try std.testing.expectEqual(@as(usize, files.len), result.dependencies().len);
+    try std.testing.expectEqual(@as(usize, files.len), result.edges().len);
+}
+
 fn exerciseCompactDeclarationAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compileWithOptions(
         allocator,
@@ -5036,6 +5189,14 @@ test "native Stylus dotted import property callables handle every allocation fai
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseImportedPropertyCallableUnitArithmeticAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus import lookup handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseImportLookupAllocationFailures,
         .{},
     );
 }

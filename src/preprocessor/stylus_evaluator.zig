@@ -27,6 +27,7 @@ const hard_loop_iterations: usize = 10_000_000;
 const hard_selectors = 1_000_000;
 const hard_temporary_bytes = 20 * 1024 * 1024;
 const hard_import_statements = 200_000;
+const hard_package_manifest_bytes = 64 * 1024;
 const hard_asset_load_paths = 64;
 const hard_asset_load_path_bytes = 4_096;
 // Exact default from the pinned Stylus 0.64.0 url() helper oracle.
@@ -1392,6 +1393,13 @@ const ImportExpander = struct {
                 output,
             )) return;
         }
+        if (isPackageImportTarget(parsed.target) and try self.loadPackageImport(
+            parsed.target,
+            parent_url,
+            parsed.require_once,
+            text,
+            output,
+        )) return;
         try self.reportImport(text, "native Stylus import was not found");
         return error.InvalidImport;
     }
@@ -1442,6 +1450,191 @@ const ImportExpander = struct {
     ) Error!void {
         errdefer self.allocator.free(candidate);
         try candidates.append(self.allocator, candidate);
+    }
+
+    fn loadPackageImport(
+        self: *ImportExpander,
+        target: []const u8,
+        parent_url: []const u8,
+        require_once: bool,
+        import_span: native_source.Span,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!bool {
+        const package_target = try std.fs.path.join(
+            self.allocator,
+            &.{ "node_modules", target },
+        );
+        defer self.allocator.free(package_target);
+        if (try self.loadPackageManifestImport(
+            package_target,
+            parent_url,
+            require_once,
+            import_span,
+            output,
+        )) |resolved| return resolved;
+
+        const stylus_package_target = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}.styl",
+            .{package_target},
+        );
+        defer self.allocator.free(stylus_package_target);
+        if (try self.loadPackageManifestImport(
+            stylus_package_target,
+            parent_url,
+            require_once,
+            import_span,
+            output,
+        )) |resolved| return resolved;
+        return self.loadPackageIndex(
+            stylus_package_target,
+            parent_url,
+            require_once,
+            import_span,
+            output,
+        );
+    }
+
+    fn loadPackageManifestImport(
+        self: *ImportExpander,
+        package_target: []const u8,
+        parent_url: []const u8,
+        require_once: bool,
+        import_span: native_source.Span,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!?bool {
+        const manifest_target = try std.fs.path.join(
+            self.allocator,
+            &.{ package_target, "package.json" },
+        );
+        defer self.allocator.free(manifest_target);
+        const manifest_url = try importCandidateUrl(
+            self.allocator,
+            parent_url,
+            manifest_target,
+        );
+        defer self.allocator.free(manifest_url);
+        const session = try self.transaction.resolverSession();
+        var loaded = session.load(manifest_url, .{
+            .kind = .reference,
+            .ancestry = self.ancestry.items,
+        }) catch |failure| switch (failure) {
+            error.Missing, error.IsDirectory, error.ParentNotDirectory => return null,
+            else => return self.failLoad(failure, import_span),
+        };
+        defer loaded.deinit();
+        if (loaded.contents.len > hard_package_manifest_bytes) {
+            try self.transaction.report(
+                .err,
+                .resource_limit,
+                import_span,
+                "native Stylus package manifest resource limit exceeded",
+                &.{},
+            );
+            return error.FileLimitExceeded;
+        }
+        try self.transaction.consumeOperations(@intCast(loaded.contents.len));
+        var parsed = std.json.parseFromSlice(
+            std.json.Value,
+            self.allocator,
+            loaded.contents,
+            .{ .max_value_len = loaded.contents.len },
+        ) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                try self.reportImport(import_span, "native Stylus package manifest is invalid");
+                return error.InvalidImport;
+            },
+        };
+        defer parsed.deinit();
+        if (parsed.value != .object) {
+            try self.reportImport(import_span, "native Stylus package manifest is invalid");
+            return error.InvalidImport;
+        }
+        const main_value = parsed.value.object.get("main") orelse return @as(
+            ?bool,
+            try self.loadPackageIndex(
+                package_target,
+                parent_url,
+                require_once,
+                import_span,
+                output,
+            ),
+        );
+        if (main_value == .null or (main_value == .string and main_value.string.len == 0)) {
+            return @as(
+                ?bool,
+                try self.loadPackageIndex(
+                    package_target,
+                    parent_url,
+                    require_once,
+                    import_span,
+                    output,
+                ),
+            );
+        }
+        if (main_value != .string or !isPackageMainTarget(main_value.string)) {
+            try self.reportImport(import_span, "native Stylus package manifest is invalid");
+            return error.InvalidImport;
+        }
+        const main_target = try std.fs.path.join(
+            self.allocator,
+            &.{ package_target, main_value.string },
+        );
+        defer self.allocator.free(main_target);
+        const main_url = try importCandidateUrl(self.allocator, parent_url, main_target);
+        defer self.allocator.free(main_url);
+        return @as(
+            ?bool,
+            try self.loadAndAppend(
+                main_url,
+                require_once,
+                import_span,
+                output,
+            ),
+        );
+    }
+
+    fn loadPackageIndex(
+        self: *ImportExpander,
+        package_target: []const u8,
+        parent_url: []const u8,
+        require_once: bool,
+        import_span: native_source.Span,
+        output: *std.ArrayList(native_syntax.NodeId),
+    ) Error!bool {
+        const index_target = try std.fs.path.join(
+            self.allocator,
+            &.{ package_target, "index.styl" },
+        );
+        defer self.allocator.free(index_target);
+        const index_url = try importCandidateUrl(self.allocator, parent_url, index_target);
+        defer self.allocator.free(index_url);
+        if (try self.loadAndAppend(index_url, require_once, import_span, output)) return true;
+
+        const basename = std.fs.path.basename(package_target);
+        const stylus_suffix = ".styl";
+        const stem = if (basename.len >= stylus_suffix.len and std.ascii.eqlIgnoreCase(
+            basename[basename.len - stylus_suffix.len ..],
+            stylus_suffix,
+        ))
+            basename[0 .. basename.len - stylus_suffix.len]
+        else
+            basename;
+        const named_file = try std.fmt.allocPrint(
+            self.allocator,
+            "{s}.styl",
+            .{stem},
+        );
+        defer self.allocator.free(named_file);
+        const named_target = try std.fs.path.join(
+            self.allocator,
+            &.{ package_target, named_file },
+        );
+        defer self.allocator.free(named_target);
+        const named_url = try importCandidateUrl(self.allocator, parent_url, named_target);
+        defer self.allocator.free(named_url);
+        return self.loadAndAppend(named_url, require_once, import_span, output);
     }
 
     fn loadAndAppend(
@@ -1646,6 +1839,32 @@ fn parseImportDirective(raw_input: []const u8) ?ParsedImport {
         return null;
     }
     return .{ .target = target, .require_once = require_once };
+}
+
+fn isPackageImportTarget(target: []const u8) bool {
+    if (target.len == 0 or target[0] == '.' or target[0] == '/' or target[0] == '\\' or
+        std.mem.indexOfScalar(u8, target, '\\') != null)
+    {
+        return false;
+    }
+    var components = std.mem.splitScalar(u8, target, '/');
+    var component_count: usize = 0;
+    while (components.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".") or
+            std.mem.eql(u8, component, "..") or
+            std.ascii.eqlIgnoreCase(component, "node_modules"))
+        {
+            return false;
+        }
+        component_count += 1;
+    }
+    return component_count > 0;
+}
+
+fn isPackageMainTarget(target: []const u8) bool {
+    return target.len > 0 and !std.fs.path.isAbsolute(target) and
+        std.mem.indexOfAny(u8, target, "\x00\r\n?#*\\") == null and
+        !hasNonLocalScheme(target);
 }
 
 const RuntimeImportDirective = struct {
