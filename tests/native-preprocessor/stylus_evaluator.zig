@@ -1113,6 +1113,21 @@ const multiline_function_property_css =
     "#wrapper{background-image:linear-gradient(top, rgba(0,0,0,0.3) 0, " ++
     "rgba(0,0,0,0) 20%, rgba(0,0,0,0) 80%, rgba(0,0,0,0.3) 100%)}";
 
+const property_access_input =
+    \\position()
+    \\  position: arguments
+    \\  z-index: 1 unless @z-index
+    \\.target
+    \\  border: 1px solid red + 5
+    \\  unknown: @missing == null
+    \\  empty: @missing
+    \\  position: absolute
+;
+
+const property_access_css =
+    ".target{border:1px solid #ff0505;unknown:true;empty:;" ++
+    "position:absolute;z-index:1}";
+
 fn compile(
     allocator: std.mem.Allocator,
     input: []const u8,
@@ -4494,6 +4509,44 @@ test "native Stylus add-property preserves declaration context and interpolation
     try std.testing.expectEqual(@as(usize, 0), result.nativeDiagnostics().len);
 }
 
+test "native Stylus property access owns the finite null list and callable contract" {
+    const lower_input =
+        \\.lower
+        \\  color: red
+        \\  background: @color
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_expression_depth = 2;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(".lower{color:#f00;background:#f00}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 4;
+    var first = try compile(std.testing.allocator, property_access_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, property_access_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(property_access_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 3;
+    try expectSemanticRejectionWithLimits(
+        property_access_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, property_access_input, "red + 5").?),
+    );
+}
+
 test "native Stylus indexed current-property access retains its callable snapshot" {
     const input =
         \\identity(value)
@@ -6816,6 +6869,14 @@ fn exerciseMultilineFunctionPropertyAllocationFailures(allocator: std.mem.Alloca
     try std.testing.expectEqualStrings(multiline_function_property_css, result.css());
 }
 
+fn exercisePropertyAccessAllocationFailures(allocator: std.mem.Allocator) !void {
+    var limits = stylus_evaluator.Limits{};
+    limits.max_expression_depth = 4;
+    var result = try compile(allocator, property_access_input, limits);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(property_access_css, result.css());
+}
+
 fn exerciseSingleLineCallableAllocationFailures(allocator: std.mem.Allocator) !void {
     var result = try compile(
         allocator,
@@ -7415,6 +7476,14 @@ test "native Stylus multiline function property handles every allocation failure
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMultilineFunctionPropertyAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus property access handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exercisePropertyAccessAllocationFailures,
         .{},
     );
 }

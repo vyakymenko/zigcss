@@ -7634,6 +7634,12 @@ const Engine = struct {
         if (std.mem.eql(u8, source_input, "\\,")) {
             return self.ownValue(span, .{ .string = .{ .bytes = "," } });
         }
+        if (propertyReferenceName(source_input) != null) {
+            if (try self.lookupBinding(scope, source_input)) |resolved| {
+                return self.ownValue(span, resolved.*);
+            }
+            return self.ownValue(span, .{ .null_value = {} });
+        }
         if (wordNegationOperand(source_input)) |operand| {
             const value = try self.evaluateValue(
                 try self.relativeSpan(span, operand),
@@ -8062,7 +8068,7 @@ const Engine = struct {
             return self.ownValue(span, .{ .string = .{ .bytes = "!important" } });
         }
         if (findGenericBinary(input)) |binary| {
-            if (try self.evaluatePrefixedSubtractionList(
+            if (try self.evaluatePrefixedBinaryList(
                 span,
                 input,
                 binary,
@@ -8405,7 +8411,7 @@ const Engine = struct {
         } });
     }
 
-    fn evaluatePrefixedSubtractionList(
+    fn evaluatePrefixedBinaryList(
         self: *Engine,
         span: native_source.Span,
         raw: []const u8,
@@ -8413,7 +8419,10 @@ const Engine = struct {
         scope: native_environment.ScopeId,
         depth: u16,
     ) Error!?*const native_value.Value {
-        if (binary.operator != '-') return null;
+        // Stylus parses whitespace-separated property values as an Expression
+        // whose final node owns its additive operation. Preserve the prefix
+        // while evaluating that tail instead of adding to the whole list.
+        if (binary.operator != '+' and binary.operator != '-') return null;
 
         const left_raw = raw[binary.left.start..binary.left.end];
         var left_parts = try splitTopLevelWhitespace(self.allocator, left_raw);
@@ -16311,6 +16320,12 @@ fn validVariableName(name: []const u8) bool {
         }
     }
     return true;
+}
+
+fn propertyReferenceName(raw: []const u8) ?[]const u8 {
+    if (raw.len < 2 or raw[0] != '@') return null;
+    const name = raw[1..];
+    return if (validVariableName(name)) name else null;
 }
 
 fn selectorBranchContainsPlaceholder(selector: []const u8) bool {
