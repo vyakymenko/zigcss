@@ -6786,7 +6786,7 @@ const Engine = struct {
         if (self.findCallable(name)) |callable| return callable;
         const binding = (try self.lookupBinding(scope, name)) orelse return null;
         return switch (binding.*) {
-            .string => |alias| self.findCallable(alias.bytes),
+            .string => |alias| if (alias.quoted) null else self.findCallable(alias.bytes),
             .callable => |callable| if (callable.kind == .user_function and
                 callable.id < self.callables.items.len)
                 self.callables.items[callable.id]
@@ -7605,6 +7605,15 @@ const Engine = struct {
         if (std.mem.eql(u8, source_input, "\\,")) {
             return self.ownValue(span, .{ .string = .{ .bytes = "," } });
         }
+        if (wordNegationOperand(source_input)) |operand| {
+            const value = try self.evaluateValue(
+                try self.relativeSpan(span, operand),
+                source_input[operand.start..operand.end],
+                scope,
+                depth + 1,
+            );
+            return self.ownValue(span, .{ .boolean = !isTruthy(value) });
+        }
         if (findTopLevelSequence(source_input, " is defined")) |marker| {
             if (marker + " is defined".len == source_input.len) {
                 const name = std.mem.trim(
@@ -7704,7 +7713,8 @@ const Engine = struct {
         }
         const grouped_ternary_input = stripOuterParentheses(source_input);
         if (grouped_ternary_input.len != source_input.len and
-            parseGenericTernary(grouped_ternary_input) != null)
+            (parseGenericTernary(grouped_ternary_input) != null or
+                isDefinedExpression(grouped_ternary_input)))
         {
             const start = @intFromPtr(grouped_ternary_input.ptr) -
                 @intFromPtr(source_input.ptr);
@@ -11414,6 +11424,14 @@ const Engine = struct {
             return error.ExpressionDepthExceeded;
         }
         const source_condition = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+        if (wordNegationOperand(source_condition)) |operand| {
+            return !try self.evaluateConditionDepth(
+                try self.relativeSpan(span, operand),
+                source_condition[operand.start..operand.end],
+                scope,
+                depth + 1,
+            );
+        }
         if (findLogicalOperator(source_condition, .or_value)) |logical| {
             if (try self.evaluateConditionDepth(
                 span,
@@ -15132,11 +15150,6 @@ fn findLogicalOperator(raw: []const u8, kind: LogicalKind) ?LogicalExpression {
 
 fn unaryPrefix(raw: []const u8) ?UnaryPrefix {
     if (raw.len == 0) return null;
-    if (startsWordAscii(raw, "not")) {
-        var end: usize = 3;
-        while (end < raw.len and std.ascii.isWhitespace(raw[end])) end += 1;
-        if (end < raw.len) return .{ .kind = .logical_not, .end = end };
-    }
     const kind: UnaryKind = switch (raw[0]) {
         '!' => .logical_not,
         '+' => .positive,
@@ -15148,6 +15161,18 @@ fn unaryPrefix(raw: []const u8) ?UnaryPrefix {
     while (end < raw.len and std.ascii.isWhitespace(raw[end])) end += 1;
     if (end >= raw.len) return null;
     return .{ .kind = kind, .end = end };
+}
+
+fn wordNegationOperand(raw: []const u8) ?ByteRange {
+    if (!startsWordAscii(raw, "not")) return null;
+    const operand = trimRange(raw, .{ .start = "not".len, .end = raw.len });
+    return if (operand.start != operand.end) operand else null;
+}
+
+fn isDefinedExpression(raw: []const u8) bool {
+    const marker = findTopLevelSequence(raw, " is defined") orelse return false;
+    return marker + " is defined".len == raw.len and
+        validVariableName(std.mem.trim(u8, raw[0..marker], " \t\r\n\x0c"));
 }
 
 fn stripOuterParentheses(raw: []const u8) []const u8 {

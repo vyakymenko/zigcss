@@ -827,6 +827,44 @@ const complex_operator_precedence_input =
 const complex_operator_precedence_css =
     "body{nested:yes;adjacent:yay;false-branch:nah;callable:true}";
 
+const word_negation_precedence_input =
+    \\padding = false
+    \\margin = false
+    \\body
+    \\  ternary not 5 < 10 ? 0 : 1
+    \\  symbolic !(5 < 10 ? 0 : 1)
+    \\  logical not padding or margin == !padding or !margin
+    \\  grouped (not padding or margin) == !padding or !margin
+;
+
+const word_negation_precedence_css =
+    "body{ternary:true;symbolic:true;logical:false;grouped:true}";
+
+const stacked_unary_precedence_input =
+    \\body
+    \\  grouped-negative (--- 0) or 4
+    \\  negative --- 0 or 4
+    \\  unit ---5px
+    \\  grouped-not (!!!5) or 2
+    \\  logical-not !!!5 or 2
+;
+
+const stacked_unary_precedence_css =
+    "body{grouped-negative:4;negative:4;unit:-5px;grouped-not:2;logical-not:2}";
+
+const quoted_callable_precedence_input =
+    \\test()
+    \\  5 * 2 - 15 / 2
+    \\body
+    \\  foo = 'test'
+    \\  bar = 'test'
+    \\  grouped (foo is defined) and (bar is defined)
+    \\  ungrouped foo is defined and bar is defined
+;
+
+const quoted_callable_precedence_css =
+    "body{grouped:true;ungrouped:true}";
+
 const equality_semantics_input =
     \\marker = 'yay'
     \\body
@@ -3609,6 +3647,71 @@ test "native Stylus complex operators own the finite ternary precedence contract
         "native Stylus expression depth exceeded",
         @intCast(std.mem.indexOf(u8, complex_operator_precedence_input, "b == 15").?),
     );
+}
+
+test "native Stylus word negation owns the finite low precedence contract" {
+    const lower_input =
+        \\body
+        \\  selected not false or true
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_expression_depth = 4;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{selected:false}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 7;
+    var first = try compile(std.testing.allocator, word_negation_precedence_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, word_negation_precedence_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(word_negation_precedence_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 6;
+    try expectSemanticRejectionWithLimits(
+        word_negation_precedence_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, word_negation_precedence_input, "margin == !padding").?),
+    );
+}
+
+test "native Stylus stacked unary operators own the finite precedence contract" {
+    var first = try compile(std.testing.allocator, stacked_unary_precedence_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, stacked_unary_precedence_input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(stacked_unary_precedence_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+}
+
+test "native Stylus precedence keeps rule-local assignments out of CSS" {
+    var first = try compile(std.testing.allocator, quoted_callable_precedence_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, quoted_callable_precedence_input, .{});
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(quoted_callable_precedence_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
 }
 
 test "native Stylus equality owns the finite coercion and expression contract" {
@@ -6854,6 +6957,18 @@ fn exerciseComplexOperatorPrecedenceAllocationFailures(allocator: std.mem.Alloca
     try std.testing.expectEqualStrings(complex_operator_precedence_css, result.css());
 }
 
+fn exerciseOperatorPrecedenceAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 7;
+    var word_negation = try compile(allocator, word_negation_precedence_input, terminal);
+    defer word_negation.deinit();
+    try std.testing.expectEqualStrings(word_negation_precedence_css, word_negation.css());
+
+    var quoted_callable = try compile(allocator, quoted_callable_precedence_input, .{});
+    defer quoted_callable.deinit();
+    try std.testing.expectEqualStrings(quoted_callable_precedence_css, quoted_callable.css());
+}
+
 fn exerciseEqualitySemanticsAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_expression_depth = 6;
@@ -7218,6 +7333,14 @@ test "native Stylus complex operators handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseComplexOperatorPrecedenceAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus operator precedence handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOperatorPrecedenceAllocationFailures,
         .{},
     );
 }
