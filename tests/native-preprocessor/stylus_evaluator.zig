@@ -428,6 +428,30 @@ const literal_css_input =
 
 const literal_css_output = "body{font:14px}a{text-decoration:none}";
 
+const literal_color_input =
+    \\body
+    \\  color #e
+    \\  color #ef
+    \\  color #fc0
+    \\  color #fc06
+    \\  color #ffcc00
+    \\  color #ffcc0066
+    \\  color rgb(100%, 255, 100%)
+    \\  color rgba(100%, 255, 100%, 0.5)
+    \\  color hsla(1, 1, 1, 0.75)
+    \\  color hsla(1, 1, 1, 75%)
+    \\  color rgba(50, 50, 50, 0.75)
+    \\  color rgba(50, 50, 50, 75%)
+    \\  color rgba(#323232, 75%)
+;
+
+const literal_color_css = "body{color:#eee;color:#efefef;color:#fc0;" ++
+    "color:rgba(255,204,0,0.4);color:#fc0;color:rgba(255,204,0,0.4);" ++
+    "color:#fff;color:rgba(255,255,255,0.5);" ++
+    "color:rgba(3,3,3,0.75);color:rgba(3,3,3,0.75);" ++
+    "color:rgba(50,50,50,0.75);color:rgba(50,50,50,0.75);" ++
+    "color:rgba(50,50,50,0.75)}";
+
 const function_property_alias_input =
     \\box-shadow-important()
     \\  push(arguments, !important)
@@ -4684,6 +4708,68 @@ test "native Stylus literal CSS blocks preserve bounded raw root and nested cont
     );
 }
 
+test "native Stylus literal colors own the finite lexical and callable terminal contract" {
+    const lower_input =
+        \\body
+        \\  short #e
+        \\  pair #ef
+        \\  alpha rgba(#fc0, 40%)
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "body{short:#eee;pair:#efefef;alpha:rgba(255,204,0,0.4)}",
+        lower.css(),
+    );
+
+    var first = try compile(std.testing.allocator, literal_color_input, .{});
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, literal_color_input, .{});
+    defer second.deinit();
+    try std.testing.expectEqualStrings(literal_color_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    const terminal_input =
+        \\body
+        \\  color rgba(100%, 255, 100%, 50%)
+    ;
+    var terminal_limits = stylus_evaluator.Limits{};
+    terminal_limits.values.max_collection_items = 4;
+    var terminal = try compile(std.testing.allocator, terminal_input, terminal_limits);
+    defer terminal.deinit();
+    try std.testing.expectEqualStrings(
+        "body{color:rgba(255,255,255,0.5)}",
+        terminal.css(),
+    );
+
+    var over_limit = terminal_limits;
+    over_limit.values.max_collection_items = 3;
+    try expectSemanticRejectionWithLimits(
+        terminal_input,
+        over_limit,
+        error.ValueLimitExceeded,
+        .resource_limit,
+        "native Stylus value limit exceeded",
+        @intCast(std.mem.indexOf(u8, terminal_input, "rgba").?),
+    );
+
+    const invalid =
+        \\body
+        \\  color rgba(100%, 255, 100%, invalid)
+    ;
+    try expectSemanticRejection(
+        invalid,
+        error.InvalidArguments,
+        .type_mismatch,
+        "native Stylus callable arguments are invalid",
+        @intCast(std.mem.indexOf(u8, invalid, "rgba").?),
+    );
+}
+
 test "native Stylus property functions emit declarations through callable aliases" {
     const lower_input =
         \\border-radius(size)
@@ -5764,6 +5850,12 @@ fn exerciseLiteralCssAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(literal_css_output, result.css());
 }
 
+fn exerciseLiteralColorAllocationFailures(allocator: std.mem.Allocator) !void {
+    var result = try compile(allocator, literal_color_input, .{});
+    defer result.deinit();
+    try std.testing.expectEqualStrings(literal_color_css, result.css());
+}
+
 fn exerciseFunctionPropertyAliasAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 1;
@@ -6143,6 +6235,14 @@ test "native Stylus literal CSS blocks handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseLiteralCssAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus literal colors handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseLiteralColorAllocationFailures,
         .{},
     );
 }

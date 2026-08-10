@@ -7247,7 +7247,7 @@ const Engine = struct {
         if (std.ascii.eqlIgnoreCase(input, "transparent")) {
             return self.ownValue(span, .{ .string = .{ .bytes = "transparent" } });
         }
-        if (native_color.parseLiteral(input)) |color| {
+        if (parseStylusColorLiteral(input)) |color| {
             return self.ownValue(span, .{ .color = color });
         }
 
@@ -7391,7 +7391,7 @@ const Engine = struct {
             const is_nested_function = end < call.arguments.end and raw[end] == '(';
             const color = if (!is_nested_function and
                 !std.ascii.eqlIgnoreCase(token, "transparent"))
-                native_color.parseLiteral(token)
+                parseStylusColorLiteral(token)
             else
                 null;
             if (color) |parsed| {
@@ -7944,7 +7944,14 @@ const Engine = struct {
                 alphaScalar(flattened.items[3].*) orelse return self.invalidBuiltinArguments(span)
             else
                 1;
-            const color = native_color.rgb(red, green, blue, alpha) catch
+            // Stylus 0.64.0 rounds channels in its RGBA node constructor,
+            // including percentage channels whose binary product is inexact.
+            const color = native_color.rgb(
+                @round(red),
+                @round(green),
+                @round(blue),
+                alpha,
+            ) catch
                 return self.invalidBuiltinArguments(span);
             return try self.ownValue(span, .{ .color = color });
         }
@@ -10243,7 +10250,7 @@ const Engine = struct {
         if (std.mem.eql(u8, input, "null")) {
             return self.ownValue(span, .{ .null_value = {} });
         }
-        if (native_color.parseLiteral(input)) |color| {
+        if (parseStylusColorLiteral(input)) |color| {
             return self.ownValue(span, .{ .color = color });
         }
         if (looksNumeric(input)) {
@@ -10413,7 +10420,7 @@ const Engine = struct {
         quoted: bool,
     ) Error!*const native_value.Value {
         if (!quoted) {
-            if (native_color.parseLiteral(bytes)) |color| {
+            if (parseStylusColorLiteral(bytes)) |color| {
                 return self.ownValue(span, .{ .color = color });
             }
         }
@@ -11061,10 +11068,12 @@ const Engine = struct {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
                 };
+                // Converting a provider HSLA node for output constructs an
+                // RGBA node and rounds; existing RGBA values stay integral.
                 const stylus_color = native_color.rgb(
-                    @floor(channels[0]),
-                    @floor(channels[1]),
-                    @floor(channels[2]),
+                    if (color.space == .hsl) @round(channels[0]) else @floor(channels[0]),
+                    if (color.space == .hsl) @round(channels[1]) else @floor(channels[1]),
+                    if (color.space == .hsl) @round(channels[2]) else @floor(channels[2]),
                     @trunc(channels[3] * 1000) / 1000,
                 ) catch {
                     try self.reportInvalidOperation(span);
@@ -11766,7 +11775,7 @@ const Engine = struct {
                         return error.InvalidDocument;
                     token_end = memberChainEnd(raw, closing + 1);
                 }
-                const ignore_color = native_color.parseLiteral(name) != null;
+                const ignore_color = parseStylusColorLiteral(name) != null;
                 const should_evaluate = !ignore_color and
                     ((try self.lookupBinding(scope, name)) != null or
                         self.findCallable(name) != null or isBuiltinCallableName(name) or
@@ -13548,9 +13557,33 @@ fn stringBytes(value: native_value.Value) ?[]const u8 {
 fn colorValue(value: native_value.Value) ?native_value.Color {
     return switch (value) {
         .color => |color| color,
-        .string => |string| native_color.parseLiteral(string.bytes),
+        .string => |string| parseStylusColorLiteral(string.bytes),
         else => null,
     };
+}
+
+fn parseStylusColorLiteral(input: []const u8) ?native_value.Color {
+    // The pinned Stylus lexer uniquely admits #n as repeated nibbles and #nn
+    // as one repeated grayscale byte; the shared CSS/Sass parser starts at #rgb.
+    if (input.len == 2 and input[0] == '#' and std.ascii.isHex(input[1])) {
+        const expanded = [4]u8{ '#', input[1], input[1], input[1] };
+        return native_color.parseLiteral(expanded[0..]);
+    }
+    if (input.len == 3 and input[0] == '#' and
+        std.ascii.isHex(input[1]) and std.ascii.isHex(input[2]))
+    {
+        const expanded = [7]u8{
+            '#',
+            input[1],
+            input[2],
+            input[1],
+            input[2],
+            input[1],
+            input[2],
+        };
+        return native_color.parseLiteral(expanded[0..]);
+    }
+    return native_color.parseLiteral(input);
 }
 
 fn optionalUnitEqual(left: ?[]const u8, right: ?[]const u8) bool {
@@ -14414,7 +14447,7 @@ fn selectorExistsQueryIsStringLike(query: []const u8) bool {
         std.ascii.eqlIgnoreCase(query, "true") or
         std.ascii.eqlIgnoreCase(query, "false") or
         std.ascii.eqlIgnoreCase(query, "null") or
-        native_color.parseLiteral(query) != null)
+        parseStylusColorLiteral(query) != null)
     {
         return false;
     }
