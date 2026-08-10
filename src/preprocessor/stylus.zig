@@ -791,7 +791,17 @@ pub const Parser = struct {
         indent: u32,
         output: *std.ArrayList(Built),
     ) Error!void {
-        while (cursor.* < lines.len and lines[cursor.*].indent == indent) {
+        std.debug.assert(cursor.* < lines.len);
+        // A recursive level opened inside braces ends with those braces even
+        // when a following root statement retains cosmetic indentation.
+        const explicit_floor = lines[cursor.*].explicit_depth;
+        while (cursor.* < lines.len and
+            lines[cursor.*].explicit_depth >= explicit_floor and
+            // Silent comment indentation is transparent to Stylus structure.
+            (lines[cursor.*].indent == indent or
+                (lines[cursor.*].indent > indent and
+                    isComment(self.lineBytes(lines[cursor.*])))))
+        {
             var line = lines[cursor.*];
             if (self.explicitEolContinuationEnd(lines, cursor.*)) |continuation_end| {
                 line.end = lines[continuation_end].end;

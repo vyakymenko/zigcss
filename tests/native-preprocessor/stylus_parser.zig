@@ -100,6 +100,18 @@ const multiline_assignment_input =
     \\  font-families families
 ;
 
+const parse_fixture_path =
+    "tests/preprocessors/stylus/corpus/files/upstream/cases/parse.styl";
+
+const parse_comment_lower_input =
+    \\body
+    \\  color red
+    \\  // outer
+    \\    // nested
+    \\   // uneven
+    \\  border 1px solid blue
+;
+
 fn countKind(document: *const syntax.Document, kind: syntax.Kind) usize {
     var count: usize = 0;
     for (document.nodes()) |node| {
@@ -238,6 +250,123 @@ test "native Stylus parser keeps a nested explicit rule beside compact declarati
         (try document.get(block_children[1])).kind,
     );
     try std.testing.expectEqual(syntax.Kind.rule, (try document.get(block_children[2])).kind);
+}
+
+test "native Stylus parser keeps the finite parse fixture structural at the root" {
+    const allocator = std.testing.allocator;
+    var lower_sources = source.Table.init(allocator, .{});
+    defer lower_sources.deinit();
+    const lower_source_id = try lower_sources.add(
+        "parse-comment-lower.styl",
+        parse_comment_lower_input,
+    );
+    var lower_limits = stylus.Limits{};
+    lower_limits.max_statements = 6;
+    var lower_parser = try stylus.Parser.init(
+        allocator,
+        &lower_sources,
+        lower_source_id,
+        lower_limits,
+        .{},
+    );
+    defer lower_parser.deinit();
+    var lower_document = try lower_parser.parse();
+    defer lower_document.deinit();
+    const lower_root = try lower_document.children(lower_document.root);
+    try std.testing.expectEqual(@as(usize, 1), lower_root.len);
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        countKind(&lower_document, .declaration),
+    );
+
+    const input = try std.fs.cwd().readFileAlloc(
+        allocator,
+        parse_fixture_path,
+        10 * 1024 * 1024,
+    );
+    defer allocator.free(input);
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("parse.styl", input);
+    var terminal_limits = stylus.Limits{};
+    terminal_limits.max_statements = 52;
+    var parser = try stylus.Parser.init(
+        allocator,
+        &sources,
+        source_id,
+        terminal_limits,
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    for (root_children) |child_id| {
+        const child = try document.get(child_id);
+        std.testing.expect(child.kind != .declaration) catch |failure| {
+            std.debug.print(
+                "\nroot declaration in parse fixture: {s}\n",
+                .{try sources.slice(child.text.?)},
+            );
+            return failure;
+        };
+    }
+
+    var over_limit = terminal_limits;
+    over_limit.max_statements = 51;
+    var limited = try stylus.Parser.init(
+        allocator,
+        &sources,
+        source_id,
+        over_limit,
+        .{},
+    );
+    defer limited.deinit();
+    if (limited.parse()) |unexpected| {
+        var unexpected_document = unexpected;
+        unexpected_document.deinit();
+        return error.TestExpectedError;
+    } else |err| {
+        try std.testing.expectEqual(error.StatementLimitExceeded, err);
+    }
+    try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
+}
+
+test "native Stylus parser closes an inline explicit block before cosmetic indentation" {
+    const input =
+        \\body {color:#666}
+        \\    a:hover {color:#333}
+    ;
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("inline-explicit-close.styl", input);
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        .{},
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 2), root_children.len);
+    for (root_children) |rule_id| {
+        try std.testing.expectEqual(syntax.Kind.rule, (try document.get(rule_id)).kind);
+    }
+    const body_children = try document.children(root_children[0]);
+    const link_children = try document.children(root_children[1]);
+    try std.testing.expectEqualStrings(
+        "body",
+        try sources.slice((try document.get(body_children[0])).text.?),
+    );
+    try std.testing.expectEqualStrings(
+        "a:hover",
+        try sources.slice((try document.get(link_children[0])).text.?),
+    );
 }
 
 test "native Stylus parser owns single-line callable blocks without consuming interpolation braces" {
@@ -1611,6 +1740,29 @@ fn exerciseCompactNestedRuleAllocationFailures(allocator: std.mem.Allocator) !vo
     try std.testing.expectEqual(@as(usize, 3), block_children.len);
 }
 
+fn exerciseParseFixtureAllocationFailures(allocator: std.mem.Allocator) !void {
+    const input = try std.fs.cwd().readFileAlloc(
+        std.testing.allocator,
+        parse_fixture_path,
+        10 * 1024 * 1024,
+    );
+    defer std.testing.allocator.free(input);
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("parse.styl", input);
+    var limits = stylus.Limits{};
+    limits.max_statements = 52;
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, limits, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root_children = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 17), root_children.len);
+    for (root_children) |child_id| {
+        try std.testing.expect((try document.get(child_id)).kind != .declaration);
+    }
+}
+
 fn exerciseSpacedSelectorInterpolationAllocationFailures(allocator: std.mem.Allocator) !void {
     var sources = source.Table.init(allocator, .{});
     defer sources.deinit();
@@ -1813,6 +1965,14 @@ test "native Stylus compact nested rule handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseCompactNestedRuleAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus parse fixture handles every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseParseFixtureAllocationFailures,
         .{},
     );
 }
