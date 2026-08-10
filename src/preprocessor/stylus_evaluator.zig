@@ -7735,6 +7735,61 @@ const Engine = struct {
                 return self.evaluateGenericBinary(span, left, right, binary.operator);
             }
         }
+        if (findLogicalOperator(source_input, .or_value)) |logical| {
+            const left = try self.evaluateValue(
+                try self.relativeSpan(span, logical.left),
+                source_input[logical.left.start..logical.left.end],
+                scope,
+                depth + 1,
+            );
+            if (isTruthy(left)) return left;
+            return self.evaluateValue(
+                try self.relativeSpan(span, logical.right),
+                source_input[logical.right.start..logical.right.end],
+                scope,
+                depth + 1,
+            );
+        }
+        if (findLogicalOperator(source_input, .and_value)) |logical| {
+            const left = try self.evaluateValue(
+                try self.relativeSpan(span, logical.left),
+                source_input[logical.left.start..logical.left.end],
+                scope,
+                depth + 1,
+            );
+            if (!isTruthy(left)) return left;
+            return self.evaluateValue(
+                try self.relativeSpan(span, logical.right),
+                source_input[logical.right.start..logical.right.end],
+                scope,
+                depth + 1,
+            );
+        }
+        if (findTopLevelSequence(source_input, " is a ")) |marker| {
+            const left_range = trimRange(source_input, .{ .start = 0, .end = marker });
+            const right_range = trimRange(source_input, .{
+                .start = marker + " is a ".len,
+                .end = source_input.len,
+            });
+            if (left_range.start != left_range.end and
+                right_range.start != right_range.end)
+            {
+                const value = try self.evaluateValue(
+                    try self.relativeSpan(span, left_range),
+                    source_input[left_range.start..left_range.end],
+                    scope,
+                    depth + 1,
+                );
+                const expected = try self.evaluateValue(
+                    try self.relativeSpan(span, right_range),
+                    source_input[right_range.start..right_range.end],
+                    scope,
+                    depth + 1,
+                );
+                return self.ownValue(span, .{ .boolean = expected.* == .string and
+                    valueIsType(value.*, expected.string.bytes, self) });
+            }
+        }
         if (findComparison(source_input)) |comparison| {
             const left = try self.evaluateValue(
                 span,
@@ -7756,6 +7811,63 @@ const Engine = struct {
         if (findGenericBinary(source_input)) |binary| {
             const left_raw = source_input[binary.left.start..binary.left.end];
             const right_raw = source_input[binary.right.start..binary.right.end];
+            if (binary.operator == '%') {
+                const left = try self.evaluateValue(
+                    try self.relativeSpan(span, binary.left),
+                    left_raw,
+                    scope,
+                    depth + 1,
+                );
+                var right_parts = try splitTopLevelWhitespace(self.allocator, right_raw);
+                defer right_parts.deinit(self.allocator);
+                if (left.* == .string and right_parts.items.len > 1) {
+                    var items: std.ArrayList(native_value.Value) = .empty;
+                    defer items.deinit(self.allocator);
+                    try items.ensureTotalCapacity(self.allocator, right_parts.items.len);
+                    const first_range = right_parts.items[0];
+                    const first_absolute = ByteRange{
+                        .start = binary.right.start + first_range.start,
+                        .end = binary.right.start + first_range.end,
+                    };
+                    const first_right = try self.evaluateValue(
+                        try self.relativeSpan(span, first_absolute),
+                        right_raw[first_range.start..first_range.end],
+                        scope,
+                        depth + 1,
+                    );
+                    const formatted = try self.evaluateGenericBinary(
+                        span,
+                        left,
+                        first_right,
+                        binary.operator,
+                    );
+                    items.appendAssumeCapacity(formatted.*);
+                    for (right_parts.items[1..]) |part| {
+                        const absolute = ByteRange{
+                            .start = binary.right.start + part.start,
+                            .end = binary.right.start + part.end,
+                        };
+                        const item = try self.evaluateValue(
+                            try self.relativeSpan(span, absolute),
+                            right_raw[part.start..part.end],
+                            scope,
+                            depth + 1,
+                        );
+                        items.appendAssumeCapacity(item.*);
+                    }
+                    return self.ownValue(span, .{ .list = .{
+                        .items = items.items,
+                        .separator = .space,
+                    } });
+                }
+                const right = try self.evaluateValue(
+                    try self.relativeSpan(span, binary.right),
+                    right_raw,
+                    scope,
+                    depth + 1,
+                );
+                return self.evaluateGenericBinary(span, left, right, binary.operator);
+            }
             if (parseCall(left_raw) != null or parseCall(right_raw) != null) {
                 const left = try self.evaluateValue(
                     try self.relativeSpan(span, binary.left),
@@ -8258,10 +8370,12 @@ const Engine = struct {
     ) Error!*const native_value.Value {
         // Stylus Unit.coerce() follows JavaScript parseFloat() when the right
         // operand is a quoted string and retains the left number's unit.
-        if (left.* == .number and right.* == .string and operator == '+') {
+        if (left.* == .number and right.* == .string and
+            (operator == '+' or operator == '-'))
+        {
             if (parseStylusFloatPrefix(right.string.bytes)) |right_value| {
                 var number = left.number;
-                number.value += right_value;
+                number.value += if (operator == '+') right_value else -right_value;
                 if (!std.math.isFinite(number.value)) {
                     try self.reportInvalidOperation(span);
                     return error.InvalidOperation;
@@ -11353,30 +11467,57 @@ const Engine = struct {
             const equal = stylusValueEqual(left.*, right.*);
             return if (operator == .equal) equal else !equal;
         }
-        if (left.* != .number or right.* != .number) {
+        if (left.* == .string) {
+            if (right.* == .string) {
+                const ordering = std.mem.order(u8, left.string.bytes, right.string.bytes);
+                return switch (operator) {
+                    .greater => ordering == .gt,
+                    .greater_equal => ordering != .lt,
+                    .less => ordering == .lt,
+                    .less_equal => ordering != .gt,
+                    else => unreachable,
+                };
+            }
+            if (right.* == .number) {
+                const left_value = std.fmt.parseFloat(f64, left.string.bytes) catch
+                    return false;
+                if (!std.math.isFinite(left_value)) return false;
+                return compareScalars(left_value, right.number.value, operator);
+            }
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
         }
+        if (left.* != .number) {
+            try self.reportInvalidOperation(span);
+            return error.InvalidOperation;
+        }
+        const right_number: native_value.Number = switch (right.*) {
+            .number => |number| number,
+            .string => |string| .{
+                .value = parseStylusFloatPrefix(string.bytes) orelse {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                },
+            },
+            else => {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            },
+        };
         // Pinned Stylus Unit.coerce() applies the unitful operand's unit to a
         // unitless relational bound. Keep unrelated incompatible unit pairs
         // fail-closed until their own finite conformance family owns them.
         const left_unitless = left.number.numerator_units.len == 0 and
             left.number.denominator_units.len == 0;
-        const right_unitless = right.number.numerator_units.len == 0 and
-            right.number.denominator_units.len == 0;
+        const right_unitless = right_number.numerator_units.len == 0 and
+            right_number.denominator_units.len == 0;
         if (!left_unitless and !right_unitless and
-            !numberUnitsEqual(left.number, right.number))
+            !numberUnitsEqual(left.number, right_number))
         {
             try self.reportInvalidOperation(span);
             return error.InvalidOperation;
         }
-        return switch (operator) {
-            .greater => left.number.value > right.number.value,
-            .greater_equal => left.number.value >= right.number.value,
-            .less => left.number.value < right.number.value,
-            .less_equal => left.number.value <= right.number.value,
-            else => unreachable,
-        };
+        return compareScalars(left.number.value, right_number.value, operator);
     }
 
     fn ownValue(
@@ -14330,10 +14471,21 @@ fn isTruthy(value: *const native_value.Value) bool {
     return switch (value.*) {
         .null_value => false,
         .boolean => |item| item,
-        .number => |number| number.value != 0,
+        .number => |number| number.value != 0 or
+            number.numerator_units.len != 0 or number.denominator_units.len != 0,
         .string => |string| string.bytes.len != 0,
         .list => |list| list.truthy_override orelse true,
         else => true,
+    };
+}
+
+fn compareScalars(left: f64, right: f64, operator: ComparisonOperator) bool {
+    return switch (operator) {
+        .greater => left > right,
+        .greater_equal => left >= right,
+        .less => left < right,
+        .less_equal => left <= right,
+        else => unreachable,
     };
 }
 

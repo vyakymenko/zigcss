@@ -767,6 +767,39 @@ const logical_condition_input =
 const logical_condition_css =
     "body{selected:yes}body{and-branch:safe}body{or-branch:safe}";
 
+const operator_semantics_input =
+    \\kind = "color"
+    \\text = ''
+    \\body
+    \\  zero-unit 0px || 5px
+    \\  chain true and 1 or 5
+    \\  type-variable #fff is a kind
+    \\  type-literal 15px is a 'unit'
+    \\  defined kind is defined and missing is defined
+    \\  ternary missing is defined ? yes : no
+    \\  joined "got " + 15px
+    \\  ungrouped-format '<a: %s b: %s>' % 1 2
+    \\  grouped-format '<a: %s b: %s>' % (1 2)
+    \\  relational 5 < '5.1'
+    \\  reverse-relational '5.1' > 5
+    \\  numeric-prefix 10 > '5x'
+    \\  invalid-left '5x' > 5
+    \\  lexical '10' > '5'
+    \\  parse-float-prefix 5 < '5 + 1'
+    \\  arithmetic (5 - "5.1") != 0
+    \\  text += 'bar'
+    \\  assigned text
+    \\  width type(40em) == 'unit' && unit(40em)
+;
+
+const operator_semantics_css =
+    "body{zero-unit:0px;chain:1;type-variable:true;type-literal:true;" ++
+    "defined:false;ternary:no;joined:'got 15px';" ++
+    "ungrouped-format:<a: 1 b: > 2;grouped-format:<a: 1 b: 2>;" ++
+    "relational:true;reverse-relational:true;numeric-prefix:true;" ++
+    "invalid-left:false;lexical:false;parse-float-prefix:false;arithmetic:true;" ++
+    "assigned:'bar';width:'em'}";
+
 const commented_if_else_input =
     \\.base
     \\  color red
@@ -3410,6 +3443,43 @@ test "native Stylus evaluates bounded compound conditions with short circuiting"
         .resource_limit,
         "native Stylus expression depth exceeded",
         @intCast(std.mem.indexOf(u8, logical_condition_input, "if n < 50").?),
+    );
+}
+
+test "native Stylus operators own the finite coercion and precedence contract" {
+    const lower_input =
+        \\body
+        \\  relational 5 < '5.1'
+    ;
+    var lower_limits = stylus_evaluator.Limits{};
+    lower_limits.max_expression_depth = 3;
+    var lower = try compile(std.testing.allocator, lower_input, lower_limits);
+    defer lower.deinit();
+    try std.testing.expectEqualStrings("body{relational:true}", lower.css());
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 6;
+    var first = try compile(std.testing.allocator, operator_semantics_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, operator_semantics_input, terminal);
+    defer second.deinit();
+
+    try std.testing.expectEqualStrings(operator_semantics_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_expression_depth = 5;
+    try expectSemanticRejectionWithLimits(
+        operator_semantics_input,
+        over_limit,
+        error.ExpressionDepthExceeded,
+        .resource_limit,
+        "native Stylus expression depth exceeded",
+        @intCast(std.mem.indexOf(u8, operator_semantics_input, "(1 2)").?),
     );
 }
 
@@ -6506,6 +6576,14 @@ fn exerciseOperatorRangeAssignmentAllocationFailures(allocator: std.mem.Allocato
     try std.testing.expectEqualStrings(operator_range_assignment_css, result.css());
 }
 
+fn exerciseOperatorSemanticsAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_expression_depth = 6;
+    var result = try compile(allocator, operator_semantics_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(operator_semantics_css, result.css());
+}
+
 test "native Stylus transaction handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -6830,6 +6908,14 @@ test "native Stylus range index assignment handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseOperatorRangeAssignmentAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus operators handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseOperatorSemanticsAllocationFailures,
         .{},
     );
 }
