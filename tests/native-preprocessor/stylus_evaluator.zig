@@ -466,6 +466,51 @@ const media_bubble_css =
     "all and (max-height: 320px) and (-webkit-min-device-pixel-ratio: 1.5)" ++
     "{.logo{background-size:42px 42px}}";
 
+const media_complex_input =
+    \\size = 3em
+    \\obj = { print: 500px }
+    \\@media only screen and (max-width: size * 10), not print and (orientation:portrait) && (min-{'width'} obj.print),
+    \\  (monochrome) and (bar baz)
+    \\  body
+    \\    color #c00
+    \\@media /* outer */ all and /* gap */(/* pre */ min-width :/* value */ 100px /* kept */)
+    \\  body
+    \\    color green
+    \\query = 'screen and (min-width: 10px)'
+    \\@media query
+    \\  body
+    \\    width 10px
+    \\breakpoints = { small: 'only screen' }
+    \\@media breakpoints["small"]
+    \\  body
+    \\    height 20px
+    \\@media (min-width: 1px) {}
+    \\bar(width)
+    \\  @media (width width)
+    \\    body
+    \\      color red
+    \\@media screen
+    \\  if true
+    \\    bar(500px)
+    \\.foo
+    \\  for j in 8..10
+    \\    @media (min-width: (1200 / 16 * j / 10)em)
+    \\      @media (min-height: (780 / 16 * j / 10)em)
+    \\        font-size (j / 10)em
+;
+
+const media_complex_css =
+    "@media only screen and (max-width: 30em), not print and " ++
+    "(orientation: portrait) and (min-width: 500px), (monochrome) and (bar: baz)" ++
+    "{body{color:#c00}}" ++
+    "@media all and (min-width: 100px /* kept */){body{color:#008000}}" ++
+    "@media screen and (min-width: 10px){body{width:10px}}" ++
+    "@media only screen{body{height:20px}}" ++
+    "@media screen and (width: 500px){body{color:#f00}}" ++
+    "@media (min-width: 60em) and (min-height: 39em){.foo{font-size:0.8em}}" ++
+    "@media (min-width: 67.5em) and (min-height: 43.875em){.foo{font-size:0.9em}}" ++
+    "@media (min-width: 75em) and (min-height: 48.75em){.foo{font-size:1em}}";
+
 const function_property_alias_input =
     \\box-shadow-important()
     \\  push(arguments, !important)
@@ -4832,6 +4877,47 @@ test "native Stylus media bubbling owns the finite query product contract" {
     );
 }
 
+test "native Stylus complex media expressions own the finite semantic contract" {
+    const lower_input =
+        \\size = 2em
+        \\@media (max-width size * 2)
+        \\  body
+        \\    color red
+    ;
+    var lower = try compile(std.testing.allocator, lower_input, .{});
+    defer lower.deinit();
+    try std.testing.expectEqualStrings(
+        "@media (max-width: 4em){body{color:#f00}}",
+        lower.css(),
+    );
+
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    terminal.max_loop_iterations = 3;
+    terminal.max_selectors = 16;
+    var first = try compile(std.testing.allocator, media_complex_input, terminal);
+    defer first.deinit();
+    var second = try compile(std.testing.allocator, media_complex_input, terminal);
+    defer second.deinit();
+    try std.testing.expectEqualStrings(media_complex_css, first.css());
+    try std.testing.expectEqualStrings(first.css(), second.css());
+    try std.testing.expectEqualSlices(u8, first.sourceMap().?, second.sourceMap().?);
+    try std.testing.expectEqual(@as(usize, 0), first.nativeDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.coreDiagnostics().len);
+    try std.testing.expectEqual(@as(usize, 0), first.dependencies().len);
+
+    var over_limit = terminal;
+    over_limit.max_loop_iterations = 2;
+    try expectSemanticRejectionWithLimits(
+        media_complex_input,
+        over_limit,
+        error.LoopLimitExceeded,
+        .loop_limit,
+        "native Stylus loop iteration limit exceeded",
+        @intCast(std.mem.indexOf(u8, media_complex_input, "for j").?),
+    );
+}
+
 test "native Stylus property functions emit declarations through callable aliases" {
     const lower_input =
         \\border-radius(size)
@@ -5926,6 +6012,16 @@ fn exerciseMediaBubbleAllocationFailures(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings(media_bubble_css, result.css());
 }
 
+fn exerciseMediaComplexAllocationFailures(allocator: std.mem.Allocator) !void {
+    var terminal = stylus_evaluator.Limits{};
+    terminal.max_call_depth = 1;
+    terminal.max_loop_iterations = 3;
+    terminal.max_selectors = 16;
+    var result = try compile(allocator, media_complex_input, terminal);
+    defer result.deinit();
+    try std.testing.expectEqualStrings(media_complex_css, result.css());
+}
+
 fn exerciseFunctionPropertyAliasAllocationFailures(allocator: std.mem.Allocator) !void {
     var terminal = stylus_evaluator.Limits{};
     terminal.max_call_depth = 1;
@@ -6321,6 +6417,14 @@ test "native Stylus media bubbling handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseMediaBubbleAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus complex media expressions handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMediaComplexAllocationFailures,
         .{},
     );
 }

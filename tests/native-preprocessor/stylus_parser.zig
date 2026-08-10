@@ -64,6 +64,14 @@ const declaration_assignment_input =
     \\  pad-y(10)
 ;
 
+const multiline_media_query_input =
+    \\@media /* outer */ all and (min-width: 100px),
+    \\/* second */ only print and (width: 100px)
+    \\, /* third */ (monochrome)
+    \\  body
+    \\    color green
+;
+
 fn countKind(document: *const syntax.Document, kind: syntax.Kind) usize {
     var count: usize = 0;
     for (document.nodes()) |node| {
@@ -344,6 +352,76 @@ test "native Stylus parser owns multiline callable signatures at their closing p
 
     var over_limit = terminal_limits;
     over_limit.max_statements = 11;
+    var limited = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        over_limit,
+        .{},
+    );
+    defer limited.deinit();
+    try std.testing.expectError(error.StatementLimitExceeded, limited.parse());
+    try std.testing.expectEqual(@as(usize, 0), limited.diagnostics().len);
+}
+
+test "native Stylus parser owns the finite multiline media query list" {
+    const lower_input =
+        \\@media screen,
+        \\  print
+        \\  body
+        \\    color red
+    ;
+    var lower_sources = source.Table.init(std.testing.allocator, .{});
+    defer lower_sources.deinit();
+    const lower_source_id = try lower_sources.add("multiline-media-lower.styl", lower_input);
+    var lower_limits = stylus.Limits{};
+    lower_limits.max_statements = 3;
+    var lower_parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &lower_sources,
+        lower_source_id,
+        lower_limits,
+        .{},
+    );
+    defer lower_parser.deinit();
+    var lower_document = try lower_parser.parse();
+    defer lower_document.deinit();
+    const lower_root = try lower_document.children(lower_document.root);
+    try std.testing.expectEqual(@as(usize, 1), lower_root.len);
+    try std.testing.expectEqual(syntax.Kind.at_rule, (try lower_document.get(lower_root[0])).kind);
+    try std.testing.expectEqualStrings(
+        "@media screen,\n  print",
+        try lower_sources.slice((try lower_document.get(lower_root[0])).text.?),
+    );
+
+    var sources = source.Table.init(std.testing.allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("multiline-media.styl", multiline_media_query_input);
+    var terminal_limits = stylus.Limits{};
+    terminal_limits.max_statements = 3;
+    var parser = try stylus.Parser.init(
+        std.testing.allocator,
+        &sources,
+        source_id,
+        terminal_limits,
+        .{},
+    );
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root.len);
+    const at_rule = try document.get(root[0]);
+    try std.testing.expectEqual(syntax.Kind.at_rule, at_rule.kind);
+    try std.testing.expectEqualStrings(
+        "@media /* outer */ all and (min-width: 100px),\n" ++
+            "/* second */ only print and (width: 100px)\n" ++
+            ", /* third */ (monochrome)",
+        try sources.slice(at_rule.text.?),
+    );
+
+    var over_limit = terminal_limits;
+    over_limit.max_statements = 2;
     var limited = try stylus.Parser.init(
         std.testing.allocator,
         &sources,
@@ -1396,6 +1474,21 @@ fn exerciseDeclarationAssignmentAllocationFailures(allocator: std.mem.Allocator)
     try std.testing.expectEqual(@as(usize, 2), countKind(&document, .declaration));
 }
 
+fn exerciseMultilineMediaQueryAllocationFailures(allocator: std.mem.Allocator) !void {
+    var sources = source.Table.init(allocator, .{});
+    defer sources.deinit();
+    const source_id = try sources.add("multiline-media.styl", multiline_media_query_input);
+    var limits = stylus.Limits{};
+    limits.max_statements = 3;
+    var parser = try stylus.Parser.init(allocator, &sources, source_id, limits, .{});
+    defer parser.deinit();
+    var document = try parser.parse();
+    defer document.deinit();
+    const root = try document.children(document.root);
+    try std.testing.expectEqual(@as(usize, 1), root.len);
+    try std.testing.expectEqual(syntax.Kind.at_rule, (try document.get(root[0])).kind);
+}
+
 test "native Stylus parser handles every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
@@ -1472,6 +1565,14 @@ test "native Stylus declaration assignments handle every allocation failure" {
     try std.testing.checkAllAllocationFailures(
         std.testing.allocator,
         exerciseDeclarationAssignmentAllocationFailures,
+        .{},
+    );
+}
+
+test "native Stylus multiline media query lists handle every allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        exerciseMultilineMediaQueryAllocationFailures,
         .{},
     );
 }

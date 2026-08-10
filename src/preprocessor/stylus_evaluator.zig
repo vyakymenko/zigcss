@@ -2445,6 +2445,11 @@ const MediaQueryParts = struct {
     features: []const u8 = "",
 };
 
+const MediaFeatureSeparator = struct {
+    index: usize,
+    width: usize,
+};
+
 const CacheSelector = struct {
     bytes: []u8,
     order: u64,
@@ -4415,8 +4420,13 @@ const Engine = struct {
             try self.emitCssLiteralBlock(at_rule);
             return;
         }
+        const raw_is_media = raw_header.len > "@media".len and
+            std.ascii.eqlIgnoreCase(raw_header[0.."@media".len], "@media");
         const header_owned = if (header_override == null)
-            try self.renderTextOwned(at_rule.text.?, parent_scope, .interpolation, 0)
+            if (raw_is_media)
+                try self.renderMediaHeaderOwned(at_rule.text.?, raw_header, parent_scope)
+            else
+                try self.renderTextOwned(at_rule.text.?, parent_scope, .interpolation, 0)
         else
             null;
         defer if (header_owned) |owned| self.allocator.free(owned);
@@ -4519,6 +4529,7 @@ const Engine = struct {
         errdefer if (content_checkpoint) |checkpoint_value| {
             self.transaction.restoreStaging(checkpoint_value) catch {};
         };
+        if (is_media and block_id == null) return;
         try self.emitMapped(at_rule.text.?, null, final_header);
         if (block_id == null) {
             try self.emit(";");
@@ -11712,6 +11723,313 @@ const Engine = struct {
         return try output.toOwnedSlice(self.allocator);
     }
 
+    fn renderMediaHeaderOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw_header: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error![]u8 {
+        const body = mediaHeaderBody(raw_header) orelse return error.InvalidDocument;
+        const rendered = try self.renderMediaQueryListBodyOwned(span, body, scope, 0);
+        defer self.allocator.free(rendered);
+        if (rendered.len == 0) return error.InvalidDocument;
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, "@media ");
+        try self.appendTemporary(&output, span, rendered);
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn renderMediaQueryListBodyOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error![]u8 {
+        if (depth >= self.limits.max_expression_depth) {
+            try self.reportExpressionDepth(span);
+            return error.ExpressionDepthExceeded;
+        }
+        const source_query = std.mem.trim(u8, raw, " \t\r\n\x0c;");
+        if (source_query.len == 0) return error.InvalidDocument;
+        if (try self.renderMediaReferenceOwned(span, source_query, scope)) |reference| {
+            defer self.allocator.free(reference);
+            if (std.mem.eql(u8, source_query, reference)) return error.InvalidDocument;
+            return self.renderMediaQueryListBodyOwned(
+                span,
+                reference,
+                scope,
+                depth + 1,
+            );
+        }
+
+        var queries = try splitMediaTopLevel(self.allocator, source_query, ',');
+        defer queries.deinit(self.allocator);
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        for (queries.items) |range| {
+            const query = std.mem.trim(
+                u8,
+                source_query[range.start..range.end],
+                " \t\r\n\x0c",
+            );
+            if (query.len == 0) return error.InvalidDocument;
+            const rendered = try self.renderMediaQueryOwned(span, query, scope, depth + 1);
+            defer self.allocator.free(rendered);
+            if (rendered.len == 0) return error.InvalidDocument;
+            if (output.items.len > 0) {
+                try self.appendTemporary(
+                    &output,
+                    span,
+                    if (self.options.output_style == .expanded) ", " else ",",
+                );
+            }
+            try self.appendTemporary(&output, span, rendered);
+        }
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn renderMediaReferenceOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+    ) Error!?[]u8 {
+        var is_reference = false;
+        if (validVariableName(raw)) {
+            is_reference = try self.lookupBinding(scope, raw) != null;
+        } else if (memberAccessBase(raw)) |base| {
+            is_reference = try self.lookupBinding(scope, base) != null;
+        } else if (isNameStart(raw, 0)) {
+            const base_end = nameEnd(raw, 0);
+            if (base_end < raw.len and (raw[base_end] == '.' or raw[base_end] == '[')) {
+                is_reference = try self.lookupBinding(scope, raw[0..base_end]) != null;
+            }
+        }
+        if (!is_reference) return null;
+
+        const value = try self.evaluateValue(span, raw, scope, 0);
+        return switch (value.*) {
+            .string, .selector => |string| try self.allocator.dupe(u8, string.bytes),
+            .list => try self.serializeValueOwned(value, .interpolation, span),
+            else => error.InvalidOperation,
+        };
+    }
+
+    fn renderMediaQueryOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error![]u8 {
+        const opening = firstMediaFeatureOpening(raw) orelse
+            return self.normalizeMediaWordsOwned(span, raw);
+        const prefix_raw = raw[0..opening];
+        const normalized_prefix = try self.normalizeMediaWordsOwned(span, prefix_raw);
+        defer self.allocator.free(normalized_prefix);
+        const prefix = stripMediaFeatureConjunction(normalized_prefix);
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        if (prefix.len > 0) try self.appendTemporary(&output, span, prefix);
+
+        var cursor = opening;
+        var feature_count: usize = 0;
+        while (cursor < raw.len) {
+            skipMediaTrivia(raw, &cursor);
+            if (cursor >= raw.len or raw[cursor] != '(') return error.InvalidDocument;
+            const closing = matchingMediaParen(raw, cursor) orelse return error.InvalidDocument;
+            const rendered = try self.renderMediaFeatureOwned(
+                span,
+                raw[cursor + 1 .. closing],
+                scope,
+                depth + 1,
+            );
+            defer self.allocator.free(rendered);
+            if (rendered.len == 0) return error.InvalidDocument;
+            if (output.items.len > 0) try self.appendTemporary(&output, span, " and ");
+            try self.appendTemporary(&output, span, rendered);
+            feature_count += 1;
+            cursor = closing + 1;
+            skipMediaTrivia(raw, &cursor);
+            if (cursor >= raw.len) break;
+            if (std.mem.startsWith(u8, raw[cursor..], "&&")) {
+                cursor += 2;
+            } else if (startsWordAscii(raw[cursor..], "and")) {
+                cursor += "and".len;
+            } else {
+                return error.InvalidDocument;
+            }
+        }
+        if (feature_count == 0) return error.InvalidDocument;
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn renderMediaFeatureOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error![]u8 {
+        const trailing_comment = trailingMediaBlockComment(raw);
+        const normalized = try self.normalizeMediaWordsOwned(span, raw);
+        defer self.allocator.free(normalized);
+        const body = std.mem.trim(u8, normalized, " \t\r\n\x0c");
+        if (body.len == 0) return error.InvalidDocument;
+
+        const separator = mediaFeatureSeparator(body);
+        const name_raw = if (separator) |item| body[0..item.index] else body;
+        const value_raw = if (separator) |item|
+            std.mem.trim(u8, body[item.index + item.width ..], " \t\r\n\x0c")
+        else
+            "";
+        const rendered_name = try self.renderRawOwned(
+            span,
+            std.mem.trim(u8, name_raw, " \t\r\n\x0c"),
+            scope,
+            .property,
+            depth + 1,
+        );
+        defer self.allocator.free(rendered_name);
+        const name = std.mem.trim(u8, rendered_name, " \t\r\n\x0c");
+        if (name.len == 0) return error.InvalidDocument;
+
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        try self.appendTemporary(&output, span, "(");
+        try self.appendTemporary(&output, span, name);
+        if (value_raw.len > 0) {
+            const rendered_value = if (preserveMediaRatio(value_raw))
+                try self.allocator.dupe(u8, value_raw)
+            else blk: {
+                const value = try self.evaluateMediaFeatureValue(
+                    span,
+                    value_raw,
+                    scope,
+                    depth + 1,
+                );
+                break :blk try self.serializeValueOwned(value, .interpolation, span);
+            };
+            defer self.allocator.free(rendered_value);
+            try self.appendTemporary(
+                &output,
+                span,
+                if (self.options.output_style == .expanded) ": " else ":",
+            );
+            try self.appendTemporary(&output, span, rendered_value);
+            if (trailing_comment) |comment| {
+                try self.appendTemporary(&output, span, " ");
+                try self.appendTemporary(&output, span, comment);
+            }
+        }
+        try self.appendTemporary(&output, span, ")");
+        return output.toOwnedSlice(self.allocator);
+    }
+
+    fn evaluateMediaFeatureValue(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+        scope: native_environment.ScopeId,
+        depth: u16,
+    ) Error!*const native_value.Value {
+        const rendered = try self.renderRawOwned(span, raw, scope, .value, depth + 1);
+        defer self.allocator.free(rendered);
+        const candidate = std.mem.trim(u8, rendered, " \t\r\n\x0c;");
+        var numeric = NumericParser{
+            .input = candidate,
+            .max_depth = self.limits.max_expression_depth,
+        };
+        if (numeric.parse()) |parsed| {
+            var numerator: [native_numeric.max_unit_instances][]const u8 = undefined;
+            var denominator: [native_numeric.max_unit_instances][]const u8 = undefined;
+            var number = parsed.toNumber(&numerator, &denominator) catch {
+                try self.reportInvalidOperation(span);
+                return error.InvalidOperation;
+            };
+            if (std.mem.indexOfScalar(u8, candidate, '*') != null) {
+                number.value = roundDecimal(number.value, 15);
+            }
+            return self.ownValue(span, .{ .number = number });
+        } else |failure| switch (failure) {
+            error.ExpressionDepthExceeded => {
+                try self.reportExpressionDepth(span);
+                return error.ExpressionDepthExceeded;
+            },
+            error.InvalidExpression => {},
+            else => {},
+        }
+        if (trailingStylusUnit(candidate)) |unit_start| {
+            var expression = NumericParser{
+                .input = std.mem.trimRight(u8, candidate[0..unit_start], " \t\r\n\x0c"),
+                .max_depth = self.limits.max_expression_depth,
+            };
+            if (expression.parse()) |parsed| {
+                if (!parsed.isDimensionless()) {
+                    try self.reportInvalidOperation(span);
+                    return error.InvalidOperation;
+                }
+                return self.ownNumberWithUnit(
+                    span,
+                    roundDecimal(parsed.value, 15),
+                    candidate[unit_start..],
+                );
+            } else |failure| switch (failure) {
+                error.ExpressionDepthExceeded => {
+                    try self.reportExpressionDepth(span);
+                    return error.ExpressionDepthExceeded;
+                },
+                error.InvalidExpression => {},
+                else => {},
+            }
+        }
+        return self.evaluateValue(span, raw, scope, depth + 1);
+    }
+
+    fn normalizeMediaWordsOwned(
+        self: *Engine,
+        span: native_source.Span,
+        raw: []const u8,
+    ) Error![]u8 {
+        var output: std.ArrayList(u8) = .empty;
+        errdefer output.deinit(self.allocator);
+        var cursor: usize = 0;
+        var pending_space = false;
+        while (cursor < raw.len) {
+            if (raw[cursor] == '/' and cursor + 1 < raw.len and raw[cursor + 1] == '*') {
+                const closing = std.mem.indexOfPos(u8, raw, cursor + 2, "*/") orelse
+                    return error.InvalidDocument;
+                pending_space = output.items.len > 0;
+                cursor = closing + 2;
+                continue;
+            }
+            if (raw[cursor] == '/' and cursor + 1 < raw.len and raw[cursor + 1] == '/') {
+                cursor += 2;
+                while (cursor < raw.len and raw[cursor] != '\r' and raw[cursor] != '\n') {
+                    cursor += 1;
+                }
+                pending_space = output.items.len > 0;
+                continue;
+            }
+            if (std.ascii.isWhitespace(raw[cursor])) {
+                pending_space = output.items.len > 0;
+                cursor += 1;
+                continue;
+            }
+            if (pending_space and output.items.len > 0) {
+                try self.appendTemporary(&output, span, " ");
+            }
+            pending_space = false;
+            try self.appendTemporary(&output, span, raw[cursor .. cursor + 1]);
+            cursor += 1;
+        }
+        return output.toOwnedSlice(self.allocator);
+    }
+
     fn parseMediaQueryParts(
         self: *Engine,
         raw: []const u8,
@@ -14414,6 +14732,290 @@ fn trimRange(raw: []const u8, input: ByteRange) ByteRange {
     while (start < end and std.ascii.isWhitespace(raw[start])) start += 1;
     while (end > start and (std.ascii.isWhitespace(raw[end - 1]) or raw[end - 1] == ';')) end -= 1;
     return .{ .start = start, .end = end };
+}
+
+fn splitMediaTopLevel(
+    allocator: std.mem.Allocator,
+    raw: []const u8,
+    delimiter: u8,
+) std.mem.Allocator.Error!std.ArrayList(ByteRange) {
+    var output: std.ArrayList(ByteRange) = .empty;
+    errdefer output.deinit(allocator);
+    var quote: u8 = 0;
+    var escaped = false;
+    var line_comment = false;
+    var block_comment = false;
+    var paren_depth: usize = 0;
+    var square_depth: usize = 0;
+    var curly_depth: usize = 0;
+    var start: usize = 0;
+    var index: usize = 0;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (line_comment) {
+            if (byte == '\r' or byte == '\n') line_comment = false;
+            continue;
+        }
+        if (block_comment) {
+            if (byte == '*' and index + 1 < raw.len and raw[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) {
+                escaped = false;
+            } else if (byte == '\\') {
+                escaped = true;
+            } else if (byte == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '/') {
+            line_comment = true;
+            index += 1;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '*') {
+            block_comment = true;
+            index += 1;
+            continue;
+        }
+        switch (byte) {
+            '(' => paren_depth += 1,
+            ')' => paren_depth -|= 1,
+            '[' => square_depth += 1,
+            ']' => square_depth -|= 1,
+            '{' => curly_depth += 1,
+            '}' => curly_depth -|= 1,
+            else => {},
+        }
+        if (byte == delimiter and paren_depth == 0 and square_depth == 0 and
+            curly_depth == 0)
+        {
+            try output.append(allocator, .{ .start = start, .end = index });
+            start = index + 1;
+        }
+    }
+    try output.append(allocator, .{ .start = start, .end = raw.len });
+    return output;
+}
+
+fn firstMediaFeatureOpening(raw: []const u8) ?usize {
+    var quote: u8 = 0;
+    var escaped = false;
+    var line_comment = false;
+    var block_comment = false;
+    var square_depth: usize = 0;
+    var curly_depth: usize = 0;
+    var index: usize = 0;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (line_comment) {
+            if (byte == '\r' or byte == '\n') line_comment = false;
+            continue;
+        }
+        if (block_comment) {
+            if (byte == '*' and index + 1 < raw.len and raw[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) escaped = false else if (byte == '\\') escaped = true else if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '/') {
+            line_comment = true;
+            index += 1;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '*') {
+            block_comment = true;
+            index += 1;
+            continue;
+        }
+        switch (byte) {
+            '[' => square_depth += 1,
+            ']' => square_depth -|= 1,
+            '{' => curly_depth += 1,
+            '}' => curly_depth -|= 1,
+            '(' => if (square_depth == 0 and curly_depth == 0) return index,
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn matchingMediaParen(raw: []const u8, opening: usize) ?usize {
+    if (opening >= raw.len or raw[opening] != '(') return null;
+    var quote: u8 = 0;
+    var escaped = false;
+    var line_comment = false;
+    var block_comment = false;
+    var depth: usize = 0;
+    var index = opening;
+    while (index < raw.len) : (index += 1) {
+        const byte = raw[index];
+        if (line_comment) {
+            if (byte == '\r' or byte == '\n') line_comment = false;
+            continue;
+        }
+        if (block_comment) {
+            if (byte == '*' and index + 1 < raw.len and raw[index + 1] == '/') {
+                block_comment = false;
+                index += 1;
+            }
+            continue;
+        }
+        if (quote != 0) {
+            if (escaped) escaped = false else if (byte == '\\') escaped = true else if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '/') {
+            line_comment = true;
+            index += 1;
+            continue;
+        }
+        if (byte == '/' and index + 1 < raw.len and raw[index + 1] == '*') {
+            block_comment = true;
+            index += 1;
+            continue;
+        }
+        if (byte == '(') depth += 1;
+        if (byte == ')') {
+            depth -|= 1;
+            if (depth == 0) return index;
+        }
+    }
+    return null;
+}
+
+fn skipMediaTrivia(raw: []const u8, cursor: *usize) void {
+    while (cursor.* < raw.len) {
+        if (std.ascii.isWhitespace(raw[cursor.*])) {
+            cursor.* += 1;
+            continue;
+        }
+        if (raw[cursor.*] == '/' and cursor.* + 1 < raw.len and raw[cursor.* + 1] == '*') {
+            const closing = std.mem.indexOfPos(u8, raw, cursor.* + 2, "*/") orelse {
+                cursor.* = raw.len;
+                return;
+            };
+            cursor.* = closing + 2;
+            continue;
+        }
+        if (raw[cursor.*] == '/' and cursor.* + 1 < raw.len and raw[cursor.* + 1] == '/') {
+            cursor.* += 2;
+            while (cursor.* < raw.len and raw[cursor.*] != '\r' and raw[cursor.*] != '\n') {
+                cursor.* += 1;
+            }
+            continue;
+        }
+        return;
+    }
+}
+
+fn stripMediaFeatureConjunction(raw: []const u8) []const u8 {
+    var trimmed = std.mem.trim(u8, raw, " \t\r\n\x0c");
+    if (std.mem.endsWith(u8, trimmed, "&&")) {
+        return std.mem.trimRight(u8, trimmed[0 .. trimmed.len - 2], " \t\r\n\x0c");
+    }
+    if (trimmed.len >= "and".len and
+        std.ascii.eqlIgnoreCase(trimmed[trimmed.len - "and".len ..], "and"))
+    {
+        const start = trimmed.len - "and".len;
+        if (start == 0 or std.ascii.isWhitespace(trimmed[start - 1])) {
+            trimmed = std.mem.trimRight(u8, trimmed[0..start], " \t\r\n\x0c");
+        }
+    }
+    return trimmed;
+}
+
+fn trailingMediaBlockComment(raw: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trimRight(u8, raw, " \t\r\n\x0c");
+    if (!std.mem.endsWith(u8, trimmed, "*/")) return null;
+    const opening = std.mem.lastIndexOf(u8, trimmed, "/*") orelse return null;
+    return trimmed[opening..];
+}
+
+fn mediaFeatureSeparator(raw: []const u8) ?MediaFeatureSeparator {
+    var quote: u8 = 0;
+    var escaped = false;
+    var depth: usize = 0;
+    for (raw, 0..) |byte, index| {
+        if (quote != 0) {
+            if (escaped) escaped = false else if (byte == '\\') escaped = true else if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            ':' => if (depth == 0) return .{ .index = index, .width = 1 },
+            else => {},
+        }
+    }
+    depth = 0;
+    quote = 0;
+    escaped = false;
+    for (raw, 0..) |byte, index| {
+        if (quote != 0) {
+            if (escaped) escaped = false else if (byte == '\\') escaped = true else if (byte == quote) quote = 0;
+            continue;
+        }
+        if (byte == '\'' or byte == '"') {
+            quote = byte;
+            continue;
+        }
+        switch (byte) {
+            '(', '[', '{' => depth += 1,
+            ')', ']', '}' => depth -|= 1,
+            else => {},
+        }
+        if (depth == 0 and std.ascii.isWhitespace(byte)) {
+            return .{ .index = index, .width = 1 };
+        }
+    }
+    return null;
+}
+
+fn preserveMediaRatio(raw: []const u8) bool {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n\x0c");
+    var slash_count: usize = 0;
+    for (trimmed) |byte| switch (byte) {
+        '/' => slash_count += 1,
+        '0'...'9', '.', '+', '-' => {},
+        else => return false,
+    };
+    return slash_count == 1;
+}
+
+fn trailingStylusUnit(raw: []const u8) ?usize {
+    var start = raw.len;
+    while (start > 0 and (std.ascii.isAlphabetic(raw[start - 1]) or raw[start - 1] == '%')) {
+        start -= 1;
+    }
+    if (start == 0 or start == raw.len or !isStylusUnit(raw[start..])) return null;
+    return start;
 }
 
 fn splitTopLevel(

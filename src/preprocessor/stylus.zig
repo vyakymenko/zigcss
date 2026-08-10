@@ -761,6 +761,11 @@ pub const Parser = struct {
                 line.content_end = lines[continuation_end].content_end;
                 line.token_end = lines[continuation_end].token_end;
                 cursor.* = continuation_end;
+            } else if (self.mediaQueryContinuationEnd(lines, cursor.*)) |continuation_end| {
+                line.end = lines[continuation_end].end;
+                line.content_end = lines[continuation_end].content_end;
+                line.token_end = lines[continuation_end].token_end;
+                cursor.* = continuation_end;
             } else if (self.declarationContinuationEnd(lines, cursor.*)) |continuation_end| {
                 line.end = lines[continuation_end].end;
                 line.content_end = lines[continuation_end].content_end;
@@ -899,6 +904,61 @@ pub const Parser = struct {
         else
             return false;
         return next.start == next_start;
+    }
+
+    fn mediaQueryContinuationEnd(
+        self: *const Parser,
+        lines: []const Line,
+        start: usize,
+    ) ?usize {
+        if (start + 1 >= lines.len or
+            !startsDirective(self.lineBytes(lines[start]), "@media"))
+        {
+            return null;
+        }
+
+        var end = start;
+        var expects_next = self.lineEndsWithSignificantToken(lines[end], .comma);
+        while (end + 1 < lines.len and
+            lines[end + 1].indent >= lines[start].indent and
+            lines[end + 1].explicit_depth == lines[start].explicit_depth and
+            self.linesArePhysicallyAdjacent(lines[end], lines[end + 1]))
+        {
+            const next = lines[end + 1];
+            if (!expects_next and !self.lineStartsWithSignificantToken(next, .comma)) break;
+            end += 1;
+            expects_next = self.lineEndsWithSignificantToken(lines[end], .comma);
+        }
+        return if (end > start) end else null;
+    }
+
+    fn lineStartsWithSignificantToken(
+        self: *const Parser,
+        line: Line,
+        kind: native_lexer.Kind,
+    ) bool {
+        for (self.tokens[line.token_start..line.token_end]) |token| {
+            switch (token.kind) {
+                .whitespace, .comment, .newline, .indent, .dedent, .eof => continue,
+                else => return token.kind == kind,
+            }
+        }
+        return false;
+    }
+
+    fn lineEndsWithSignificantToken(
+        self: *const Parser,
+        line: Line,
+        kind: native_lexer.Kind,
+    ) bool {
+        var result: ?native_lexer.Kind = null;
+        for (self.tokens[line.token_start..line.token_end]) |token| {
+            switch (token.kind) {
+                .whitespace, .comment, .newline, .indent, .dedent, .eof => continue,
+                else => result = token.kind,
+            }
+        }
+        return result == kind;
     }
 
     fn declarationContinuationEnd(
